@@ -23,6 +23,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Set version from git
         run: |
           VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
@@ -32,10 +33,11 @@ jobs:
           fi
           sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
           rm Cargo.toml.bak
-      # - name: Set up Python ${{ matrix.python-version }}
-      #   uses: actions/setup-python@v5
-      #   with:
-      #     python-version: ${{ matrix.python-version }}
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
 
       - uses: actions-rs/toolchain@v1
         with:
