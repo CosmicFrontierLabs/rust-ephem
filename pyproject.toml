@@ -31,7 +31,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Rust",
-
+    "Typing :: Typed",
     "Topic :: Scientific/Engineering :: Astronomy",
     "Topic :: Scientific/Engineering :: Physics",
 ]
@@ -56,6 +56,12 @@ module-name = "rust_ephem._rust_ephem"
 
 # Build with release optimizations for wheels
 profile = "release"
+
+# Include type stubs and py.typed marker for PEP 561 compliance
+include = [
+    "rust_ephem/py.typed",
+    "rust_ephem/*.pyi",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
