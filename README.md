@@ -1,11 +1,31 @@
 # rust-ephem
 
-A Rust library for satellite ephemeris calculations, with Python bindings. This library supports:
+`rust-ephem` is a Rust library with Python bindings for high-performance
+satellite and planetary ephemeris calculations. It propagates Two-Line Element
+(TLE) data and SPICE kernels, outputs standard coordinate frames (ITRS, GCRS),
+and integrates with astropy for Python workflows. It achieves meters-level
+accuracy for Low Earth Orbit (LEO) satellites with proper time corrections. It
+also supports ground-based observatory ephemerides.
 
-- **TLE-based propagation** using SGP4
-- **SPICE kernel-based ephemeris** using the ANISE library
+Built for performance: generates ephemerides for thousands of time steps using
+Rust's speed and efficient memory handling. Ideal for visibility calculators
+where speed is critical (e.g. APIs serving many users) and large-scale
+ephemeris tasks where it outperforms pure-Python libraries by an order of
+magnitude.
 
-Both methods provide accurate coordinate transformations including TEME, ITRS, and GCRS frames.
+`rust-ephem` outputs ephemerides as `astropy` `SkyCoord` objects, eliminating
+manual conversions and enabling seamless integration with astropy-based
+workflows. By default, it includes Sun and Moon positions in `SkyCoord` with observer
+location and velocity, correctly handling motion effects like Moon parallax in
+LEO spacecraft. It also supports ephemerides for other solar system bodies.
+
+`rust-ephem` also has a constraint system, that enables flexible evaluation of
+observational constraints for ephemeris planning, including Sun and Moon
+proximity, Earth limb avoidance, and generic body proximity. It supports
+logical operators (AND, OR, NOT) for combining constraints, with Python
+operator overloading (`&`, `|`, `~`) for intuitive composition. Built on
+Pydantic models, it allows JSON serialization and direct evaluation against
+ephemeris objects for efficient visibility and planning calculations.
 
 ## Features
 
@@ -27,6 +47,15 @@ Both methods provide accurate coordinate transformations including TEME, ITRS, a
   - **Polar motion correction** (optional) for additional ~10-20m accuracy improvement
   - Automatically downloads and caches IERS data from JPL
 - **Pure Rust**: Uses ERFA (Essential Routines for Fundamental Astronomy) and ANISE for transformations
+- **Constraint System**:
+  - Flexible constraint evaluation for observational planning
+  - Sun/Moon proximity constraints with configurable minimum angles
+  - Eclipse detection (umbra and penumbra)
+  - Earth limb avoidance constraints
+  - Generic body proximity constraints (planets, etc.)
+  - Logical operators (AND, OR, NOT) for combining constraints
+  - Python operator overloading (`&`, `|`, `~`) for intuitive constraint composition
+  - Pydantic-based configuration with JSON serialization support
 
 ## Building
 
