@@ -10,7 +10,7 @@
 /// Constraints operate on ephemeris data and target coordinates to produce
 /// time-based violation windows.
 use crate::time_utils::python_datetime_to_utc;
-use chrono::{DateTime, Datelike, Timelike, Utc};
+use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -124,23 +124,9 @@ impl ConstraintResult {
     /// Property: array of Python datetime objects for each evaluation time
     #[getter]
     fn timestamp(&self, py: Python) -> PyResult<Vec<Py<PyAny>>> {
-        let datetime_mod = py.import("datetime")?;
-        let timezone_class = datetime_mod.getattr("timezone")?;
-        let timezone_utc = timezone_class.getattr("utc")?;
-
         let mut result = Vec::with_capacity(self.times.len());
         for dt in &self.times {
-            let py_dt = datetime_mod.getattr("datetime")?.call1((
-                dt.year(),
-                dt.month(),
-                dt.day(),
-                dt.hour(),
-                dt.minute(),
-                dt.second(),
-                dt.timestamp_subsec_micros(),
-                timezone_utc.clone(),
-            ))?;
-            result.push(py_dt.into());
+            result.push(crate::time_utils::utc_to_python_datetime(py, dt)?);
         }
         Ok(result)
     }
