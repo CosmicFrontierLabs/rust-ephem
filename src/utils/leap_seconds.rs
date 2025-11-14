@@ -9,7 +9,7 @@
 /// Next scheduled check: None announced as of November 2024
 use chrono::{DateTime, Utc};
 
-use crate::config::TT_TAI_SECONDS;
+use crate::utils::config::TT_TAI_SECONDS;
 
 /// Embedded leap second data: (NTP timestamp, TAI-UTC offset in seconds)
 /// NTP timestamps are seconds since 1900-01-01 00:00:00

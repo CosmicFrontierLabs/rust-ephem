@@ -5,8 +5,8 @@
 //!
 //! Data is downloaded from JPL's EOP2 service and cached for reuse.
 
-use crate::config::ARCSEC_TO_RAD;
-use crate::eop_cache::load_or_download_eop2_text;
+use crate::utils::config::ARCSEC_TO_RAD;
+use crate::utils::eop_cache::load_or_download_eop2_text;
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 use std::sync::Mutex;

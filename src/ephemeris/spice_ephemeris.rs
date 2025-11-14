@@ -4,10 +4,10 @@ use hifitime::Epoch as HifiEpoch;
 use ndarray::Array2;
 use pyo3::{prelude::*, types::PyDateTime};
 
-use crate::conversions;
-use crate::ephemeris_common::{generate_timestamps, EphemerisBase, EphemerisData};
-use crate::position_velocity::PositionVelocityData;
-use crate::to_skycoord::AstropyModules;
+use crate::ephemeris::ephemeris_common::{generate_timestamps, EphemerisBase, EphemerisData};
+use crate::ephemeris::position_velocity::PositionVelocityData;
+use crate::utils::conversions;
+use crate::utils::to_skycoord::AstropyModules;
 
 #[pyclass]
 pub struct SPICEEphemeris {
@@ -64,16 +64,8 @@ impl SPICEEphemeris {
         ephemeris.gcrs_to_itrs()?;
         ephemeris.calculate_sun_moon()?;
 
-        // Import astropy modules once for all SkyCoord creations
-        let astropy_modules = AstropyModules::import(py)?;
-
-        // Cache SkyCoord objects
-        ephemeris.itrs_skycoord = ephemeris.itrs_to_skycoord(py, &astropy_modules).ok();
-        ephemeris.common_data.gcrs_skycoord = ephemeris.gcrs_to_skycoord(py, &astropy_modules).ok();
-        ephemeris.common_data.earth_skycoord =
-            ephemeris.earth_to_skycoord(py, &astropy_modules).ok();
-        ephemeris.common_data.sun_skycoord = ephemeris.sun_to_skycoord(py, &astropy_modules).ok();
-        ephemeris.common_data.moon_skycoord = ephemeris.moon_to_skycoord(py, &astropy_modules).ok();
+        // Cache all SkyCoord objects using helper function
+        ephemeris.itrs_skycoord = ephemeris.cache_skycoords(py)?;
 
         // Return the SPICEEphemeris object
         Ok(ephemeris)

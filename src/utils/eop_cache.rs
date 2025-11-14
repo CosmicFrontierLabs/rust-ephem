@@ -4,9 +4,9 @@
 //! store it in a local cache, and read it back with a TTL.
 //! Both UT1 and polar motion providers can consume the returned text.
 
-use crate::config::DEFAULT_EOP_PATH;
-use crate::config::DEFAULT_EOP_TTL;
-use crate::config::EOP2_URL;
+use crate::utils::config::DEFAULT_EOP_PATH;
+use crate::utils::config::DEFAULT_EOP_TTL;
+use crate::utils::config::EOP2_URL;
 use std::error::Error;
 use std::fs;
 use std::io::Read;

@@ -8,7 +8,8 @@ use once_cell::sync::Lazy;
 use std::sync::Mutex;
 
 // Shared EOP2 caching
-use crate::eop_cache::load_or_download_eop2_text;
+use crate::utils::eop_cache::load_or_download_eop2_text;
+use crate::utils::leap_seconds;
 
 // Re-export Ut1Provider for external use if needed
 pub use hifitime::ut1::Ut1Provider;
@@ -66,7 +67,7 @@ pub fn get_ut1_utc_offset(dt: &DateTime<Utc>) -> f64 {
 
         if let Some(tai_minus_ut1) = epoch.ut1_offset(provider) {
             // TAI-UTC from leap seconds (we need to get this properly)
-            let tai_minus_utc = crate::leap_seconds::get_tai_utc_offset(dt).unwrap_or(37.0);
+            let tai_minus_utc = leap_seconds::get_tai_utc_offset(dt).unwrap_or(37.0);
 
             // UT1-UTC = (TAI-UTC) - (TAI-UT1)
             tai_minus_utc - tai_minus_ut1.to_seconds()

@@ -80,7 +80,7 @@ pub fn ensure_planetary_ephemeris(path: &Path) -> Result<(), Box<dyn std::error:
 /// Choose the best available planetary SPK path on disk.
 /// Always prefer full DE440 if present, otherwise fall back to DE440S.
 pub fn best_available_planetary_path() -> Option<std::path::PathBuf> {
-    use crate::config::{DEFAULT_DE440S_PATH, DEFAULT_DE440_PATH};
+    use crate::utils::config::{DEFAULT_DE440S_PATH, DEFAULT_DE440_PATH};
     let full = DEFAULT_DE440_PATH.as_path();
     if full.exists() {
         return Some(full.to_path_buf());

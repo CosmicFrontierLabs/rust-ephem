@@ -5,9 +5,9 @@ use erfa::vectors_and_matrices::mat_mul_pvec;
 use ndarray::Array2;
 use std::sync::Arc;
 
-use crate::math_utils::transpose_matrix;
-use crate::time_utils::{datetime_to_jd, get_tt_offset_days};
-use crate::{config::*, is_planetary_ephemeris_initialized};
+use crate::utils::math_utils::transpose_matrix;
+use crate::utils::time_utils::{datetime_to_jd, get_tt_offset_days};
+use crate::{is_planetary_ephemeris_initialized, utils::config::*};
 
 /// Calculate Sun positions for multiple timestamps
 /// Returns Array2 with shape (N, 6) containing [x, y, z, vx, vy, vz] for each timestamp
@@ -285,7 +285,7 @@ pub fn calculate_body_positions_spice(
     use hifitime::Epoch as HifiEpoch;
 
     // Prefer a centrally-initialized planetary almanac if available
-    use crate::spice_manager;
+    use crate::ephemeris::spice_manager;
 
     let maybe_ephemeris = spice_manager::get_planetary_ephemeris();
 
@@ -293,7 +293,7 @@ pub fn calculate_body_positions_spice(
         almanac
     } else {
         // Fallback: try to load from the best available default cache path (prefer full DE440)
-        let path = if let Some(p) = crate::spice_manager::best_available_planetary_path() {
+        let path = if let Some(p) = spice_manager::best_available_planetary_path() {
             p
         } else {
             DEFAULT_DE440S_PATH.as_path().to_path_buf()
@@ -363,14 +363,14 @@ pub fn calculate_body_positions_spice_result(
     target_id: i32,
     center_id: i32,
 ) -> Result<Array2<f64>, String> {
-    use crate::spice_manager;
+    use crate::ephemeris::spice_manager;
     use anise::prelude::*;
     use hifitime::Epoch as HifiEpoch;
 
     let almanac = if let Some(almanac) = spice_manager::get_planetary_ephemeris() {
         almanac
     } else {
-        let path = if let Some(p) = crate::spice_manager::best_available_planetary_path() {
+        let path = if let Some(p) = spice_manager::best_available_planetary_path() {
             p
         } else {
             DEFAULT_DE440S_PATH.as_path().to_path_buf()

@@ -9,10 +9,10 @@ use erfa::{
 };
 use ndarray::Array2;
 
-use crate::config::*;
-use crate::eop_provider::get_polar_motion_rad;
-use crate::math_utils::{polar_motion_matrix, transpose_matrix};
-use crate::time_utils::{datetime_to_jd, datetime_to_jd_ut1, get_tt_offset_days};
+use crate::utils::config::*;
+use crate::utils::eop_provider::get_polar_motion_rad;
+use crate::utils::math_utils::{polar_motion_matrix, transpose_matrix};
+use crate::utils::time_utils::{datetime_to_jd, datetime_to_jd_ut1, get_tt_offset_days};
 
 /// Supported coordinate frames for conversion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

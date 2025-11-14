@@ -1,6 +1,6 @@
-use crate::config::*;
-use crate::leap_seconds;
-use crate::ut1_provider;
+use crate::utils::config::*;
+use crate::utils::leap_seconds;
+use crate::utils::ut1_provider;
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use pyo3::prelude::*;
 
