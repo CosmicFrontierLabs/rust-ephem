@@ -1,0 +1,77 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "rust-ephem"
+dynamic = ["version"]
+description = "A Rust library for satellite ephemeris calculations with Python / astropy bindings"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Jamie A. Kennea", email = "jak574@users.noreply.github.com" },
+]
+keywords = [
+    "satellite",
+    "ephemeris",
+    "sgp4",
+    "tle",
+    "spice",
+    "orbital-mechanics",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
+
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+dependencies = [
+    "numpy>=1.16",
+    "pydantic>=2.12.4",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0", "astropy>=5.0", "pluggy>=1.6.0"]
+docs = ["sphinx>=6.0", "sphinx-rtd-theme", "maturin>=1.0"]
+
+[project.urls]
+Homepage = "https://github.com/jak574/rust-ephem"
+Repository = "https://github.com/jak574/rust-ephem"
+"Bug Tracker" = "https://github.com/jak574/rust-ephem/issues"
+
+[tool.maturin]
+module-name = "rust_ephem._rust_ephem"
+# python-source = "rust_ephem"
+
+# Build with release optimizations for wheels
+profile = "release"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py", "integration_test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+# Display more verbose output
+addopts = ["-v", "--tb=short"]
+# Don't recurse into directories
+norecursedirs = [".git", ".tox", "dist", "build", "*.egg", "target"]
+# Suppress astropy internal warnings during coordinate transformations
+# These occur in astropy's internals when it normalizes vectors during SkyCoord creation
+# and don't indicate actual problems with our calculations
+filterwarnings = [
+    "ignore:invalid value encountered in divide:RuntimeWarning:astropy",
+    "ignore:divide by zero encountered in divide:RuntimeWarning:astropy",
+    "ignore:invalid value encountered in pdp:RuntimeWarning:astropy"
+]
