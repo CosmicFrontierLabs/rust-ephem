@@ -2,7 +2,12 @@
 ///
 /// This module provides the Python API for constraint evaluation,
 /// including JSON-based configuration and convenient factory methods.
+use crate::constraints::body_proximity::{BodyProximityConfig, BodyProximityEvaluator};
 use crate::constraints::core::*;
+use crate::constraints::earth_limb::EarthLimbConfig;
+use crate::constraints::eclipse::EclipseConfig;
+use crate::constraints::moon_proximity::MoonProximityConfig;
+use crate::constraints::sun_proximity::SunProximityConfig;
 use crate::ephemeris::ephemeris_common::EphemerisBase;
 use crate::ephemeris::GroundEphemeris;
 use crate::ephemeris::SPICEEphemeris;
