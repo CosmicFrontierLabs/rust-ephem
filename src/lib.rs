@@ -4,10 +4,8 @@ mod ephemeris;
 mod utils;
 
 // Re-export public API from ephemeris
+pub use ephemeris::position_velocity::PositionVelocityData;
 pub use ephemeris::{GroundEphemeris, SPICEEphemeris, TLEEphemeris};
-
-// Re-export public API from utils
-pub use utils::position_velocity::PositionVelocityData;
 
 // Re-export constraint types
 pub use constraints::{ConstraintResult, ConstraintViolation, PyConstraint, VisibilityWindow};

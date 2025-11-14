@@ -5,6 +5,7 @@
 
 pub mod ephemeris_common;
 pub mod ground_ephemeris;
+pub mod position_velocity;
 pub mod spice_ephemeris;
 pub mod spice_manager;
 pub mod tle_ephemeris;

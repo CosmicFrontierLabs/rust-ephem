@@ -3,9 +3,9 @@ use ndarray::{s, Array2};
 use numpy::IntoPyArray;
 use pyo3::{prelude::*, types::PyDateTime};
 
+use crate::ephemeris::position_velocity::PositionVelocityData;
 use crate::utils::celestial::{calculate_moon_positions, calculate_sun_positions};
 use crate::utils::config::MAX_TIMESTAMPS;
-use crate::utils::position_velocity::PositionVelocityData;
 use crate::utils::time_utils::python_datetime_to_utc;
 use crate::utils::to_skycoord::{to_skycoord, AstropyModules, SkyCoordConfig};
 

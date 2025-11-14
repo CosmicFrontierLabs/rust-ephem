@@ -5,8 +5,8 @@ use sgp4::{parse_2les, Constants};
 use crate::ephemeris::ephemeris_common::{
     generate_timestamps, split_pos_vel, EphemerisBase, EphemerisData,
 };
+use crate::ephemeris::position_velocity::PositionVelocityData;
 use crate::utils::conversions;
-use crate::utils::position_velocity::PositionVelocityData;
 use crate::utils::to_skycoord::AstropyModules;
 
 #[pyclass]

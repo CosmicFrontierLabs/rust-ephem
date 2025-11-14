@@ -5,8 +5,8 @@ use ndarray::Array2;
 use pyo3::{prelude::*, types::PyDateTime};
 
 use crate::ephemeris::ephemeris_common::{generate_timestamps, EphemerisBase, EphemerisData};
+use crate::ephemeris::position_velocity::PositionVelocityData;
 use crate::utils::conversions;
-use crate::utils::position_velocity::PositionVelocityData;
 use crate::utils::to_skycoord::AstropyModules;
 
 #[pyclass]
