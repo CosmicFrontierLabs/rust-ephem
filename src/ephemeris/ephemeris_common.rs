@@ -426,6 +426,40 @@ pub trait EphemerisBase {
         Ok(())
     }
 
+    /// Cache all SkyCoord objects for this ephemeris
+    ///
+    /// This is a helper function to reduce code duplication across different ephemeris types.
+    /// It caches GCRS, Earth, Sun, and Moon SkyCoord objects in the common data structure,
+    /// and returns the ITRS SkyCoord for types that need to cache it separately.
+    ///
+    /// # Arguments
+    /// * `py` - Python interpreter state
+    ///
+    /// # Returns
+    /// `PyResult<Option<Py<PyAny>>>` - The ITRS SkyCoord if computed, or None
+    fn cache_skycoords(&mut self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        // Import astropy modules once for all SkyCoord creations
+        let astropy_modules = AstropyModules::import(py)?;
+
+        // Compute ITRS SkyCoord (may fail if not available for this ephemeris type)
+        let itrs_skycoord = self.itrs_to_skycoord(py, &astropy_modules).ok();
+
+        // Cache common SkyCoord objects - compute all first, then store
+        let gcrs_skycoord = self.gcrs_to_skycoord(py, &astropy_modules).ok();
+        let earth_skycoord = self.earth_to_skycoord(py, &astropy_modules).ok();
+        let sun_skycoord = self.sun_to_skycoord(py, &astropy_modules).ok();
+        let moon_skycoord = self.moon_to_skycoord(py, &astropy_modules).ok();
+
+        // Now store them
+        let data_mut = self.data_mut();
+        data_mut.gcrs_skycoord = gcrs_skycoord;
+        data_mut.earth_skycoord = earth_skycoord;
+        data_mut.sun_skycoord = sun_skycoord;
+        data_mut.moon_skycoord = moon_skycoord;
+
+        Ok(itrs_skycoord)
+    }
+
     /// Convert to astropy SkyCoord object with ITRS frame
     /// Returns a SkyCoord with ITRS (Earth-fixed) frame containing all time points
     /// This is much faster than creating SkyCoord objects in a Python loop

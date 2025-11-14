@@ -63,16 +63,8 @@ impl TLEEphemeris {
         ephemeris.teme_to_gcrs()?;
         ephemeris.calculate_sun_moon()?;
 
-        // Import astropy modules once for all SkyCoord creations
-        let astropy_modules = AstropyModules::import(py)?;
-
-        // Cache SkyCoord objects
-        ephemeris.itrs_skycoord = ephemeris.itrs_to_skycoord(py, &astropy_modules).ok();
-        ephemeris.common_data.gcrs_skycoord = ephemeris.gcrs_to_skycoord(py, &astropy_modules).ok();
-        ephemeris.common_data.earth_skycoord =
-            ephemeris.earth_to_skycoord(py, &astropy_modules).ok();
-        ephemeris.common_data.sun_skycoord = ephemeris.sun_to_skycoord(py, &astropy_modules).ok();
-        ephemeris.common_data.moon_skycoord = ephemeris.moon_to_skycoord(py, &astropy_modules).ok();
+        // Cache all SkyCoord objects using helper function
+        ephemeris.itrs_skycoord = ephemeris.cache_skycoords(py)?;
 
         // Return the TLEEphemeris object
         Ok(ephemeris)
