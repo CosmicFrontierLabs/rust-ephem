@@ -2,7 +2,7 @@ use crate::config::*;
 use crate::leap_seconds;
 use crate::ut1_provider;
 use chrono::{DateTime, Utc};
-use pyo3::{prelude::*, types::PyDateTime};
+use pyo3::prelude::*;
 
 /// Convert a DateTime<Utc> to a two-part Julian Date (JD1, JD2) for ERFA functions.
 /// This splits the JD into an integer part (JD1) and fractional part (JD2) for precision.
@@ -41,7 +41,8 @@ pub fn datetime_to_jd_ut1(dt: &DateTime<Utc>) -> (f64, f64) {
 }
 
 /// Helper function to convert Python datetime to Rust DateTime<Utc>
-pub fn naive_pydatetime_to_datetime_utc(py_dt: &Bound<'_, PyDateTime>) -> PyResult<DateTime<Utc>> {
+/// Accepts both naive and timezone-aware datetimes (naive datetimes are treated as UTC)
+pub fn python_datetime_to_utc(py_dt: &Bound<PyAny>) -> PyResult<DateTime<Utc>> {
     let year = py_dt.getattr("year")?.extract::<i32>()?;
     let month = py_dt.getattr("month")?.extract::<u32>()?;
     let day = py_dt.getattr("day")?.extract::<u32>()?;
