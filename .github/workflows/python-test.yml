@@ -52,7 +52,7 @@ jobs:
         run: pip install maturin
 
       - name: Install test dependencies
-        run: pip install pytest numpy astropy
+        run: pip install pytest numpy astropy pydantic
 
       - name: Build and install rust-ephem
         run: |
