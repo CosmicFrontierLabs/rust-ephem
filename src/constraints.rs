@@ -9,7 +9,7 @@
 ///
 /// Constraints operate on ephemeris data and target coordinates to produce
 /// time-based violation windows.
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Timelike, Utc};
 use ndarray::Array2;
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -58,9 +58,8 @@ pub struct ConstraintResult {
     /// Constraint name/description
     #[pyo3(get)]
     pub constraint_name: String,
-    /// Evaluation times as RFC3339 strings, aligned with array outputs
-    #[pyo3(get)]
-    pub times: Vec<String>,
+    /// Evaluation times as Rust DateTime<Utc>, not directly exposed to Python
+    pub times: Vec<DateTime<Utc>>,
 }
 
 #[pymethods]
@@ -100,8 +99,9 @@ impl ConstraintResult {
         }
         let mut ok = vec![true; self.times.len()];
         for (i, t) in self.times.iter().enumerate() {
+            let t_str = t.to_rfc3339();
             for v in &self.violations {
-                if v.start_time <= *t && *t <= v.end_time {
+                if v.start_time <= t_str && t_str <= v.end_time {
                     ok[i] = false;
                     break;
                 }
@@ -120,26 +120,50 @@ impl ConstraintResult {
         Ok(py_arr.into())
     }
 
-    /// Check if the target is in-constraint at a given time.
-    /// Accepts either an ISO8601 string or a Python datetime.
-    fn in_constraint(&self, time: &Bound<PyAny>) -> PyResult<bool> {
-        // Try extract string first
-        let t_str = if let Ok(s) = time.extract::<String>() {
-            s
-        } else {
-            // Try datetime: use isoformat()
-            let iso = time
-                .getattr("isoformat")
-                .and_then(|m| m.call0())
-                .and_then(|s| s.extract::<String>())
-                .map_err(|_| {
-                    pyo3::exceptions::PyTypeError::new_err("time must be an ISO string or datetime")
-                })?;
-            iso
-        };
+    /// Property: array of Python datetime objects for each evaluation time
+    #[getter]
+    fn timestamp(&self, py: Python) -> PyResult<Vec<Py<PyAny>>> {
+        let datetime_mod = py.import("datetime")?;
+        let timezone_class = datetime_mod.getattr("timezone")?;
+        let timezone_utc = timezone_class.getattr("utc")?;
 
-        // Use the precomputed array semantics: find exact match in times
-        if let Some(idx) = self.times.iter().position(|t| t == &t_str) {
+        let mut result = Vec::with_capacity(self.times.len());
+        for dt in &self.times {
+            let py_dt = datetime_mod.getattr("datetime")?.call1((
+                dt.year(),
+                dt.month(),
+                dt.day(),
+                dt.hour(),
+                dt.minute(),
+                dt.second(),
+                dt.timestamp_subsec_micros(),
+                timezone_utc.clone(),
+            ))?;
+            result.push(py_dt.into());
+        }
+        Ok(result)
+    }
+
+    /// Check if the target is in-constraint at a given time.
+    /// Accepts a Python datetime object (naive datetimes are treated as UTC).
+    fn in_constraint(&self, _py: Python, time: &Bound<PyAny>) -> PyResult<bool> {
+        // Convert Python datetime to Rust DateTime<Utc>
+        let year: i32 = time.getattr("year")?.extract()?;
+        let month: u32 = time.getattr("month")?.extract()?;
+        let day: u32 = time.getattr("day")?.extract()?;
+        let hour: u32 = time.getattr("hour")?.extract()?;
+        let minute: u32 = time.getattr("minute")?.extract()?;
+        let second: u32 = time.getattr("second")?.extract()?;
+        let microsecond: u32 = time.getattr("microsecond")?.extract()?;
+
+        // Create a Rust DateTime (assuming UTC if naive)
+        let dt = chrono::NaiveDate::from_ymd_opt(year, month, day)
+            .and_then(|d| d.and_hms_micro_opt(hour, minute, second, microsecond))
+            .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid datetime"))?;
+
+        // Find matching time in our array
+        if let Some(idx) = self.times.iter().position(|t| t == &dt) {
             let ok_vec = self._compute_constraint_vec();
             Ok(ok_vec[idx])
         } else {
@@ -317,7 +341,7 @@ impl ConstraintEvaluator for SunProximityEvaluator {
             violations,
             all_satisfied,
             constraint_name: self.name(),
-            times: times.iter().map(|t| t.to_rfc3339()).collect(),
+            times: times.to_vec(),
         }
     }
 
@@ -478,7 +502,7 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
             violations,
             all_satisfied,
             constraint_name: self.name(),
-            times: times.iter().map(|t| t.to_rfc3339()).collect(),
+            times: times.to_vec(),
         }
     }
 
@@ -669,7 +693,7 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
             violations,
             all_satisfied,
             constraint_name: self.name(),
-            times: times.iter().map(|t| t.to_rfc3339()).collect(),
+            times: times.to_vec(),
         }
     }
 
@@ -850,7 +874,7 @@ impl ConstraintEvaluator for EclipseEvaluator {
             violations,
             all_satisfied,
             constraint_name: self.name(),
-            times: times.iter().map(|t| t.to_rfc3339()).collect(),
+            times: times.to_vec(),
         }
     }
 
@@ -1011,7 +1035,7 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
             violations,
             all_satisfied,
             constraint_name: self.name(),
-            times: times.iter().map(|t| t.to_rfc3339()).collect(),
+            times: times.to_vec(),
         }
     }
 

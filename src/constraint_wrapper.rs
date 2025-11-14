@@ -720,7 +720,7 @@ impl ConstraintEvaluator for AndEvaluator {
             violations: merged_violations,
             all_satisfied,
             constraint_name: self.name(),
-            times: times.iter().map(|t| t.to_rfc3339()).collect(),
+            times: times.to_vec(),
         }
     }
 
@@ -829,7 +829,7 @@ impl ConstraintEvaluator for OrEvaluator {
             violations: merged_violations,
             all_satisfied,
             constraint_name: self.name(),
-            times: times.iter().map(|t| t.to_rfc3339()).collect(),
+            times: times.to_vec(),
         }
     }
 
@@ -927,7 +927,7 @@ impl ConstraintEvaluator for NotEvaluator {
             violations: inverted_violations,
             all_satisfied,
             constraint_name: self.name(),
-            times: times.iter().map(|t| t.to_rfc3339()).collect(),
+            times: times.to_vec(),
         }
     }
 
