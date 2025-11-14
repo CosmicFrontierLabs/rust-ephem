@@ -39,6 +39,18 @@ class ConstraintViolation:
 
     def __repr__(self) -> str: ...
 
+class VisibilityWindow:
+    """A time window when the target is not constrained (visible)"""
+
+    start_time: datetime
+    end_time: datetime
+
+    def __repr__(self) -> str: ...
+    @property
+    def duration_seconds(self) -> float:
+        """Duration of the visibility window in seconds"""
+        ...
+
 class ConstraintResult:
     """Result of constraint evaluation containing all violations"""
 
@@ -59,6 +71,11 @@ class ConstraintResult:
     @property
     def timestamp(self) -> list[datetime]:
         """Array of Python datetime objects for each evaluation time"""
+        ...
+
+    @property
+    def visibility(self) -> list[VisibilityWindow]:
+        """Array of visibility windows when target is not constrained"""
         ...
 
     def in_constraint(self, time: datetime) -> bool:
