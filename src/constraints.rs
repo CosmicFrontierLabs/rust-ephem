@@ -259,17 +259,25 @@ impl ConstraintEvaluator for SunProximityEvaluator {
         observer_positions: &Array2<f64>,
     ) -> ConstraintResult {
         let target_vec = radec_to_unit_vector(target_ra, target_dec);
-        
+
         let violations = track_violations(
             times,
             |i| {
-                let sun_pos = [sun_positions[[i, 0]], sun_positions[[i, 1]], sun_positions[[i, 2]]];
-                let obs_pos = [observer_positions[[i, 0]], observer_positions[[i, 1]], observer_positions[[i, 2]]];
+                let sun_pos = [
+                    sun_positions[[i, 0]],
+                    sun_positions[[i, 1]],
+                    sun_positions[[i, 2]],
+                ];
+                let obs_pos = [
+                    observer_positions[[i, 0]],
+                    observer_positions[[i, 1]],
+                    observer_positions[[i, 2]],
+                ];
                 let angle_deg = calculate_angular_separation(&target_vec, &sun_pos, &obs_pos);
-                
+
                 let is_violated = angle_deg < self.min_angle_deg
                     || self.max_angle_deg.is_some_and(|max| angle_deg > max);
-                
+
                 let severity = if angle_deg < self.min_angle_deg {
                     (self.min_angle_deg - angle_deg) / self.min_angle_deg
                 } else if let Some(max) = self.max_angle_deg {
@@ -277,7 +285,7 @@ impl ConstraintEvaluator for SunProximityEvaluator {
                 } else {
                     0.0
                 };
-                
+
                 (is_violated, severity)
             },
             |_, is_final| {
@@ -373,17 +381,25 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
         observer_positions: &Array2<f64>,
     ) -> ConstraintResult {
         let target_vec = radec_to_unit_vector(target_ra, target_dec);
-        
+
         let violations = track_violations(
             times,
             |i| {
-                let moon_pos = [moon_positions[[i, 0]], moon_positions[[i, 1]], moon_positions[[i, 2]]];
-                let obs_pos = [observer_positions[[i, 0]], observer_positions[[i, 1]], observer_positions[[i, 2]]];
+                let moon_pos = [
+                    moon_positions[[i, 0]],
+                    moon_positions[[i, 1]],
+                    moon_positions[[i, 2]],
+                ];
+                let obs_pos = [
+                    observer_positions[[i, 0]],
+                    observer_positions[[i, 1]],
+                    observer_positions[[i, 2]],
+                ];
                 let angle_deg = calculate_angular_separation(&target_vec, &moon_pos, &obs_pos);
-                
+
                 let is_violated = angle_deg < self.min_angle_deg
                     || self.max_angle_deg.is_some_and(|max| angle_deg > max);
-                
+
                 let severity = if angle_deg < self.min_angle_deg {
                     (self.min_angle_deg - angle_deg) / self.min_angle_deg
                 } else if let Some(max) = self.max_angle_deg {
@@ -391,7 +407,7 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
                 } else {
                     0.0
                 };
-                
+
                 (is_violated, severity)
             },
             |_, is_final| {
@@ -843,20 +859,28 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
         // Body positions are passed via sun_positions slot
         let body_positions = sun_positions;
         let target_vec = radec_to_unit_vector(target_ra, target_dec);
-        
+
         let violations = track_violations(
             times,
             |i| {
-                let body_pos = [body_positions[[i, 0]], body_positions[[i, 1]], body_positions[[i, 2]]];
-                let obs_pos = [observer_positions[[i, 0]], observer_positions[[i, 1]], observer_positions[[i, 2]]];
+                let body_pos = [
+                    body_positions[[i, 0]],
+                    body_positions[[i, 1]],
+                    body_positions[[i, 2]],
+                ];
+                let obs_pos = [
+                    observer_positions[[i, 0]],
+                    observer_positions[[i, 1]],
+                    observer_positions[[i, 2]],
+                ];
                 let angle_deg = calculate_angular_separation(&target_vec, &body_pos, &obs_pos);
-                
+
                 let is_violation = if let Some(max_angle) = self.max_angle_deg {
                     angle_deg < self.min_angle_deg || angle_deg > max_angle
                 } else {
                     angle_deg < self.min_angle_deg
                 };
-                
+
                 let severity = if angle_deg < self.min_angle_deg {
                     (self.min_angle_deg - angle_deg) / self.min_angle_deg
                 } else if let Some(max_angle) = self.max_angle_deg {
@@ -864,7 +888,7 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
                 } else {
                     0.0
                 };
-                
+
                 (is_violation, severity)
             },
             |_, is_final| {
