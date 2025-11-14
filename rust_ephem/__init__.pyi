@@ -22,6 +22,9 @@ from rust_ephem._rust_ephem import (
     TLEEphemeris as TLEEphemeris,
 )
 from rust_ephem._rust_ephem import (
+    VisibilityWindow as VisibilityWindow,
+)
+from rust_ephem._rust_ephem import (
     download_planetary_ephemeris as download_planetary_ephemeris,
 )
 from rust_ephem._rust_ephem import (
@@ -111,6 +114,7 @@ __all__ = [
     "Constraint",
     "ConstraintResult",
     "ConstraintViolation",
+    "VisibilityWindow",
     "init_planetary_ephemeris",
     "download_planetary_ephemeris",
     "ensure_planetary_ephemeris",

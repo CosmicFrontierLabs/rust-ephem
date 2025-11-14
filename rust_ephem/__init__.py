@@ -5,6 +5,7 @@ from ._rust_ephem import (  # type: ignore[import-untyped]
     GroundEphemeris,
     SPICEEphemeris,
     TLEEphemeris,
+    VisibilityWindow,
     download_planetary_ephemeris,
     ensure_planetary_ephemeris,
     get_cache_dir,
@@ -30,30 +31,6 @@ from .constraints import (
     SunConstraintConfig,
 )
 
-# Re-export convenience builders from the pydantic helper module
-try:
-    from rust_ephem_constraints import (
-        and_constraint,
-        constraint_to_rust,
-        moon_proximity,
-        not_constraint,
-        sun_proximity,
-    )
-    from rust_ephem_constraints import (
-        eclipse as eclipse_config,
-    )
-
-    # provide the names expected by examples
-    and_constraint = and_constraint
-    constraint_to_rust = constraint_to_rust
-    eclipse = eclipse_config
-    moon_proximity = moon_proximity
-    not_constraint = not_constraint
-    sun_proximity = sun_proximity
-except Exception:
-    # optional; examples may run without these helpers
-    pass
-
 __all__ = [
     "ConstraintConfig",
     "SunConstraintConfig",
@@ -71,6 +48,7 @@ __all__ = [
     "Constraint",
     "ConstraintResult",
     "ConstraintViolation",
+    "VisibilityWindow",
     "init_planetary_ephemeris",
     "download_planetary_ephemeris",
     "ensure_planetary_ephemeris",

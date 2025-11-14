@@ -27,7 +27,7 @@ pub use tle_ephemeris::TLEEphemeris;
 
 // Re-export constraint types
 pub use constraint_wrapper::PyConstraint;
-pub use constraints::{ConstraintResult, ConstraintViolation};
+pub use constraints::{ConstraintResult, ConstraintViolation, VisibilityWindow};
 
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
@@ -250,6 +250,7 @@ fn _rust_ephem(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyConstraint>()?;
     m.add_class::<ConstraintResult>()?;
     m.add_class::<ConstraintViolation>()?;
+    m.add_class::<VisibilityWindow>()?;
     m.add_function(wrap_pyfunction!(init_planetary_ephemeris, m)?)?;
     m.add_function(wrap_pyfunction!(download_planetary_ephemeris, m)?)?;
     m.add_function(wrap_pyfunction!(ensure_planetary_ephemeris, m)?)?;

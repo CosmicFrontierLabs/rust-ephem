@@ -9,6 +9,7 @@
 ///
 /// Constraints operate on ephemeris data and target coordinates to produce
 /// time-based violation windows.
+use crate::time_utils::python_datetime_to_utc;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::prelude::*;
@@ -45,6 +46,37 @@ impl ConstraintViolation {
     }
 }
 
+/// Visibility window indicating when target is not constrained
+#[pyclass(name = "VisibilityWindow")]
+pub struct VisibilityWindow {
+    /// Start time of the visibility window
+    #[pyo3(get)]
+    pub start_time: Py<PyAny>, // Python datetime object
+    /// End time of the visibility window
+    #[pyo3(get)]
+    pub end_time: Py<PyAny>, // Python datetime object
+}
+
+#[pymethods]
+impl VisibilityWindow {
+    fn __repr__(&self, py: Python) -> PyResult<String> {
+        let start_str = self.start_time.bind(py).str()?.to_string();
+        let end_str = self.end_time.bind(py).str()?.to_string();
+        let duration = self.duration_seconds(py)?;
+        Ok(format!(
+            "VisibilityWindow(start_time={}, end_time={}, duration_seconds={})",
+            start_str, end_str, duration
+        ))
+    }
+    #[getter]
+    fn duration_seconds(&self, py: Python) -> PyResult<f64> {
+        let start_dt = crate::time_utils::python_datetime_to_utc(self.start_time.bind(py))?;
+        let end_dt = crate::time_utils::python_datetime_to_utc(self.end_time.bind(py))?;
+        let duration = end_dt.signed_duration_since(start_dt);
+        Ok(duration.num_seconds() as f64)
+    }
+}
+
 /// Result of constraint evaluation containing all violations
 #[pyclass(name = "ConstraintResult")]
 #[derive(Clone, Debug)]
@@ -58,9 +90,8 @@ pub struct ConstraintResult {
     /// Constraint name/description
     #[pyo3(get)]
     pub constraint_name: String,
-    /// Evaluation times as RFC3339 strings, aligned with array outputs
-    #[pyo3(get)]
-    pub times: Vec<String>,
+    /// Evaluation times as Rust DateTime<Utc>, not directly exposed to Python
+    pub times: Vec<DateTime<Utc>>,
 }
 
 #[pymethods]
@@ -100,8 +131,9 @@ impl ConstraintResult {
         }
         let mut ok = vec![true; self.times.len()];
         for (i, t) in self.times.iter().enumerate() {
+            let t_str = t.to_rfc3339();
             for v in &self.violations {
-                if v.start_time <= *t && *t <= v.end_time {
+                if v.start_time <= t_str && t_str <= v.end_time {
                     ok[i] = false;
                     break;
                 }
@@ -120,26 +152,23 @@ impl ConstraintResult {
         Ok(py_arr.into())
     }
 
-    /// Check if the target is in-constraint at a given time.
-    /// Accepts either an ISO8601 string or a Python datetime.
-    fn in_constraint(&self, time: &Bound<PyAny>) -> PyResult<bool> {
-        // Try extract string first
-        let t_str = if let Ok(s) = time.extract::<String>() {
-            s
-        } else {
-            // Try datetime: use isoformat()
-            let iso = time
-                .getattr("isoformat")
-                .and_then(|m| m.call0())
-                .and_then(|s| s.extract::<String>())
-                .map_err(|_| {
-                    pyo3::exceptions::PyTypeError::new_err("time must be an ISO string or datetime")
-                })?;
-            iso
-        };
+    /// Property: array of Python datetime objects for each evaluation time
+    #[getter]
+    fn timestamp(&self, py: Python) -> PyResult<Vec<Py<PyAny>>> {
+        let mut result = Vec::with_capacity(self.times.len());
+        for dt in &self.times {
+            result.push(crate::time_utils::utc_to_python_datetime(py, dt)?);
+        }
+        Ok(result)
+    }
 
-        // Use the precomputed array semantics: find exact match in times
-        if let Some(idx) = self.times.iter().position(|t| t == &t_str) {
+    /// Check if the target is in-constraint at a given time.
+    /// Accepts a Python datetime object (naive datetimes are treated as UTC).
+    fn in_constraint(&self, _py: Python, time: &Bound<PyAny>) -> PyResult<bool> {
+        let dt = python_datetime_to_utc(time)?;
+
+        // Find matching time in our array
+        if let Some(idx) = self.times.iter().position(|t| t == &dt) {
             let ok_vec = self._compute_constraint_vec();
             Ok(ok_vec[idx])
         } else {
@@ -147,6 +176,57 @@ impl ConstraintResult {
                 "time not found in evaluated timestamps",
             ))
         }
+    }
+
+    /// Property: array of visibility windows when target is not constrained
+    #[getter]
+    fn visibility(&self, py: Python) -> PyResult<Vec<VisibilityWindow>> {
+        if self.times.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut windows = Vec::new();
+        let mut current_window_start: Option<usize> = None;
+
+        // Get constraint satisfaction status for each time
+        let ok_vec = self._compute_constraint_vec();
+
+        for (i, &is_satisfied) in ok_vec.iter().enumerate() {
+            if is_satisfied {
+                // Constraint is satisfied (target is visible)
+                if current_window_start.is_none() {
+                    current_window_start = Some(i);
+                }
+            } else {
+                // Constraint is violated (target not visible)
+                if let Some(start_idx) = current_window_start {
+                    windows.push(VisibilityWindow {
+                        start_time: crate::time_utils::utc_to_python_datetime(
+                            py,
+                            &self.times[start_idx],
+                        )?,
+                        end_time: crate::time_utils::utc_to_python_datetime(
+                            py,
+                            &self.times[i - 1],
+                        )?,
+                    });
+                    current_window_start = None;
+                }
+            }
+        }
+
+        // Close any open visibility window at the end
+        if let Some(start_idx) = current_window_start {
+            windows.push(VisibilityWindow {
+                start_time: crate::time_utils::utc_to_python_datetime(py, &self.times[start_idx])?,
+                end_time: crate::time_utils::utc_to_python_datetime(
+                    py,
+                    &self.times[self.times.len() - 1],
+                )?,
+            });
+        }
+
+        Ok(windows)
     }
 }
 
@@ -246,78 +326,52 @@ impl ConstraintEvaluator for SunProximityEvaluator {
         _moon_positions: &Array2<f64>,
         observer_positions: &Array2<f64>,
     ) -> ConstraintResult {
-        let mut violations = Vec::new();
-        let mut current_violation: Option<(usize, f64)> = None;
-
-        // Convert target RA/Dec to unit vector
         let target_vec = radec_to_unit_vector(target_ra, target_dec);
 
-        for (i, _time) in times.iter().enumerate() {
-            // Get Sun position relative to observer
-            let sun_rel = [
-                sun_positions[[i, 0]] - observer_positions[[i, 0]],
-                sun_positions[[i, 1]] - observer_positions[[i, 1]],
-                sun_positions[[i, 2]] - observer_positions[[i, 2]],
-            ];
+        let violations = track_violations(
+            times,
+            |i| {
+                let sun_pos = [
+                    sun_positions[[i, 0]],
+                    sun_positions[[i, 1]],
+                    sun_positions[[i, 2]],
+                ];
+                let obs_pos = [
+                    observer_positions[[i, 0]],
+                    observer_positions[[i, 1]],
+                    observer_positions[[i, 2]],
+                ];
+                let angle_deg = calculate_angular_separation(&target_vec, &sun_pos, &obs_pos);
 
-            // Normalize to unit vector
-            let sun_unit = normalize_vector(&sun_rel);
+                let is_violated = angle_deg < self.min_angle_deg
+                    || self.max_angle_deg.is_some_and(|max| angle_deg > max);
 
-            // Calculate angular separation in degrees
-            let cos_angle = dot_product(&target_vec, &sun_unit);
-            let angle_deg = cos_angle.clamp(-1.0, 1.0).acos().to_degrees();
-
-            // Check if constraint is violated
-            let is_violated = angle_deg < self.min_angle_deg
-                || self.max_angle_deg.is_some_and(|max| angle_deg > max);
-
-            if is_violated {
                 let severity = if angle_deg < self.min_angle_deg {
                     (self.min_angle_deg - angle_deg) / self.min_angle_deg
                 } else if let Some(max) = self.max_angle_deg {
                     (angle_deg - max) / max
                 } else {
-                    0.0 // Should not happen
+                    0.0
                 };
 
-                match current_violation {
-                    Some((start_idx, max_sev)) => {
-                        // Update max severity
-                        current_violation = Some((start_idx, max_sev.max(severity)));
-                    }
-                    None => {
-                        // Start new violation window
-                        current_violation = Some((i, severity));
-                    }
+                (is_violated, severity)
+            },
+            |_, is_final| {
+                if is_final {
+                    self.final_violation_description()
+                } else {
+                    // Get angle for description (recompute at violation end)
+                    "Target violates Sun proximity constraint".to_string()
                 }
-            } else if let Some((start_idx, max_severity)) = current_violation {
-                // End current violation window
-                violations.push(ConstraintViolation {
-                    start_time: times[start_idx].to_rfc3339(),
-                    end_time: times[i - 1].to_rfc3339(),
-                    max_severity,
-                    description: self.violation_description(angle_deg),
-                });
-                current_violation = None;
-            }
-        }
-
-        // Close any open violation at the end
-        if let Some((start_idx, max_severity)) = current_violation {
-            violations.push(ConstraintViolation {
-                start_time: times[start_idx].to_rfc3339(),
-                end_time: times[times.len() - 1].to_rfc3339(),
-                max_severity,
-                description: self.final_violation_description(),
-            });
-        }
+            },
+        );
 
         let all_satisfied = violations.is_empty();
         ConstraintResult {
             violations,
             all_satisfied,
             constraint_name: self.name(),
-            times: times.iter().map(|t| t.to_rfc3339()).collect(),
+            times: times.to_vec(),
         }
     }
 
@@ -334,22 +388,6 @@ impl ConstraintEvaluator for SunProximityEvaluator {
 }
 
 impl SunProximityEvaluator {
-    fn violation_description(&self, angle_deg: f64) -> String {
-        if angle_deg < self.min_angle_deg {
-            format!(
-                "Target within {:.1}° of Sun (min allowed: {:.1}°)",
-                angle_deg, self.min_angle_deg
-            )
-        } else if let Some(max) = self.max_angle_deg {
-            format!("Target {angle_deg:.1}° from Sun (max allowed: {max:.1}°)")
-        } else {
-            format!(
-                "Target too close to Sun (min allowed: {:.1}°)",
-                self.min_angle_deg
-            )
-        }
-    }
-
     fn final_violation_description(&self) -> String {
         match self.max_angle_deg {
             Some(max) => format!(
@@ -410,75 +448,51 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
         moon_positions: &Array2<f64>,
         observer_positions: &Array2<f64>,
     ) -> ConstraintResult {
-        let mut violations = Vec::new();
-        let mut current_violation: Option<(usize, f64)> = None;
-
-        // Convert target RA/Dec to unit vector
         let target_vec = radec_to_unit_vector(target_ra, target_dec);
 
-        for (i, _time) in times.iter().enumerate() {
-            // Get Moon position relative to observer
-            let moon_rel = [
-                moon_positions[[i, 0]] - observer_positions[[i, 0]],
-                moon_positions[[i, 1]] - observer_positions[[i, 1]],
-                moon_positions[[i, 2]] - observer_positions[[i, 2]],
-            ];
+        let violations = track_violations(
+            times,
+            |i| {
+                let moon_pos = [
+                    moon_positions[[i, 0]],
+                    moon_positions[[i, 1]],
+                    moon_positions[[i, 2]],
+                ];
+                let obs_pos = [
+                    observer_positions[[i, 0]],
+                    observer_positions[[i, 1]],
+                    observer_positions[[i, 2]],
+                ];
+                let angle_deg = calculate_angular_separation(&target_vec, &moon_pos, &obs_pos);
 
-            // Normalize to unit vector
-            let moon_unit = normalize_vector(&moon_rel);
+                let is_violated = angle_deg < self.min_angle_deg
+                    || self.max_angle_deg.is_some_and(|max| angle_deg > max);
 
-            // Calculate angular separation in degrees
-            let cos_angle = dot_product(&target_vec, &moon_unit);
-            let angle_deg = cos_angle.clamp(-1.0, 1.0).acos().to_degrees();
-
-            // Check if constraint is violated
-            let is_violated = angle_deg < self.min_angle_deg
-                || self.max_angle_deg.is_some_and(|max| angle_deg > max);
-
-            if is_violated {
                 let severity = if angle_deg < self.min_angle_deg {
                     (self.min_angle_deg - angle_deg) / self.min_angle_deg
                 } else if let Some(max) = self.max_angle_deg {
                     (angle_deg - max) / max
                 } else {
-                    0.0 // Should not happen
+                    0.0
                 };
 
-                match current_violation {
-                    Some((start_idx, max_sev)) => {
-                        current_violation = Some((start_idx, max_sev.max(severity)));
-                    }
-                    None => {
-                        current_violation = Some((i, severity));
-                    }
+                (is_violated, severity)
+            },
+            |_, is_final| {
+                if is_final {
+                    self.final_violation_description()
+                } else {
+                    "Target violates Moon proximity constraint".to_string()
                 }
-            } else if let Some((start_idx, max_severity)) = current_violation {
-                violations.push(ConstraintViolation {
-                    start_time: times[start_idx].to_rfc3339(),
-                    end_time: times[i - 1].to_rfc3339(),
-                    max_severity,
-                    description: self.violation_description(angle_deg),
-                });
-                current_violation = None;
-            }
-        }
-
-        // Close any open violation at the end
-        if let Some((start_idx, max_severity)) = current_violation {
-            violations.push(ConstraintViolation {
-                start_time: times[start_idx].to_rfc3339(),
-                end_time: times[times.len() - 1].to_rfc3339(),
-                max_severity,
-                description: self.final_violation_description(),
-            });
-        }
+            },
+        );
 
         let all_satisfied = violations.is_empty();
         ConstraintResult {
             violations,
             all_satisfied,
             constraint_name: self.name(),
-            times: times.iter().map(|t| t.to_rfc3339()).collect(),
+            times: times.to_vec(),
         }
     }
 
@@ -495,22 +509,6 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
 }
 
 impl MoonProximityEvaluator {
-    fn violation_description(&self, angle_deg: f64) -> String {
-        if angle_deg < self.min_angle_deg {
-            format!(
-                "Target within {:.1}° of Moon (min allowed: {:.1}°)",
-                angle_deg, self.min_angle_deg
-            )
-        } else if let Some(max) = self.max_angle_deg {
-            format!("Target {angle_deg:.1}° from Moon (max allowed: {max:.1}°)")
-        } else {
-            format!(
-                "Target too close to Moon (min allowed: {:.1}°)",
-                self.min_angle_deg
-            )
-        }
-    }
-
     fn final_violation_description(&self) -> String {
         match self.max_angle_deg {
             Some(max) => format!(
@@ -669,7 +667,7 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
             violations,
             all_satisfied,
             constraint_name: self.name(),
-            times: times.iter().map(|t| t.to_rfc3339()).collect(),
+            times: times.to_vec(),
         }
     }
 
@@ -850,7 +848,7 @@ impl ConstraintEvaluator for EclipseEvaluator {
             violations,
             all_satisfied,
             constraint_name: self.name(),
-            times: times.iter().map(|t| t.to_rfc3339()).collect(),
+            times: times.to_vec(),
         }
     }
 
@@ -928,90 +926,63 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
     ) -> ConstraintResult {
         // Body positions are passed via sun_positions slot
         let body_positions = sun_positions;
-
-        let mut violations = Vec::new();
-        let mut current_violation: Option<(usize, f64)> = None;
-
         let target_vec = radec_to_unit_vector(target_ra, target_dec);
 
-        for (i, _time) in times.iter().enumerate() {
-            let body_rel = [
-                body_positions[[i, 0]] - observer_positions[[i, 0]],
-                body_positions[[i, 1]] - observer_positions[[i, 1]],
-                body_positions[[i, 2]] - observer_positions[[i, 2]],
-            ];
+        let violations = track_violations(
+            times,
+            |i| {
+                let body_pos = [
+                    body_positions[[i, 0]],
+                    body_positions[[i, 1]],
+                    body_positions[[i, 2]],
+                ];
+                let obs_pos = [
+                    observer_positions[[i, 0]],
+                    observer_positions[[i, 1]],
+                    observer_positions[[i, 2]],
+                ];
+                let angle_deg = calculate_angular_separation(&target_vec, &body_pos, &obs_pos);
 
-            let body_unit = normalize_vector(&body_rel);
-            let cos_angle = dot_product(&target_vec, &body_unit);
-            let angle_deg = cos_angle.clamp(-1.0, 1.0).acos().to_degrees();
+                let is_violation = if let Some(max_angle) = self.max_angle_deg {
+                    angle_deg < self.min_angle_deg || angle_deg > max_angle
+                } else {
+                    angle_deg < self.min_angle_deg
+                };
 
-            let is_violation = if let Some(max_angle) = self.max_angle_deg {
-                angle_deg < self.min_angle_deg || angle_deg > max_angle
-            } else {
-                angle_deg < self.min_angle_deg
-            };
-
-            if is_violation {
                 let severity = if angle_deg < self.min_angle_deg {
                     (self.min_angle_deg - angle_deg) / self.min_angle_deg
                 } else if let Some(max_angle) = self.max_angle_deg {
-                    // For max angle violations, severity increases as angle exceeds max
                     (angle_deg - max_angle) / max_angle.max(1e-9)
                 } else {
-                    0.0 // This shouldn't happen since is_violation would be false
+                    0.0
                 };
-                match current_violation {
-                    Some((start_idx, max_sev)) => {
-                        current_violation = Some((start_idx, max_sev.max(severity)));
-                    }
-                    None => {
-                        current_violation = Some((i, severity));
-                    }
-                }
-            } else if let Some((start_idx, max_severity)) = current_violation {
-                violations.push(ConstraintViolation {
-                    start_time: times[start_idx].to_rfc3339(),
-                    end_time: times[i - 1].to_rfc3339(),
-                    max_severity,
-                    description: match self.max_angle_deg {
+
+                (is_violation, severity)
+            },
+            |_, is_final| {
+                if is_final {
+                    match self.max_angle_deg {
                         Some(max) => format!(
-                            "Target within {:.1}° of {} (min: {:.1}°, max: {:.1}°)",
-                            angle_deg, self.body, self.min_angle_deg, max
+                            "Target too close to {} (min: {:.1}°, max: {:.1}°)",
+                            self.body, self.min_angle_deg, max
                         ),
                         None => format!(
-                            "Target within {:.1}° of {} (min allowed: {:.1}°)",
-                            angle_deg, self.body, self.min_angle_deg
+                            "Target too close to {} (min allowed: {:.1}°)",
+                            self.body, self.min_angle_deg
                         ),
-                    },
-                });
-                current_violation = None;
-            }
-        }
-
-        if let Some((start_idx, max_severity)) = current_violation {
-            violations.push(ConstraintViolation {
-                start_time: times[start_idx].to_rfc3339(),
-                end_time: times[times.len() - 1].to_rfc3339(),
-                max_severity,
-                description: match self.max_angle_deg {
-                    Some(max) => format!(
-                        "Target too close to {} (min: {:.1}°, max: {:.1}°)",
-                        self.body, self.min_angle_deg, max
-                    ),
-                    None => format!(
-                        "Target too close to {} (min allowed: {:.1}°)",
-                        self.body, self.min_angle_deg
-                    ),
-                },
-            });
-        }
+                    }
+                } else {
+                    format!("Target violates {} proximity constraint", self.body)
+                }
+            },
+        );
 
         let all_satisfied = violations.is_empty();
         ConstraintResult {
             violations,
             all_satisfied,
             constraint_name: self.name(),
-            times: times.iter().map(|t| t.to_rfc3339()).collect(),
+            times: times.to_vec(),
         }
     }
 
@@ -1054,6 +1025,54 @@ pub struct NotConfig {
     pub constraint: Box<serde_json::Value>,
 }
 
+// Helper function for tracking violation windows
+fn track_violations<F>(
+    times: &[DateTime<Utc>],
+    mut is_violated: F,
+    mut get_description: impl FnMut(usize, bool) -> String,
+) -> Vec<ConstraintViolation>
+where
+    F: FnMut(usize) -> (bool, f64),
+{
+    let mut violations = Vec::new();
+    let mut current_violation: Option<(usize, f64)> = None;
+
+    for i in 0..times.len() {
+        let (violated, severity) = is_violated(i);
+
+        if violated {
+            match current_violation {
+                Some((start_idx, max_sev)) => {
+                    current_violation = Some((start_idx, max_sev.max(severity)));
+                }
+                None => {
+                    current_violation = Some((i, severity));
+                }
+            }
+        } else if let Some((start_idx, max_severity)) = current_violation {
+            violations.push(ConstraintViolation {
+                start_time: times[start_idx].to_rfc3339(),
+                end_time: times[i - 1].to_rfc3339(),
+                max_severity,
+                description: get_description(start_idx, false),
+            });
+            current_violation = None;
+        }
+    }
+
+    // Close any open violation at the end
+    if let Some((start_idx, max_severity)) = current_violation {
+        violations.push(ConstraintViolation {
+            start_time: times[start_idx].to_rfc3339(),
+            end_time: times[times.len() - 1].to_rfc3339(),
+            max_severity,
+            description: get_description(start_idx, true),
+        });
+    }
+
+    violations
+}
+
 // Helper functions for vector math
 fn radec_to_unit_vector(ra_deg: f64, dec_deg: f64) -> [f64; 3] {
     let ra_rad = ra_deg.to_radians();
@@ -1081,4 +1100,20 @@ fn dot_product(a: &[f64; 3], b: &[f64; 3]) -> f64 {
 
 fn vector_magnitude(v: &[f64; 3]) -> f64 {
     (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
+}
+
+// Helper function for calculating angular separation between target and body
+fn calculate_angular_separation(
+    target_vec: &[f64; 3],
+    body_position: &[f64; 3],
+    observer_position: &[f64; 3],
+) -> f64 {
+    let body_rel = [
+        body_position[0] - observer_position[0],
+        body_position[1] - observer_position[1],
+        body_position[2] - observer_position[2],
+    ];
+    let body_unit = normalize_vector(&body_rel);
+    let cos_angle = dot_product(target_vec, &body_unit);
+    cos_angle.clamp(-1.0, 1.0).acos().to_degrees()
 }

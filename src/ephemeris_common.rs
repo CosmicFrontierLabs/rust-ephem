@@ -6,7 +6,7 @@ use pyo3::{prelude::*, types::PyDateTime};
 use crate::celestial::{calculate_moon_positions, calculate_sun_positions};
 use crate::config::MAX_TIMESTAMPS;
 use crate::position_velocity::PositionVelocityData;
-use crate::time_utils::naive_pydatetime_to_datetime_utc;
+use crate::time_utils::python_datetime_to_utc;
 use crate::to_skycoord::{to_skycoord, AstropyModules, SkyCoordConfig};
 
 /// Splits a stacked position+velocity (N x 6) array into a PositionVelocityData struct.
@@ -44,8 +44,8 @@ pub fn generate_timestamps(
     step_size: i64,
 ) -> PyResult<Vec<DateTime<Utc>>> {
     // Convert Python datetime objects to Rust DateTime<Utc>
-    let begin_dt = naive_pydatetime_to_datetime_utc(begin)?;
-    let end_dt = naive_pydatetime_to_datetime_utc(end)?;
+    let begin_dt = python_datetime_to_utc(begin)?;
+    let end_dt = python_datetime_to_utc(end)?;
 
     // Validate inputs
     if begin_dt > end_dt {
