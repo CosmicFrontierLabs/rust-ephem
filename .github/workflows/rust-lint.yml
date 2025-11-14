@@ -1,0 +1,46 @@
+name: Rust Lint
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set version from git
+        run: |
+          VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+          if [ -z "$VERSION" ]; then
+            echo "No git tags found, using default version 0.1.0"
+            VERSION="0.1.0"
+          fi
+          sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+          rm Cargo.toml.bak
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+
+      # Cache Cargo registry and build artifacts
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Optional: additional cache key prefix for manual cache invalidation
+          prefix-key: "v1-rust"
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Run clippy
+        run: cargo clippy -- -D warnings
