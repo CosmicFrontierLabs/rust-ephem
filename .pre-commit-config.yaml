@@ -25,7 +25,7 @@ repos:
     # Verify that GitHub workflows are well formed
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
-    rev: v0.14.4
+    rev: v0.14.5
     hooks:
       - id: ruff-check
         name: Lint code using ruff; sort and organize imports
@@ -33,7 +33,7 @@ repos:
         args: [--extend-select, "I", --fixable, "I,F", --fix]
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
-    rev: v0.14.4
+    rev: v0.14.5
     hooks:
       # Run the linter.
       - id: ruff-format
