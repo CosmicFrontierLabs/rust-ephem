@@ -46,6 +46,37 @@ impl ConstraintViolation {
     }
 }
 
+/// Visibility window indicating when target is not constrained
+#[pyclass(name = "VisibilityWindow")]
+pub struct VisibilityWindow {
+    /// Start time of the visibility window
+    #[pyo3(get)]
+    pub start_time: Py<PyAny>, // Python datetime object
+    /// End time of the visibility window
+    #[pyo3(get)]
+    pub end_time: Py<PyAny>, // Python datetime object
+}
+
+#[pymethods]
+impl VisibilityWindow {
+    fn __repr__(&self, py: Python) -> PyResult<String> {
+        let start_str = self.start_time.bind(py).str()?.to_string();
+        let end_str = self.end_time.bind(py).str()?.to_string();
+        let duration = self.duration_seconds(py)?;
+        Ok(format!(
+            "VisibilityWindow(start_time={}, end_time={}, duration_seconds={})",
+            start_str, end_str, duration
+        ))
+    }
+    #[getter]
+    fn duration_seconds(&self, py: Python) -> PyResult<f64> {
+        let start_dt = crate::time_utils::python_datetime_to_utc(self.start_time.bind(py))?;
+        let end_dt = crate::time_utils::python_datetime_to_utc(self.end_time.bind(py))?;
+        let duration = end_dt.signed_duration_since(start_dt);
+        Ok(duration.num_seconds() as f64)
+    }
+}
+
 /// Result of constraint evaluation containing all violations
 #[pyclass(name = "ConstraintResult")]
 #[derive(Clone, Debug)]
@@ -145,6 +176,57 @@ impl ConstraintResult {
                 "time not found in evaluated timestamps",
             ))
         }
+    }
+
+    /// Property: array of visibility windows when target is not constrained
+    #[getter]
+    fn visibility(&self, py: Python) -> PyResult<Vec<VisibilityWindow>> {
+        if self.times.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut windows = Vec::new();
+        let mut current_window_start: Option<usize> = None;
+
+        // Get constraint satisfaction status for each time
+        let ok_vec = self._compute_constraint_vec();
+
+        for (i, &is_satisfied) in ok_vec.iter().enumerate() {
+            if is_satisfied {
+                // Constraint is satisfied (target is visible)
+                if current_window_start.is_none() {
+                    current_window_start = Some(i);
+                }
+            } else {
+                // Constraint is violated (target not visible)
+                if let Some(start_idx) = current_window_start {
+                    windows.push(VisibilityWindow {
+                        start_time: crate::time_utils::utc_to_python_datetime(
+                            py,
+                            &self.times[start_idx],
+                        )?,
+                        end_time: crate::time_utils::utc_to_python_datetime(
+                            py,
+                            &self.times[i - 1],
+                        )?,
+                    });
+                    current_window_start = None;
+                }
+            }
+        }
+
+        // Close any open visibility window at the end
+        if let Some(start_idx) = current_window_start {
+            windows.push(VisibilityWindow {
+                start_time: crate::time_utils::utc_to_python_datetime(py, &self.times[start_idx])?,
+                end_time: crate::time_utils::utc_to_python_datetime(
+                    py,
+                    &self.times[self.times.len() - 1],
+                )?,
+            });
+        }
+
+        Ok(windows)
     }
 }
 
