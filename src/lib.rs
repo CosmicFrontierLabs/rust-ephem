@@ -1,45 +1,30 @@
 // Module declarations
-mod celestial;
-mod config;
-mod constraint_wrapper;
 mod constraints;
-mod conversions;
-mod eop_cache;
-pub mod eop_provider; // Public for testing
-mod ephemeris_common;
-mod ground_ephemeris;
-mod leap_seconds;
-mod math_utils;
-pub mod naif_ids; // Public for NAIF ID lookups
-mod position_velocity;
-mod spice_ephemeris;
-mod spice_manager;
-mod time_utils;
-mod tle_ephemeris;
-mod to_skycoord;
-pub mod ut1_provider; // Public for testing
-mod vector_math;
+mod ephemeris;
+mod utils;
 
-// Re-export public API
-pub use ground_ephemeris::GroundEphemeris;
-pub use position_velocity::PositionVelocityData;
-pub use spice_ephemeris::SPICEEphemeris;
-pub use tle_ephemeris::TLEEphemeris;
+// Re-export public API from ephemeris
+pub use ephemeris::{GroundEphemeris, SPICEEphemeris, TLEEphemeris};
+
+// Re-export public API from utils
+pub use utils::position_velocity::PositionVelocityData;
 
 // Re-export constraint types
-pub use constraint_wrapper::PyConstraint;
-pub use constraints::{ConstraintResult, ConstraintViolation, VisibilityWindow};
+pub use constraints::{ConstraintResult, ConstraintViolation, PyConstraint, VisibilityWindow};
+
+// Make certain utils modules public for external access
+pub use utils::{eop_provider, naif_ids, ut1_provider};
 
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 
-use crate::config::{DE440S_URL, DE440_URL};
-use crate::config::{DEFAULT_DE440S_PATH, DEFAULT_DE440_PATH};
+use crate::utils::config::{DE440S_URL, DE440_URL};
+use crate::utils::config::{DEFAULT_DE440S_PATH, DEFAULT_DE440_PATH};
 
 #[pyfunction]
 fn init_planetary_ephemeris(py_path: String) -> PyResult<()> {
     let p = std::path::Path::new(&py_path);
-    spice_manager::init_planetary_ephemeris(p).map_err(|e| {
+    ephemeris::spice_manager::init_planetary_ephemeris(p).map_err(|e| {
         pyo3::exceptions::PyRuntimeError::new_err(format!(
             "Failed to init planetary SPK '{py_path}': {e:?}"
         ))
@@ -50,7 +35,7 @@ fn init_planetary_ephemeris(py_path: String) -> PyResult<()> {
 #[pyfunction]
 fn download_planetary_ephemeris(url: String, dest: String) -> PyResult<()> {
     let p = std::path::Path::new(&dest);
-    spice_manager::download_planetary_ephemeris(&url, p).map_err(|e| {
+    ephemeris::spice_manager::download_planetary_ephemeris(&url, p).map_err(|e| {
         pyo3::exceptions::PyRuntimeError::new_err(format!(
             "Failed to download {url} -> {dest}: {e:?}"
         ))
@@ -70,7 +55,10 @@ fn ensure_planetary_ephemeris(
 
     // If already initialized and prefer_full was requested with no explicit path,
     // upgrade to the full kernel when it exists.
-    if spice_manager::is_planetary_ephemeris_initialized() && py_path.is_none() && prefer_full {
+    if ephemeris::spice_manager::is_planetary_ephemeris_initialized()
+        && py_path.is_none()
+        && prefer_full
+    {
         let full = DEFAULT_DE440_PATH.as_path();
         if full.exists() {
             // Emit a Python warning about re-initialization
@@ -86,7 +74,7 @@ fn ensure_planetary_ephemeris(
                     PyModule::import(py, "warnings").expect("Failed to import warnings module");
                 let _ = warnings.call_method1("warn", (PyString::new(py, &warning_msg),));
             });
-            spice_manager::init_planetary_ephemeris(full).map_err(|e| {
+            ephemeris::spice_manager::init_planetary_ephemeris(full).map_err(|e| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!(
                     "Failed to init full planetary SPK '{}': {:?}",
                     full.display(),
@@ -143,7 +131,7 @@ fn ensure_planetary_ephemeris(
                     DE440S_URL.to_string()
                 }
             };
-            spice_manager::download_planetary_ephemeris(&url, path).map_err(|e| {
+            ephemeris::spice_manager::download_planetary_ephemeris(&url, path).map_err(|e| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!(
                     "Failed to download planetary SPK from {url}: {e:?}"
                 ))
@@ -156,12 +144,12 @@ fn ensure_planetary_ephemeris(
     }
 
     // Check if already initialized (only after confirming file exists)
-    if spice_manager::is_planetary_ephemeris_initialized() {
+    if ephemeris::spice_manager::is_planetary_ephemeris_initialized() {
         return Ok(());
     }
 
     // Initialize the almanac
-    spice_manager::ensure_planetary_ephemeris(path).map_err(|e| {
+    ephemeris::spice_manager::ensure_planetary_ephemeris(path).map_err(|e| {
         pyo3::exceptions::PyRuntimeError::new_err(format!(
             "Failed to load planetary SPK '{path_str}': {e:?}"
         ))
@@ -171,7 +159,7 @@ fn ensure_planetary_ephemeris(
 
 #[pyfunction]
 fn is_planetary_ephemeris_initialized() -> bool {
-    spice_manager::is_planetary_ephemeris_initialized()
+    ephemeris::spice_manager::is_planetary_ephemeris_initialized()
 }
 
 /// Helper function to convert PyDateTime to chrono::DateTime<Utc>
@@ -202,45 +190,45 @@ fn pydatetime_to_chrono(
 #[pyfunction]
 fn get_tai_utc_offset(py_datetime: &Bound<'_, pyo3::types::PyDateTime>) -> PyResult<Option<f64>> {
     let dt = pydatetime_to_chrono(py_datetime)?;
-    Ok(leap_seconds::get_tai_utc_offset(&dt))
+    Ok(utils::leap_seconds::get_tai_utc_offset(&dt))
 }
 
 #[pyfunction]
 fn get_ut1_utc_offset(py_datetime: &Bound<'_, pyo3::types::PyDateTime>) -> PyResult<f64> {
     let dt = pydatetime_to_chrono(py_datetime)?;
-    Ok(ut1_provider::get_ut1_utc_offset(&dt))
+    Ok(utils::ut1_provider::get_ut1_utc_offset(&dt))
 }
 
 #[pyfunction]
 fn is_ut1_available() -> bool {
-    ut1_provider::is_ut1_available()
+    utils::ut1_provider::is_ut1_available()
 }
 
 #[pyfunction]
 fn init_ut1_provider() -> bool {
-    ut1_provider::init_ut1_provider()
+    utils::ut1_provider::init_ut1_provider()
 }
 
 #[pyfunction]
 fn get_polar_motion(py_datetime: &Bound<'_, pyo3::types::PyDateTime>) -> PyResult<(f64, f64)> {
     let dt = pydatetime_to_chrono(py_datetime)?;
-    Ok(eop_provider::get_polar_motion(&dt))
+    Ok(utils::eop_provider::get_polar_motion(&dt))
 }
 
 #[pyfunction]
 fn is_eop_available() -> bool {
-    eop_provider::is_eop_available()
+    utils::eop_provider::is_eop_available()
 }
 
 #[pyfunction]
 fn init_eop_provider() -> bool {
-    eop_provider::init_eop_provider()
+    utils::eop_provider::init_eop_provider()
 }
 
 /// Returns the cache directory path used by rust_ephem for storing data files
 #[pyfunction]
 fn get_cache_dir() -> String {
-    config::CACHE_DIR.to_string_lossy().to_string()
+    utils::config::CACHE_DIR.to_string_lossy().to_string()
 }
 
 #[pymodule]
