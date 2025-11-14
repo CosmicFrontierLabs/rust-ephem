@@ -10,6 +10,10 @@
 /// Constraints operate on ephemeris data and target coordinates to produce
 /// time-based violation windows.
 use crate::time_utils::python_datetime_to_utc;
+use crate::vector_math::{
+    calculate_angular_separation, dot_product, normalize_vector, radec_to_unit_vector,
+    vector_magnitude,
+};
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::prelude::*;
@@ -1071,49 +1075,4 @@ where
     }
 
     violations
-}
-
-// Helper functions for vector math
-fn radec_to_unit_vector(ra_deg: f64, dec_deg: f64) -> [f64; 3] {
-    let ra_rad = ra_deg.to_radians();
-    let dec_rad = dec_deg.to_radians();
-    let cos_dec = dec_rad.cos();
-    [
-        cos_dec * ra_rad.cos(),
-        cos_dec * ra_rad.sin(),
-        dec_rad.sin(),
-    ]
-}
-
-fn normalize_vector(v: &[f64; 3]) -> [f64; 3] {
-    let mag = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-    if mag > 0.0 {
-        [v[0] / mag, v[1] / mag, v[2] / mag]
-    } else {
-        [0.0, 0.0, 0.0]
-    }
-}
-
-fn dot_product(a: &[f64; 3], b: &[f64; 3]) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
-fn vector_magnitude(v: &[f64; 3]) -> f64 {
-    (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
-}
-
-// Helper function for calculating angular separation between target and body
-fn calculate_angular_separation(
-    target_vec: &[f64; 3],
-    body_position: &[f64; 3],
-    observer_position: &[f64; 3],
-) -> f64 {
-    let body_rel = [
-        body_position[0] - observer_position[0],
-        body_position[1] - observer_position[1],
-        body_position[2] - observer_position[2],
-    ];
-    let body_unit = normalize_vector(&body_rel);
-    let cos_angle = dot_product(target_vec, &body_unit);
-    cos_angle.clamp(-1.0, 1.0).acos().to_degrees()
 }

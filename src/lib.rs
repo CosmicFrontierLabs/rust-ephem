@@ -18,6 +18,7 @@ mod time_utils;
 mod tle_ephemeris;
 mod to_skycoord;
 pub mod ut1_provider; // Public for testing
+mod vector_math;
 
 // Re-export public API
 pub use ground_ephemeris::GroundEphemeris;
