@@ -84,8 +84,12 @@ jobs:
 
             - name: Install Rust toolchain
               uses: dtolnay/rust-toolchain@stable
+
+            - name: Cache Rust dependencies
+              uses: Swatinem/rust-cache@v2
               with:
-                  targets: ${{ matrix.target }}
+                  key: ${{ matrix.target }}
+                  cache-on-failure: true
 
             - name: Set up QEMU (for cross-compilation on Linux)
               if: runner.os == 'Linux' && matrix.target == 'aarch64-unknown-linux-gnu'
