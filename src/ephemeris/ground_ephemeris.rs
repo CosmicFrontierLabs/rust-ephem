@@ -138,7 +138,7 @@ impl GroundEphemeris {
     }
 
     #[getter]
-    fn timestamp(&self, py: Python) -> PyResult<Option<Vec<Py<PyDateTime>>>> {
+    fn timestamp(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         self.get_timestamp(py)
     }
 

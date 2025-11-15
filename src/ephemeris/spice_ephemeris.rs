@@ -108,7 +108,7 @@ impl SPICEEphemeris {
 
     // Getter for times but call it timestamp and convert to python datetime
     #[getter]
-    fn timestamp(&self, py: Python) -> PyResult<Option<Vec<Py<PyDateTime>>>> {
+    fn timestamp(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         self.get_timestamp(py)
     }
 
