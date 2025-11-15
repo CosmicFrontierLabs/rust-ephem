@@ -14,6 +14,7 @@ use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::prelude::*;
 use std::fmt;
+use std::sync::OnceLock;
 
 /// Result of constraint evaluation
 ///
@@ -78,7 +79,6 @@ impl VisibilityWindow {
 
 /// Result of constraint evaluation containing all violations
 #[pyclass(name = "ConstraintResult")]
-#[derive(Clone, Debug)]
 pub struct ConstraintResult {
     /// List of time windows where the constraint was violated
     #[pyo3(get)]
@@ -91,6 +91,29 @@ pub struct ConstraintResult {
     pub constraint_name: String,
     /// Evaluation times as Rust DateTime<Utc>, not directly exposed to Python
     pub times: Vec<DateTime<Utc>>,
+    /// Cached Python timestamp array (not directly exposed, use getter)
+    timestamp_cache: OnceLock<Py<PyAny>>,
+    /// Cached constraint array (not directly exposed, use getter)
+    constraint_array_cache: OnceLock<Py<PyAny>>,
+}
+
+impl ConstraintResult {
+    /// Create a new ConstraintResult with initialized caches
+    pub fn new(
+        violations: Vec<ConstraintViolation>,
+        all_satisfied: bool,
+        constraint_name: String,
+        times: Vec<DateTime<Utc>>,
+    ) -> Self {
+        Self {
+            violations,
+            all_satisfied,
+            constraint_name,
+            times,
+            timestamp_cache: OnceLock::new(),
+            constraint_array_cache: OnceLock::new(),
+        }
+    }
 }
 
 #[pymethods]
@@ -158,16 +181,32 @@ impl ConstraintResult {
     /// Property: array of booleans for each timestamp where True means constraint satisfied
     #[getter]
     fn constraint_array(&self, py: Python) -> PyResult<Py<PyAny>> {
+        // Use cached value if available
+        if let Some(cached) = self.constraint_array_cache.get() {
+            return Ok(cached.clone_ref(py));
+        }
+
+        // Compute and cache
         let arr = self._compute_constraint_vec();
         let np = pyo3::types::PyModule::import(py, "numpy")
             .map_err(|_| pyo3::exceptions::PyImportError::new_err("numpy is required"))?;
         let py_arr = np.getattr("array")?.call1((arr,))?;
-        Ok(py_arr.into())
+        let py_obj: Py<PyAny> = py_arr.into();
+
+        // Cache the result (ignore if already set by another thread)
+        let _ = self.constraint_array_cache.set(py_obj.clone_ref(py));
+
+        Ok(py_obj)
     }
 
     /// Property: array of Python datetime objects for each evaluation time (as numpy array)
     #[getter]
     fn timestamp(&self, py: Python) -> PyResult<Py<PyAny>> {
+        // Use cached value if available
+        if let Some(cached) = self.timestamp_cache.get() {
+            return Ok(cached.clone_ref(py));
+        }
+
         // Import numpy
         let np = pyo3::types::PyModule::import(py, "numpy")
             .map_err(|_| pyo3::exceptions::PyImportError::new_err("numpy is required"))?;
@@ -181,8 +220,12 @@ impl ConstraintResult {
 
         // Convert to numpy array with dtype=object
         let np_array = np.getattr("array")?.call1((py_list,))?;
+        let py_obj: Py<PyAny> = np_array.into();
 
-        Ok(np_array.into())
+        // Cache the result (ignore if already set by another thread)
+        let _ = self.timestamp_cache.set(py_obj.clone_ref(py));
+
+        Ok(py_obj)
     }
 
     /// Check if the target is in-constraint at a given time.

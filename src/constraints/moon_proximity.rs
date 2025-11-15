@@ -83,12 +83,7 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
         );
 
         let all_satisfied = violations.is_empty();
-        ConstraintResult {
-            violations,
-            all_satisfied,
-            constraint_name: self.name(),
-            times: times.to_vec(),
-        }
+        ConstraintResult::new(violations, all_satisfied, self.name(), times.to_vec())
     }
 
     fn name(&self) -> String {

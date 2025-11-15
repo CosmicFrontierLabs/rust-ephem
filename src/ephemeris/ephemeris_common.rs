@@ -2,6 +2,7 @@ use chrono::{DateTime, Datelike, Duration, Timelike, Utc};
 use ndarray::{s, Array2};
 use numpy::IntoPyArray;
 use pyo3::{prelude::*, types::PyDateTime};
+use std::sync::OnceLock;
 
 use crate::ephemeris::position_velocity::PositionVelocityData;
 use crate::utils::celestial::{calculate_moon_positions, calculate_sun_positions};
@@ -96,6 +97,8 @@ pub struct EphemerisData {
     pub earth_skycoord: Option<Py<PyAny>>,
     pub sun_skycoord: Option<Py<PyAny>>,
     pub moon_skycoord: Option<Py<PyAny>>,
+    /// Cached Python timestamp array (NumPy array of datetime objects)
+    pub timestamp_cache: OnceLock<Py<PyAny>>,
 }
 
 impl EphemerisData {
@@ -110,6 +113,7 @@ impl EphemerisData {
             earth_skycoord: None,
             sun_skycoord: None,
             moon_skycoord: None,
+            timestamp_cache: OnceLock::new(),
         }
     }
 }
@@ -243,6 +247,11 @@ pub trait EphemerisBase {
         use crate::utils::time_utils::utc_to_python_datetime;
 
         Ok(self.data().times.as_ref().map(|times| {
+            // Check cache first
+            if let Some(cached) = self.data().timestamp_cache.get() {
+                return cached.clone_ref(py);
+            }
+
             // Import numpy
             let np = pyo3::types::PyModule::import(py, "numpy")
                 .map_err(|_| pyo3::exceptions::PyImportError::new_err("numpy is required"))
@@ -257,8 +266,12 @@ pub trait EphemerisBase {
 
             // Convert to numpy array with dtype=object
             let np_array = np.getattr("array").unwrap().call1((py_list,)).unwrap();
+            let result: Py<PyAny> = np_array.into();
 
-            np_array.into()
+            // Cache the result
+            let _ = self.data().timestamp_cache.set(result.clone_ref(py));
+
+            result
         }))
     }
 

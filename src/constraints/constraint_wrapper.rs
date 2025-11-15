@@ -883,12 +883,12 @@ impl ConstraintEvaluator for AndEvaluator {
         }
 
         let all_satisfied = merged_violations.is_empty();
-        ConstraintResult {
-            violations: merged_violations,
+        ConstraintResult::new(
+            merged_violations,
             all_satisfied,
-            constraint_name: self.name(),
-            times: times.to_vec(),
-        }
+            self.name(),
+            times.to_vec(),
+        )
     }
 
     fn name(&self) -> String {
@@ -992,12 +992,12 @@ impl ConstraintEvaluator for OrEvaluator {
         }
 
         let all_satisfied = merged_violations.is_empty();
-        ConstraintResult {
-            violations: merged_violations,
+        ConstraintResult::new(
+            merged_violations,
             all_satisfied,
-            constraint_name: self.name(),
-            times: times.to_vec(),
-        }
+            self.name(),
+            times.to_vec(),
+        )
     }
 
     fn name(&self) -> String {
@@ -1090,12 +1090,12 @@ impl ConstraintEvaluator for NotEvaluator {
         }
 
         let all_satisfied = inverted_violations.is_empty();
-        ConstraintResult {
-            violations: inverted_violations,
+        ConstraintResult::new(
+            inverted_violations,
             all_satisfied,
-            constraint_name: self.name(),
-            times: times.to_vec(),
-        }
+            self.name(),
+            times.to_vec(),
+        )
     }
 
     fn name(&self) -> String {
