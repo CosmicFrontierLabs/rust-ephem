@@ -41,8 +41,8 @@ jobs:
                   args: --release --out dist --interpreter 3.10 3.11 3.12 3.13
                   manylinux: auto
                   sccache: true
-              env:
-                  OPENSSL_NO_VENDOR: "1"
+                  before-script-linux: |
+                      yum install -y openssl-devel perl-IPC-Cmd
 
             - name: Upload wheels
               uses: actions/upload-artifact@v4
