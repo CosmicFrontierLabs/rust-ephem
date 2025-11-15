@@ -128,10 +128,24 @@ impl ConstraintResult {
         if self.times.is_empty() {
             return Vec::new();
         }
+
+        // Pre-allocate result vector
         let mut ok = vec![true; self.times.len()];
+
+        // Early return if no violations
+        if self.violations.is_empty() {
+            return ok;
+        }
+
+        // Mark violated times - violations are already sorted by time
         for (i, t) in self.times.iter().enumerate() {
             let t_str = t.to_rfc3339();
+            // Binary search could be used here, but violation count is typically small
+            // and the string comparison overhead dominates
             for v in &self.violations {
+                if t_str < v.start_time {
+                    break; // Violations are sorted, no need to check further
+                }
                 if v.start_time <= t_str && t_str <= v.end_time {
                     ok[i] = false;
                     break;
@@ -320,7 +334,8 @@ pub(crate) fn track_violations<F>(
 where
     F: FnMut(usize) -> (bool, f64),
 {
-    let mut violations = Vec::new();
+    // Pre-allocate with reasonable capacity estimate
+    let mut violations = Vec::with_capacity(4);
     let mut current_violation: Option<(usize, f64)> = None;
 
     for i in 0..times.len() {

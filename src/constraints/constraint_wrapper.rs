@@ -524,6 +524,8 @@ impl PyConstraint {
         ephemeris: &Bound<PyAny>,
         times_arg: &Bound<PyAny>,
     ) -> PyResult<Vec<usize>> {
+        use std::collections::HashMap;
+
         // Get ephemeris times - need to clone to avoid lifetime issues
         let ephem_times: Vec<DateTime<Utc>> =
             if let Ok(ephem) = ephemeris.extract::<PyRef<TLEEphemeris>>() {
@@ -574,16 +576,38 @@ impl PyConstraint {
             vec![dt]
         };
 
-        // Find indices for each input time
-        let mut indices = Vec::new();
-        for dt in input_times {
-            if let Some(idx) = ephem_times.iter().position(|t| t == &dt) {
-                indices.push(idx);
-            } else {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "Time {} not found in ephemeris timestamps",
-                    dt.to_rfc3339()
-                )));
+        // Build HashMap for O(1) lookup when multiple times are requested
+        let mut indices = Vec::with_capacity(input_times.len());
+
+        if input_times.len() > 3 {
+            // Use HashMap for multiple lookups
+            let time_map: HashMap<DateTime<Utc>, usize> = ephem_times
+                .iter()
+                .enumerate()
+                .map(|(i, t)| (*t, i))
+                .collect();
+
+            for dt in input_times {
+                if let Some(&idx) = time_map.get(&dt) {
+                    indices.push(idx);
+                } else {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Time {} not found in ephemeris timestamps",
+                        dt.to_rfc3339()
+                    )));
+                }
+            }
+        } else {
+            // Use linear search for small number of lookups
+            for dt in input_times {
+                if let Some(idx) = ephem_times.iter().position(|t| t == &dt) {
+                    indices.push(idx);
+                } else {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Time {} not found in ephemeris timestamps",
+                        dt.to_rfc3339()
+                    )));
+                }
             }
         }
 
@@ -813,7 +837,8 @@ impl ConstraintEvaluator for AndEvaluator {
                     if violation.start_time <= time_str && time_str <= violation.end_time {
                         violated = true;
                         max_severity = max_severity.max(violation.max_severity);
-                        descriptions.push(violation.description.clone());
+                        // Avoid cloning by using reference
+                        descriptions.push(&violation.description);
                     }
                 }
             }
@@ -823,13 +848,18 @@ impl ConstraintEvaluator for AndEvaluator {
                     Some((_, sev, descs)) => {
                         *sev = sev.max(max_severity);
                         for desc in descriptions {
-                            if !descs.contains(&desc) {
-                                descs.push(desc);
+                            // Only store string references, clone at the end
+                            if !descs.iter().any(|d| d == desc) {
+                                descs.push(desc.to_string());
                             }
                         }
                     }
                     None => {
-                        current_violation = Some((i, max_severity, descriptions));
+                        current_violation = Some((
+                            i,
+                            max_severity,
+                            descriptions.iter().map(|s| s.to_string()).collect(),
+                        ));
                     }
                 }
             } else if let Some((start_idx, severity, descs)) = current_violation.take() {
@@ -1032,7 +1062,7 @@ impl ConstraintEvaluator for NotEvaluator {
             for violation in &result.violations {
                 if last_end < violation.start_time {
                     inverted_violations.push(ConstraintViolation {
-                        start_time: last_end.clone(),
+                        start_time: last_end,
                         end_time: violation.start_time.clone(),
                         max_severity: 0.5,
                         description: format!(

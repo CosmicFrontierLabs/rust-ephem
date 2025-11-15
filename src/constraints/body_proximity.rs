@@ -46,6 +46,7 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
     ) -> ConstraintResult {
         // Body positions are passed via sun_positions slot
         let body_positions = sun_positions;
+        // Cache target vector computation outside the loop
         let target_vec = radec_to_unit_vector(target_ra, target_dec);
 
         let violations = track_violations(
