@@ -102,6 +102,9 @@ jobs:
                   target: ${{ matrix.target }}
                   args: --release --out dist --interpreter 3.10 3.11 3.12 3.13
                   manylinux: ${{ matrix.container || 'auto' }}
+              env:
+                  # Fix for ring crate ARM64 cross-compilation
+                  CFLAGS_aarch64_unknown_linux_gnu: "-D__ARM_ARCH=8"
 
             - name: Build wheels (macOS)
               if: runner.os == 'macOS'
