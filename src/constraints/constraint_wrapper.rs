@@ -429,42 +429,6 @@ impl PyConstraint {
         })
     }
 
-    /// Evaluate constraint against a TLE ephemeris
-    ///
-    /// Args:
-    ///     ephemeris (TLEEphemeris): Ephemeris object
-    ///     target_ra (float): Target right ascension in degrees (ICRS/J2000)
-    ///     target_dec (float): Target declination in degrees (ICRS/J2000)
-    ///
-    /// Returns:
-    ///     ConstraintResult: Result containing violation windows
-    fn evaluate_tle(
-        &self,
-        ephemeris: &TLEEphemeris,
-        target_ra: f64,
-        target_dec: f64,
-    ) -> PyResult<ConstraintResult> {
-        self.eval_with_ephemeris(ephemeris, target_ra, target_dec)
-    }
-
-    /// Evaluate constraint against a SPICE ephemeris
-    ///
-    /// Args:
-    ///     ephemeris (SPICEEphemeris): Ephemeris object
-    ///     target_ra (float): Target right ascension in degrees (ICRS/J2000)
-    ///     target_dec (float): Target declination in degrees (ICRS/J2000)
-    ///
-    /// Returns:
-    ///     ConstraintResult: Result containing violation windows
-    fn evaluate_spice(
-        &self,
-        ephemeris: &SPICEEphemeris,
-        target_ra: f64,
-        target_dec: f64,
-    ) -> PyResult<ConstraintResult> {
-        self.eval_with_ephemeris(ephemeris, target_ra, target_dec)
-    }
-
     /// Evaluate constraint against any supported ephemeris type
     ///
     /// Args:
@@ -474,8 +438,8 @@ impl PyConstraint {
     ///
     /// Returns:
     ///     ConstraintResult: Result containing violation windows
-    #[pyo3(name = "evaluate")]
-    fn evaluate_any(
+    #[pyo3(signature = (ephemeris, target_ra, target_dec))]
+    fn evaluate(
         &self,
         py: Python,
         ephemeris: Py<PyAny>,
