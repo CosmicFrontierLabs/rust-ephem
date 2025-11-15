@@ -8,8 +8,8 @@ on:
             - "v*"
     workflow_dispatch:
         inputs:
-            publish:
-                description: "Publish to PyPI"
+            publish_testpypi:
+                description: "Publish to TestPyPI"
                 required: false
                 default: false
                 type: boolean
@@ -166,7 +166,7 @@ jobs:
         name: Publish to TestPyPI
         runs-on: ubuntu-latest
         needs: [build-wheels, build-sdist]
-        if: github.event_name == 'workflow_dispatch' && inputs.publish
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_testpypi
         permissions:
             id-token: write
 
@@ -190,8 +190,6 @@ jobs:
               with:
                   command: upload
                   args: --non-interactive --skip-existing dist/* --repository-url https://test.pypi.org/legacy/
-              env:
-                  MATURIN_PYPI_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}
 
     publish:
         name: Publish to PyPI
@@ -222,8 +220,6 @@ jobs:
               with:
                   command: upload
                   args: --non-interactive --skip-existing dist/*
-              env:
-                  MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
 
             - name: Create GitHub Release
               uses: softprops/action-gh-release@v1
