@@ -151,14 +151,24 @@ impl ConstraintResult {
         Ok(py_arr.into())
     }
 
-    /// Property: array of Python datetime objects for each evaluation time
+    /// Property: array of Python datetime objects for each evaluation time (as numpy array)
     #[getter]
-    fn timestamp(&self, py: Python) -> PyResult<Vec<Py<PyAny>>> {
-        let mut result = Vec::with_capacity(self.times.len());
+    fn timestamp(&self, py: Python) -> PyResult<Py<PyAny>> {
+        // Import numpy
+        let np = pyo3::types::PyModule::import(py, "numpy")
+            .map_err(|_| pyo3::exceptions::PyImportError::new_err("numpy is required"))?;
+
+        // Build list of Python datetime objects
+        let py_list = pyo3::types::PyList::empty(py);
         for dt in &self.times {
-            result.push(utc_to_python_datetime(py, dt)?);
+            let py_dt = utc_to_python_datetime(py, dt)?;
+            py_list.append(py_dt)?;
         }
-        Ok(result)
+
+        // Convert to numpy array with dtype=object
+        let np_array = np.getattr("array")?.call1((py_list,))?;
+
+        Ok(np_array.into())
     }
 
     /// Check if the target is in-constraint at a given time.
@@ -167,9 +177,17 @@ impl ConstraintResult {
         let dt = python_datetime_to_utc(time)?;
 
         // Find matching time in our array
-        if let Some(idx) = self.times.iter().position(|t| t == &dt) {
-            let ok_vec = self._compute_constraint_vec();
-            Ok(ok_vec[idx])
+        if let Some(_idx) = self.times.iter().position(|t| t == &dt) {
+            // Check if this time falls within any violation window
+            let t_str = dt.to_rfc3339();
+            for v in &self.violations {
+                if v.start_time <= t_str && t_str <= v.end_time {
+                    // Time is in a violation window, so NOT in-constraint
+                    return Ok(false);
+                }
+            }
+            // No violations found for this time, so in-constraint
+            Ok(true)
         } else {
             Err(pyo3::exceptions::PyValueError::new_err(
                 "time not found in evaluated timestamps",

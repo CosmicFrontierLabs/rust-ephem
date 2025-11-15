@@ -62,3 +62,24 @@ __all__ = [
     "init_eop_provider",
     "get_cache_dir",
 ]
+
+# Cache for ConstraintResult timestamp property
+_timestamp_cache: dict = {}
+
+# Save the original Rust timestamp descriptor BEFORE any modification
+_original_timestamp_descriptor = ConstraintResult.timestamp
+
+
+def _get_cached_timestamp(self):  # type: ignore[no-untyped-def]
+    """Get timestamp with caching to avoid recomputing on every access."""
+    obj_id = id(self)
+    if obj_id not in _timestamp_cache:
+        # Call the original Rust descriptor
+        _timestamp_cache[obj_id] = _original_timestamp_descriptor.__get__(
+            self, ConstraintResult
+        )
+    return _timestamp_cache[obj_id]
+
+
+# Replace the timestamp property with cached version
+ConstraintResult.timestamp = property(_get_cached_timestamp)  # type: ignore[misc, assignment]
