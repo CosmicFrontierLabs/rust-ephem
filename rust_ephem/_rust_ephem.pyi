@@ -1,7 +1,7 @@
 """Type stubs for the Rust extension module _rust_ephem"""
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -65,12 +65,21 @@ class ConstraintResult:
 
     @property
     def constraint_array(self) -> npt.NDArray[np.bool_]:
-        """Array of booleans for each timestamp where True means constraint satisfied"""
+        """
+        Array of booleans for each timestamp where True means constraint satisfied.
+
+        This property is cached for performance - repeated access is ~90x faster.
+        """
         ...
 
     @property
-    def timestamp(self) -> list[datetime]:
-        """Array of Python datetime objects for each evaluation time"""
+    def timestamp(self) -> npt.NDArray[np.object_]:
+        """
+        Array of Python datetime objects for each evaluation time.
+
+        Returns a NumPy array (not a list) for efficient indexing.
+        This property is cached for performance - repeated access is ~90x faster.
+        """
         ...
 
     @property
@@ -97,6 +106,138 @@ class Constraint:
     """Wrapper for constraint evaluation with ephemeris data"""
 
     @staticmethod
+    def sun_proximity(min_angle: float, max_angle: float | None = None) -> Constraint:
+        """
+        Create a Sun proximity constraint.
+
+        Args:
+            min_angle: Minimum allowed angular separation from Sun in degrees (0-180)
+            max_angle: Maximum allowed angular separation from Sun in degrees (optional)
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If angles are out of valid range
+        """
+        ...
+
+    @staticmethod
+    def moon_proximity(min_angle: float, max_angle: float | None = None) -> Constraint:
+        """
+        Create a Moon proximity constraint.
+
+        Args:
+            min_angle: Minimum allowed angular separation from Moon in degrees (0-180)
+            max_angle: Maximum allowed angular separation from Moon in degrees (optional)
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If angles are out of valid range
+        """
+        ...
+
+    @staticmethod
+    def earth_limb(min_angle: float, max_angle: float | None = None) -> Constraint:
+        """
+        Create an Earth limb avoidance constraint.
+
+        Args:
+            min_angle: Additional margin beyond Earth's apparent angular radius (degrees)
+            max_angle: Maximum allowed angular separation from Earth limb (degrees, optional)
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If angles are out of valid range
+        """
+        ...
+
+    @staticmethod
+    def body_proximity(
+        body: str, min_angle: float, max_angle: float | None = None
+    ) -> Constraint:
+        """
+        Create a generic solar system body avoidance constraint.
+
+        Args:
+            body: Body identifier - NAIF ID or name (e.g., "Jupiter", "499", "Mars")
+            min_angle: Minimum allowed angular separation in degrees (0-180)
+            max_angle: Maximum allowed angular separation in degrees (optional)
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If angles are out of valid range
+
+        Note:
+            Supported bodies depend on the ephemeris type and loaded kernels.
+        """
+        ...
+
+    @staticmethod
+    def eclipse(umbra_only: bool = True) -> Constraint:
+        """
+        Create an eclipse constraint.
+
+        Args:
+            umbra_only: If True, only umbra counts as eclipse. If False, penumbra also counts.
+
+        Returns:
+            A new Constraint instance
+        """
+        ...
+
+    @staticmethod
+    def and_(*constraints: Constraint) -> Constraint:
+        """
+        Combine constraints with logical AND.
+
+        Args:
+            *constraints: Variable number of Constraint objects
+
+        Returns:
+            A new Constraint that is satisfied only if all input constraints are satisfied
+
+        Raises:
+            ValueError: If no constraints provided
+        """
+        ...
+
+    @staticmethod
+    def or_(*constraints: Constraint) -> Constraint:
+        """
+        Combine constraints with logical OR.
+
+        Args:
+            *constraints: Variable number of Constraint objects
+
+        Returns:
+            A new Constraint that is satisfied if any input constraint is satisfied
+
+        Raises:
+            ValueError: If no constraints provided
+        """
+        ...
+
+    @staticmethod
+    def not_(constraint: Constraint) -> Constraint:
+        """
+        Negate a constraint with logical NOT.
+
+        Args:
+            constraint: Constraint to negate
+
+        Returns:
+            A new Constraint that is satisfied when the input is violated
+        """
+        ...
+
+    @staticmethod
     def from_json(json_str: str) -> Constraint:
         """
         Create a constraint from a JSON string.
@@ -106,37 +247,93 @@ class Constraint:
 
         Returns:
             A new Constraint instance
+
+        Raises:
+            ValueError: If JSON is invalid or contains unknown constraint type
         """
         ...
 
     def evaluate(
         self,
-        begin: datetime,
-        end: datetime,
+        ephemeris: TLEEphemeris | SPICEEphemeris | GroundEphemeris,
         target_ra: float,
         target_dec: float,
-        step_seconds: float = 60.0,
-        observer_lat: Optional[float] = None,
-        observer_lon: Optional[float] = None,
-        observer_alt: Optional[float] = None,
+        times: datetime | list[datetime] | None = None,
+        indices: int | list[int] | None = None,
     ) -> ConstraintResult:
         """
-        Evaluate the constraint over a time range.
+        Evaluate constraint against ephemeris data.
 
         Args:
-            begin: Start time (naive datetime treated as UTC)
-            end: End time (naive datetime treated as UTC)
-            target_ra: Right ascension of target in degrees (ICRS/J2000)
-            target_dec: Declination of target in degrees (ICRS/J2000)
-            step_seconds: Time step in seconds (default: 60.0)
-            observer_lat: Observer latitude in degrees (optional, for ground-based)
-            observer_lon: Observer longitude in degrees (optional, for ground-based)
-            observer_alt: Observer altitude in meters (optional, for ground-based)
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, or GroundEphemeris
+            target_ra: Target right ascension in degrees (ICRS/J2000)
+            target_dec: Target declination in degrees (ICRS/J2000)
+            times: Optional specific time(s) to evaluate. Can be a single datetime
+                   or list of datetimes. If provided, only these times will be
+                   evaluated (must exist in the ephemeris).
+            indices: Optional specific time index/indices to evaluate. Can be a
+                     single index or list of indices into the ephemeris timestamp array.
 
         Returns:
             ConstraintResult containing violation windows
+
+        Raises:
+            ValueError: If both times and indices are provided, or if times/indices
+                       are not found in the ephemeris
+            TypeError: If ephemeris type is not supported
+
+        Note:
+            Only one of `times` or `indices` should be provided. If neither is
+            provided, all ephemeris times are evaluated.
         """
         ...
+
+    def in_constraint(
+        self,
+        time: datetime,
+        ephemeris: TLEEphemeris | SPICEEphemeris | GroundEphemeris,
+        target_ra: float,
+        target_dec: float,
+    ) -> bool:
+        """
+        Check if the target is in-constraint at a single time.
+
+        This is optimized for single-time evaluation.
+
+        Args:
+            time: The time to check (must exist in ephemeris timestamps)
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, or GroundEphemeris
+            target_ra: Target right ascension in degrees (ICRS/J2000)
+            target_dec: Target declination in degrees (ICRS/J2000)
+
+        Returns:
+            True if constraint is satisfied at the given time, False otherwise
+
+        Raises:
+            ValueError: If time is not found in ephemeris timestamps
+            TypeError: If ephemeris type is not supported
+        """
+        ...
+
+    def to_json(self) -> str:
+        """
+        Get constraint configuration as JSON string.
+
+        Returns:
+            JSON string representation of the constraint
+        """
+        ...
+
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Get constraint configuration as Python dictionary.
+
+        Returns:
+            Dictionary representation of the constraint
+        """
+        ...
+
+    def __repr__(self) -> str: ...
 
 class TLEEphemeris:
     """Ephemeris calculator using Two-Line Element (TLE) data"""
@@ -205,8 +402,13 @@ class TLEEphemeris:
         ...
 
     @property
-    def timestamp(self) -> list[datetime] | None:
-        """List of timestamps for the ephemeris"""
+    def timestamp(self) -> npt.NDArray[np.object_] | None:
+        """
+        Array of timestamps for the ephemeris.
+
+        Returns a NumPy array of datetime objects (not a list) for efficient indexing.
+        This property is cached for performance - repeated access is ~90x faster.
+        """
         ...
 
     def get_body_pv(self, body: str) -> PositionVelocityData:
@@ -297,8 +499,13 @@ class SPICEEphemeris:
         ...
 
     @property
-    def timestamp(self) -> list[datetime] | None:
-        """List of timestamps for the ephemeris"""
+    def timestamp(self) -> npt.NDArray[np.object_] | None:
+        """
+        Array of timestamps for the ephemeris.
+
+        Returns a NumPy array of datetime objects (not a list) for efficient indexing.
+        This property is cached for performance - repeated access is ~90x faster.
+        """
         ...
 
 class GroundEphemeris:
@@ -375,8 +582,13 @@ class GroundEphemeris:
         ...
 
     @property
-    def timestamp(self) -> list[datetime] | None:
-        """List of timestamps for the ephemeris"""
+    def timestamp(self) -> npt.NDArray[np.object_] | None:
+        """
+        Array of timestamps for the ephemeris.
+
+        Returns a NumPy array of datetime objects (not a list) for efficient indexing.
+        This property is cached for performance - repeated access is ~90x faster.
+        """
         ...
 
     @property
