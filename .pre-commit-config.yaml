@@ -58,3 +58,8 @@ repos:
             "-D", # Flag to override settings in conf.py
             "exclude_patterns=notebooks/*", # Exclude our notebooks from pre-commit
           ]
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.29.4
+    hooks:
+      - id: check-github-workflows
+        args: ["--verbose"]

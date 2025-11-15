@@ -5,13 +5,12 @@ build-backend = "maturin"
 [project]
 name = "rust-ephem"
 dynamic = ["version"]
-description = "A Rust library for satellite ephemeris calculations with Python / astropy bindings"
+description = "High-performance satellite ephemeris and visibility calculations with Rust and astropy integration"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
-authors = [
-    { name = "Jamie A. Kennea", email = "jak574@users.noreply.github.com" },
-]
+authors = [{ name = "Jamie A. Kennea", email = "jamie@cosmicfrontier.org" }]
+maintainers = [{ name = "Jamie A. Kennea", email = "jamie@cosmicfrontier.org" }]
 keywords = [
     "satellite",
     "ephemeris",
@@ -19,36 +18,54 @@ keywords = [
     "tle",
     "spice",
     "orbital-mechanics",
+    "astronomy",
+    "astropy",
+    "visibility",
+    "constraints",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Rust",
     "Typing :: Typed",
     "Topic :: Scientific/Engineering :: Astronomy",
     "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
-dependencies = [
-    "numpy>=1.16",
-    "pydantic>=2.12.4",
-]
+dependencies = ["numpy>=1.16", "pydantic>=2.12.4"]
 
 [project.optional-dependencies]
 test = ["pytest>=7.0", "astropy>=5.0", "pluggy>=1.6.0"]
 docs = ["sphinx>=6.0", "sphinx-rtd-theme", "maturin>=1.0"]
+all = [
+    "pytest>=7.0",
+    "astropy>=5.0",
+    "pluggy>=1.6.0",
+    "sphinx>=6.0",
+    "sphinx-rtd-theme",
+]
 
 [project.urls]
-Homepage = "https://github.com/jak574/rust-ephem"
-Repository = "https://github.com/jak574/rust-ephem"
-"Bug Tracker" = "https://github.com/jak574/rust-ephem/issues"
+Homepage = "https://github.com/CosmicFrontierLabs/rust-ephem"
+Repository = "https://github.com/CosmicFrontierLabs/rust-ephem"
+#Documentation = "https://rust-ephem.readthedocs.io"
+"Bug Tracker" = "https://github.com/CosmicFrontierLabs/rust-ephem/issues"
+"Source Code" = "https://github.com/CosmicFrontierLabs/rust-ephem"
+Changelog = "https://github.com/CosmicFrontierLabs/rust-ephem/releases"
 
 [tool.maturin]
 module-name = "rust_ephem._rust_ephem"
@@ -58,10 +75,7 @@ module-name = "rust_ephem._rust_ephem"
 profile = "release"
 
 # Include type stubs and py.typed marker for PEP 561 compliance
-include = [
-    "rust_ephem/py.typed",
-    "rust_ephem/*.pyi",
-]
+include = ["rust_ephem/py.typed", "rust_ephem/*.pyi"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -78,5 +92,5 @@ norecursedirs = [".git", ".tox", "dist", "build", "*.egg", "target"]
 filterwarnings = [
     "ignore:invalid value encountered in divide:RuntimeWarning:astropy",
     "ignore:divide by zero encountered in divide:RuntimeWarning:astropy",
-    "ignore:invalid value encountered in pdp:RuntimeWarning:astropy"
+    "ignore:invalid value encountered in pdp:RuntimeWarning:astropy",
 ]
