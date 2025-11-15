@@ -95,11 +95,34 @@ Classes
 **Constraint**
   Evaluate astronomical observation constraints against ephemeris data.
   
-  **Constructor:**
-    ``Constraint.from_json(json_config)`` — Create from JSON configuration string
+  **Static Methods:**
+    * ``Constraint.sun_proximity(min_angle, max_angle=None)`` — Create Sun proximity constraint
+    * ``Constraint.moon_proximity(min_angle, max_angle=None)`` — Create Moon proximity constraint
+    * ``Constraint.earth_limb(min_angle, max_angle=None)`` — Create Earth limb avoidance constraint
+    * ``Constraint.body_proximity(body, min_angle, max_angle=None)`` — Create solar system body proximity constraint
+    * ``Constraint.eclipse(umbra_only=True)`` — Create eclipse constraint
+    * ``Constraint.and_(*constraints)`` — Combine constraints with logical AND
+    * ``Constraint.or_(*constraints)`` — Combine constraints with logical OR
+    * ``Constraint.not_(constraint)`` — Negate a constraint with logical NOT
+    * ``Constraint.from_json(json_str)`` — Create constraint from JSON configuration
   
   **Methods:**
-    * ``evaluate(ephemeris, target_ra, target_dec)`` — Evaluate constraint against ephemeris data. Returns ``ConstraintResult``.
+    * ``evaluate(ephemeris, target_ra, target_dec, times=None, indices=None)`` — Evaluate constraint against ephemeris data
+      
+      - ``ephemeris`` — TLEEphemeris, SPICEEphemeris, or GroundEphemeris object
+      - ``target_ra`` — Target right ascension in degrees (ICRS/J2000)
+      - ``target_dec`` — Target declination in degrees (ICRS/J2000)
+      - ``times`` — Optional: specific datetime(s) to evaluate (must exist in ephemeris)
+      - ``indices`` — Optional: specific time index/indices to evaluate
+      - Returns: ``ConstraintResult`` object
+    
+    * ``in_constraint(time, ephemeris, target_ra, target_dec)`` — Check if target is in-constraint at a single time
+      
+      - ``time`` — Python datetime object (must exist in ephemeris timestamps)
+      - Returns: ``bool`` (True if constraint is satisfied, False if violated)
+    
+    * ``to_json()`` — Get constraint configuration as JSON string
+    * ``to_dict()`` — Get constraint configuration as Python dictionary
 
 **ConstraintResult**
   Result of constraint evaluation containing violation information.
@@ -108,10 +131,16 @@ Classes
     * ``violations`` — List of ``ConstraintViolation`` objects
     * ``all_satisfied`` — Boolean indicating if constraint was satisfied for entire time range
     * ``constraint_name`` — String name/description of the constraint
-    * ``times`` — List of RFC3339 timestamp strings for evaluation times
+    * ``timestamp`` — NumPy array of Python datetime objects (optimized with caching)
+    * ``constraint_array`` — NumPy boolean array where True means constraint satisfied (optimized with caching)
+    * ``visibility`` — List of ``VisibilityWindow`` objects for contiguous satisfied periods
   
   **Methods:**
     * ``total_violation_duration()`` — Get total duration of violations in seconds
+    * ``in_constraint(time)`` — Check if constraint is satisfied at a given time
+      
+      - ``time`` — Python datetime object (must exist in result timestamps)
+      - Returns: ``bool`` (True if satisfied, False if violated)
 
 **ConstraintViolation**
   Information about a specific constraint violation time window.
@@ -121,6 +150,14 @@ Classes
     * ``end_time`` — End time of violation window (ISO 8601 string)
     * ``max_severity`` — Maximum severity of violation (0.0 = just violated, 1.0+ = severe)
     * ``description`` — Human-readable description of the violation
+
+**VisibilityWindow**
+  Time window when observation target is not constrained (visible).
+  
+  **Attributes (read-only):**
+    * ``start_time`` — Start time of visibility window (Python datetime)
+    * ``end_time`` — End time of visibility window (Python datetime)
+    * ``duration_seconds`` — Duration of the window in seconds (computed property)
 
 **PositionVelocityData**
   Container for position and velocity data returned by ephemeris calculations.
@@ -253,3 +290,46 @@ Constraint configurations support Python bitwise operators for convenient combin
 * ``~constraint`` — Logical NOT (equivalent to ``NotConstraintConfig``)
 
 Usage examples are provided in the examples section of the docs.
+
+Performance Notes
+^^^^^^^^^^^^^^^^^
+
+**Constraint Evaluation Optimizations**
+
+The constraint system includes several performance optimizations for efficient evaluation:
+
+* **Property Caching**: The ``timestamp`` and ``constraint_array`` properties on ephemeris and constraint result objects are cached for repeated access (90x+ speedup on subsequent accesses)
+
+* **Subset Evaluation**: Use ``times`` or ``indices`` parameters in ``evaluate()`` to compute constraints for specific times only, avoiding full ephemeris evaluation
+
+* **Single Time Checks**: For checking a single time, use ``Constraint.in_constraint()`` which is optimized for single-point evaluation
+
+* **Optimal Usage Patterns**:
+
+  - **FASTEST**: Evaluate once, then use ``constraint_array`` property::
+  
+      result = constraint.evaluate(eph, ra, dec)
+      for i in range(len(result.timestamp)):
+          if result.constraint_array[i]:  # ~1000x faster than alternatives
+              # Target is visible at this time
+              pass
+  
+  - **FAST**: Evaluate once, then loop over result::
+  
+      result = constraint.evaluate(eph, ra, dec)
+      for i, time in enumerate(result.timestamp):
+          if result.in_constraint(time):  # ~100x faster than evaluating each time
+              # Target is visible
+              pass
+  
+  - **SLOW (avoid)**: Calling ``in_constraint()`` in a loop::
+  
+      # Don't do this - evaluates ephemeris 1000s of times!
+      for time in eph.timestamp:
+          if constraint.in_constraint(time, eph, ra, dec):
+              pass
+
+**Timestamp Access**
+
+All ephemeris and constraint result objects return NumPy arrays for the ``timestamp`` property, which is significantly faster than Python lists for indexing operations.
+
