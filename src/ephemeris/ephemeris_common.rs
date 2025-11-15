@@ -142,6 +142,10 @@ pub trait EphemerisBase {
     /// Returns None if not yet created (lazy initialization)
     fn get_itrs_skycoord_ref(&self) -> Option<&Py<PyAny>>;
 
+    /// Set the ITRS SkyCoord cache
+    /// This must be implemented by each ephemeris type to store in its OnceLock
+    fn set_itrs_skycoord_cache(&self, skycoord: Py<PyAny>) -> Result<(), Py<PyAny>>;
+
     /// Get ITRS position and velocity in PositionVelocityData format
     fn get_itrs_pv(&self, py: Python) -> Option<Py<PositionVelocityData>> {
         self.get_itrs_data()
@@ -480,10 +484,21 @@ pub trait EphemerisBase {
     }
 
     /// Get ITRS SkyCoord - helper for ephemeris types that support ITRS
-    /// Creates the SkyCoord from ITRS data without caching (ITRS cached separately per type)
+    /// Default implementation provides lazy initialization with caching
     fn itrs_to_skycoord_helper(&self, py: Python) -> PyResult<Py<PyAny>> {
+        // Check cache first
+        if let Some(cached) = self.get_itrs_skycoord_ref() {
+            return Ok(cached.clone_ref(py));
+        }
+
+        // Create the SkyCoord
         let modules = AstropyModules::import(py)?;
-        self.itrs_to_skycoord(py, &modules)
+        let skycoord = self.itrs_to_skycoord(py, &modules)?;
+
+        // Try to cache it (may fail if another thread cached it first, which is fine)
+        let _ = self.set_itrs_skycoord_cache(skycoord.clone_ref(py));
+
+        Ok(skycoord)
     }
 
     /// Convert to astropy SkyCoord object with ITRS frame

@@ -302,19 +302,7 @@ impl EphemerisBase for SPICEEphemeris {
         self.itrs_skycoord.get()
     }
 
-    fn itrs_to_skycoord_helper(&self, py: Python) -> PyResult<Py<PyAny>> {
-        // Check cache first
-        if let Some(cached) = self.itrs_skycoord.get() {
-            return Ok(cached.clone_ref(py));
-        }
-
-        // Create the SkyCoord
-        let modules = AstropyModules::import(py)?;
-        let skycoord = self.itrs_to_skycoord(py, &modules)?;
-
-        // Try to cache it
-        let _ = self.itrs_skycoord.set(skycoord.clone_ref(py));
-
-        Ok(skycoord)
+    fn set_itrs_skycoord_cache(&self, skycoord: Py<PyAny>) -> Result<(), Py<PyAny>> {
+        self.itrs_skycoord.set(skycoord)
     }
 }
