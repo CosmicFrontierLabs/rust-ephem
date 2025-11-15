@@ -126,11 +126,7 @@ impl TLEEphemeris {
         })?;
 
         // Parse TLE - concatenate with newlines (parse_2les expects newline-separated format)
-        let tle_string = format!(
-            "{}
-{}",
-            self.tle1, self.tle2
-        );
+        let tle_string = format!("{}\n{}", self.tle1, self.tle2);
         let elements_vec = parse_2les(&tle_string).map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("TLE parse error: {e:?}"))
         })?;
