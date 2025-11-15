@@ -207,7 +207,7 @@ jobs:
               uses: PyO3/maturin-action@v1
               with:
                   command: upload
-                  args: --non-interactive --skip-existing dist/* --repository-url https://test.pypi.org/legacy/
+                  args: --non-interactive --skip-existing --repository-url https://test.pypi.org/legacy/ dist/*
 
     publish:
         name: Publish to PyPI
