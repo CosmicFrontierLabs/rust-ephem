@@ -31,13 +31,24 @@ jobs:
                   sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
                   rm -f Cargo.toml.bak
 
-            - name: Build wheels
-              uses: PyO3/maturin-action@v1
+            - name: Set up Python
+              uses: actions/setup-python@v5
               with:
-                  target: x86_64
-                  args: --release --out dist --interpreter 3.10 3.11 3.12 3.13
-                  manylinux: auto
-                  sccache: true
+                  python-version: "3.11"
+
+            - name: Install Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
+
+            - name: Cache Rust dependencies
+              uses: Swatinem/rust-cache@v2
+              with:
+                  cache-on-failure: true
+
+            - name: Install maturin
+              run: pip install maturin
+
+            - name: Build wheels
+              run: maturin build --release --out dist
 
             - name: Upload wheels
               uses: actions/upload-artifact@v4
