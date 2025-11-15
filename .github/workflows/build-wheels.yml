@@ -31,6 +31,8 @@ jobs:
           args: --release --out dist --interpreter 3.10 3.11 3.12 3.13
           manylinux: auto
           sccache: true
+        env:
+          OPENSSL_NO_VENDOR: "1"
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -67,6 +69,7 @@ jobs:
           sccache: true
         env:
           CFLAGS_aarch64_unknown_linux_gnu: "-D__ARM_ARCH=8"
+          OPENSSL_NO_VENDOR: "1"
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
