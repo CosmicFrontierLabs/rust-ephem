@@ -42,6 +42,7 @@ impl ConstraintEvaluator for SunProximityEvaluator {
         _moon_positions: &Array2<f64>,
         observer_positions: &Array2<f64>,
     ) -> ConstraintResult {
+        // Cache target vector computation outside the loop
         let target_vec = radec_to_unit_vector(target_ra, target_dec);
 
         let violations = track_violations(
@@ -83,12 +84,7 @@ impl ConstraintEvaluator for SunProximityEvaluator {
         );
 
         let all_satisfied = violations.is_empty();
-        ConstraintResult {
-            violations,
-            all_satisfied,
-            constraint_name: self.name(),
-            times: times.to_vec(),
-        }
+        ConstraintResult::new(violations, all_satisfied, self.name(), times.to_vec())
     }
 
     fn name(&self) -> String {

@@ -8,14 +8,14 @@ and operator overloads.
 import pytest
 
 from rust_ephem.constraints import (
-    AndConstraintConfig,
-    BodyConstraintConfig,
-    EarthLimbConstraintConfig,
-    EclipseConstraintConfig,
-    MoonConstraintConfig,
-    NotConstraintConfig,
-    OrConstraintConfig,
-    SunConstraintConfig,
+    AndConstraint,
+    BodyConstraint,
+    EarthLimbConstraint,
+    EclipseConstraint,
+    MoonConstraint,
+    NotConstraint,
+    OrConstraint,
+    SunConstraint,
 )
 
 
@@ -31,32 +31,32 @@ def mock_ephem():
 
 @pytest.fixture
 def sun_constraint():
-    """Fixture for a SunConstraintConfig instance."""
-    return SunConstraintConfig(min_angle=45.0)
+    """Fixture for a SunConstraint instance."""
+    return SunConstraint(min_angle=45.0)
 
 
 @pytest.fixture
 def moon_constraint():
-    """Fixture for a MoonConstraintConfig instance."""
-    return MoonConstraintConfig(min_angle=30.0)
+    """Fixture for a MoonConstraint instance."""
+    return MoonConstraint(min_angle=30.0)
 
 
 @pytest.fixture
 def eclipse_constraint():
-    """Fixture for an EclipseConstraintConfig instance."""
-    return EclipseConstraintConfig(umbra_only=True)
+    """Fixture for an EclipseConstraint instance."""
+    return EclipseConstraint(umbra_only=True)
 
 
 @pytest.fixture
 def earth_limb_constraint():
-    """Fixture for an EarthLimbConstraintConfig instance."""
-    return EarthLimbConstraintConfig(min_angle=10.0)
+    """Fixture for an EarthLimbConstraint instance."""
+    return EarthLimbConstraint(min_angle=10.0)
 
 
 @pytest.fixture
 def body_constraint():
-    """Fixture for a BodyConstraintConfig instance."""
-    return BodyConstraintConfig(body="Mars", min_angle=15.0)
+    """Fixture for a BodyConstraint instance."""
+    return BodyConstraint(body="Mars", min_angle=15.0)
 
 
 class TestRustConstraintMixin:
@@ -97,22 +97,22 @@ class TestRustConstraintMixin:
     def test_operator_precedence_expr_is_or(
         self, sun_constraint, moon_constraint, eclipse_constraint
     ):
-        """Test operator precedence: expression is OrConstraintConfig."""
+        """Test operator precedence: expression is OrConstraint."""
         sun = sun_constraint
         moon = moon_constraint
         eclipse = eclipse_constraint
         expr = sun & moon | eclipse
-        assert isinstance(expr, OrConstraintConfig)
+        assert isinstance(expr, OrConstraint)
 
     def test_operator_precedence_first_constraint_is_and(
         self, sun_constraint, moon_constraint, eclipse_constraint
     ):
-        """Test operator precedence: first constraint in OR is AndConstraintConfig."""
+        """Test operator precedence: first constraint in OR is AndConstraint."""
         sun = sun_constraint
         moon = moon_constraint
         eclipse = eclipse_constraint
         expr = sun & moon | eclipse
-        assert isinstance(expr.constraints[0], AndConstraintConfig)
+        assert isinstance(expr.constraints[0], AndConstraint)
 
     def test_operator_precedence_second_constraint_is_eclipse(
         self, sun_constraint, moon_constraint, eclipse_constraint
@@ -125,204 +125,204 @@ class TestRustConstraintMixin:
         assert expr.constraints[1] is eclipse
 
 
-class TestConstraintConfigs:
+class TestConstraints:
     """Test individual constraint configuration classes."""
 
     def test_sun_constraint_config_type(self, sun_constraint):
-        """Test SunConstraintConfig type."""
+        """Test SunConstraint type."""
         config = sun_constraint
         assert config.type == "sun"
 
     def test_sun_constraint_config_min_angle(self, sun_constraint):
-        """Test SunConstraintConfig min_angle."""
+        """Test SunConstraint min_angle."""
         config = sun_constraint
         assert config.min_angle == 45.0
 
     def test_sun_constraint_config_max_angle_default(self, sun_constraint):
-        """Test SunConstraintConfig max_angle defaults to None."""
+        """Test SunConstraint max_angle defaults to None."""
         config = sun_constraint
         assert config.max_angle is None
 
     def test_sun_constraint_config_max_angle(self):
-        """Test SunConstraintConfig max_angle can be set."""
-        config = SunConstraintConfig(min_angle=45.0, max_angle=90.0)
+        """Test SunConstraint max_angle can be set."""
+        config = SunConstraint(min_angle=45.0, max_angle=90.0)
         assert config.max_angle == 90.0
 
     def test_sun_constraint_config_validation_max_angle_below_minimum(self):
-        """Test SunConstraintConfig validation for max_angle below minimum."""
+        """Test SunConstraint validation for max_angle below minimum."""
         with pytest.raises(ValueError):
-            SunConstraintConfig(min_angle=45.0, max_angle=-10.0)
+            SunConstraint(min_angle=45.0, max_angle=-10.0)
 
     def test_sun_constraint_config_validation_max_angle_above_maximum(self):
-        """Test SunConstraintConfig validation for max_angle above maximum."""
+        """Test SunConstraint validation for max_angle above maximum."""
         with pytest.raises(ValueError):
-            SunConstraintConfig(min_angle=45.0, max_angle=200.0)
+            SunConstraint(min_angle=45.0, max_angle=200.0)
 
     def test_sun_constraint_config_validation_min_angle_below_minimum(self):
-        """Test SunConstraintConfig validation for min_angle below minimum."""
+        """Test SunConstraint validation for min_angle below minimum."""
         with pytest.raises(ValueError):
-            SunConstraintConfig(min_angle=-10.0)
+            SunConstraint(min_angle=-10.0)
 
     def test_sun_constraint_config_validation_min_angle_above_maximum(self):
-        """Test SunConstraintConfig validation for min_angle above maximum."""
+        """Test SunConstraint validation for min_angle above maximum."""
         with pytest.raises(ValueError):
-            SunConstraintConfig(min_angle=200.0)
+            SunConstraint(min_angle=200.0)
 
     def test_moon_constraint_config_type(self, moon_constraint):
-        """Test MoonConstraintConfig type."""
+        """Test MoonConstraint type."""
         config = moon_constraint
         assert config.type == "moon"
 
     def test_moon_constraint_config_min_angle(self, moon_constraint):
-        """Test MoonConstraintConfig min_angle."""
+        """Test MoonConstraint min_angle."""
         config = moon_constraint
         assert config.min_angle == 30.0
 
     def test_moon_constraint_config_max_angle_default(self, moon_constraint):
-        """Test MoonConstraintConfig max_angle defaults to None."""
+        """Test MoonConstraint max_angle defaults to None."""
         config = moon_constraint
         assert config.max_angle is None
 
     def test_moon_constraint_config_max_angle(self):
-        """Test MoonConstraintConfig max_angle can be set."""
-        config = MoonConstraintConfig(min_angle=30.0, max_angle=60.0)
+        """Test MoonConstraint max_angle can be set."""
+        config = MoonConstraint(min_angle=30.0, max_angle=60.0)
         assert config.max_angle == 60.0
 
     def test_moon_constraint_config_validation_max_angle_below_minimum(self):
-        """Test MoonConstraintConfig validation for max_angle below minimum."""
+        """Test MoonConstraint validation for max_angle below minimum."""
         with pytest.raises(ValueError):
-            MoonConstraintConfig(min_angle=30.0, max_angle=-10.0)
+            MoonConstraint(min_angle=30.0, max_angle=-10.0)
 
     def test_moon_constraint_config_validation_max_angle_above_maximum(self):
-        """Test MoonConstraintConfig validation for max_angle above maximum."""
+        """Test MoonConstraint validation for max_angle above maximum."""
         with pytest.raises(ValueError):
-            MoonConstraintConfig(min_angle=30.0, max_angle=200.0)
+            MoonConstraint(min_angle=30.0, max_angle=200.0)
 
     def test_earth_limb_constraint_config_type(self, earth_limb_constraint):
-        """Test EarthLimbConstraintConfig type."""
+        """Test EarthLimbConstraint type."""
         config = earth_limb_constraint
         assert config.type == "earth_limb"
 
     def test_earth_limb_constraint_config_min_angle(self, earth_limb_constraint):
-        """Test EarthLimbConstraintConfig min_angle."""
+        """Test EarthLimbConstraint min_angle."""
         config = earth_limb_constraint
         assert config.min_angle == 10.0
 
     def test_earth_limb_constraint_config_max_angle_default(
         self, earth_limb_constraint
     ):
-        """Test EarthLimbConstraintConfig max_angle defaults to None."""
+        """Test EarthLimbConstraint max_angle defaults to None."""
         config = earth_limb_constraint
         assert config.max_angle is None
 
     def test_earth_limb_constraint_config_max_angle(self):
-        """Test EarthLimbConstraintConfig max_angle can be set."""
-        config = EarthLimbConstraintConfig(min_angle=10.0, max_angle=45.0)
+        """Test EarthLimbConstraint max_angle can be set."""
+        config = EarthLimbConstraint(min_angle=10.0, max_angle=45.0)
         assert config.max_angle == 45.0
 
     def test_earth_limb_constraint_config_validation_max_angle_below_minimum(self):
-        """Test EarthLimbConstraintConfig validation for max_angle below minimum."""
+        """Test EarthLimbConstraint validation for max_angle below minimum."""
         with pytest.raises(ValueError):
-            EarthLimbConstraintConfig(min_angle=10.0, max_angle=-10.0)
+            EarthLimbConstraint(min_angle=10.0, max_angle=-10.0)
 
     def test_earth_limb_constraint_config_validation_max_angle_above_maximum(self):
-        """Test EarthLimbConstraintConfig validation for max_angle above maximum."""
+        """Test EarthLimbConstraint validation for max_angle above maximum."""
         with pytest.raises(ValueError):
-            EarthLimbConstraintConfig(min_angle=10.0, max_angle=200.0)
+            EarthLimbConstraint(min_angle=10.0, max_angle=200.0)
 
     def test_body_constraint_config_type(self, body_constraint):
-        """Test BodyConstraintConfig type."""
+        """Test BodyConstraint type."""
         config = body_constraint
         assert config.type == "body"
 
     def test_body_constraint_config_body(self, body_constraint):
-        """Test BodyConstraintConfig body."""
+        """Test BodyConstraint body."""
         config = body_constraint
         assert config.body == "Mars"
 
     def test_body_constraint_config_min_angle(self, body_constraint):
-        """Test BodyConstraintConfig min_angle."""
+        """Test BodyConstraint min_angle."""
         config = body_constraint
         assert config.min_angle == 15.0
 
     def test_body_constraint_config_max_angle_default(self, body_constraint):
-        """Test BodyConstraintConfig max_angle defaults to None."""
+        """Test BodyConstraint max_angle defaults to None."""
         config = body_constraint
         assert config.max_angle is None
 
     def test_body_constraint_config_max_angle(self):
-        """Test BodyConstraintConfig max_angle can be set."""
-        config = BodyConstraintConfig(body="Mars", min_angle=15.0, max_angle=75.0)
+        """Test BodyConstraint max_angle can be set."""
+        config = BodyConstraint(body="Mars", min_angle=15.0, max_angle=75.0)
         assert config.max_angle == 75.0
 
     def test_body_constraint_config_validation_max_angle_below_minimum(self):
-        """Test BodyConstraintConfig validation for max_angle below minimum."""
+        """Test BodyConstraint validation for max_angle below minimum."""
         with pytest.raises(ValueError):
-            BodyConstraintConfig(body="Mars", min_angle=15.0, max_angle=-10.0)
+            BodyConstraint(body="Mars", min_angle=15.0, max_angle=-10.0)
 
     def test_body_constraint_config_validation_max_angle_above_maximum(self):
-        """Test BodyConstraintConfig validation for max_angle above maximum."""
+        """Test BodyConstraint validation for max_angle above maximum."""
         with pytest.raises(ValueError):
-            BodyConstraintConfig(body="Mars", min_angle=15.0, max_angle=200.0)
+            BodyConstraint(body="Mars", min_angle=15.0, max_angle=200.0)
 
     def test_eclipse_constraint_config_type(self, eclipse_constraint):
-        """Test EclipseConstraintConfig type."""
+        """Test EclipseConstraint type."""
         config = eclipse_constraint
         assert config.type == "eclipse"
 
     def test_eclipse_constraint_config_umbra_only(self, eclipse_constraint):
-        """Test EclipseConstraintConfig umbra_only."""
+        """Test EclipseConstraint umbra_only."""
         config = eclipse_constraint
         assert config.umbra_only is True
 
     def test_eclipse_constraint_config_default_umbra_only(self):
-        """Test EclipseConstraintConfig default umbra_only."""
-        config2 = EclipseConstraintConfig()
+        """Test EclipseConstraint default umbra_only."""
+        config2 = EclipseConstraint()
         assert config2.umbra_only is True
 
     def test_and_constraint_config_type(self, sun_constraint, moon_constraint):
-        """Test AndConstraintConfig type."""
+        """Test AndConstraint type."""
         sun = sun_constraint
         moon = moon_constraint
-        config = AndConstraintConfig(constraints=[sun, moon])
+        config = AndConstraint(constraints=[sun, moon])
         assert config.type == "and"
 
     def test_and_constraint_config_length(self, sun_constraint, moon_constraint):
-        """Test AndConstraintConfig constraints length."""
+        """Test AndConstraint constraints length."""
         sun = sun_constraint
         moon = moon_constraint
-        config = AndConstraintConfig(constraints=[sun, moon])
+        config = AndConstraint(constraints=[sun, moon])
         assert len(config.constraints) == 2
 
     def test_and_constraint_config_validation_empty_list(self):
-        """Test AndConstraintConfig validation for empty constraints."""
+        """Test AndConstraint validation for empty constraints."""
         with pytest.raises(ValueError):
-            AndConstraintConfig(constraints=[])
+            AndConstraint(constraints=[])
 
     def test_or_constraint_config_type(self, sun_constraint, moon_constraint):
-        """Test OrConstraintConfig type."""
+        """Test OrConstraint type."""
         sun = sun_constraint
         moon = moon_constraint
-        config = OrConstraintConfig(constraints=[sun, moon])
+        config = OrConstraint(constraints=[sun, moon])
         assert config.type == "or"
 
     def test_or_constraint_config_length(self, sun_constraint, moon_constraint):
-        """Test OrConstraintConfig constraints length."""
+        """Test OrConstraint constraints length."""
         sun = sun_constraint
         moon = moon_constraint
-        config = OrConstraintConfig(constraints=[sun, moon])
+        config = OrConstraint(constraints=[sun, moon])
         assert len(config.constraints) == 2
 
     def test_not_constraint_config_type(self, sun_constraint):
-        """Test NotConstraintConfig type."""
+        """Test NotConstraint type."""
         sun = sun_constraint
-        config = NotConstraintConfig(constraint=sun)
+        config = NotConstraint(constraint=sun)
         assert config.type == "not"
 
     def test_not_constraint_config_constraint(self, sun_constraint):
-        """Test NotConstraintConfig constraint."""
+        """Test NotConstraint constraint."""
         sun = sun_constraint
-        config = NotConstraintConfig(constraint=sun)
+        config = NotConstraint(constraint=sun)
         assert config.constraint is sun
 
 
@@ -330,40 +330,40 @@ class TestConstraintSerialization:
     """Test JSON serialization/deserialization of constraints."""
 
     def test_sun_constraint_serialization_type_in_json(self, sun_constraint):
-        """Test SunConstraintConfig JSON contains type."""
+        """Test SunConstraint JSON contains type."""
         config = sun_constraint
         json_str = config.model_dump_json()
         assert '"type":"sun"' in json_str
 
     def test_sun_constraint_serialization_min_angle_in_json(self, sun_constraint):
-        """Test SunConstraintConfig JSON contains min_angle."""
+        """Test SunConstraint JSON contains min_angle."""
         config = sun_constraint
         json_str = config.model_dump_json()
         assert '"min_angle":45.0' in json_str
 
     def test_sun_constraint_serialization_max_angle_in_json(self):
-        """Test SunConstraintConfig JSON contains max_angle when set."""
-        config = SunConstraintConfig(min_angle=45.0, max_angle=90.0)
+        """Test SunConstraint JSON contains max_angle when set."""
+        config = SunConstraint(min_angle=45.0, max_angle=90.0)
         json_str = config.model_dump_json()
         assert '"max_angle":90.0' in json_str
 
     def test_sun_constraint_serialization_max_angle_none_in_json(self, sun_constraint):
-        """Test SunConstraintConfig JSON contains max_angle as null when None."""
+        """Test SunConstraint JSON contains max_angle as null when None."""
         config = sun_constraint
         json_str = config.model_dump_json()
         assert '"max_angle":null' in json_str
 
     def test_sun_constraint_deserialization_type(self, sun_constraint):
-        """Test SunConstraintConfig deserialization type."""
+        """Test SunConstraint deserialization type."""
         config = sun_constraint
         json_str = config.model_dump_json()
         from rust_ephem.constraints import CombinedConstraintConfig
 
         restored = CombinedConstraintConfig.validate_json(json_str)
-        assert isinstance(restored, SunConstraintConfig)
+        assert isinstance(restored, SunConstraint)
 
     def test_sun_constraint_deserialization_min_angle(self, sun_constraint):
-        """Test SunConstraintConfig deserialization min_angle."""
+        """Test SunConstraint deserialization min_angle."""
         config = sun_constraint
         json_str = config.model_dump_json()
         from rust_ephem.constraints import CombinedConstraintConfig
@@ -372,8 +372,8 @@ class TestConstraintSerialization:
         assert restored.min_angle == 45.0
 
     def test_sun_constraint_deserialization_max_angle(self):
-        """Test SunConstraintConfig deserialization max_angle."""
-        config = SunConstraintConfig(min_angle=45.0, max_angle=90.0)
+        """Test SunConstraint deserialization max_angle."""
+        config = SunConstraint(min_angle=45.0, max_angle=90.0)
         json_str = config.model_dump_json()
         from rust_ephem.constraints import CombinedConstraintConfig
 
@@ -403,7 +403,7 @@ class TestConstraintSerialization:
         from rust_ephem.constraints import CombinedConstraintConfig
 
         restored = CombinedConstraintConfig.validate_json(json_str)
-        assert isinstance(restored, OrConstraintConfig)
+        assert isinstance(restored, OrConstraint)
 
     def test_complex_constraint_deserialization_length(
         self, sun_constraint, moon_constraint, eclipse_constraint
@@ -431,7 +431,7 @@ class TestConstraintSerialization:
         from rust_ephem.constraints import CombinedConstraintConfig
 
         restored = CombinedConstraintConfig.validate_json(json_str)
-        assert isinstance(restored.constraints[0], AndConstraintConfig)
+        assert isinstance(restored.constraints[0], AndConstraint)
 
     def test_complex_constraint_deserialization_second_is_not(
         self, sun_constraint, moon_constraint, eclipse_constraint
@@ -445,7 +445,7 @@ class TestConstraintSerialization:
         from rust_ephem.constraints import CombinedConstraintConfig
 
         restored = CombinedConstraintConfig.validate_json(json_str)
-        assert isinstance(restored.constraints[1], NotConstraintConfig)
+        assert isinstance(restored.constraints[1], NotConstraint)
 
 
 class TestLogicalOperators:
@@ -454,16 +454,16 @@ class TestLogicalOperators:
     def test_and_method_creates_and_constraint_type(
         self, sun_constraint, moon_constraint
     ):
-        """Test and_ method creates AndConstraintConfig type."""
+        """Test and_ method creates AndConstraint type."""
         sun = sun_constraint
         moon = moon_constraint
         combined = sun.and_(moon)
-        assert isinstance(combined, AndConstraintConfig)
+        assert isinstance(combined, AndConstraint)
 
     def test_and_method_creates_and_constraint_length(
         self, sun_constraint, moon_constraint
     ):
-        """Test and_ method creates AndConstraintConfig with correct length."""
+        """Test and_ method creates AndConstraint with correct length."""
         sun = sun_constraint
         moon = moon_constraint
         combined = sun.and_(moon)
@@ -472,7 +472,7 @@ class TestLogicalOperators:
     def test_and_method_creates_and_constraint_first(
         self, sun_constraint, moon_constraint
     ):
-        """Test and_ method creates AndConstraintConfig with correct first constraint."""
+        """Test and_ method creates AndConstraint with correct first constraint."""
         sun = sun_constraint
         moon = moon_constraint
         combined = sun.and_(moon)
@@ -481,7 +481,7 @@ class TestLogicalOperators:
     def test_and_method_creates_and_constraint_second(
         self, sun_constraint, moon_constraint
     ):
-        """Test and_ method creates AndConstraintConfig with correct second constraint."""
+        """Test and_ method creates AndConstraint with correct second constraint."""
         sun = sun_constraint
         moon = moon_constraint
         combined = sun.and_(moon)
@@ -490,16 +490,16 @@ class TestLogicalOperators:
     def test_or_method_creates_or_constraint_type(
         self, sun_constraint, moon_constraint
     ):
-        """Test or_ method creates OrConstraintConfig type."""
+        """Test or_ method creates OrConstraint type."""
         sun = sun_constraint
         moon = moon_constraint
         combined = sun.or_(moon)
-        assert isinstance(combined, OrConstraintConfig)
+        assert isinstance(combined, OrConstraint)
 
     def test_or_method_creates_or_constraint_length(
         self, sun_constraint, moon_constraint
     ):
-        """Test or_ method creates OrConstraintConfig with correct length."""
+        """Test or_ method creates OrConstraint with correct length."""
         sun = sun_constraint
         moon = moon_constraint
         combined = sun.or_(moon)
@@ -508,7 +508,7 @@ class TestLogicalOperators:
     def test_or_method_creates_or_constraint_first(
         self, sun_constraint, moon_constraint
     ):
-        """Test or_ method creates OrConstraintConfig with correct first constraint."""
+        """Test or_ method creates OrConstraint with correct first constraint."""
         sun = sun_constraint
         moon = moon_constraint
         combined = sun.or_(moon)
@@ -517,70 +517,70 @@ class TestLogicalOperators:
     def test_or_method_creates_or_constraint_second(
         self, sun_constraint, moon_constraint
     ):
-        """Test or_ method creates OrConstraintConfig with correct second constraint."""
+        """Test or_ method creates OrConstraint with correct second constraint."""
         sun = sun_constraint
         moon = moon_constraint
         combined = sun.or_(moon)
         assert combined.constraints[1] is moon
 
     def test_not_method_creates_not_constraint_type(self, sun_constraint):
-        """Test not_ method creates NotConstraintConfig type."""
+        """Test not_ method creates NotConstraint type."""
         sun = sun_constraint
         negated = sun.not_()
-        assert isinstance(negated, NotConstraintConfig)
+        assert isinstance(negated, NotConstraint)
 
     def test_not_method_creates_not_constraint_constraint(self, sun_constraint):
-        """Test not_ method creates NotConstraintConfig with correct constraint."""
+        """Test not_ method creates NotConstraint with correct constraint."""
         sun = sun_constraint
         negated = sun.not_()
         assert negated.constraint is sun
 
     def test_and_operator_overload_type(self, sun_constraint, moon_constraint):
-        """Test __and__ operator creates AndConstraintConfig type."""
+        """Test __and__ operator creates AndConstraint type."""
         sun = sun_constraint
         moon = moon_constraint
         combined = sun & moon
-        assert isinstance(combined, AndConstraintConfig)
+        assert isinstance(combined, AndConstraint)
 
     def test_and_operator_overload_length(self, sun_constraint, moon_constraint):
-        """Test __and__ operator creates AndConstraintConfig with correct length."""
+        """Test __and__ operator creates AndConstraint with correct length."""
         sun = sun_constraint
         moon = moon_constraint
         combined = sun & moon
         assert len(combined.constraints) == 2
 
     def test_or_operator_overload_type(self, sun_constraint, moon_constraint):
-        """Test __or__ operator creates OrConstraintConfig type."""
+        """Test __or__ operator creates OrConstraint type."""
         sun = sun_constraint
         moon = moon_constraint
         combined = sun | moon
-        assert isinstance(combined, OrConstraintConfig)
+        assert isinstance(combined, OrConstraint)
 
     def test_or_operator_overload_length(self, sun_constraint, moon_constraint):
-        """Test __or__ operator creates OrConstraintConfig with correct length."""
+        """Test __or__ operator creates OrConstraint with correct length."""
         sun = sun_constraint
         moon = moon_constraint
         combined = sun | moon
         assert len(combined.constraints) == 2
 
     def test_invert_operator_overload_type(self, sun_constraint):
-        """Test __invert__ operator creates NotConstraintConfig type."""
+        """Test __invert__ operator creates NotConstraint type."""
         sun = sun_constraint
         negated = ~sun
-        assert isinstance(negated, NotConstraintConfig)
+        assert isinstance(negated, NotConstraint)
 
     def test_invert_operator_overload_constraint(self, sun_constraint):
-        """Test __invert__ operator creates NotConstraintConfig with correct constraint."""
+        """Test __invert__ operator creates NotConstraint with correct constraint."""
         sun = sun_constraint
         negated = ~sun
         assert negated.constraint is sun
 
     def test_operator_chaining_type(self, sun_constraint, moon_constraint):
-        """Test chaining of logical operators creates OrConstraintConfig."""
+        """Test chaining of logical operators creates OrConstraint."""
         sun = sun_constraint
         moon = moon_constraint
         combined = (sun & moon) | sun
-        assert isinstance(combined, OrConstraintConfig)
+        assert isinstance(combined, OrConstraint)
 
     def test_operator_chaining_length(self, sun_constraint, moon_constraint):
         """Test chaining of logical operators has correct length."""
@@ -594,7 +594,7 @@ class TestLogicalOperators:
         sun = sun_constraint
         moon = moon_constraint
         combined = (sun & moon) | sun
-        assert isinstance(combined.constraints[0], AndConstraintConfig)
+        assert isinstance(combined.constraints[0], AndConstraint)
 
     def test_operator_chaining_second_is_sun(self, sun_constraint, moon_constraint):
         """Test chaining of logical operators second constraint is sun."""
@@ -604,17 +604,17 @@ class TestLogicalOperators:
         assert combined.constraints[1] is sun
 
     def test_nested_logical_operations_type(self, sun_constraint, moon_constraint):
-        """Test nested logical operations creates NotConstraintConfig."""
+        """Test nested logical operations creates NotConstraint."""
         sun = sun_constraint
         moon = moon_constraint
         nested = ~(sun & moon)
-        assert isinstance(nested, NotConstraintConfig)
+        assert isinstance(nested, NotConstraint)
 
     def test_nested_logical_operations_constraint_type(
         self, sun_constraint, moon_constraint
     ):
-        """Test nested logical operations constraint is AndConstraintConfig."""
+        """Test nested logical operations constraint is AndConstraint."""
         sun = sun_constraint
         moon = moon_constraint
         nested = ~(sun & moon)
-        assert isinstance(nested.constraint, AndConstraintConfig)
+        assert isinstance(nested.constraint, AndConstraint)

@@ -63,31 +63,31 @@ from rust_ephem._rust_ephem import (
 
 # Re-export from constraints
 from rust_ephem.constraints import (
-    AndConstraintConfig as AndConstraintConfig,
+    AndConstraint as AndConstraint,
 )
 from rust_ephem.constraints import (
-    BodyConstraintConfig as BodyConstraintConfig,
+    BodyConstraint as BodyConstraint,
 )
 from rust_ephem.constraints import (
     CombinedConstraintConfig as CombinedConstraintConfig,
 )
 from rust_ephem.constraints import (
-    EarthLimbConstraintConfig as EarthLimbConstraintConfig,
+    EarthLimbConstraint as EarthLimbConstraint,
 )
 from rust_ephem.constraints import (
-    EclipseConstraintConfig as EclipseConstraintConfig,
+    EclipseConstraint as EclipseConstraint,
 )
 from rust_ephem.constraints import (
-    MoonConstraintConfig as MoonConstraintConfig,
+    MoonConstraint as MoonConstraint,
 )
 from rust_ephem.constraints import (
-    NotConstraintConfig as NotConstraintConfig,
+    NotConstraint as NotConstraint,
 )
 from rust_ephem.constraints import (
-    OrConstraintConfig as OrConstraintConfig,
+    OrConstraint as OrConstraint,
 )
 from rust_ephem.constraints import (
-    SunConstraintConfig as SunConstraintConfig,
+    SunConstraint as SunConstraint,
 )
 
 # Optional convenience functions (may not be available)
@@ -99,15 +99,15 @@ def not_constraint(*args: Any, **kwargs: Any) -> Any: ...
 def sun_proximity(*args: Any, **kwargs: Any) -> Any: ...
 
 __all__ = [
-    "SunConstraintConfig",
-    "MoonConstraintConfig",
-    "EarthLimbConstraintConfig",
-    "EclipseConstraintConfig",
-    "BodyConstraintConfig",
+    "SunConstraint",
+    "MoonConstraint",
+    "EarthLimbConstraint",
+    "EclipseConstraint",
+    "BodyConstraint",
     "CombinedConstraintConfig",
-    "AndConstraintConfig",
-    "OrConstraintConfig",
-    "NotConstraintConfig",
+    "AndConstraint",
+    "OrConstraint",
+    "NotConstraint",
     "TLEEphemeris",
     "SPICEEphemeris",
     "GroundEphemeris",

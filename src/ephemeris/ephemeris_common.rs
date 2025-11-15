@@ -2,6 +2,7 @@ use chrono::{DateTime, Datelike, Duration, Timelike, Utc};
 use ndarray::{s, Array2};
 use numpy::IntoPyArray;
 use pyo3::{prelude::*, types::PyDateTime};
+use std::sync::OnceLock;
 
 use crate::ephemeris::position_velocity::PositionVelocityData;
 use crate::utils::celestial::{calculate_moon_positions, calculate_sun_positions};
@@ -96,6 +97,8 @@ pub struct EphemerisData {
     pub earth_skycoord: Option<Py<PyAny>>,
     pub sun_skycoord: Option<Py<PyAny>>,
     pub moon_skycoord: Option<Py<PyAny>>,
+    /// Cached Python timestamp array (NumPy array of datetime objects)
+    pub timestamp_cache: OnceLock<Py<PyAny>>,
 }
 
 impl EphemerisData {
@@ -110,6 +113,7 @@ impl EphemerisData {
             earth_skycoord: None,
             sun_skycoord: None,
             moon_skycoord: None,
+            timestamp_cache: OnceLock::new(),
         }
     }
 }
@@ -214,8 +218,8 @@ pub trait EphemerisBase {
             })
     }
 
-    /// Get timestamps as Python datetime objects
-    fn get_timestamp(&self, py: Python) -> PyResult<Option<Vec<Py<PyDateTime>>>> {
+    /// Get timestamps as Python datetime objects (for internal use by SkyCoordConfig)
+    fn get_timestamp_vec(&self, py: Python) -> PyResult<Option<Vec<Py<PyDateTime>>>> {
         Ok(self.data().times.as_ref().map(|times| {
             times
                 .iter()
@@ -235,6 +239,39 @@ pub trait EphemerisBase {
                     .into()
                 })
                 .collect()
+        }))
+    }
+
+    /// Get timestamps as numpy array of Python datetime objects (optimized for property access)
+    fn get_timestamp(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        use crate::utils::time_utils::utc_to_python_datetime;
+
+        Ok(self.data().times.as_ref().map(|times| {
+            // Check cache first
+            if let Some(cached) = self.data().timestamp_cache.get() {
+                return cached.clone_ref(py);
+            }
+
+            // Import numpy
+            let np = pyo3::types::PyModule::import(py, "numpy")
+                .map_err(|_| pyo3::exceptions::PyImportError::new_err("numpy is required"))
+                .unwrap();
+
+            // Build list of Python datetime objects
+            let py_list = pyo3::types::PyList::empty(py);
+            for dt in times {
+                let py_dt = utc_to_python_datetime(py, dt).unwrap();
+                py_list.append(py_dt).unwrap();
+            }
+
+            // Convert to numpy array with dtype=object
+            let np_array = np.getattr("array").unwrap().call1((py_list,)).unwrap();
+            let result: Py<PyAny> = np_array.into();
+
+            // Cache the result
+            let _ = self.data().timestamp_cache.set(result.clone_ref(py));
+
+            result
         }))
     }
 
@@ -325,7 +362,7 @@ pub trait EphemerisBase {
         observer_data: Option<&'a Array2<f64>>,
     ) -> PyResult<SkyCoordConfig<'a>> {
         let time_objects = self
-            .get_timestamp(py)?
+            .get_timestamp_vec(py)?
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available."))?;
 
         Ok(SkyCoordConfig {

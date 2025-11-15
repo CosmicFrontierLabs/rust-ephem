@@ -34,11 +34,35 @@ impl PyConstraint {
         ephemeris: &E,
         target_ra: f64,
         target_dec: f64,
+        time_indices: Option<Vec<usize>>,
     ) -> PyResult<ConstraintResult> {
-        let times = ephemeris.get_times()?;
-        let sun_positions = ephemeris.get_sun_positions()?;
-        let moon_positions = ephemeris.get_moon_positions()?;
-        let observer_positions = ephemeris.get_gcrs_positions()?;
+        let mut times = ephemeris.get_times()?;
+        let mut sun_positions = ephemeris.get_sun_positions()?;
+        let mut moon_positions = ephemeris.get_moon_positions()?;
+        let mut observer_positions = ephemeris.get_gcrs_positions()?;
+
+        // Filter by time indices if provided
+        if let Some(ref indices) = time_indices {
+            // Validate indices
+            let n_times = times.len();
+            for &idx in indices {
+                if idx >= n_times {
+                    return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                        "Index {idx} out of range for ephemeris with {n_times} timestamps"
+                    )));
+                }
+            }
+
+            // Filter times and positions
+            times = indices.iter().map(|&i| times[i]).collect();
+            sun_positions =
+                Array2::from_shape_fn((indices.len(), 3), |(i, j)| sun_positions[[indices[i], j]]);
+            moon_positions =
+                Array2::from_shape_fn((indices.len(), 3), |(i, j)| moon_positions[[indices[i], j]]);
+            observer_positions = Array2::from_shape_fn((indices.len(), 3), |(i, j)| {
+                observer_positions[[indices[i], j]]
+            });
+        }
 
         // Special handling for body proximity - need to compute body positions
         if let Some(body_eval) = self
@@ -51,7 +75,14 @@ impl PyConstraint {
             let result = Python::with_gil(|py| {
                 let body_pv = ephemeris.get_body_pv(py, &body_eval.body)?;
                 let body_pv_ref = body_pv.bind(py).borrow();
-                let body_positions = body_pv_ref.position.clone();
+                let mut body_positions = body_pv_ref.position.clone();
+
+                // Filter body positions if time_indices was provided
+                if let Some(ref indices) = time_indices {
+                    body_positions = Array2::from_shape_fn((indices.len(), 3), |(i, j)| {
+                        body_positions[[indices[i], j]]
+                    });
+                }
 
                 // Pass body positions via sun_positions slot (a bit hacky but avoids API changes)
                 Ok::<_, PyErr>(self.evaluator.evaluate(
@@ -429,73 +460,198 @@ impl PyConstraint {
         })
     }
 
-    /// Evaluate constraint against a TLE ephemeris
-    ///
-    /// Args:
-    ///     ephemeris (TLEEphemeris): Ephemeris object
-    ///     target_ra (float): Target right ascension in degrees (ICRS/J2000)
-    ///     target_dec (float): Target declination in degrees (ICRS/J2000)
-    ///
-    /// Returns:
-    ///     ConstraintResult: Result containing violation windows
-    fn evaluate_tle(
-        &self,
-        ephemeris: &TLEEphemeris,
-        target_ra: f64,
-        target_dec: f64,
-    ) -> PyResult<ConstraintResult> {
-        self.eval_with_ephemeris(ephemeris, target_ra, target_dec)
-    }
-
-    /// Evaluate constraint against a SPICE ephemeris
-    ///
-    /// Args:
-    ///     ephemeris (SPICEEphemeris): Ephemeris object
-    ///     target_ra (float): Target right ascension in degrees (ICRS/J2000)
-    ///     target_dec (float): Target declination in degrees (ICRS/J2000)
-    ///
-    /// Returns:
-    ///     ConstraintResult: Result containing violation windows
-    fn evaluate_spice(
-        &self,
-        ephemeris: &SPICEEphemeris,
-        target_ra: f64,
-        target_dec: f64,
-    ) -> PyResult<ConstraintResult> {
-        self.eval_with_ephemeris(ephemeris, target_ra, target_dec)
-    }
-
     /// Evaluate constraint against any supported ephemeris type
     ///
     /// Args:
     ///     ephemeris: One of `TLEEphemeris`, `SPICEEphemeris`, or `GroundEphemeris`
     ///     target_ra (float): Target right ascension in degrees (ICRS/J2000)
     ///     target_dec (float): Target declination in degrees (ICRS/J2000)
+    ///     times (datetime or list[datetime], optional): Specific time(s) to evaluate.
+    ///         Can be a single datetime or list of datetimes. If provided, only these
+    ///         times will be evaluated (must exist in the ephemeris).
+    ///     indices (int or list[int], optional): Specific time index/indices to evaluate.
+    ///         Can be a single index or list of indices into the ephemeris timestamp array.
     ///
     /// Returns:
     ///     ConstraintResult: Result containing violation windows
-    #[pyo3(name = "evaluate")]
-    fn evaluate_any(
+    ///
+    /// Note:
+    ///     Only one of `times` or `indices` should be provided. If neither is provided,
+    ///     all ephemeris times are evaluated.
+    #[pyo3(signature = (ephemeris, target_ra, target_dec, times=None, indices=None))]
+    fn evaluate(
         &self,
         py: Python,
         ephemeris: Py<PyAny>,
         target_ra: f64,
         target_dec: f64,
+        times: Option<&Bound<PyAny>>,
+        indices: Option<&Bound<PyAny>>,
     ) -> PyResult<ConstraintResult> {
+        // Parse time filtering options
         let bound = ephemeris.bind(py);
+        let time_indices = if let Some(times_arg) = times {
+            if indices.is_some() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Cannot specify both 'times' and 'indices' parameters",
+                ));
+            }
+            Some(self.parse_times_to_indices(bound, times_arg)?)
+        } else if let Some(indices_arg) = indices {
+            Some(self.parse_indices(indices_arg)?)
+        } else {
+            None
+        };
+
         if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
-            return self.eval_with_ephemeris(&*ephem, target_ra, target_dec);
+            return self.eval_with_ephemeris(&*ephem, target_ra, target_dec, time_indices);
         }
         if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
-            return self.eval_with_ephemeris(&*ephem, target_ra, target_dec);
+            return self.eval_with_ephemeris(&*ephem, target_ra, target_dec, time_indices);
         }
         if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
-            return self.eval_with_ephemeris(&*ephem, target_ra, target_dec);
+            return self.eval_with_ephemeris(&*ephem, target_ra, target_dec, time_indices);
         }
 
         Err(pyo3::exceptions::PyTypeError::new_err(
             "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, or GroundEphemeris",
         ))
+    }
+
+    /// Helper to parse times parameter and convert to indices
+    fn parse_times_to_indices(
+        &self,
+        ephemeris: &Bound<PyAny>,
+        times_arg: &Bound<PyAny>,
+    ) -> PyResult<Vec<usize>> {
+        use std::collections::HashMap;
+
+        // Get ephemeris times - need to clone to avoid lifetime issues
+        let ephem_times: Vec<DateTime<Utc>> =
+            if let Ok(ephem) = ephemeris.extract::<PyRef<TLEEphemeris>>() {
+                ephem.data().times.as_ref().cloned()
+            } else if let Ok(ephem) = ephemeris.extract::<PyRef<SPICEEphemeris>>() {
+                ephem.data().times.as_ref().cloned()
+            } else if let Ok(ephem) = ephemeris.extract::<PyRef<GroundEphemeris>>() {
+                ephem.data().times.as_ref().cloned()
+            } else {
+                None
+            }
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times in ephemeris"))?;
+
+        // Parse input times (single datetime or list)
+        let input_times: Vec<DateTime<Utc>> = if times_arg.is_instance_of::<pyo3::types::PyList>() {
+            let list = times_arg.downcast::<pyo3::types::PyList>()?;
+            list.iter()
+                .map(|item| {
+                    let year: i32 = item.getattr("year")?.extract()?;
+                    let month: u32 = item.getattr("month")?.extract()?;
+                    let day: u32 = item.getattr("day")?.extract()?;
+                    let hour: u32 = item.getattr("hour")?.extract()?;
+                    let minute: u32 = item.getattr("minute")?.extract()?;
+                    let second: u32 = item.getattr("second")?.extract()?;
+                    let microsecond: u32 = item.getattr("microsecond")?.extract()?;
+
+                    chrono::NaiveDate::from_ymd_opt(year, month, day)
+                        .and_then(|d| d.and_hms_micro_opt(hour, minute, second, microsecond))
+                        .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
+                        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid datetime"))
+                })
+                .collect::<PyResult<_>>()?
+        } else {
+            // Single datetime
+            let year: i32 = times_arg.getattr("year")?.extract()?;
+            let month: u32 = times_arg.getattr("month")?.extract()?;
+            let day: u32 = times_arg.getattr("day")?.extract()?;
+            let hour: u32 = times_arg.getattr("hour")?.extract()?;
+            let minute: u32 = times_arg.getattr("minute")?.extract()?;
+            let second: u32 = times_arg.getattr("second")?.extract()?;
+            let microsecond: u32 = times_arg.getattr("microsecond")?.extract()?;
+
+            let dt = chrono::NaiveDate::from_ymd_opt(year, month, day)
+                .and_then(|d| d.and_hms_micro_opt(hour, minute, second, microsecond))
+                .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
+                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid datetime"))?;
+
+            vec![dt]
+        };
+
+        // Build HashMap for O(1) lookup when multiple times are requested
+        let mut indices = Vec::with_capacity(input_times.len());
+
+        if input_times.len() > 3 {
+            // Use HashMap for multiple lookups
+            let time_map: HashMap<DateTime<Utc>, usize> = ephem_times
+                .iter()
+                .enumerate()
+                .map(|(i, t)| (*t, i))
+                .collect();
+
+            for dt in input_times {
+                if let Some(&idx) = time_map.get(&dt) {
+                    indices.push(idx);
+                } else {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Time {} not found in ephemeris timestamps",
+                        dt.to_rfc3339()
+                    )));
+                }
+            }
+        } else {
+            // Use linear search for small number of lookups
+            for dt in input_times {
+                if let Some(idx) = ephem_times.iter().position(|t| t == &dt) {
+                    indices.push(idx);
+                } else {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Time {} not found in ephemeris timestamps",
+                        dt.to_rfc3339()
+                    )));
+                }
+            }
+        }
+
+        Ok(indices)
+    }
+
+    /// Helper to parse indices parameter
+    fn parse_indices(&self, indices_arg: &Bound<PyAny>) -> PyResult<Vec<usize>> {
+        if indices_arg.is_instance_of::<pyo3::types::PyList>() {
+            let list = indices_arg.downcast::<pyo3::types::PyList>()?;
+            list.iter()
+                .map(|item| item.extract::<usize>())
+                .collect::<PyResult<_>>()
+        } else {
+            // Single index
+            let idx: usize = indices_arg.extract()?;
+            Ok(vec![idx])
+        }
+    }
+
+    /// Check if the target is in-constraint at a given time
+    ///
+    /// Args:
+    ///     time (datetime): The time to check (must exist in ephemeris)
+    ///     ephemeris: One of `TLEEphemeris`, `SPICEEphemeris`, or `GroundEphemeris`
+    ///     target_ra (float): Target right ascension in degrees (ICRS/J2000)
+    ///     target_dec (float): Target declination in degrees (ICRS/J2000)
+    ///
+    /// Returns:
+    ///     bool: True if constraint is satisfied at the given time, False otherwise
+    fn in_constraint(
+        &self,
+        py: Python,
+        time: &Bound<PyAny>,
+        ephemeris: Py<PyAny>,
+        target_ra: f64,
+        target_dec: f64,
+    ) -> PyResult<bool> {
+        // Evaluate constraint for just this single time
+        let result = self.evaluate(py, ephemeris, target_ra, target_dec, Some(time), None)?;
+
+        // Check if there are any violations
+        // If no violations, the constraint is satisfied (in-constraint)
+        Ok(result.all_satisfied)
     }
 
     /// Get constraint configuration as JSON string
@@ -681,7 +837,8 @@ impl ConstraintEvaluator for AndEvaluator {
                     if violation.start_time <= time_str && time_str <= violation.end_time {
                         violated = true;
                         max_severity = max_severity.max(violation.max_severity);
-                        descriptions.push(violation.description.clone());
+                        // Avoid cloning by using reference
+                        descriptions.push(&violation.description);
                     }
                 }
             }
@@ -691,13 +848,18 @@ impl ConstraintEvaluator for AndEvaluator {
                     Some((_, sev, descs)) => {
                         *sev = sev.max(max_severity);
                         for desc in descriptions {
-                            if !descs.contains(&desc) {
-                                descs.push(desc);
+                            // Only store string references, clone at the end
+                            if !descs.iter().any(|d| d == desc) {
+                                descs.push(desc.to_string());
                             }
                         }
                     }
                     None => {
-                        current_violation = Some((i, max_severity, descriptions));
+                        current_violation = Some((
+                            i,
+                            max_severity,
+                            descriptions.iter().map(|s| s.to_string()).collect(),
+                        ));
                     }
                 }
             } else if let Some((start_idx, severity, descs)) = current_violation.take() {
@@ -721,12 +883,12 @@ impl ConstraintEvaluator for AndEvaluator {
         }
 
         let all_satisfied = merged_violations.is_empty();
-        ConstraintResult {
-            violations: merged_violations,
+        ConstraintResult::new(
+            merged_violations,
             all_satisfied,
-            constraint_name: self.name(),
-            times: times.to_vec(),
-        }
+            self.name(),
+            times.to_vec(),
+        )
     }
 
     fn name(&self) -> String {
@@ -830,12 +992,12 @@ impl ConstraintEvaluator for OrEvaluator {
         }
 
         let all_satisfied = merged_violations.is_empty();
-        ConstraintResult {
-            violations: merged_violations,
+        ConstraintResult::new(
+            merged_violations,
             all_satisfied,
-            constraint_name: self.name(),
-            times: times.to_vec(),
-        }
+            self.name(),
+            times.to_vec(),
+        )
     }
 
     fn name(&self) -> String {
@@ -900,7 +1062,7 @@ impl ConstraintEvaluator for NotEvaluator {
             for violation in &result.violations {
                 if last_end < violation.start_time {
                     inverted_violations.push(ConstraintViolation {
-                        start_time: last_end.clone(),
+                        start_time: last_end,
                         end_time: violation.start_time.clone(),
                         max_severity: 0.5,
                         description: format!(
@@ -928,12 +1090,12 @@ impl ConstraintEvaluator for NotEvaluator {
         }
 
         let all_satisfied = inverted_violations.is_empty();
-        ConstraintResult {
-            violations: inverted_violations,
+        ConstraintResult::new(
+            inverted_violations,
             all_satisfied,
-            constraint_name: self.name(),
-            times: times.to_vec(),
-        }
+            self.name(),
+            times.to_vec(),
+        )
     }
 
     fn name(&self) -> String {

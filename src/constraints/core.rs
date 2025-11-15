@@ -14,6 +14,7 @@ use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::prelude::*;
 use std::fmt;
+use std::sync::OnceLock;
 
 /// Result of constraint evaluation
 ///
@@ -78,7 +79,6 @@ impl VisibilityWindow {
 
 /// Result of constraint evaluation containing all violations
 #[pyclass(name = "ConstraintResult")]
-#[derive(Clone, Debug)]
 pub struct ConstraintResult {
     /// List of time windows where the constraint was violated
     #[pyo3(get)]
@@ -91,6 +91,29 @@ pub struct ConstraintResult {
     pub constraint_name: String,
     /// Evaluation times as Rust DateTime<Utc>, not directly exposed to Python
     pub times: Vec<DateTime<Utc>>,
+    /// Cached Python timestamp array (not directly exposed, use getter)
+    timestamp_cache: OnceLock<Py<PyAny>>,
+    /// Cached constraint array (not directly exposed, use getter)
+    constraint_array_cache: OnceLock<Py<PyAny>>,
+}
+
+impl ConstraintResult {
+    /// Create a new ConstraintResult with initialized caches
+    pub fn new(
+        violations: Vec<ConstraintViolation>,
+        all_satisfied: bool,
+        constraint_name: String,
+        times: Vec<DateTime<Utc>>,
+    ) -> Self {
+        Self {
+            violations,
+            all_satisfied,
+            constraint_name,
+            times,
+            timestamp_cache: OnceLock::new(),
+            constraint_array_cache: OnceLock::new(),
+        }
+    }
 }
 
 #[pymethods]
@@ -128,10 +151,24 @@ impl ConstraintResult {
         if self.times.is_empty() {
             return Vec::new();
         }
+
+        // Pre-allocate result vector
         let mut ok = vec![true; self.times.len()];
+
+        // Early return if no violations
+        if self.violations.is_empty() {
+            return ok;
+        }
+
+        // Mark violated times - violations are already sorted by time
         for (i, t) in self.times.iter().enumerate() {
             let t_str = t.to_rfc3339();
+            // Binary search could be used here, but violation count is typically small
+            // and the string comparison overhead dominates
             for v in &self.violations {
+                if t_str < v.start_time {
+                    break; // Violations are sorted, no need to check further
+                }
                 if v.start_time <= t_str && t_str <= v.end_time {
                     ok[i] = false;
                     break;
@@ -144,21 +181,51 @@ impl ConstraintResult {
     /// Property: array of booleans for each timestamp where True means constraint satisfied
     #[getter]
     fn constraint_array(&self, py: Python) -> PyResult<Py<PyAny>> {
+        // Use cached value if available
+        if let Some(cached) = self.constraint_array_cache.get() {
+            return Ok(cached.clone_ref(py));
+        }
+
+        // Compute and cache
         let arr = self._compute_constraint_vec();
         let np = pyo3::types::PyModule::import(py, "numpy")
             .map_err(|_| pyo3::exceptions::PyImportError::new_err("numpy is required"))?;
         let py_arr = np.getattr("array")?.call1((arr,))?;
-        Ok(py_arr.into())
+        let py_obj: Py<PyAny> = py_arr.into();
+
+        // Cache the result (ignore if already set by another thread)
+        let _ = self.constraint_array_cache.set(py_obj.clone_ref(py));
+
+        Ok(py_obj)
     }
 
-    /// Property: array of Python datetime objects for each evaluation time
+    /// Property: array of Python datetime objects for each evaluation time (as numpy array)
     #[getter]
-    fn timestamp(&self, py: Python) -> PyResult<Vec<Py<PyAny>>> {
-        let mut result = Vec::with_capacity(self.times.len());
-        for dt in &self.times {
-            result.push(utc_to_python_datetime(py, dt)?);
+    fn timestamp(&self, py: Python) -> PyResult<Py<PyAny>> {
+        // Use cached value if available
+        if let Some(cached) = self.timestamp_cache.get() {
+            return Ok(cached.clone_ref(py));
         }
-        Ok(result)
+
+        // Import numpy
+        let np = pyo3::types::PyModule::import(py, "numpy")
+            .map_err(|_| pyo3::exceptions::PyImportError::new_err("numpy is required"))?;
+
+        // Build list of Python datetime objects
+        let py_list = pyo3::types::PyList::empty(py);
+        for dt in &self.times {
+            let py_dt = utc_to_python_datetime(py, dt)?;
+            py_list.append(py_dt)?;
+        }
+
+        // Convert to numpy array with dtype=object
+        let np_array = np.getattr("array")?.call1((py_list,))?;
+        let py_obj: Py<PyAny> = np_array.into();
+
+        // Cache the result (ignore if already set by another thread)
+        let _ = self.timestamp_cache.set(py_obj.clone_ref(py));
+
+        Ok(py_obj)
     }
 
     /// Check if the target is in-constraint at a given time.
@@ -167,9 +234,17 @@ impl ConstraintResult {
         let dt = python_datetime_to_utc(time)?;
 
         // Find matching time in our array
-        if let Some(idx) = self.times.iter().position(|t| t == &dt) {
-            let ok_vec = self._compute_constraint_vec();
-            Ok(ok_vec[idx])
+        if let Some(_idx) = self.times.iter().position(|t| t == &dt) {
+            // Check if this time falls within any violation window
+            let t_str = dt.to_rfc3339();
+            for v in &self.violations {
+                if v.start_time <= t_str && t_str <= v.end_time {
+                    // Time is in a violation window, so NOT in-constraint
+                    return Ok(false);
+                }
+            }
+            // No violations found for this time, so in-constraint
+            Ok(true)
         } else {
             Err(pyo3::exceptions::PyValueError::new_err(
                 "time not found in evaluated timestamps",
@@ -302,7 +377,8 @@ pub(crate) fn track_violations<F>(
 where
     F: FnMut(usize) -> (bool, f64),
 {
-    let mut violations = Vec::new();
+    // Pre-allocate with reasonable capacity estimate
+    let mut violations = Vec::with_capacity(4);
     let mut current_violation: Option<(usize, f64)> = None;
 
     for i in 0..times.len() {

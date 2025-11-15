@@ -46,6 +46,7 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
     ) -> ConstraintResult {
         // Body positions are passed via sun_positions slot
         let body_positions = sun_positions;
+        // Cache target vector computation outside the loop
         let target_vec = radec_to_unit_vector(target_ra, target_dec);
 
         let violations = track_violations(
@@ -98,12 +99,7 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
         );
 
         let all_satisfied = violations.is_empty();
-        ConstraintResult {
-            violations,
-            all_satisfied,
-            constraint_name: self.name(),
-            times: times.to_vec(),
-        }
+        ConstraintResult::new(violations, all_satisfied, self.name(), times.to_vec())
     }
 
     fn name(&self) -> String {

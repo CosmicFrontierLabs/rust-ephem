@@ -45,15 +45,10 @@ impl TLEEphemeris {
             itrs: None,
             itrs_skycoord: None,
             polar_motion,
-            common_data: EphemerisData {
-                gcrs: None,
-                times: Some(times),
-                sun_gcrs: None,
-                moon_gcrs: None,
-                gcrs_skycoord: None,
-                earth_skycoord: None,
-                sun_skycoord: None,
-                moon_skycoord: None,
+            common_data: {
+                let mut data = EphemerisData::new();
+                data.times = Some(times);
+                data
             },
         };
 
@@ -114,7 +109,7 @@ impl TLEEphemeris {
 
     // Getter for times but call it timestamp and convert to python datetime
     #[getter]
-    fn timestamp(&self, py: Python) -> PyResult<Option<Vec<Py<PyDateTime>>>> {
+    fn timestamp(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         self.get_timestamp(py)
     }
 
