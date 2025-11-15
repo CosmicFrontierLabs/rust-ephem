@@ -3,6 +3,7 @@ use chrono::{Datelike, Timelike};
 use hifitime::Epoch as HifiEpoch;
 use ndarray::Array2;
 use pyo3::{prelude::*, types::PyDateTime};
+use std::sync::OnceLock;
 
 use crate::ephemeris::ephemeris_common::{generate_timestamps, EphemerisBase, EphemerisData};
 use crate::ephemeris::position_velocity::PositionVelocityData;
@@ -15,8 +16,8 @@ pub struct SPICEEphemeris {
     naif_id: i32,
     center_id: i32,
     itrs: Option<Array2<f64>>,
-    itrs_skycoord: Option<Py<PyAny>>, // Cached SkyCoord object for ITRS
-    polar_motion: bool,               // Whether to apply polar motion correction
+    itrs_skycoord: OnceLock<Py<PyAny>>, // Lazy-initialized cached SkyCoord object for ITRS
+    polar_motion: bool,                 // Whether to apply polar motion correction
     // Common ephemeris data
     common_data: EphemerisData,
 }
@@ -27,7 +28,7 @@ impl SPICEEphemeris {
     #[pyo3(signature = (spk_path, naif_id, begin, end, step_size=60, center_id=399, *, polar_motion=false))]
     #[allow(clippy::too_many_arguments)]
     fn new(
-        py: Python,
+        _py: Python,
         spk_path: String,
         naif_id: i32,
         begin: &Bound<'_, PyDateTime>,
@@ -45,7 +46,7 @@ impl SPICEEphemeris {
             naif_id,
             center_id,
             itrs: None,
-            itrs_skycoord: None,
+            itrs_skycoord: OnceLock::new(),
             polar_motion,
             common_data: {
                 let mut data = EphemerisData::new();
@@ -59,8 +60,7 @@ impl SPICEEphemeris {
         ephemeris.gcrs_to_itrs()?;
         ephemeris.calculate_sun_moon()?;
 
-        // Cache all SkyCoord objects using helper function
-        ephemeris.itrs_skycoord = ephemeris.cache_skycoords(py)?;
+        // Note: SkyCoords are now created lazily on first access
 
         // Return the SPICEEphemeris object
         Ok(ephemeris)
@@ -298,7 +298,23 @@ impl EphemerisBase for SPICEEphemeris {
         self.itrs.as_ref()
     }
 
-    fn get_itrs_skycoord(&self) -> Option<&Py<PyAny>> {
-        self.itrs_skycoord.as_ref()
+    fn get_itrs_skycoord_ref(&self) -> Option<&Py<PyAny>> {
+        self.itrs_skycoord.get()
+    }
+
+    fn itrs_to_skycoord_helper(&self, py: Python) -> PyResult<Py<PyAny>> {
+        // Check cache first
+        if let Some(cached) = self.itrs_skycoord.get() {
+            return Ok(cached.clone_ref(py));
+        }
+
+        // Create the SkyCoord
+        let modules = AstropyModules::import(py)?;
+        let skycoord = self.itrs_to_skycoord(py, &modules)?;
+
+        // Try to cache it
+        let _ = self.itrs_skycoord.set(skycoord.clone_ref(py));
+
+        Ok(skycoord)
     }
 }
