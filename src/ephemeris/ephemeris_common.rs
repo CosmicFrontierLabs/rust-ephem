@@ -93,10 +93,11 @@ pub struct EphemerisData {
     pub times: Option<Vec<DateTime<Utc>>>,
     pub sun_gcrs: Option<Array2<f64>>,
     pub moon_gcrs: Option<Array2<f64>>,
-    pub gcrs_skycoord: Option<Py<PyAny>>,
-    pub earth_skycoord: Option<Py<PyAny>>,
-    pub sun_skycoord: Option<Py<PyAny>>,
-    pub moon_skycoord: Option<Py<PyAny>>,
+    /// Lazy-initialized SkyCoord caches - created on first access
+    pub gcrs_skycoord: OnceLock<Py<PyAny>>,
+    pub earth_skycoord: OnceLock<Py<PyAny>>,
+    pub sun_skycoord: OnceLock<Py<PyAny>>,
+    pub moon_skycoord: OnceLock<Py<PyAny>>,
     /// Cached Python timestamp array (NumPy array of datetime objects)
     pub timestamp_cache: OnceLock<Py<PyAny>>,
 }
@@ -109,10 +110,10 @@ impl EphemerisData {
             times: None,
             sun_gcrs: None,
             moon_gcrs: None,
-            gcrs_skycoord: None,
-            earth_skycoord: None,
-            sun_skycoord: None,
-            moon_skycoord: None,
+            gcrs_skycoord: OnceLock::new(),
+            earth_skycoord: OnceLock::new(),
+            sun_skycoord: OnceLock::new(),
+            moon_skycoord: OnceLock::new(),
             timestamp_cache: OnceLock::new(),
         }
     }
@@ -136,9 +137,14 @@ pub trait EphemerisBase {
     /// This must be implemented by each ephemeris type that supports ITRS
     fn get_itrs_data(&self) -> Option<&Array2<f64>>;
 
-    /// Get a reference to cached ITRS SkyCoord
+    /// Get a reference to cached ITRS SkyCoord (if already created)
     /// This must be implemented by each ephemeris type that caches ITRS SkyCoord
-    fn get_itrs_skycoord(&self) -> Option<&Py<PyAny>>;
+    /// Returns None if not yet created (lazy initialization)
+    fn get_itrs_skycoord_ref(&self) -> Option<&Py<PyAny>>;
+
+    /// Set the ITRS SkyCoord cache
+    /// This must be implemented by each ephemeris type to store in its OnceLock
+    fn set_itrs_skycoord_cache(&self, skycoord: Py<PyAny>) -> Result<(), Py<PyAny>>;
 
     /// Get ITRS position and velocity in PositionVelocityData format
     fn get_itrs_pv(&self, py: Python) -> Option<Py<PositionVelocityData>> {
@@ -148,14 +154,13 @@ pub trait EphemerisBase {
 
     /// Get cached ITRS SkyCoord object
     fn get_itrs(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self
-            .get_itrs_skycoord()
-            .map(|py_obj| py_obj.clone_ref(py))
-            .ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "No cached ITRS SkyCoord available. Ensure it was computed during initialization.",
-                )
-            })
+        // Check if already cached
+        if let Some(cached) = self.get_itrs_skycoord_ref() {
+            return Ok(cached.clone_ref(py));
+        }
+
+        // Lazy create and cache - implementation will handle caching
+        self.itrs_to_skycoord_helper(py)
     }
 
     fn get_gcrs_pv(&self, py: Python) -> Option<Py<PositionVelocityData>> {
@@ -167,55 +172,70 @@ pub trait EphemerisBase {
 
     /// Get cached GCRS SkyCoord object
     fn get_gcrs(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self
-            .data()
-            .gcrs_skycoord
-            .as_ref()
-            .map(|py_obj| py_obj.clone_ref(py))
-            .ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "No cached GCRS SkyCoord available. Ensure it was computed during initialization.",
-                )
-            })
+        // Lazy initialization: create on first access
+        if let Some(cached) = self.data().gcrs_skycoord.get() {
+            return Ok(cached.clone_ref(py));
+        }
+
+        // Create the SkyCoord
+        let modules = AstropyModules::import(py)?;
+        let skycoord = self.gcrs_to_skycoord(py, &modules)?;
+
+        // Try to cache it (may fail if another thread cached it first, which is fine)
+        let _ = self.data().gcrs_skycoord.set(skycoord.clone_ref(py));
+
+        Ok(skycoord)
     }
 
     /// Get cached Earth SkyCoord object
     fn get_earth(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.data()
-            .earth_skycoord
-            .as_ref()
-            .map(|py_obj| py_obj.clone_ref(py))
-            .ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "No cached Earth SkyCoord available. Ensure it was computed during initialization.",
-                )
-            })
+        // Lazy initialization: create on first access
+        if let Some(cached) = self.data().earth_skycoord.get() {
+            return Ok(cached.clone_ref(py));
+        }
+
+        // Create the SkyCoord
+        let modules = AstropyModules::import(py)?;
+        let skycoord = self.earth_to_skycoord(py, &modules)?;
+
+        // Try to cache it
+        let _ = self.data().earth_skycoord.set(skycoord.clone_ref(py));
+
+        Ok(skycoord)
     }
 
     /// Get cached Sun SkyCoord object
     fn get_sun(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.data()
-            .sun_skycoord
-            .as_ref()
-            .map(|py_obj| py_obj.clone_ref(py))
-            .ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "No cached Sun SkyCoord available. Ensure it was computed during initialization.",
-                )
-            })
+        // Lazy initialization: create on first access
+        if let Some(cached) = self.data().sun_skycoord.get() {
+            return Ok(cached.clone_ref(py));
+        }
+
+        // Create the SkyCoord
+        let modules = AstropyModules::import(py)?;
+        let skycoord = self.sun_to_skycoord(py, &modules)?;
+
+        // Try to cache it
+        let _ = self.data().sun_skycoord.set(skycoord.clone_ref(py));
+
+        Ok(skycoord)
     }
 
     /// Get cached Moon SkyCoord object
     fn get_moon(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.data()
-            .moon_skycoord
-            .as_ref()
-            .map(|py_obj| py_obj.clone_ref(py))
-            .ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "No cached Moon SkyCoord available. Ensure it was computed during initialization.",
-                )
-            })
+        // Lazy initialization: create on first access
+        if let Some(cached) = self.data().moon_skycoord.get() {
+            return Ok(cached.clone_ref(py));
+        }
+
+        // Create the SkyCoord
+        let modules = AstropyModules::import(py)?;
+        let skycoord = self.moon_to_skycoord(py, &modules)?;
+
+        // Try to cache it
+        let _ = self.data().moon_skycoord.set(skycoord.clone_ref(py));
+
+        Ok(skycoord)
     }
 
     /// Get timestamps as Python datetime objects (for internal use by SkyCoordConfig)
@@ -463,38 +483,22 @@ pub trait EphemerisBase {
         Ok(())
     }
 
-    /// Cache all SkyCoord objects for this ephemeris
-    ///
-    /// This is a helper function to reduce code duplication across different ephemeris types.
-    /// It caches GCRS, Earth, Sun, and Moon SkyCoord objects in the common data structure,
-    /// and returns the ITRS SkyCoord for types that need to cache it separately.
-    ///
-    /// # Arguments
-    /// * `py` - Python interpreter state
-    ///
-    /// # Returns
-    /// `PyResult<Option<Py<PyAny>>>` - The ITRS SkyCoord if computed, or None
-    fn cache_skycoords(&mut self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        // Import astropy modules once for all SkyCoord creations
-        let astropy_modules = AstropyModules::import(py)?;
+    /// Get ITRS SkyCoord - helper for ephemeris types that support ITRS
+    /// Default implementation provides lazy initialization with caching
+    fn itrs_to_skycoord_helper(&self, py: Python) -> PyResult<Py<PyAny>> {
+        // Check cache first
+        if let Some(cached) = self.get_itrs_skycoord_ref() {
+            return Ok(cached.clone_ref(py));
+        }
 
-        // Compute ITRS SkyCoord (may fail if not available for this ephemeris type)
-        let itrs_skycoord = self.itrs_to_skycoord(py, &astropy_modules).ok();
+        // Create the SkyCoord
+        let modules = AstropyModules::import(py)?;
+        let skycoord = self.itrs_to_skycoord(py, &modules)?;
 
-        // Cache common SkyCoord objects - compute all first, then store
-        let gcrs_skycoord = self.gcrs_to_skycoord(py, &astropy_modules).ok();
-        let earth_skycoord = self.earth_to_skycoord(py, &astropy_modules).ok();
-        let sun_skycoord = self.sun_to_skycoord(py, &astropy_modules).ok();
-        let moon_skycoord = self.moon_to_skycoord(py, &astropy_modules).ok();
+        // Try to cache it (may fail if another thread cached it first, which is fine)
+        let _ = self.set_itrs_skycoord_cache(skycoord.clone_ref(py));
 
-        // Now store them
-        let data_mut = self.data_mut();
-        data_mut.gcrs_skycoord = gcrs_skycoord;
-        data_mut.earth_skycoord = earth_skycoord;
-        data_mut.sun_skycoord = sun_skycoord;
-        data_mut.moon_skycoord = moon_skycoord;
-
-        Ok(itrs_skycoord)
+        Ok(skycoord)
     }
 
     /// Convert to astropy SkyCoord object with ITRS frame

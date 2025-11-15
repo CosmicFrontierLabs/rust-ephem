@@ -1,5 +1,6 @@
 use ndarray::Array2;
 use pyo3::{prelude::*, types::PyDateTime};
+use std::sync::OnceLock;
 
 use crate::ephemeris::ephemeris_common::{generate_timestamps, EphemerisBase, EphemerisData};
 use crate::ephemeris::position_velocity::PositionVelocityData;
@@ -14,7 +15,7 @@ pub struct GroundEphemeris {
     longitude: f64, // degrees
     height: f64,    // meters above WGS84 ellipsoid
     itrs: Option<Array2<f64>>,
-    itrs_skycoord: Option<Py<PyAny>>,
+    itrs_skycoord: OnceLock<Py<PyAny>>,
     polar_motion: bool, // Whether to apply polar motion correction
     // Common ephemeris data
     common_data: EphemerisData,
@@ -36,7 +37,7 @@ impl GroundEphemeris {
     #[pyo3(signature = (latitude, longitude, height, begin, end, step_size=60, *, polar_motion=false))]
     #[allow(clippy::too_many_arguments)]
     fn new(
-        py: Python,
+        _py: Python,
         latitude: f64,
         longitude: f64,
         height: f64,
@@ -66,7 +67,7 @@ impl GroundEphemeris {
             longitude,
             height,
             itrs: None,
-            itrs_skycoord: None,
+            itrs_skycoord: OnceLock::new(),
             polar_motion,
             common_data: {
                 let mut data = EphemerisData::new();
@@ -80,8 +81,7 @@ impl GroundEphemeris {
         ephemeris.itrs_to_gcrs()?;
         ephemeris.calculate_sun_moon()?;
 
-        // Cache all SkyCoord objects using helper function
-        ephemeris.itrs_skycoord = ephemeris.cache_skycoords(py)?;
+        // Note: SkyCoords are now created lazily on first access
 
         // Return the GroundEphemeris object
         Ok(ephemeris)
@@ -314,7 +314,11 @@ impl EphemerisBase for GroundEphemeris {
         self.itrs.as_ref()
     }
 
-    fn get_itrs_skycoord(&self) -> Option<&Py<PyAny>> {
-        self.itrs_skycoord.as_ref()
+    fn get_itrs_skycoord_ref(&self) -> Option<&Py<PyAny>> {
+        self.itrs_skycoord.get()
+    }
+
+    fn set_itrs_skycoord_cache(&self, skycoord: Py<PyAny>) -> Result<(), Py<PyAny>> {
+        self.itrs_skycoord.set(skycoord)
     }
 }

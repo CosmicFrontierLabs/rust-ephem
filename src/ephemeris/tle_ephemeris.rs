@@ -1,6 +1,7 @@
 use ndarray::Array2;
 use pyo3::{prelude::*, types::PyDateTime};
 use sgp4::{parse_2les, Constants};
+use std::sync::OnceLock;
 
 use crate::ephemeris::ephemeris_common::{
     generate_timestamps, split_pos_vel, EphemerisBase, EphemerisData,
@@ -15,8 +16,8 @@ pub struct TLEEphemeris {
     tle2: String,
     teme: Option<Array2<f64>>,
     itrs: Option<Array2<f64>>,
-    itrs_skycoord: Option<Py<PyAny>>, // Cached SkyCoord object for ITRS
-    polar_motion: bool,               // Whether to apply polar motion correction
+    itrs_skycoord: OnceLock<Py<PyAny>>, // Lazy-initialized cached SkyCoord object for ITRS
+    polar_motion: bool,                 // Whether to apply polar motion correction
     // Common ephemeris data
     common_data: EphemerisData,
 }
@@ -26,7 +27,7 @@ impl TLEEphemeris {
     #[new]
     #[pyo3(signature = (tle1, tle2, begin, end, step_size=60, *, polar_motion=false))]
     fn new(
-        py: Python,
+        _py: Python,
         tle1: String,
         tle2: String,
         begin: &Bound<'_, PyDateTime>,
@@ -43,7 +44,7 @@ impl TLEEphemeris {
             tle2,
             teme: None,
             itrs: None,
-            itrs_skycoord: None,
+            itrs_skycoord: OnceLock::new(),
             polar_motion,
             common_data: {
                 let mut data = EphemerisData::new();
@@ -58,8 +59,7 @@ impl TLEEphemeris {
         ephemeris.teme_to_gcrs()?;
         ephemeris.calculate_sun_moon()?;
 
-        // Cache all SkyCoord objects using helper function
-        ephemeris.itrs_skycoord = ephemeris.cache_skycoords(py)?;
+        // Note: SkyCoords are now created lazily on first access
 
         // Return the TLEEphemeris object
         Ok(ephemeris)
@@ -125,7 +125,9 @@ impl TLEEphemeris {
             )
         })?;
 
-        let elements_vec = parse_2les(&format!("{}\n{}\n", self.tle1, self.tle2)).map_err(|e| {
+        // Parse TLE - concatenate with newlines (parse_2les expects newline-separated format)
+        let tle_string = format!("{}\n{}", self.tle1, self.tle2);
+        let elements_vec = parse_2les(&tle_string).map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("TLE parse error: {e:?}"))
         })?;
         // Use the first set of elements
@@ -149,14 +151,10 @@ impl TLEEphemeris {
             // Convert to NaiveDateTime for sgp4 compatibility
             let naive_dt = dt.naive_utc();
 
-            // Use the built-in method to calculate minutes since epoch
-            let minutes_since_epoch = elements
-                .datetime_to_minutes_since_epoch(&naive_dt)
-                .map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!(
-                        "Failed to calculate minutes since epoch for {dt}: {e:?}"
-                    ))
-                })?;
+            // Calculate minutes since epoch
+            // Use unwrap() since time conversions should always succeed for valid timestamps
+            let minutes_since_epoch = elements.datetime_to_minutes_since_epoch(&naive_dt).unwrap();
+
             // Propagate to get position and velocity in TEME
             let pred = constants.propagate(minutes_since_epoch).map_err(|e| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!("Propagation error: {e:?}"))
@@ -342,7 +340,11 @@ impl EphemerisBase for TLEEphemeris {
         self.itrs.as_ref()
     }
 
-    fn get_itrs_skycoord(&self) -> Option<&Py<PyAny>> {
-        self.itrs_skycoord.as_ref()
+    fn get_itrs_skycoord_ref(&self) -> Option<&Py<PyAny>> {
+        self.itrs_skycoord.get()
+    }
+
+    fn set_itrs_skycoord_cache(&self, skycoord: Py<PyAny>) -> Result<(), Py<PyAny>> {
+        self.itrs_skycoord.set(skycoord)
     }
 }
