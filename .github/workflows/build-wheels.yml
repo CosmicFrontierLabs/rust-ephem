@@ -37,12 +37,12 @@ jobs:
                       release_only: true
 
                     # macOS x86_64 (Intel) - only on release
-                    - os: macos-13
+                    - os: macos-15-intel
                       target: x86_64-apple-darwin
                       release_only: true
 
                     # macOS aarch64 (Apple Silicon) - only on release
-                    - os: macos-14
+                    - os: macos-latest
                       target: aarch64-apple-darwin
                       release_only: true
 
@@ -115,7 +115,7 @@ jobs:
               with:
                   target: ${{ matrix.target }}
                   args: --release --out dist --interpreter 3.10 3.11 3.12 3.13
-                  manylinux: ${{ matrix.container || 'auto' }}
+                  manylinux: ${{ matrix.container == 'off' && 'off' || 'auto' }}
               env:
                   # Fix for ring crate ARM64 cross-compilation
                   CFLAGS_aarch64_unknown_linux_gnu: "-D__ARM_ARCH=8"
