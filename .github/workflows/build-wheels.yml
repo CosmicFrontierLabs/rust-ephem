@@ -28,12 +28,10 @@ jobs:
                     # Linux x86_64
                     - os: ubuntu-latest
                       target: x86_64
-                      container: off
 
                     # Linux aarch64 - only on release
                     - os: ubuntu-latest
                       target: aarch64
-                      container: auto
                       release_only: true
 
                     # macOS x86_64 (Intel) - only on release
@@ -96,7 +94,7 @@ jobs:
               uses: dtolnay/rust-toolchain@stable
 
             - name: Cache Rust dependencies
-              if: steps.skip_check.outputs.skip != 'true' && matrix.container != 'auto'
+              if: steps.skip_check.outputs.skip != 'true'
               uses: Swatinem/rust-cache@v2
               with:
                   key: ${{ matrix.target }}
@@ -115,7 +113,7 @@ jobs:
               with:
                   target: ${{ matrix.target }}
                   args: --release --out dist --interpreter 3.10 3.11 3.12 3.13
-                  manylinux: ${{ matrix.container == 'off' && 'off' || 'auto' }}
+                  manylinux: auto
               env:
                   # Fix for ring crate ARM64 cross-compilation
                   CFLAGS_aarch64_unknown_linux_gnu: "-D__ARM_ARCH=8"
