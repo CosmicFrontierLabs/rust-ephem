@@ -8,15 +8,31 @@ to configure the Rust constraint evaluators.
 
 from __future__ import annotations
 
-from typing import List, Literal, Union, cast
+from datetime import datetime
+from typing import TYPE_CHECKING, List, Literal, Union, cast
 
 from pydantic import BaseModel, Field, TypeAdapter
+
+if TYPE_CHECKING:
+    from rust_ephem import (
+        ConstraintResult,
+        GroundEphemeris,
+        SPICEEphemeris,
+        TLEEphemeris,
+    )
 
 
 class RustConstraintMixin(BaseModel):
     """Base class for Rust constraint configurations"""
 
-    def evaluate(self, *args, **kwargs):
+    def evaluate(
+        self,
+        ephemeris: Union["TLEEphemeris", "SPICEEphemeris", "GroundEphemeris"],
+        target_ra: float,
+        target_dec: float,
+        times: Union[datetime, list[datetime], None] = None,
+        indices: Union[int, list[int], None] = None,
+    ) -> "ConstraintResult":
         """
         Evaluate the constraint using the Rust backend.
 
@@ -24,95 +40,130 @@ class RustConstraintMixin(BaseModel):
         object on first use.
 
         Args:
-            *args: Positional arguments for evaluation
-            **kwargs: Keyword arguments for evaluation
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, or GroundEphemeris
+            target_ra: Target right ascension in degrees (ICRS/J2000)
+            target_dec: Target declination in degrees (ICRS/J2000)
+            times: Optional specific time(s) to evaluate
+            indices: Optional specific time index/indices to evaluate
 
         Returns:
-            Result of the Rust constraint evaluation
+            ConstraintResult containing violation windows
         """
         if not hasattr(self, "_rust_constraint"):
             from rust_ephem import Constraint
 
             self._rust_constraint = Constraint.from_json(self.model_dump_json())
-        return self._rust_constraint.evaluate(*args, **kwargs)
+        return self._rust_constraint.evaluate(
+            ephemeris, target_ra, target_dec, times, indices
+        )
 
-    def and_(self, other: "ConstraintConfig") -> "AndConstraintConfig":
+    def in_constraint(
+        self,
+        time: datetime,
+        ephemeris: Union["TLEEphemeris", "SPICEEphemeris", "GroundEphemeris"],
+        target_ra: float,
+        target_dec: float,
+    ) -> bool:
+        """
+        Check if target is in-constraint at a given time.
+
+        This method lazily creates the corresponding Rust constraint
+        object and delegates to its in_constraint method.
+
+        Args:
+            time: The time to check (must exist in ephemeris)
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, or GroundEphemeris
+            target_ra: Target right ascension in degrees (ICRS/J2000)
+            target_dec: Target declination in degrees (ICRS/J2000)
+
+        Returns:
+            True if constraint is satisfied at the given time
+        """
+        if not hasattr(self, "_rust_constraint"):
+            from rust_ephem import Constraint
+
+            self._rust_constraint = Constraint.from_json(self.model_dump_json())
+        return self._rust_constraint.in_constraint(
+            time, ephemeris, target_ra, target_dec
+        )
+
+    def and_(self, other: "ConstraintConfig") -> "AndConstraint":
         """Combine this constraint with another using logical AND
 
         Args:
-            other: Another constraint configuration
+            other: Another constraint
 
         Returns:
-            AndConstraintConfig combining both constraints
+            AndConstraint combining both constraints
         """
-        return AndConstraintConfig(constraints=[cast("ConstraintConfig", self), other])
+        return AndConstraint(constraints=[cast("ConstraintConfig", self), other])
 
-    def or_(self, other: "ConstraintConfig") -> "OrConstraintConfig":
+    def or_(self, other: "ConstraintConfig") -> "OrConstraint":
         """Combine this constraint with another using logical OR
 
         Args:
-            other: Another constraint configuration
+            other: Another constraint
 
         Returns:
-            OrConstraintConfig combining both constraints
+            OrConstraint combining both constraints
         """
-        return OrConstraintConfig(constraints=[cast("ConstraintConfig", self), other])
+        return OrConstraint(constraints=[cast("ConstraintConfig", self), other])
 
-    def not_(self) -> "NotConstraintConfig":
+    def not_(self) -> "NotConstraint":
         """Negate this constraint using logical NOT
 
         Returns:
-            NotConstraintConfig negating this constraint
+            NotConstraint negating this constraint
         """
-        return NotConstraintConfig(constraint=cast("ConstraintConfig", self))
+        return NotConstraint(constraint=cast("ConstraintConfig", self))
 
-    def __and__(self, other: "ConstraintConfig") -> "AndConstraintConfig":
+    def __and__(self, other: "ConstraintConfig") -> "AndConstraint":
         """Combine constraints using & operator (logical AND)
 
         Args:
-            other: Another constraint configuration
+            other: Another constraint
 
         Returns:
-            AndConstraintConfig combining both constraints
+            AndConstraint combining both constraints
 
         Example:
-            >>> sun = SunConstraintConfig(min_angle=45.0)
-            >>> moon = MoonConstraintConfig(min_angle=30.0)
+            >>> sun = SunConstraint(min_angle=45.0)
+            >>> moon = MoonConstraint(min_angle=30.0)
             >>> combined = sun & moon
         """
         return self.and_(other)
 
-    def __or__(self, other: "ConstraintConfig") -> "OrConstraintConfig":
+    def __or__(self, other: "ConstraintConfig") -> "OrConstraint":
         """Combine constraints using | operator (logical OR)
 
         Args:
-            other: Another constraint configuration
+            other: Another constraint
 
         Returns:
-            OrConstraintConfig combining both constraints
+            OrConstraint combining both constraints
 
         Example:
-            >>> sun = SunConstraintConfig(min_angle=45.0)
-            >>> moon = MoonConstraintConfig(min_angle=30.0)
+            >>> sun = SunConstraint(min_angle=45.0)
+            >>> moon = MoonConstraint(min_angle=30.0)
             >>> combined = sun | moon
         """
         return self.or_(other)
 
-    def __invert__(self) -> "NotConstraintConfig":
+    def __invert__(self) -> "NotConstraint":
         """Negate constraint using ~ operator (logical NOT)
 
         Returns:
-            NotConstraintConfig negating this constraint
+            NotConstraint negating this constraint
 
         Example:
-            >>> sun = SunConstraintConfig(min_angle=45.0)
+            >>> sun = SunConstraint(min_angle=45.0)
             >>> not_sun = ~sun
         """
         return self.not_()
 
 
-class SunConstraintConfig(RustConstraintMixin):
-    """Configuration for Sun  constraint
+class SunConstraint(RustConstraintMixin):
+    """Sun proximity constraint
 
     Ensures target maintains minimum angular separation from Sun.
 
@@ -131,8 +182,8 @@ class SunConstraintConfig(RustConstraintMixin):
     )
 
 
-class EarthLimbConstraintConfig(RustConstraintMixin):
-    """Configuration for Earth limb constraint
+class EarthLimbConstraint(RustConstraintMixin):
+    """Earth limb avoidance constraint
 
     Ensures target maintains minimum angular separation from Earth's limb.
 
@@ -154,8 +205,8 @@ class EarthLimbConstraintConfig(RustConstraintMixin):
     )
 
 
-class BodyConstraintConfig(RustConstraintMixin):
-    """Configuration for generic solar system body proximity constraint
+class BodyConstraint(RustConstraintMixin):
+    """Solar system body proximity constraint
 
     Ensures target maintains minimum angular separation from specified body.
 
@@ -176,8 +227,8 @@ class BodyConstraintConfig(RustConstraintMixin):
     )
 
 
-class MoonConstraintConfig(RustConstraintMixin):
-    """Configuration for Moon  constraint
+class MoonConstraint(RustConstraintMixin):
+    """Moon proximity constraint
 
     Ensures target maintains minimum angular separation from Moon.
 
@@ -196,8 +247,8 @@ class MoonConstraintConfig(RustConstraintMixin):
     )
 
 
-class EclipseConstraintConfig(RustConstraintMixin):
-    """Configuration for eclipse constraint
+class EclipseConstraint(RustConstraintMixin):
+    """Eclipse constraint
 
     Checks if observer is in Earth's shadow (umbra and/or penumbra).
 
@@ -212,14 +263,14 @@ class EclipseConstraintConfig(RustConstraintMixin):
     )
 
 
-class AndConstraintConfig(RustConstraintMixin):
-    """Configuration for logical AND combinator
+class AndConstraint(RustConstraintMixin):
+    """Logical AND constraint combinator
 
     Satisfied only if ALL sub-constraints are satisfied.
 
     Attributes:
         type: Always "and"
-        constraints: List of constraint configurations to combine with AND
+        constraints: List of constraints to combine with AND
     """
 
     type: Literal["and"] = "and"
@@ -228,14 +279,14 @@ class AndConstraintConfig(RustConstraintMixin):
     )
 
 
-class OrConstraintConfig(RustConstraintMixin):
-    """Configuration for logical OR combinator
+class OrConstraint(RustConstraintMixin):
+    """Logical OR constraint combinator
 
     Satisfied if ANY sub-constraint is satisfied.
 
     Attributes:
         type: Always "or"
-        constraints: List of constraint configurations to combine with OR
+        constraints: List of constraints to combine with OR
     """
 
     type: Literal["or"] = "or"
@@ -244,38 +295,38 @@ class OrConstraintConfig(RustConstraintMixin):
     )
 
 
-class NotConstraintConfig(RustConstraintMixin):
-    """Configuration for logical NOT combinator
+class NotConstraint(RustConstraintMixin):
+    """Logical NOT constraint combinator
 
     Inverts a constraint - satisfied when inner constraint is violated.
 
     Attributes:
         type: Always "not"
-        constraint: Constraint configuration to negate
+        constraint: Constraint to negate
     """
 
     type: Literal["not"] = "not"
     constraint: "ConstraintConfig" = Field(..., description="Constraint to negate")
 
 
-# Union type for all constraint configs
+# Union type for all constraints
 ConstraintConfig = Union[
-    SunConstraintConfig,
-    MoonConstraintConfig,
-    EclipseConstraintConfig,
-    EarthLimbConstraintConfig,
-    BodyConstraintConfig,
-    AndConstraintConfig,
-    OrConstraintConfig,
-    NotConstraintConfig,
+    SunConstraint,
+    MoonConstraint,
+    EclipseConstraint,
+    EarthLimbConstraint,
+    BodyConstraint,
+    AndConstraint,
+    OrConstraint,
+    NotConstraint,
 ]
 
 
 # Update forward references after ConstraintConfig is defined
-AndConstraintConfig.model_rebuild()
-OrConstraintConfig.model_rebuild()
-NotConstraintConfig.model_rebuild()
+AndConstraint.model_rebuild()
+OrConstraint.model_rebuild()
+NotConstraint.model_rebuild()
 
 
-# A single type adapter for ConstraintConfig
+# Type adapter for ConstraintConfig union
 CombinedConstraintConfig: TypeAdapter[ConstraintConfig] = TypeAdapter(ConstraintConfig)

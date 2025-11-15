@@ -114,11 +114,13 @@ class TestTLEEphemerisTyping:
         assert tle_ephem.sun is not None
         assert tle_ephem.moon is not None
 
-    def test_timestamp_property_returns_list(self, tle_ephem):
-        """timestamp property should return list of datetimes or None."""
+    def test_timestamp_property_returns_array(self, tle_ephem):
+        """timestamp property should return NDArray of datetimes or None."""
+        import numpy as np
+
         timestamps = tle_ephem.timestamp
         if timestamps is not None:
-            assert isinstance(timestamps, list)
+            assert isinstance(timestamps, np.ndarray)
             assert len(timestamps) > 0
             # Check first element is datetime
             assert hasattr(timestamps[0], "year")

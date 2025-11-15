@@ -200,94 +200,98 @@ Constraint Configuration Classes
 
 The following Pydantic models are used to configure constraints. These can be serialized to/from JSON and support logical combinations using Python operators.
 
-**SunConstraintConfig**
-  Configuration for Sun proximity constraints.
+**SunConstraint**
+  Sun proximity constraint.
   
   **Constructor:**
-    ``SunConstraintConfig(min_angle=45.0)``
+    ``SunConstraint(min_angle=45.0)``
   
   **Attributes:**
     * ``type`` — Always "sun"
     * ``min_angle`` — Minimum angular separation from Sun in degrees (0-180)
+    * ``max_angle`` — Maximum angular separation from Sun in degrees (0-180), optional
 
-**MoonConstraintConfig**
-  Configuration for Moon proximity constraints.
+**MoonConstraint**
+  Moon proximity constraint.
   
   **Constructor:**
-    ``MoonConstraintConfig(min_angle=30.0)``
+    ``MoonConstraint(min_angle=30.0)``
   
   **Attributes:**
     * ``type`` — Always "moon"
     * ``min_angle`` — Minimum angular separation from Moon in degrees (0-180)
+    * ``max_angle`` — Maximum angular separation from Moon in degrees (0-180), optional
 
-**EarthLimbConstraintConfig**
-  Configuration for Earth limb proximity constraints.
+**EarthLimbConstraint**
+  Earth limb avoidance constraint.
   
   **Constructor:**
-    ``EarthLimbConstraintConfig(min_angle=10.0)``
+    ``EarthLimbConstraint(min_angle=10.0)``
   
   **Attributes:**
     * ``type`` — Always "earth_limb"
     * ``min_angle`` — Minimum angular separation from Earth's limb in degrees (0-180)
+    * ``max_angle`` — Maximum angular separation from Earth's limb in degrees (0-180), optional
 
-**BodyConstraintConfig**
-  Configuration for solar system body proximity constraints.
+**BodyConstraint**
+  Solar system body proximity constraint.
   
   **Constructor:**
-    ``BodyConstraintConfig(body="Mars", min_angle=15.0)``
+    ``BodyConstraint(body="Mars", min_angle=15.0)``
   
   **Attributes:**
     * ``type`` — Always "body"
     * ``body`` — Name of the solar system body (e.g., "Mars", "Jupiter")
     * ``min_angle`` — Minimum angular separation from body in degrees (0-180)
+    * ``max_angle`` — Maximum angular separation from body in degrees (0-180), optional
 
-**EclipseConstraintConfig**
-  Configuration for eclipse constraints (Earth shadow).
+**EclipseConstraint**
+  Eclipse constraint (Earth shadow).
   
   **Constructor:**
-    ``EclipseConstraintConfig(umbra_only=True)``
+    ``EclipseConstraint(umbra_only=True)``
   
   **Attributes:**
     * ``type`` — Always "eclipse"
     * ``umbra_only`` — If True, only umbra counts. If False, includes penumbra.
 
-**AndConstraintConfig**
+**AndConstraint**
   Logical AND combination of constraints.
   
   **Constructor:**
-    ``AndConstraintConfig(constraints=[constraint1, constraint2])``
+    ``AndConstraint(constraints=[constraint1, constraint2])``
   
   **Attributes:**
     * ``type`` — Always "and"
-    * ``constraints`` — List of constraint configurations to combine with AND
+    * ``constraints`` — List of constraints to combine with AND
 
-**OrConstraintConfig**
+**OrConstraint**
   Logical OR combination of constraints.
   
   **Constructor:**
-    ``OrConstraintConfig(constraints=[constraint1, constraint2])``
+    ``OrConstraint(constraints=[constraint1, constraint2])``
   
   **Attributes:**
     * ``type`` — Always "or"
-    * ``constraints`` — List of constraint configurations to combine with OR
+    * ``constraints`` — List of constraints to combine with OR
 
-**NotConstraintConfig**
+**NotConstraint**
   Logical NOT (negation) of a constraint.
   
   **Constructor:**
-    ``NotConstraintConfig(constraint=some_constraint)``
+    ``NotConstraint(constraint=some_constraint)``
   
   **Attributes:**
     * ``type`` — Always "not"
-    * ``constraint`` — Constraint configuration to negate
+    * ``constraint`` — Constraint to negate
 
 **Constraint Operators**
 
 Constraint configurations support Python bitwise operators for convenient combination:
 
-* ``constraint1 & constraint2`` — Logical AND (equivalent to ``AndConstraintConfig``)
-* ``constraint1 | constraint2`` — Logical OR (equivalent to ``OrConstraintConfig``)
-* ``~constraint`` — Logical NOT (equivalent to ``NotConstraintConfig``)
+* ``constraint1 & constraint2`` — Logical AND (equivalent to ``AndConstraint``)
+* ``constraint1 | constraint2`` — Logical OR (equivalent to ``OrConstraint``)
+* ``~constraint`` — Logical NOT (equivalent to ``NotConstraint``)
 
 Usage examples are provided in the examples section of the docs.
 
