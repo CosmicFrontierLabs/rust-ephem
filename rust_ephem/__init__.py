@@ -63,11 +63,13 @@ __all__ = [
     "get_cache_dir",
 ]
 
-# Cache for ConstraintResult timestamp property
+# Cache for timestamp and constraint_array properties
 _timestamp_cache: dict = {}
+_constraint_array_cache: dict = {}
 
-# Save the original Rust timestamp descriptor BEFORE any modification
+# Save the original Rust descriptors BEFORE any modification
 _original_constraint_result_timestamp = ConstraintResult.timestamp
+_original_constraint_result_constraint_array = ConstraintResult.constraint_array
 _original_tle_timestamp = TLEEphemeris.timestamp
 _original_spice_timestamp = SPICEEphemeris.timestamp
 _original_ground_timestamp = GroundEphemeris.timestamp
@@ -94,8 +96,20 @@ def _get_cached_timestamp(self):  # type: ignore[no-untyped-def]
     return _timestamp_cache[obj_id]
 
 
-# Replace the timestamp property with cached version for all classes
+def _get_cached_constraint_array(self):  # type: ignore[no-untyped-def]
+    """Get constraint_array with caching to avoid recomputing on every access."""
+    obj_id = id(self)
+    if obj_id not in _constraint_array_cache:
+        # Call the original Rust descriptor
+        _constraint_array_cache[obj_id] = (
+            _original_constraint_result_constraint_array.__get__(self, ConstraintResult)
+        )
+    return _constraint_array_cache[obj_id]
+
+
+# Replace properties with cached versions
 ConstraintResult.timestamp = property(_get_cached_timestamp)  # type: ignore[misc, assignment]
+ConstraintResult.constraint_array = property(_get_cached_constraint_array)  # type: ignore[misc, assignment]
 TLEEphemeris.timestamp = property(_get_cached_timestamp)  # type: ignore[misc, assignment]
 SPICEEphemeris.timestamp = property(_get_cached_timestamp)  # type: ignore[misc, assignment]
 GroundEphemeris.timestamp = property(_get_cached_timestamp)  # type: ignore[misc, assignment]
