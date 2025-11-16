@@ -147,6 +147,7 @@ Classes
     * ``Constraint.sun_proximity(min_angle, max_angle=None)`` — Create Sun proximity constraint
     * ``Constraint.moon_proximity(min_angle, max_angle=None)`` — Create Moon proximity constraint
     * ``Constraint.earth_limb(min_angle, max_angle=None)`` — Create Earth limb avoidance constraint
+      * ``Constraint.earth_limb(min_angle, max_angle=None, include_refraction=False, horizon_dip=False)`` — Create Earth limb avoidance constraint
     * ``Constraint.body_proximity(body, min_angle, max_angle=None)`` — Create solar system body proximity constraint
     * ``Constraint.eclipse(umbra_only=True)`` — Create eclipse constraint
     * ``Constraint.and_(*constraints)`` — Combine constraints with logical AND
@@ -274,12 +275,14 @@ The following Pydantic models are used to configure constraints. These can be se
   Earth limb avoidance constraint.
   
   **Constructor:**
-    ``EarthLimbConstraint(min_angle=10.0)``
+    ``EarthLimbConstraint(min_angle=10.0, include_refraction=False, horizon_dip=False)``
   
   **Attributes:**
     * ``type`` — Always "earth_limb"
     * ``min_angle`` — Minimum angular separation from Earth's limb in degrees (0-180)
     * ``max_angle`` — Maximum angular separation from Earth's limb in degrees (0-180), optional
+      * ``include_refraction`` — Include atmospheric refraction correction (~0.57°) for ground observers (default: False)
+      * ``horizon_dip`` — Include geometric horizon dip correction for ground observers (default: False)
 
 **BodyConstraint**
   Solar system body proximity constraint.

@@ -236,12 +236,19 @@ impl PyConstraint {
     /// Args:
     ///     min_angle (float): Additional margin beyond Earth's apparent angular radius (degrees)
     ///     max_angle (float, optional): Maximum allowed angular separation from Earth limb (degrees)
+    ///     include_refraction (bool, optional): Include atmospheric refraction correction for ground observers (default: False)
+    ///     horizon_dip (bool, optional): Include geometric horizon dip correction for ground observers (default: False)
     ///
     /// Returns:
     ///     Constraint: A new constraint object
-    #[pyo3(signature=(min_angle, max_angle=None))]
+    #[pyo3(signature=(min_angle, max_angle=None, include_refraction=false, horizon_dip=false))]
     #[staticmethod]
-    fn earth_limb(min_angle: f64, max_angle: Option<f64>) -> PyResult<Self> {
+    fn earth_limb(
+        min_angle: f64,
+        max_angle: Option<f64>,
+        include_refraction: bool,
+        horizon_dip: bool,
+    ) -> PyResult<Self> {
         if !(0.0..=180.0).contains(&min_angle) {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "min_angle must be between 0 and 180 degrees",
@@ -264,14 +271,18 @@ impl PyConstraint {
         let config = EarthLimbConfig {
             min_angle,
             max_angle,
+            include_refraction,
+            horizon_dip,
         };
         let mut json_obj = serde_json::json!({
             "type": "earth_limb",
-            "min_angle": min_angle
+            "min_angle": min_angle,
+            "include_refraction": include_refraction
         });
         if let Some(max) = max_angle {
             json_obj["max_angle"] = serde_json::json!(max);
         }
+        json_obj["horizon_dip"] = serde_json::json!(horizon_dip);
         let config_json = json_obj.to_string();
 
         Ok(PyConstraint {
@@ -722,9 +733,19 @@ fn parse_constraint_json(value: &serde_json::Value) -> PyResult<Box<dyn Constrai
                     pyo3::exceptions::PyValueError::new_err("Missing 'min_angle' field")
                 })?;
             let max_angle = value.get("max_angle").and_then(|v| v.as_f64());
+            let include_refraction = value
+                .get("include_refraction")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false); // Default to false if not specified
+            let horizon_dip = value
+                .get("horizon_dip")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false); // Default to false if not specified
             let config = EarthLimbConfig {
                 min_angle,
                 max_angle,
+                include_refraction,
+                horizon_dip,
             };
             Ok(config.to_evaluator())
         }

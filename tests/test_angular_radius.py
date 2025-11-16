@@ -236,12 +236,13 @@ class TestEarthAngularRadius:
         # ISS is in LEO (~400-450 km altitude), Earth radius ~65-70 degrees
         assert np.all((deg > 60) & (deg < 80))
 
-    def test_earth_radius_is_nan_for_ground_observer(self, ground_ephemeris):
-        """Earth radius should be NaN for ground-based observer (distance ~0)"""
+    def test_earth_radius_near_90_for_ground_observer(self, ground_ephemeris):
+        """Earth radius should be ~90 degrees for ground-based observer (fills half the sky)"""
         deg = ground_ephemeris.earth_radius_deg
-        # Distance from ground station to Earth center is essentially the observer's distance
-        # which makes the angular radius calculation invalid (NaN or very large)
-        assert np.all(np.isnan(deg) | (deg > 80))
+        # Ground observer is at Earth's surface, so distance to center ≈ Earth radius
+        # Angular radius = arcsin(R_earth / R_earth) = arcsin(1) = 90 degrees
+        # For Mauna Kea at 4205m altitude, value is ~88.65 degrees
+        assert np.all((deg > 85.0) & (deg < 90.1))  # Near 90 degrees
 
     def test_earth_radius_small_from_moon(self, spice_ephemeris):
         """Earth angular radius from Moon should be small (~1 degree)"""
@@ -249,6 +250,27 @@ class TestEarthAngularRadius:
         # Moon is ~384,400 km from Earth, Earth radius ~6378 km
         # Angular radius = arcsin(6378/384400) ≈ 0.95 degrees
         assert np.all((deg > 0.9) & (deg < 1.1))
+
+    def test_earth_radius_rad_near_pi_over_2_for_ground_observer(
+        self, ground_ephemeris
+    ):
+        """Earth radius in radians should be ~π/2 for ground-based observer"""
+        rad = ground_ephemeris.earth_radius_rad
+        # π/2 radians = 90 degrees
+        # For Mauna Kea at 4205m altitude, value is ~1.547 radians (88.65°)
+        assert np.all(rad > 1.48) and np.all(rad < np.pi / 2 + 0.01)
+
+    def test_earth_radius_quantity_near_90_for_ground_observer(self, ground_ephemeris):
+        """Earth radius Quantity should be ~90 degrees for ground-based observer"""
+        from astropy import units as u
+
+        radius = ground_ephemeris.earth_radius
+        # Should have astropy units
+        assert hasattr(radius, "unit")
+        # Convert to degrees and check value
+        # For Mauna Kea at 4205m altitude, value is ~88.65 degrees
+        deg_values = radius.to(u.deg).value
+        assert np.all((deg_values > 85.0) & (deg_values < 90.1))
 
 
 class TestAngularRadiusCaching:

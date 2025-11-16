@@ -15,6 +15,21 @@ pub struct EarthLimbConfig {
     /// Maximum allowed angular separation from Earth's limb in degrees (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_angle: Option<f64>,
+    /// Include atmospheric refraction correction for ground observers (default: true)
+    /// Adds ~0.57° to horizon for standard atmosphere
+    #[serde(default = "default_refraction")]
+    pub include_refraction: bool,
+    /// Include geometric horizon dip correction for ground observers (default: true)
+    #[serde(default = "default_horizon_dip")]
+    pub horizon_dip: bool,
+}
+
+fn default_refraction() -> bool {
+    false
+}
+
+fn default_horizon_dip() -> bool {
+    false
 }
 
 impl ConstraintConfig for EarthLimbConfig {
@@ -22,6 +37,8 @@ impl ConstraintConfig for EarthLimbConfig {
         Box::new(EarthLimbEvaluator {
             min_angle_deg: self.min_angle,
             max_angle_deg: self.max_angle,
+            include_refraction: self.include_refraction,
+            horizon_dip: self.horizon_dip,
         })
     }
 }
@@ -30,6 +47,8 @@ impl ConstraintConfig for EarthLimbConfig {
 struct EarthLimbEvaluator {
     min_angle_deg: f64,
     max_angle_deg: Option<f64>,
+    include_refraction: bool,
+    horizon_dip: bool,
 }
 
 impl ConstraintEvaluator for EarthLimbEvaluator {
@@ -62,7 +81,21 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
             let r = vector_magnitude(&obs_pos);
             let ratio = (EARTH_RADIUS / r).clamp(-1.0, 1.0);
             let earth_ang_radius_deg = ratio.asin().to_degrees();
-            let threshold_deg = earth_ang_radius_deg + self.min_angle_deg;
+
+            // For ground observers (r close to EARTH_RADIUS), add horizon dip correction
+            // Horizon dip angle = arccos(R/r), which makes objects visible slightly beyond 90°
+            // For spacecraft (r >> R), this correction is negligible
+            let horizon_dip_correction = if self.horizon_dip && (r - EARTH_RADIUS).abs() < 100.0 {
+                // True ground observer or very low altitude (<100 km above surface)
+                let dip_angle_deg = (EARTH_RADIUS / r).clamp(-1.0, 1.0).acos().to_degrees();
+                let refraction = if self.include_refraction { 0.57 } else { 0.0 };
+                dip_angle_deg + refraction
+            } else {
+                // Spacecraft or high altitude - no correction needed
+                0.0
+            };
+
+            let threshold_deg = earth_ang_radius_deg + self.min_angle_deg + horizon_dip_correction;
 
             let center_unit = normalize_vector(&[-obs_pos[0], -obs_pos[1], -obs_pos[2]]);
             let cos_angle = dot_product(&target_vec, &center_unit);
@@ -119,7 +152,20 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
             let r = vector_magnitude(&obs_pos);
             let ratio = (EARTH_RADIUS / r).clamp(-1.0, 1.0);
             let earth_ang_radius_deg = ratio.asin().to_degrees();
-            let threshold_deg = earth_ang_radius_deg + self.min_angle_deg;
+
+            let horizon_dip_correction = if (r - EARTH_RADIUS).abs() < 100.0 {
+                if self.horizon_dip {
+                    let dip_angle_deg = (EARTH_RADIUS / r).clamp(-1.0, 1.0).acos().to_degrees();
+                    let refraction = if self.include_refraction { 0.57 } else { 0.0 };
+                    dip_angle_deg + refraction
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            };
+
+            let threshold_deg = earth_ang_radius_deg + self.min_angle_deg + horizon_dip_correction;
 
             violations.push(ConstraintViolation {
                 start_time: times[start_idx].to_rfc3339(),

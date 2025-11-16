@@ -752,7 +752,11 @@ pub trait EphemerisBase {
             let y = row[1];
             let z = row[2];
             let distance = (x * x + y * y + z * z).sqrt();
-            let angular_radius_rad = (EARTH_RADIUS_KM / distance).asin();
+            // Angular radius: angle from observer to visible horizon
+            // For ground observers: arcsin(R_earth / distance) < 90°
+            // Clamp ratio to [0, 1] for numerical stability
+            let ratio = (EARTH_RADIUS_KM / distance).min(1.0);
+            let angular_radius_rad = ratio.asin();
             angular_radii.push(angular_radius_rad.to_degrees());
         }
 
@@ -939,7 +943,11 @@ pub trait EphemerisBase {
             let y = row[1];
             let z = row[2];
             let distance = (x * x + y * y + z * z).sqrt();
-            let angular_radius_rad = (EARTH_RADIUS_KM / distance).asin();
+            // Angular radius: angle from observer to visible horizon
+            // For ground observers: arcsin(R_earth / distance) < π/2
+            // Clamp ratio to [0, 1] for numerical stability
+            let ratio = (EARTH_RADIUS_KM / distance).min(1.0);
+            let angular_radius_rad = ratio.asin();
             angular_radii.push(angular_radius_rad);
         }
 
