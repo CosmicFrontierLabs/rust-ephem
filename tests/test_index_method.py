@@ -145,7 +145,7 @@ class TestIndexMethod:
 class TestIndexMethodSPICE:
     """Test index() method with SPICE ephemeris"""
 
-    def test_index_works_with_spice(self, tmp_path):
+    def test_index_works_with_spice(self):
         """index() should work with SPICEEphemeris"""
         # Use the test data SPK file
         spk_path = "test_data/de440s.bsp"
