@@ -7,8 +7,6 @@ name: Build Wheels and Sdist
 
 on:
   push:
-    branches:
-      - main
     tags:
       - "*"
   workflow_dispatch:
