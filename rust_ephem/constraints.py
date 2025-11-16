@@ -186,11 +186,14 @@ class EarthLimbConstraint(RustConstraintMixin):
     """Earth limb avoidance constraint
 
     Ensures target maintains minimum angular separation from Earth's limb.
+    For ground observers, optionally accounts for geometric horizon dip and atmospheric refraction.
 
     Attributes:
         type: Always "earth_limb"
         min_angle: Minimum allowed angular separation in degrees (0-180)
         max_angle: Maximum allowed angular separation in degrees (0-180), optional
+        include_refraction: Include atmospheric refraction correction (~0.57°) for ground observers (default: False)
+        horizon_dip: Include geometric horizon dip correction for ground observers (default: False)
     """
 
     type: Literal["earth_limb"] = "earth_limb"
@@ -202,6 +205,14 @@ class EarthLimbConstraint(RustConstraintMixin):
         ge=0.0,
         le=180.0,
         description="Maximum angle from Earth's limb in degrees",
+    )
+    include_refraction: bool = Field(
+        default=False,
+        description="Include atmospheric refraction correction for ground observers",
+    )
+    horizon_dip: bool = Field(
+        default=False,
+        description="Include geometric horizon dip correction for ground observers",
     )
 
 
