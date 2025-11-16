@@ -210,6 +210,75 @@ impl GroundEphemeris {
         let modules = AstropyModules::import(py)?;
         <Self as EphemerisBase>::get_body(self, py, &modules, &body)
     }
+
+    /// Get angular radius of the Sun as seen from the ground station (in degrees)
+    ///
+    /// Returns a NumPy array of angular radii for each timestamp.
+    /// Angular radius = arcsin(physical_radius / distance)
+    ///
+    /// # Returns
+    /// NumPy array of angular radii in degrees
+    #[getter]
+    fn sun_angular_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_sun_angular_radius(py)
+    }
+
+    /// Get angular radius of the Moon as seen from the ground station (in degrees)
+    ///
+    /// Returns a NumPy array of angular radii for each timestamp.
+    /// Angular radius = arcsin(physical_radius / distance)
+    ///
+    /// # Returns
+    /// NumPy array of angular radii in degrees
+    #[getter]
+    fn moon_angular_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_moon_angular_radius(py)
+    }
+
+    /// Get angular radius of the Earth as seen from the ground station (in degrees)
+    ///
+    /// Returns a NumPy array of angular radii for each timestamp.
+    /// Angular radius = arcsin(physical_radius / distance)
+    ///
+    /// # Returns
+    /// NumPy array of angular radii in degrees
+    #[getter]
+    fn earth_angular_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_earth_angular_radius(py)
+    }
+
+    /// Get angular radius of the Sun with astropy units (degrees)
+    ///
+    /// Returns an astropy Quantity with units of degrees
+    ///
+    /// # Returns
+    /// astropy Quantity array with units of degrees
+    #[getter]
+    fn sun_angular_radius_quantity(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_sun_angular_radius_quantity(py)
+    }
+
+    /// Get angular radius of the Moon with astropy units (degrees)
+    ///
+    /// Returns an astropy Quantity with units of degrees
+    ///
+    /// # Returns
+    /// astropy Quantity array with units of degrees
+    #[getter]
+    fn moon_angular_radius_quantity(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_moon_angular_radius_quantity(py)
+    }
+
+    /// Get angular radius of the Earth with astropy units (degrees)
+    ///
+    /// Returns an astropy Quantity with units of degrees
+    ///
+    /// # Returns
+    /// astropy Quantity array with units of degrees
+    #[getter]
+    fn earth_angular_radius_quantity(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_earth_angular_radius_quantity(py)
+    }
 }
 
 impl GroundEphemeris {

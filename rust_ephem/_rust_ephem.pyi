@@ -730,6 +730,81 @@ class GroundEphemeris:
         """Altitude in meters above WGS84 ellipsoid"""
         ...
 
+    @property
+    def sun_angular_radius(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Sun as seen from the ground station (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+
+        Returns:
+            NumPy array of angular radii in degrees
+        """
+        ...
+
+    @property
+    def moon_angular_radius(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Moon as seen from the ground station (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+
+        Returns:
+            NumPy array of angular radii in degrees
+        """
+        ...
+
+    @property
+    def earth_angular_radius(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Earth as seen from the ground station (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+
+        Returns:
+            NumPy array of angular radii in degrees
+        """
+        ...
+
+    @property
+    def sun_angular_radius_quantity(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Sun with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+
+        Returns:
+            astropy Quantity array with units of degrees
+        """
+        ...
+
+    @property
+    def moon_angular_radius_quantity(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Moon with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+
+        Returns:
+            astropy Quantity array with units of degrees
+        """
+        ...
+
+    @property
+    def earth_angular_radius_quantity(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Earth with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+
+        Returns:
+            astropy Quantity array with units of degrees
+        """
+        ...
+
 def init_planetary_ephemeris(
     py_path: str,
 ) -> None:

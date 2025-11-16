@@ -617,4 +617,152 @@ pub trait EphemerisBase {
         )?;
         to_skycoord(py, Some(modules), config)
     }
+
+    /// Get angular radius of the Sun as seen from the observer (in degrees)
+    ///
+    /// Returns a NumPy array of angular radii for each timestamp.
+    /// Angular radius = arcsin(physical_radius / distance)
+    ///
+    /// # Returns
+    /// NumPy array of angular radii in degrees
+    fn get_sun_angular_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        use crate::utils::config::SUN_RADIUS_KM;
+        use numpy::PyArray1;
+
+        let sun_pv_data = self
+            .data()
+            .sun_gcrs
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No Sun data available."))?;
+
+        let n = sun_pv_data.nrows();
+        let mut angular_radii = Vec::with_capacity(n);
+
+        for i in 0..n {
+            let row = sun_pv_data.row(i);
+            let x = row[0];
+            let y = row[1];
+            let z = row[2];
+            let distance = (x * x + y * y + z * z).sqrt();
+            let angular_radius_rad = (SUN_RADIUS_KM / distance).asin();
+            angular_radii.push(angular_radius_rad.to_degrees());
+        }
+
+        Ok(PyArray1::from_vec(py, angular_radii).to_owned().into())
+    }
+
+    /// Get angular radius of the Moon as seen from the observer (in degrees)
+    ///
+    /// Returns a NumPy array of angular radii for each timestamp.
+    /// Angular radius = arcsin(physical_radius / distance)
+    ///
+    /// # Returns
+    /// NumPy array of angular radii in degrees
+    fn get_moon_angular_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        use crate::utils::config::MOON_RADIUS_KM;
+        use numpy::PyArray1;
+
+        let moon_pv_data =
+            self.data().moon_gcrs.as_ref().ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("No Moon data available.")
+            })?;
+
+        let n = moon_pv_data.nrows();
+        let mut angular_radii = Vec::with_capacity(n);
+
+        for i in 0..n {
+            let row = moon_pv_data.row(i);
+            let x = row[0];
+            let y = row[1];
+            let z = row[2];
+            let distance = (x * x + y * y + z * z).sqrt();
+            let angular_radius_rad = (MOON_RADIUS_KM / distance).asin();
+            angular_radii.push(angular_radius_rad.to_degrees());
+        }
+
+        Ok(PyArray1::from_vec(py, angular_radii).to_owned().into())
+    }
+
+    /// Get angular radius of the Earth as seen from the observer (in degrees)
+    ///
+    /// Returns a NumPy array of angular radii for each timestamp.
+    /// Angular radius = arcsin(physical_radius / distance)
+    ///
+    /// # Returns
+    /// NumPy array of angular radii in degrees
+    fn get_earth_angular_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        use crate::utils::config::EARTH_RADIUS_KM;
+        use numpy::PyArray1;
+
+        let gcrs_data =
+            self.data().gcrs.as_ref().ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("No GCRS data available.")
+            })?;
+
+        let n = gcrs_data.nrows();
+        let mut angular_radii = Vec::with_capacity(n);
+
+        for i in 0..n {
+            let row = gcrs_data.row(i);
+            let x = row[0];
+            let y = row[1];
+            let z = row[2];
+            let distance = (x * x + y * y + z * z).sqrt();
+            let angular_radius_rad = (EARTH_RADIUS_KM / distance).asin();
+            angular_radii.push(angular_radius_rad.to_degrees());
+        }
+
+        Ok(PyArray1::from_vec(py, angular_radii).to_owned().into())
+    }
+
+    /// Get angular radius of the Sun with astropy units (degrees)
+    ///
+    /// Returns an astropy Quantity with units of degrees
+    ///
+    /// # Returns
+    /// astropy Quantity array with units of degrees
+    fn get_sun_angular_radius_quantity(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let angular_radii_array = self.get_sun_angular_radius(py)?;
+        let astropy = py.import("astropy.units")?;
+        let quantity_class = astropy.getattr("Quantity")?;
+        let deg_unit = astropy.getattr("deg")?;
+
+        Ok(quantity_class
+            .call1((angular_radii_array, deg_unit))?
+            .into())
+    }
+
+    /// Get angular radius of the Moon with astropy units (degrees)
+    ///
+    /// Returns an astropy Quantity with units of degrees
+    ///
+    /// # Returns
+    /// astropy Quantity array with units of degrees
+    fn get_moon_angular_radius_quantity(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let angular_radii_array = self.get_moon_angular_radius(py)?;
+        let astropy = py.import("astropy.units")?;
+        let quantity_class = astropy.getattr("Quantity")?;
+        let deg_unit = astropy.getattr("deg")?;
+
+        Ok(quantity_class
+            .call1((angular_radii_array, deg_unit))?
+            .into())
+    }
+
+    /// Get angular radius of the Earth with astropy units (degrees)
+    ///
+    /// Returns an astropy Quantity with units of degrees
+    ///
+    /// # Returns
+    /// astropy Quantity array with units of degrees
+    fn get_earth_angular_radius_quantity(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let angular_radii_array = self.get_earth_angular_radius(py)?;
+        let astropy = py.import("astropy.units")?;
+        let quantity_class = astropy.getattr("Quantity")?;
+        let deg_unit = astropy.getattr("deg")?;
+
+        Ok(quantity_class
+            .call1((angular_radii_array, deg_unit))?
+            .into())
+    }
 }
