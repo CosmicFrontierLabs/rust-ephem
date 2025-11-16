@@ -411,6 +411,102 @@ class TLEEphemeris:
         """
         ...
 
+    @property
+    def sun_radius(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Sun with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_radius_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Sun as seen from the spacecraft (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_radius(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Moon with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_radius_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Moon as seen from the spacecraft (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_radius(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Earth with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_radius_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Earth as seen from the spacecraft (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Sun as seen from the spacecraft (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Moon as seen from the spacecraft (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Earth as seen from the spacecraft (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
     def get_body_pv(self, body: str) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body.
@@ -505,6 +601,102 @@ class SPICEEphemeris:
 
         Returns a NumPy array of datetime objects (not a list) for efficient indexing.
         This property is cached for performance - repeated access is ~90x faster.
+        """
+        ...
+
+    @property
+    def sun_radius(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Sun with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_radius_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Sun as seen from the observer (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_radius(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Moon with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_radius_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Moon as seen from the observer (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_radius(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Earth with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_radius_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Earth as seen from the observer (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Sun as seen from the observer (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Moon as seen from the observer (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Earth as seen from the observer (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
         """
         ...
 
@@ -614,6 +806,129 @@ class GroundEphemeris:
     @property
     def height(self) -> float:
         """Altitude in meters above WGS84 ellipsoid"""
+        ...
+
+    @property
+    def sun_radius(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Sun with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+        This property is cached for performance.
+
+        Returns:
+            astropy Quantity array with units of degrees
+        """
+        ...
+
+    @property
+    def sun_radius_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Sun as seen from the ground station (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+
+        Returns:
+            NumPy array of angular radii in degrees
+        """
+        ...
+
+    @property
+    def moon_radius(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Moon with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+        This property is cached for performance.
+
+        Returns:
+            astropy Quantity array with units of degrees
+        """
+        ...
+
+    @property
+    def moon_radius_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Moon as seen from the ground station (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+
+        Returns:
+            NumPy array of angular radii in degrees
+        """
+        ...
+
+    @property
+    def earth_radius(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Earth with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+        This property is cached for performance.
+
+        Returns:
+            astropy Quantity array with units of degrees
+        """
+        ...
+
+    @property
+    def earth_radius_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Earth as seen from the ground station (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+
+        Returns:
+            NumPy array of angular radii in degrees
+        """
+        ...
+
+    @property
+    def sun_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Sun as seen from the ground station (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+
+        Returns:
+            NumPy array of angular radii in radians
+        """
+        ...
+
+    @property
+    def moon_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Moon as seen from the ground station (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+
+        Returns:
+            NumPy array of angular radii in radians
+        """
+        ...
+
+    @property
+    def earth_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Earth as seen from the ground station (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+
+        Returns:
+            NumPy array of angular radii in radians
+        """
         ...
 
 def init_planetary_ephemeris(

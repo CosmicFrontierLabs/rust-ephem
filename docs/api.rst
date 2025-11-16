@@ -44,6 +44,15 @@ Classes
     * ``moon`` — Moon position as astropy SkyCoord
     * ``obsgeoloc`` — Observer geocentric location (alias for GCRS position)
     * ``obsgeovel`` — Observer geocentric velocity (alias for GCRS velocity)
+    * ``sun_radius`` — Sun angular radius as astropy Quantity (degrees)
+    * ``sun_radius_deg`` — Sun angular radius as NumPy array (degrees)
+    * ``sun_radius_rad`` — Sun angular radius as NumPy array (radians)
+    * ``moon_radius`` — Moon angular radius as astropy Quantity (degrees)
+    * ``moon_radius_deg`` — Moon angular radius as NumPy array (degrees)
+    * ``moon_radius_rad`` — Moon angular radius as NumPy array (radians)
+    * ``earth_radius`` — Earth angular radius as astropy Quantity (degrees)
+    * ``earth_radius_deg`` — Earth angular radius as NumPy array (degrees)
+    * ``earth_radius_rad`` — Earth angular radius as NumPy array (radians)
 
 **SPICEEphemeris**
   Access planetary ephemerides (SPK files) for celestial body positions.
@@ -64,6 +73,15 @@ Classes
     * ``moon`` — Moon position as astropy SkyCoord
     * ``obsgeoloc`` — Observer geocentric location (alias for GCRS position)
     * ``obsgeovel`` — Observer geocentric velocity (alias for GCRS velocity)
+    * ``sun_radius`` — Sun angular radius as astropy Quantity (degrees)
+    * ``sun_radius_deg`` — Sun angular radius as NumPy array (degrees)
+    * ``sun_radius_rad`` — Sun angular radius as NumPy array (radians)
+    * ``moon_radius`` — Moon angular radius as astropy Quantity (degrees)
+    * ``moon_radius_deg`` — Moon angular radius as NumPy array (degrees)
+    * ``moon_radius_rad`` — Moon angular radius as NumPy array (radians)
+    * ``earth_radius`` — Earth angular radius as astropy Quantity (degrees)
+    * ``earth_radius_deg`` — Earth angular radius as NumPy array (degrees)
+    * ``earth_radius_rad`` — Earth angular radius as NumPy array (radians)
 
 **GroundEphemeris**
   Ground-based observatory ephemeris for a fixed point on Earth's surface.
@@ -91,6 +109,15 @@ Classes
     * ``moon`` — Moon position as astropy SkyCoord
     * ``obsgeoloc`` — Observer geocentric location (alias for GCRS position)
     * ``obsgeovel`` — Observer geocentric velocity (alias for GCRS velocity)
+    * ``sun_radius`` — Sun angular radius as astropy Quantity (degrees)
+    * ``sun_radius_deg`` — Sun angular radius as NumPy array (degrees)
+    * ``sun_radius_rad`` — Sun angular radius as NumPy array (radians)
+    * ``moon_radius`` — Moon angular radius as astropy Quantity (degrees)
+    * ``moon_radius_deg`` — Moon angular radius as NumPy array (degrees)
+    * ``moon_radius_rad`` — Moon angular radius as NumPy array (radians)
+    * ``earth_radius`` — Earth angular radius as astropy Quantity (degrees)
+    * ``earth_radius_deg`` — Earth angular radius as NumPy array (degrees)
+    * ``earth_radius_rad`` — Earth angular radius as NumPy array (radians)
 
 **Constraint**
   Evaluate astronomical observation constraints against ephemeris data.

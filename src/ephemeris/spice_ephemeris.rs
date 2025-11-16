@@ -282,6 +282,112 @@ impl SPICEEphemeris {
         let modules = AstropyModules::import(py)?;
         <Self as EphemerisBase>::get_body(self, py, &modules, &body)
     }
+
+    /// Get angular radius of the Sun with astropy units
+    ///
+    /// Returns an astropy Quantity array with units of degrees for each timestamp.
+    /// Angular radius = arcsin(physical_radius / distance)
+    ///
+    /// # Returns
+    /// astropy Quantity array with units of degrees
+    #[getter]
+    fn sun_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_sun_radius(py)
+    }
+
+    /// Get angular radius of the Sun with astropy units
+    ///
+    /// Returns an astropy Quantity array with units of degrees for each timestamp.
+    /// Angular radius = arcsin(physical_radius / distance)
+    ///
+    /// # Returns
+    /// astropy Quantity array with units of degrees
+    #[getter]
+    fn sun_radius_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_sun_radius_deg(py)
+    }
+
+    /// Get angular radius of the Moon with astropy units (degrees)
+    ///
+    /// Returns an astropy Quantity with units of degrees
+    ///
+    /// # Returns
+    /// astropy Quantity array with units of degrees
+    #[getter]
+    fn moon_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_moon_radius(py)
+    }
+
+    /// Get angular radius of the Moon as seen from the observer (in degrees)
+    ///
+    /// Returns a NumPy array of angular radii for each timestamp.
+    /// Angular radius = arcsin(physical_radius / distance)
+    ///
+    /// # Returns
+    /// NumPy array of angular radii in degrees
+    #[getter]
+    fn moon_radius_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_moon_radius_deg(py)
+    }
+
+    /// Get angular radius of the Earth with astropy units (degrees)
+    ///
+    /// Returns an astropy Quantity with units of degrees
+    ///
+    /// # Returns
+    /// astropy Quantity array with units of degrees
+    #[getter]
+    fn earth_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_earth_radius(py)
+    }
+
+    /// Get angular radius of the Earth as seen from the observer (in degrees)
+    ///
+    /// Returns a NumPy array of angular radii for each timestamp.
+    /// Angular radius = arcsin(physical_radius / distance)
+    ///
+    /// # Returns
+    /// NumPy array of angular radii in degrees
+    #[getter]
+    fn earth_radius_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_earth_radius_deg(py)
+    }
+
+    /// Get angular radius of the Sun as seen from the observer (in radians)
+    ///
+    /// Returns a NumPy array of angular radii for each timestamp.
+    /// Angular radius = arcsin(physical_radius / distance)
+    ///
+    /// # Returns
+    /// NumPy array of angular radii in radians
+    #[getter]
+    fn sun_radius_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_sun_radius_rad(py)
+    }
+
+    /// Get angular radius of the Moon as seen from the observer (in radians)
+    ///
+    /// Returns a NumPy array of angular radii for each timestamp.
+    /// Angular radius = arcsin(physical_radius / distance)
+    ///
+    /// # Returns
+    /// NumPy array of angular radii in radians
+    #[getter]
+    fn moon_radius_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_moon_radius_rad(py)
+    }
+
+    /// Get angular radius of the Earth as seen from the observer (in radians)
+    ///
+    /// Returns a NumPy array of angular radii for each timestamp.
+    /// Angular radius = arcsin(physical_radius / distance)
+    ///
+    /// # Returns
+    /// NumPy array of angular radii in radians
+    #[getter]
+    fn earth_radius_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_earth_radius_rad(py)
+    }
 }
 
 // Implement the EphemerisBase trait for SPICEEphemeris
