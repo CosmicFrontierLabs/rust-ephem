@@ -999,11 +999,7 @@ pub trait EphemerisBase {
             .iter()
             .enumerate()
             .map(|(idx, t)| {
-                let diff = if *t > target_time {
-                    (*t - target_time).num_milliseconds().abs()
-                } else {
-                    (target_time - *t).num_milliseconds().abs()
-                };
+                let diff = (*t - target_time).num_milliseconds().abs();
                 (idx, diff)
             })
             .min_by_key(|&(_, diff)| diff)
