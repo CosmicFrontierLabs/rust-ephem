@@ -429,6 +429,29 @@ impl TLEEphemeris {
     fn earth_radius_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
         self.get_earth_radius_rad(py)
     }
+
+    /// Find the index of the closest timestamp to the given datetime
+    ///
+    /// Returns the index in the ephemeris timestamp array that is closest to the provided time.
+    /// This can be used to index into any of the ephemeris arrays (positions, velocities, etc.)
+    ///
+    /// # Arguments
+    /// * `time` - Python datetime object to find the closest match for
+    ///
+    /// # Returns
+    /// Index of the closest timestamp
+    ///
+    /// # Example
+    /// ```python
+    /// from datetime import datetime
+    /// eph = TLEEphemeris(...)
+    /// target_time = datetime(2024, 1, 15, 12, 0, 0)
+    /// idx = eph.index(target_time)
+    /// position = eph.gcrs_pv.position[idx]
+    /// ```
+    fn index(&self, time: &Bound<'_, PyDateTime>) -> PyResult<usize> {
+        self.find_closest_index(time)
+    }
 }
 
 // Implement the EphemerisBase trait for TLEEphemeris

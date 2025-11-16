@@ -531,6 +531,31 @@ class TLEEphemeris:
         """
         ...
 
+    def index(self, time: datetime) -> int:
+        """
+        Find the index of the closest timestamp to the given datetime.
+
+        Returns the index in the ephemeris timestamp array that is closest to the provided time.
+        This can be used to index into any of the ephemeris arrays (positions, velocities, etc.)
+
+        Args:
+            time: Python datetime object to find the closest match for
+
+        Returns:
+            Index of the closest timestamp
+
+        Raises:
+            ValueError: If no timestamps are available in the ephemeris
+
+        Example:
+            >>> from datetime import datetime
+            >>> eph = TLEEphemeris(...)
+            >>> target_time = datetime(2024, 1, 15, 12, 0, 0)
+            >>> idx = eph.index(target_time)
+            >>> position = eph.gcrs_pv.position[idx]
+        """
+        ...
+
 class SPICEEphemeris:
     """Ephemeris calculator using SPICE kernels"""
 
@@ -697,6 +722,31 @@ class SPICEEphemeris:
         Returns a NumPy array of angular radii for each timestamp.
         Angular radius = arcsin(physical_radius / distance)
         This property is cached for performance.
+        """
+        ...
+
+    def index(self, time: datetime) -> int:
+        """
+        Find the index of the closest timestamp to the given datetime.
+
+        Returns the index in the ephemeris timestamp array that is closest to the provided time.
+        This can be used to index into any of the ephemeris arrays (positions, velocities, etc.)
+
+        Args:
+            time: Python datetime object to find the closest match for
+
+        Returns:
+            Index of the closest timestamp
+
+        Raises:
+            ValueError: If no timestamps are available in the ephemeris
+
+        Example:
+            >>> from datetime import datetime
+            >>> eph = SPICEEphemeris(...)
+            >>> target_time = datetime(2024, 1, 15, 12, 0, 0)
+            >>> idx = eph.index(target_time)
+            >>> position = eph.gcrs_pv.position[idx]
         """
         ...
 
@@ -928,6 +978,31 @@ class GroundEphemeris:
 
         Returns:
             NumPy array of angular radii in radians
+        """
+        ...
+
+    def index(self, time: datetime) -> int:
+        """
+        Find the index of the closest timestamp to the given datetime.
+
+        Returns the index in the ephemeris timestamp array that is closest to the provided time.
+        This can be used to index into any of the ephemeris arrays (positions, velocities, etc.)
+
+        Args:
+            time: Python datetime object to find the closest match for
+
+        Returns:
+            Index of the closest timestamp
+
+        Raises:
+            ValueError: If no timestamps are available in the ephemeris
+
+        Example:
+            >>> from datetime import datetime
+            >>> eph = GroundEphemeris(...)
+            >>> target_time = datetime(2024, 1, 15, 12, 0, 0)
+            >>> idx = eph.index(target_time)
+            >>> sun_position = eph.sun_pv.position[idx]
         """
         ...
 
