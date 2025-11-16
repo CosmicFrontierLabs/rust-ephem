@@ -23,7 +23,23 @@ import rust_ephem  # type: ignore[import-untyped]
 @pytest.fixture(scope="module")
 def ensure_planetary_data():
     """Ensure planetary ephemeris is loaded once for all tests"""
-    rust_ephem.ensure_planetary_ephemeris()
+    # Use local test data file if available, otherwise download once
+    import os
+
+    test_data_path = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), "test_data", "de440s.bsp"
+    )
+
+    # If file exists locally, use it without downloading
+    if os.path.exists(test_data_path):
+        rust_ephem.ensure_planetary_ephemeris(
+            py_path=test_data_path, download_if_missing=False
+        )
+    else:
+        # File doesn't exist, allow download (will happen once per machine)
+        rust_ephem.ensure_planetary_ephemeris(
+            py_path=test_data_path, download_if_missing=True
+        )
 
 
 @pytest.fixture
