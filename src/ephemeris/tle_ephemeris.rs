@@ -325,11 +325,9 @@ impl TLEEphemeris {
         <Self as EphemerisBase>::get_body(self, py, &modules, &body)
     }
 
-    /// Get angular radius of the Sun as seen from the spacecraft (in degrees)
+    /// Get angular radius of the Sun with astropy units
     ///
-    /// Get angular radius of the Sun with astropy units (degrees)
-    ///
-    /// Returns an astropy Quantity with units of degrees
+    /// Returns an astropy Quantity with units of degrees.
     ///
     /// # Returns
     /// astropy Quantity array with units of degrees
