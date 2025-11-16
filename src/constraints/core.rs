@@ -239,12 +239,12 @@ impl ConstraintResult {
             let t_str = dt.to_rfc3339();
             for v in &self.violations {
                 if v.start_time <= t_str && t_str <= v.end_time {
-                    // Time is in a violation window, so NOT in-constraint
-                    return Ok(false);
+                    // Time is in a violation window, so in-constraint (violated)
+                    return Ok(true);
                 }
             }
-            // No violations found for this time, so in-constraint
-            Ok(true)
+            // No violations found for this time, so not in-constraint
+            Ok(false)
         } else {
             Err(pyo3::exceptions::PyValueError::new_err(
                 "time not found in evaluated timestamps",

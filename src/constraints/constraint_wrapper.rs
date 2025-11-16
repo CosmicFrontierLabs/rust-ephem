@@ -639,7 +639,7 @@ impl PyConstraint {
         }
     }
 
-    /// Check if the target is in-constraint at a given time
+    /// Check if the target violates the constraint at a given time
     ///
     /// Args:
     ///     time (datetime): The time to check (must exist in ephemeris)
@@ -648,7 +648,7 @@ impl PyConstraint {
     ///     target_dec (float): Target declination in degrees (ICRS/J2000)
     ///
     /// Returns:
-    ///     bool: True if constraint is satisfied at the given time, False otherwise
+    ///     bool: True if constraint is violated at the given time, False otherwise
     fn in_constraint(
         &self,
         py: Python,
@@ -661,8 +661,8 @@ impl PyConstraint {
         let result = self.evaluate(py, ephemeris, target_ra, target_dec, Some(time), None)?;
 
         // Check if there are any violations
-        // If no violations, the constraint is satisfied (in-constraint)
-        Ok(result.all_satisfied)
+        // If violations exist, the constraint is violated (in-constraint)
+        Ok(!result.all_satisfied)
     }
 
     /// Get constraint configuration as JSON string
