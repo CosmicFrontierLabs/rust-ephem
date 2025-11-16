@@ -100,6 +100,10 @@ pub struct EphemerisData {
     pub moon_skycoord: OnceLock<Py<PyAny>>,
     /// Cached Python timestamp array (NumPy array of datetime objects)
     pub timestamp_cache: OnceLock<Py<PyAny>>,
+    /// Cached angular radius arrays
+    pub sun_angular_radius_cache: OnceLock<Py<PyAny>>,
+    pub moon_angular_radius_cache: OnceLock<Py<PyAny>>,
+    pub earth_angular_radius_cache: OnceLock<Py<PyAny>>,
 }
 
 impl EphemerisData {
@@ -115,6 +119,9 @@ impl EphemerisData {
             sun_skycoord: OnceLock::new(),
             moon_skycoord: OnceLock::new(),
             timestamp_cache: OnceLock::new(),
+            sun_angular_radius_cache: OnceLock::new(),
+            moon_angular_radius_cache: OnceLock::new(),
+            earth_angular_radius_cache: OnceLock::new(),
         }
     }
 }
@@ -626,6 +633,11 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of angular radii in degrees
     fn get_sun_angular_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        // Check cache first
+        if let Some(cached) = self.data().sun_angular_radius_cache.get() {
+            return Ok(cached.clone_ref(py));
+        }
+
         use crate::utils::config::SUN_RADIUS_KM;
         use numpy::PyArray1;
 
@@ -648,7 +660,15 @@ pub trait EphemerisBase {
             angular_radii.push(angular_radius_rad.to_degrees());
         }
 
-        Ok(PyArray1::from_vec(py, angular_radii).to_owned().into())
+        let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii).to_owned().into();
+
+        // Cache the result
+        let _ = self
+            .data()
+            .sun_angular_radius_cache
+            .set(result.clone_ref(py));
+
+        Ok(result)
     }
 
     /// Get angular radius of the Moon as seen from the observer (in degrees)
@@ -659,6 +679,11 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of angular radii in degrees
     fn get_moon_angular_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        // Check cache first
+        if let Some(cached) = self.data().moon_angular_radius_cache.get() {
+            return Ok(cached.clone_ref(py));
+        }
+
         use crate::utils::config::MOON_RADIUS_KM;
         use numpy::PyArray1;
 
@@ -680,7 +705,15 @@ pub trait EphemerisBase {
             angular_radii.push(angular_radius_rad.to_degrees());
         }
 
-        Ok(PyArray1::from_vec(py, angular_radii).to_owned().into())
+        let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii).to_owned().into();
+
+        // Cache the result
+        let _ = self
+            .data()
+            .moon_angular_radius_cache
+            .set(result.clone_ref(py));
+
+        Ok(result)
     }
 
     /// Get angular radius of the Earth as seen from the observer (in degrees)
@@ -691,6 +724,11 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of angular radii in degrees
     fn get_earth_angular_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        // Check cache first
+        if let Some(cached) = self.data().earth_angular_radius_cache.get() {
+            return Ok(cached.clone_ref(py));
+        }
+
         use crate::utils::config::EARTH_RADIUS_KM;
         use numpy::PyArray1;
 
@@ -712,7 +750,15 @@ pub trait EphemerisBase {
             angular_radii.push(angular_radius_rad.to_degrees());
         }
 
-        Ok(PyArray1::from_vec(py, angular_radii).to_owned().into())
+        let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii).to_owned().into();
+
+        // Cache the result
+        let _ = self
+            .data()
+            .earth_angular_radius_cache
+            .set(result.clone_ref(py));
+
+        Ok(result)
     }
 
     /// Get angular radius of the Sun with astropy units (degrees)
