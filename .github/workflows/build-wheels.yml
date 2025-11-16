@@ -37,6 +37,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
+      - name: Update version from tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+          echo "Tag: $TAG"
+          echo "Setting version to: $VERSION"
+          sed -i "s/^version = .*/version = \"$VERSION\"/" Cargo.toml
+          cat Cargo.toml | grep "^version"
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -124,6 +133,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
+      - name: Update version from tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+          echo "Tag: $TAG"
+          echo "Setting version to: $VERSION"
+          sed -i '' "s/^version = .*/version = \"$VERSION\"/" Cargo.toml
+          cat Cargo.toml | grep "^version"
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -140,6 +158,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Update version from tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+          echo "Tag: $TAG"
+          echo "Setting version to: $VERSION"
+          sed -i "s/^version = .*/version = \"$VERSION\"/" Cargo.toml
+          cat Cargo.toml | grep "^version"
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
