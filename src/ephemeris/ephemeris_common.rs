@@ -994,17 +994,36 @@ pub trait EphemerisBase {
 
         let target_time = python_datetime_to_utc(time)?;
 
-        // Find the index with minimum time difference
-        let (min_idx, _min_diff) = times
-            .iter()
-            .enumerate()
-            .map(|(idx, t)| {
-                let diff = (*t - target_time).num_milliseconds().abs();
-                (idx, diff)
-            })
-            .min_by_key(|&(_, diff)| diff)
-            .unwrap(); // Safe because we already checked times is not empty
+        // Use binary search to find the closest timestamp - O(log n) complexity
+        // Since timestamps are guaranteed to be sorted (generated in ascending order),
+        // we can use binary_search_by to efficiently locate the insertion point
+        match times.binary_search(&target_time) {
+            // Exact match found
+            Ok(idx) => Ok(idx),
+            // Not found - idx is the insertion point
+            Err(idx) => {
+                // Handle edge cases
+                if idx == 0 {
+                    // Target is before all timestamps, return first index
+                    Ok(0)
+                } else if idx >= times.len() {
+                    // Target is after all timestamps, return last index
+                    Ok(times.len() - 1)
+                } else {
+                    // Target is between idx-1 and idx, find which is closer
+                    let before = &times[idx - 1];
+                    let after = &times[idx];
 
-        Ok(min_idx)
+                    let diff_before = (target_time - *before).num_milliseconds().abs();
+                    let diff_after = (*after - target_time).num_milliseconds().abs();
+
+                    if diff_before <= diff_after {
+                        Ok(idx - 1)
+                    } else {
+                        Ok(idx)
+                    }
+                }
+            }
+        }
     }
 }
