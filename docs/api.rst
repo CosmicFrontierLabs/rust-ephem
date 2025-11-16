@@ -53,6 +53,13 @@ Classes
     * ``earth_radius`` — Earth angular radius as astropy Quantity (degrees)
     * ``earth_radius_deg`` — Earth angular radius as NumPy array (degrees)
     * ``earth_radius_rad`` — Earth angular radius as NumPy array (radians)
+  
+  **Methods:**
+    * ``index(time)`` — Find the index of the closest timestamp to the given datetime
+      
+      - ``time`` — Python datetime object
+      - Returns: ``int`` index that can be used to access ephemeris arrays
+      - Example: ``idx = eph.index(datetime(2024, 1, 1, 12, 0, 0))`` then ``position = eph.gcrs_pv.position[idx]``
 
 **SPICEEphemeris**
   Access planetary ephemerides (SPK files) for celestial body positions.
@@ -82,6 +89,13 @@ Classes
     * ``earth_radius`` — Earth angular radius as astropy Quantity (degrees)
     * ``earth_radius_deg`` — Earth angular radius as NumPy array (degrees)
     * ``earth_radius_rad`` — Earth angular radius as NumPy array (radians)
+  
+  **Methods:**
+    * ``index(time)`` — Find the index of the closest timestamp to the given datetime
+      
+      - ``time`` — Python datetime object
+      - Returns: ``int`` index that can be used to access ephemeris arrays
+      - Example: ``idx = eph.index(datetime(2024, 1, 1, 12, 0, 0))`` then ``position = eph.gcrs_pv.position[idx]``
 
 **GroundEphemeris**
   Ground-based observatory ephemeris for a fixed point on Earth's surface.
@@ -118,6 +132,13 @@ Classes
     * ``earth_radius`` — Earth angular radius as astropy Quantity (degrees)
     * ``earth_radius_deg`` — Earth angular radius as NumPy array (degrees)
     * ``earth_radius_rad`` — Earth angular radius as NumPy array (radians)
+  
+  **Methods:**
+    * ``index(time)`` — Find the index of the closest timestamp to the given datetime
+      
+      - ``time`` — Python datetime object
+      - Returns: ``int`` index that can be used to access ephemeris arrays
+      - Example: ``idx = eph.index(datetime(2024, 1, 1, 12, 0, 0))`` then ``sun_position = eph.sun_pv.position[idx]``
 
 **Constraint**
   Evaluate astronomical observation constraints against ephemeris data.
