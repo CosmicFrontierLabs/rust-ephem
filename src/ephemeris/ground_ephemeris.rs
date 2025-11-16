@@ -211,25 +211,25 @@ impl GroundEphemeris {
         <Self as EphemerisBase>::get_body(self, py, &modules, &body)
     }
 
-    /// Get angular radius of the Sun as seen from the ground station (in degrees)
+    /// Get angular radius of the Sun with astropy units
     ///
-    /// Returns a NumPy array of angular radii for each timestamp.
+    /// Returns an astropy Quantity array of angular radii for each timestamp (units: degrees).
     /// Angular radius = arcsin(physical_radius / distance)
     ///
     /// # Returns
-    /// NumPy array of angular radii in degrees
+    /// astropy Quantity array with units of degrees
     #[getter]
     fn sun_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
         self.get_sun_radius(py)
     }
 
-    /// Get angular radius of the Sun as seen from the ground station (in degrees)
+    /// Get angular radius of the Sun with astropy units
     ///
-    /// Returns a NumPy array of angular radii for each timestamp.
+    /// Returns an astropy Quantity array of angular radii for each timestamp (units: degrees).
     /// Angular radius = arcsin(physical_radius / distance)
     ///
     /// # Returns
-    /// NumPy array of angular radii in degrees
+    /// astropy Quantity array with units of degrees
     #[getter]
     fn sun_radius_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
         self.get_sun_radius_deg(py)
