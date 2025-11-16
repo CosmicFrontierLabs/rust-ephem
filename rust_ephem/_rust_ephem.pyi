@@ -474,6 +474,39 @@ class TLEEphemeris:
         """
         ...
 
+    @property
+    def sun_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Sun as seen from the spacecraft (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Moon as seen from the spacecraft (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Earth as seen from the spacecraft (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
     def get_body_pv(self, body: str) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body.
@@ -627,6 +660,39 @@ class SPICEEphemeris:
     def earth_radius_deg(self) -> npt.NDArray[np.float64]:
         """
         Angular radius of the Earth as seen from the observer (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Sun as seen from the observer (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Moon as seen from the observer (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Earth as seen from the observer (in radians).
 
         Returns a NumPy array of angular radii for each timestamp.
         Angular radius = arcsin(physical_radius / distance)
@@ -820,6 +886,48 @@ class GroundEphemeris:
 
         Returns:
             NumPy array of angular radii in degrees
+        """
+        ...
+
+    @property
+    def sun_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Sun as seen from the ground station (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+
+        Returns:
+            NumPy array of angular radii in radians
+        """
+        ...
+
+    @property
+    def moon_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Moon as seen from the ground station (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+
+        Returns:
+            NumPy array of angular radii in radians
+        """
+        ...
+
+    @property
+    def earth_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Earth as seen from the ground station (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+
+        Returns:
+            NumPy array of angular radii in radians
         """
         ...
 

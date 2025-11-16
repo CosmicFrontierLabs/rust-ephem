@@ -352,6 +352,42 @@ impl SPICEEphemeris {
     fn earth_radius_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
         self.get_earth_radius_deg(py)
     }
+
+    /// Get angular radius of the Sun as seen from the observer (in radians)
+    ///
+    /// Returns a NumPy array of angular radii for each timestamp.
+    /// Angular radius = arcsin(physical_radius / distance)
+    ///
+    /// # Returns
+    /// NumPy array of angular radii in radians
+    #[getter]
+    fn sun_radius_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_sun_radius_rad(py)
+    }
+
+    /// Get angular radius of the Moon as seen from the observer (in radians)
+    ///
+    /// Returns a NumPy array of angular radii for each timestamp.
+    /// Angular radius = arcsin(physical_radius / distance)
+    ///
+    /// # Returns
+    /// NumPy array of angular radii in radians
+    #[getter]
+    fn moon_radius_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_moon_radius_rad(py)
+    }
+
+    /// Get angular radius of the Earth as seen from the observer (in radians)
+    ///
+    /// Returns a NumPy array of angular radii for each timestamp.
+    /// Angular radius = arcsin(physical_radius / distance)
+    ///
+    /// # Returns
+    /// NumPy array of angular radii in radians
+    #[getter]
+    fn earth_radius_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_earth_radius_rad(py)
+    }
 }
 
 // Implement the EphemerisBase trait for SPICEEphemeris
