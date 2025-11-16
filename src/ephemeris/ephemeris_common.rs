@@ -953,4 +953,58 @@ pub trait EphemerisBase {
 
         Ok(result)
     }
+
+    /// Find the index of the closest timestamp to the given datetime
+    ///
+    /// Returns the index in the ephemeris timestamp array that is closest to the provided time.
+    /// This can be used to index into any of the ephemeris arrays (positions, velocities, etc.)
+    ///
+    /// # Arguments
+    /// * `time` - Python datetime object to find the closest match for
+    ///
+    /// # Returns
+    /// `usize` - Index of the closest timestamp
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - No timestamps are available in the ephemeris
+    /// - The provided datetime cannot be converted to UTC
+    ///
+    /// # Example Python usage
+    /// ```python
+    /// from datetime import datetime
+    /// eph = TLEEphemeris(...)
+    /// target_time = datetime(2024, 1, 15, 12, 0, 0)
+    /// idx = eph.index(target_time)
+    /// # Now you can use idx to access specific data points
+    /// position = eph.gcrs_pv.position[idx]
+    /// ```
+    fn find_closest_index(&self, time: &Bound<'_, PyDateTime>) -> PyResult<usize> {
+        use crate::utils::time_utils::python_datetime_to_utc;
+
+        let times = self.data().times.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("No timestamps available in ephemeris.")
+        })?;
+
+        if times.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Ephemeris contains no timestamps.",
+            ));
+        }
+
+        let target_time = python_datetime_to_utc(time)?;
+
+        // Find the index with minimum time difference
+        let (min_idx, _min_diff) = times
+            .iter()
+            .enumerate()
+            .map(|(idx, t)| {
+                let diff = (*t - target_time).num_milliseconds().abs();
+                (idx, diff)
+            })
+            .min_by_key(|&(_, diff)| diff)
+            .unwrap(); // Safe because we already checked times is not empty
+
+        Ok(min_idx)
+    }
 }

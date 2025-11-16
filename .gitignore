@@ -32,3 +32,6 @@ Thumbs.db
 
 # Maturin
 wheels/
+
+# Test data files (large ephemeris files downloaded on demand)
+test_data/*.bsp
