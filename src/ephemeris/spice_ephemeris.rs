@@ -291,8 +291,31 @@ impl SPICEEphemeris {
     /// # Returns
     /// NumPy array of angular radii in degrees
     #[getter]
-    fn sun_angular_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.get_sun_angular_radius(py)
+    fn sun_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_sun_radius(py)
+    }
+
+    /// Get angular radius of the Sun as seen from the observer (in degrees)
+    ///
+    /// Returns a NumPy array of angular radii for each timestamp.
+    /// Angular radius = arcsin(physical_radius / distance)
+    ///
+    /// # Returns
+    /// NumPy array of angular radii in degrees
+    #[getter]
+    fn sun_radius_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_sun_radius_deg(py)
+    }
+
+    /// Get angular radius of the Moon with astropy units (degrees)
+    ///
+    /// Returns an astropy Quantity with units of degrees
+    ///
+    /// # Returns
+    /// astropy Quantity array with units of degrees
+    #[getter]
+    fn moon_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_moon_radius(py)
     }
 
     /// Get angular radius of the Moon as seen from the observer (in degrees)
@@ -303,8 +326,19 @@ impl SPICEEphemeris {
     /// # Returns
     /// NumPy array of angular radii in degrees
     #[getter]
-    fn moon_angular_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.get_moon_angular_radius(py)
+    fn moon_radius_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_moon_radius_deg(py)
+    }
+
+    /// Get angular radius of the Earth with astropy units (degrees)
+    ///
+    /// Returns an astropy Quantity with units of degrees
+    ///
+    /// # Returns
+    /// astropy Quantity array with units of degrees
+    #[getter]
+    fn earth_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_earth_radius(py)
     }
 
     /// Get angular radius of the Earth as seen from the observer (in degrees)
@@ -315,41 +349,8 @@ impl SPICEEphemeris {
     /// # Returns
     /// NumPy array of angular radii in degrees
     #[getter]
-    fn earth_angular_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.get_earth_angular_radius(py)
-    }
-
-    /// Get angular radius of the Sun with astropy units (degrees)
-    ///
-    /// Returns an astropy Quantity with units of degrees
-    ///
-    /// # Returns
-    /// astropy Quantity array with units of degrees
-    #[getter]
-    fn sun_angular_radius_quantity(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.get_sun_angular_radius_quantity(py)
-    }
-
-    /// Get angular radius of the Moon with astropy units (degrees)
-    ///
-    /// Returns an astropy Quantity with units of degrees
-    ///
-    /// # Returns
-    /// astropy Quantity array with units of degrees
-    #[getter]
-    fn moon_angular_radius_quantity(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.get_moon_angular_radius_quantity(py)
-    }
-
-    /// Get angular radius of the Earth with astropy units (degrees)
-    ///
-    /// Returns an astropy Quantity with units of degrees
-    ///
-    /// # Returns
-    /// astropy Quantity array with units of degrees
-    #[getter]
-    fn earth_angular_radius_quantity(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.get_earth_angular_radius_quantity(py)
+    fn earth_radius_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_earth_radius_deg(py)
     }
 }
 

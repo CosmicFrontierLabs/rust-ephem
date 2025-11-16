@@ -632,7 +632,7 @@ pub trait EphemerisBase {
     ///
     /// # Returns
     /// NumPy array of angular radii in degrees
-    fn get_sun_angular_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+    fn get_sun_radius_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
         // Check cache first
         if let Some(cached) = self.data().sun_angular_radius_cache.get() {
             return Ok(cached.clone_ref(py));
@@ -678,7 +678,7 @@ pub trait EphemerisBase {
     ///
     /// # Returns
     /// NumPy array of angular radii in degrees
-    fn get_moon_angular_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+    fn get_moon_radius_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
         // Check cache first
         if let Some(cached) = self.data().moon_angular_radius_cache.get() {
             return Ok(cached.clone_ref(py));
@@ -723,7 +723,7 @@ pub trait EphemerisBase {
     ///
     /// # Returns
     /// NumPy array of angular radii in degrees
-    fn get_earth_angular_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+    fn get_earth_radius_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
         // Check cache first
         if let Some(cached) = self.data().earth_angular_radius_cache.get() {
             return Ok(cached.clone_ref(py));
@@ -767,8 +767,8 @@ pub trait EphemerisBase {
     ///
     /// # Returns
     /// astropy Quantity array with units of degrees
-    fn get_sun_angular_radius_quantity(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let angular_radii_array = self.get_sun_angular_radius(py)?;
+    fn get_sun_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let angular_radii_array = self.get_sun_radius_deg(py)?;
         let astropy = py.import("astropy.units")?;
         let quantity_class = astropy.getattr("Quantity")?;
         let deg_unit = astropy.getattr("deg")?;
@@ -784,8 +784,8 @@ pub trait EphemerisBase {
     ///
     /// # Returns
     /// astropy Quantity array with units of degrees
-    fn get_moon_angular_radius_quantity(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let angular_radii_array = self.get_moon_angular_radius(py)?;
+    fn get_moon_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let angular_radii_array = self.get_moon_radius_deg(py)?;
         let astropy = py.import("astropy.units")?;
         let quantity_class = astropy.getattr("Quantity")?;
         let deg_unit = astropy.getattr("deg")?;
@@ -801,8 +801,8 @@ pub trait EphemerisBase {
     ///
     /// # Returns
     /// astropy Quantity array with units of degrees
-    fn get_earth_angular_radius_quantity(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let angular_radii_array = self.get_earth_angular_radius(py)?;
+    fn get_earth_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let angular_radii_array = self.get_earth_radius_deg(py)?;
         let astropy = py.import("astropy.units")?;
         let quantity_class = astropy.getattr("Quantity")?;
         let deg_unit = astropy.getattr("deg")?;
