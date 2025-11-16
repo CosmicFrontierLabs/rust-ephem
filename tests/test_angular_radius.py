@@ -70,11 +70,19 @@ def spice_ephemeris(ensure_planetary_data):
     """Create a SPICEEphemeris instance for testing"""
     import os
 
-    spk_path = os.path.expanduser("~/.cache/rust_ephem/de440s.bsp")
+    # Use the same test data path as ensure_planetary_data
+    test_data_path = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), "test_data", "de440s.bsp"
+    )
+
+    # If file doesn't exist in test_data, try cache directory as fallback
+    if not os.path.exists(test_data_path):
+        test_data_path = os.path.expanduser("~/.cache/rust_ephem/de440s.bsp")
+
     begin = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
     end = datetime(2024, 1, 1, 6, 0, 0, tzinfo=timezone.utc)
     # Use Moon (NAIF ID 301) as the observer
-    return rust_ephem.SPICEEphemeris(spk_path, 301, begin, end, step_size=600)
+    return rust_ephem.SPICEEphemeris(test_data_path, 301, begin, end, step_size=600)
 
 
 class TestSunAngularRadius:
