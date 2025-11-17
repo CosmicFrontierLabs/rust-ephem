@@ -146,9 +146,9 @@ class TestMoonConstraints:
             target_dec=moon.dec.deg,
         )
         if offset < 21:
-            assert not_vis is True, "Sun should be Sun Constrained"
+            assert not_vis is True, "Moon should be Moon Constrained"
         else:
-            assert not_vis is False, "Sun should not be Sun Constrained"
+            assert not_vis is False, "Moon should not be Moon Constrained"
 
     @pytest.mark.parametrize(
         "offset",
