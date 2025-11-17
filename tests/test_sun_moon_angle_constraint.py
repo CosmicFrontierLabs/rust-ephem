@@ -72,7 +72,7 @@ def moon_constraint() -> MoonConstraint:
 
 @pytest.fixture
 def earth_limb_constraint() -> EarthLimbConstraint:
-    return EarthLimbConstraint(min_angle=20)
+    return EarthLimbConstraint(min_angle=21)
 
 
 @pytest.fixture
