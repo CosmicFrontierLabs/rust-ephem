@@ -65,7 +65,7 @@ class RustConstraintMixin(BaseModel):
         target_dec: float,
     ) -> bool:
         """
-        Check if target is in-constraint at a given time.
+        Check if target violates the constraint at a given time.
 
         This method lazily creates the corresponding Rust constraint
         object and delegates to its in_constraint method.
@@ -77,7 +77,7 @@ class RustConstraintMixin(BaseModel):
             target_dec: Target declination in degrees (ICRS/J2000)
 
         Returns:
-            True if constraint is satisfied at the given time
+            True if constraint is violated at the given time
         """
         if not hasattr(self, "_rust_constraint"):
             from rust_ephem import Constraint

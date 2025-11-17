@@ -146,18 +146,24 @@ impl ConstraintResult {
         Ok(total_seconds)
     }
 
-    /// Internal: compute boolean array indicating if constraint is satisfied at each time
+    /// Internal: compute boolean array indicating if constraint is violated at each time
+    ///
+    /// NOTE: This returns a *violation mask* where True means the constraint
+    /// is violated (target NOT visible) at that timestamp. The public
+    /// `constraint_array` property therefore exposes violation semantics
+    /// (True == violated) to Python; visibility windows are computed by
+    /// inverting this mask.
     fn _compute_constraint_vec(&self) -> Vec<bool> {
         if self.times.is_empty() {
             return Vec::new();
         }
 
-        // Pre-allocate result vector
-        let mut ok = vec![true; self.times.len()];
+        // Pre-allocate result vector: default false == not violated
+        let mut violated = vec![false; self.times.len()];
 
-        // Early return if no violations
+        // Early return if no violations (all false)
         if self.violations.is_empty() {
-            return ok;
+            return violated;
         }
 
         // Mark violated times - violations are already sorted by time
@@ -170,15 +176,15 @@ impl ConstraintResult {
                     break; // Violations are sorted, no need to check further
                 }
                 if v.start_time <= t_str && t_str <= v.end_time {
-                    ok[i] = false;
+                    violated[i] = true;
                     break;
                 }
             }
         }
-        ok
+        violated
     }
 
-    /// Property: array of booleans for each timestamp where True means constraint satisfied
+    /// Property: array of booleans for each timestamp where True means constraint violated
     #[getter]
     fn constraint_array(&self, py: Python) -> PyResult<Py<PyAny>> {
         // Use cached value if available
@@ -187,11 +193,15 @@ impl ConstraintResult {
         }
 
         // Compute and cache
+        // Return a Python list of bools (True == violated) so indexing yields
+        // native Python bool values. Tests historically expect identity
+        // comparisons ("is True"), so returning Python bools is safer.
         let arr = self._compute_constraint_vec();
-        let np = pyo3::types::PyModule::import(py, "numpy")
-            .map_err(|_| pyo3::exceptions::PyImportError::new_err("numpy is required"))?;
-        let py_arr = np.getattr("array")?.call1((arr,))?;
-        let py_obj: Py<PyAny> = py_arr.into();
+        let py_list = pyo3::types::PyList::empty(py);
+        for b in arr {
+            py_list.append(pyo3::types::PyBool::new(py, b))?;
+        }
+        let py_obj: Py<PyAny> = py_list.into();
 
         // Cache the result (ignore if already set by another thread)
         let _ = self.constraint_array_cache.set(py_obj.clone_ref(py));
@@ -239,12 +249,12 @@ impl ConstraintResult {
             let t_str = dt.to_rfc3339();
             for v in &self.violations {
                 if v.start_time <= t_str && t_str <= v.end_time {
-                    // Time is in a violation window, so NOT in-constraint
-                    return Ok(false);
+                    // Time is in a violation window, so in-constraint (violated)
+                    return Ok(true);
                 }
             }
-            // No violations found for this time, so in-constraint
-            Ok(true)
+            // No violations found for this time, so not in-constraint
+            Ok(false)
         } else {
             Err(pyo3::exceptions::PyValueError::new_err(
                 "time not found in evaluated timestamps",
@@ -262,10 +272,11 @@ impl ConstraintResult {
         let mut windows = Vec::new();
         let mut current_window_start: Option<usize> = None;
 
-        // Get constraint satisfaction status for each time
-        let ok_vec = self._compute_constraint_vec();
+        // Get violation mask for each time (True == violated)
+        let violated_vec = self._compute_constraint_vec();
 
-        for (i, &is_satisfied) in ok_vec.iter().enumerate() {
+        for (i, &is_violated) in violated_vec.iter().enumerate() {
+            let is_satisfied = !is_violated;
             if is_satisfied {
                 // Constraint is satisfied (target is visible)
                 if current_window_start.is_none() {

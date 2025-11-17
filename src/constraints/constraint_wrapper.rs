@@ -639,7 +639,7 @@ impl PyConstraint {
         }
     }
 
-    /// Check if the target is in-constraint at a given time
+    /// Check if the target violates the constraint at a given time
     ///
     /// Args:
     ///     time (datetime): The time to check (must exist in ephemeris)
@@ -648,7 +648,7 @@ impl PyConstraint {
     ///     target_dec (float): Target declination in degrees (ICRS/J2000)
     ///
     /// Returns:
-    ///     bool: True if constraint is satisfied at the given time, False otherwise
+    ///     bool: True if constraint is violated at the given time, False otherwise
     fn in_constraint(
         &self,
         py: Python,
@@ -661,8 +661,8 @@ impl PyConstraint {
         let result = self.evaluate(py, ephemeris, target_ra, target_dec, Some(time), None)?;
 
         // Check if there are any violations
-        // If no violations, the constraint is satisfied (in-constraint)
-        Ok(result.all_satisfied)
+        // If violations exist, the constraint is violated (in-constraint)
+        Ok(!result.all_satisfied)
     }
 
     /// Get constraint configuration as JSON string
@@ -841,33 +841,37 @@ impl ConstraintEvaluator for AndEvaluator {
             })
             .collect();
 
-        // Merge violations - a violation exists if ANY constraint is violated at that time
+        // Merge violations - a violation exists if ALL constraints are violated at that time
         let mut merged_violations = Vec::new();
         let mut current_violation: Option<(usize, f64, Vec<String>)> = None;
 
         for (i, time) in times.iter().enumerate() {
             let time_str = time.to_rfc3339();
-            let mut violated = false;
-            let mut max_severity: f64 = 0.0;
+            let mut all_violated = true;
+            let mut min_severity = f64::MAX;
             let mut descriptions = Vec::new();
 
-            // Check if any constraint is violated at this time
+            // Check if all constraints are violated at this time
             for result in &results {
+                let mut this_violated = false;
                 for violation in &result.violations {
-                    // Check if this time is within the violation window
                     if violation.start_time <= time_str && time_str <= violation.end_time {
-                        violated = true;
-                        max_severity = max_severity.max(violation.max_severity);
-                        // Avoid cloning by using reference
+                        this_violated = true;
+                        min_severity = min_severity.min(violation.max_severity);
                         descriptions.push(&violation.description);
+                        break;
                     }
+                }
+                if !this_violated {
+                    all_violated = false;
+                    break;
                 }
             }
 
-            if violated {
+            if all_violated {
                 match &mut current_violation {
                     Some((_, sev, descs)) => {
-                        *sev = sev.max(max_severity);
+                        *sev = sev.max(min_severity);
                         for desc in descriptions {
                             // Only store string references, clone at the end
                             if !descs.iter().any(|d| d == desc) {
@@ -878,7 +882,7 @@ impl ConstraintEvaluator for AndEvaluator {
                     None => {
                         current_violation = Some((
                             i,
-                            max_severity,
+                            min_severity,
                             descriptions.iter().map(|s| s.to_string()).collect(),
                         ));
                     }
@@ -958,57 +962,65 @@ impl ConstraintEvaluator for OrEvaluator {
             })
             .collect();
 
-        // For OR, we violate only when ALL constraints are violated
+        // For OR, we violate when ANY constraint is violated
         let mut merged_violations = Vec::new();
-        let mut current_violation: Option<(usize, f64)> = None;
+        let mut current_violation: Option<(usize, f64, Vec<String>)> = None;
 
         for (i, time) in times.iter().enumerate() {
             let time_str = time.to_rfc3339();
-            let mut all_violated = true;
-            let mut min_severity = f64::MAX;
+            let mut any_violated = false;
+            let mut max_severity: f64 = 0.0;
+            let mut descriptions = Vec::new();
 
-            // Check if all constraints are violated at this time
+            // Check if any constraint is violated at this time
             for result in &results {
-                let mut this_violated = false;
                 for violation in &result.violations {
                     if violation.start_time <= time_str && time_str <= violation.end_time {
-                        this_violated = true;
-                        min_severity = min_severity.min(violation.max_severity);
+                        any_violated = true;
+                        max_severity = max_severity.max(violation.max_severity);
+                        // Avoid cloning by using reference
+                        descriptions.push(&violation.description);
                         break;
                     }
                 }
-                if !this_violated {
-                    all_violated = false;
-                    break;
-                }
             }
 
-            if all_violated {
+            if any_violated {
                 match &mut current_violation {
-                    Some((_, sev)) => {
-                        *sev = sev.max(min_severity);
+                    Some((_, sev, descs)) => {
+                        *sev = sev.max(max_severity);
+                        for desc in descriptions {
+                            // Only store string references, clone at the end
+                            if !descs.iter().any(|d| d == desc) {
+                                descs.push(desc.to_string());
+                            }
+                        }
                     }
                     None => {
-                        current_violation = Some((i, min_severity));
+                        current_violation = Some((
+                            i,
+                            max_severity,
+                            descriptions.iter().map(|s| s.to_string()).collect(),
+                        ));
                     }
                 }
-            } else if let Some((start_idx, severity)) = current_violation.take() {
+            } else if let Some((start_idx, severity, descs)) = current_violation.take() {
                 merged_violations.push(ConstraintViolation {
                     start_time: times[start_idx].to_rfc3339(),
                     end_time: times[i - 1].to_rfc3339(),
                     max_severity: severity,
-                    description: "OR violation: all alternatives violated".to_string(),
+                    description: format!("OR violation: {}", descs.join("; ")),
                 });
             }
         }
 
         // Close any open violation
-        if let Some((start_idx, severity)) = current_violation {
+        if let Some((start_idx, severity, descs)) = current_violation {
             merged_violations.push(ConstraintViolation {
                 start_time: times[start_idx].to_rfc3339(),
                 end_time: times[times.len() - 1].to_rfc3339(),
                 max_severity: severity,
-                description: "OR violation: all alternatives violated".to_string(),
+                description: format!("OR violation: {}", descs.join("; ")),
             });
         }
 
