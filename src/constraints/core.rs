@@ -184,7 +184,7 @@ impl ConstraintResult {
         violated
     }
 
-    /// Property: array of booleans for each timestamp where True means constraint satisfied
+    /// Property: array of booleans for each timestamp where True means constraint violated
     #[getter]
     fn constraint_array(&self, py: Python) -> PyResult<Py<PyAny>> {
         // Use cached value if available
