@@ -16,6 +16,9 @@ from rust_ephem._rust_ephem import (
     GroundEphemeris as GroundEphemeris,
 )
 from rust_ephem._rust_ephem import (
+    OEMEphemeris as OEMEphemeris,
+)
+from rust_ephem._rust_ephem import (
     SPICEEphemeris as SPICEEphemeris,
 )
 from rust_ephem._rust_ephem import (
@@ -111,6 +114,7 @@ __all__ = [
     "TLEEphemeris",
     "SPICEEphemeris",
     "GroundEphemeris",
+    "OEMEphemeris",
     "Constraint",
     "ConstraintResult",
     "ConstraintViolation",
