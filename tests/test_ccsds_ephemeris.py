@@ -145,7 +145,7 @@ def test_ccsds_ephemeris_index_method(sample_oem_path):
     # Test finding index for exact time
     target_time = datetime(2024, 1, 1, 0, 15, 0)
     idx = eph.index(target_time)
-    assert idx == 15  # 15 minutes = 15 * 60 seconds steps
+    assert idx == 15  # 15 minutes = 15 steps of 60 seconds
 
     # Test finding index for time between steps
     target_time = datetime(2024, 1, 1, 0, 15, 30)
