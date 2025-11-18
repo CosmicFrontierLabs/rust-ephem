@@ -158,6 +158,22 @@ impl OEMEphemeris {
         Py::new(py, split_pos_vel(&self.oem_states)).unwrap()
     }
 
+    /// Get OEM raw data timestamps
+    ///
+    /// Returns the raw timestamps from the OEM file as Python datetime objects
+    #[getter]
+    fn oem_timestamp(&self, py: Python) -> PyResult<Vec<Py<PyAny>>> {
+        use pyo3::types::PyTzInfo;
+        let utc_tz = PyTzInfo::utc(py)?;
+        self.oem_times
+            .iter()
+            .map(|dt| {
+                let pydt = PyDateTime::from_timestamp(py, dt.timestamp() as f64, Some(&utc_tz))?;
+                Ok(pydt.into_any().unbind())
+            })
+            .collect()
+    }
+
     /// Get angular radius of the Sun with astropy units (degrees)
     #[getter]
     fn sun_radius(&self, py: Python) -> PyResult<Py<PyAny>> {

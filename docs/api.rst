@@ -154,6 +154,7 @@ Classes
   
   **Attributes (read-only):**
     * ``oem_pv`` — Original OEM state vectors (PositionVelocityData) without interpolation
+    * ``oem_timestamp`` — Original OEM timestamps (list of datetime) without interpolation
     * ``gcrs_pv`` — Interpolated position/velocity in GCRS frame (PositionVelocityData)
     * ``itrs_pv`` — Position/velocity in ITRS frame (PositionVelocityData)
     * ``sun_pv`` — Sun position/velocity in GCRS frame (PositionVelocityData)

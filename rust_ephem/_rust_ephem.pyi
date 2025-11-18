@@ -832,6 +832,15 @@ class OEMEphemeris:
         ...
 
     @property
+    def oem_timestamp(self) -> list[datetime]:
+        """
+        Raw OEM timestamps without interpolation.
+
+        Returns the original timestamps from the OEM file as UTC datetime objects.
+        """
+        ...
+
+    @property
     def sun_radius(self) -> Any:  # Returns astropy.units.Quantity
         """
         Angular radius of the Sun with astropy units (degrees).

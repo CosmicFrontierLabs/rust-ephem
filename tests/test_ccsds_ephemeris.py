@@ -1,7 +1,7 @@
 """Tests for CCSDS OEM ephemeris"""
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 import numpy as np
 import pytest
@@ -203,6 +203,39 @@ def test_ccsds_ephemeris_angular_radius(sample_oem_path):
     # Earth angular radius should be large from LEO (around 60-70 degrees)
     assert np.all(earth_radius_deg > 50)
     assert np.all(earth_radius_deg < 80)
+
+
+def test_ccsds_ephemeris_oem_timestamp(sample_oem_path):
+    """Test that oem_timestamp property returns raw OEM timestamps"""
+    begin = datetime(2024, 1, 1, 0, 0, 0)
+    end = datetime(2024, 1, 1, 1, 0, 0)
+
+    # Use step_size=300 (5 minutes) which will create 13 interpolated points
+    # vs 7 raw OEM timestamps (every 10 minutes)
+    eph = OEMEphemeris(sample_oem_path, begin=begin, end=end, step_size=300)
+
+    # Get raw OEM timestamps
+    oem_timestamps = eph.oem_timestamp
+
+    # Should have 7 raw timestamps (from the sample OEM file, every 10 minutes)
+    assert len(oem_timestamps) == 7
+
+    # Check they are datetime objects
+    assert all(isinstance(ts, datetime) for ts in oem_timestamps)
+
+    # Check they are timezone-aware (UTC)
+    assert all(ts.tzinfo is not None for ts in oem_timestamps)
+
+    # Check first and last timestamps match expected values (with UTC timezone)
+    assert oem_timestamps[0] == datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    assert oem_timestamps[-1] == datetime(2024, 1, 1, 1, 0, 0, tzinfo=timezone.utc)
+
+    # Should match the number of OEM position vectors
+    assert len(oem_timestamps) == len(eph.oem_pv.position)
+
+    # Interpolated timestamps should be different (13 vs 7)
+    assert len(eph.timestamp) == 13  # 0, 5, 10, 15, ..., 60 minutes
+    assert len(eph.timestamp) != len(oem_timestamps)
 
 
 if __name__ == "__main__":
