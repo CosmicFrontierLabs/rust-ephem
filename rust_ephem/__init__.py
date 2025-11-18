@@ -30,6 +30,7 @@ from .constraints import (
     NotConstraint,
     OrConstraint,
     SunConstraint,
+    XorConstraint,
 )
 
 __all__ = [
@@ -42,6 +43,7 @@ __all__ = [
     "CombinedConstraintConfig",
     "AndConstraint",
     "OrConstraint",
+    "XorConstraint",
     "NotConstraint",
     "TLEEphemeris",
     "SPICEEphemeris",

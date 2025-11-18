@@ -92,6 +92,9 @@ from rust_ephem.constraints import (
 from rust_ephem.constraints import (
     SunConstraint as SunConstraint,
 )
+from rust_ephem.constraints import (
+    XorConstraint as XorConstraint,
+)
 
 # Optional convenience functions (may not be available)
 def and_constraint(*args: Any, **kwargs: Any) -> Any: ...
@@ -110,6 +113,7 @@ __all__ = [
     "CombinedConstraintConfig",
     "AndConstraint",
     "OrConstraint",
+    "XorConstraint",
     "NotConstraint",
     "TLEEphemeris",
     "SPICEEphemeris",
