@@ -202,6 +202,7 @@ Classes
     * ``Constraint.eclipse(umbra_only=True)`` — Create eclipse constraint
     * ``Constraint.and_(*constraints)`` — Combine constraints with logical AND
     * ``Constraint.or_(*constraints)`` — Combine constraints with logical OR
+    * ``Constraint.xor_(*constraints)`` — Combine constraints with logical XOR (violation when exactly one sub-constraint is violated)
     * ``Constraint.not_(constraint)`` — Negate a constraint with logical NOT
     * ``Constraint.from_json(json_str)`` — Create constraint from JSON configuration
   
