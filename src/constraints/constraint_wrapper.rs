@@ -362,6 +362,7 @@ impl PyConstraint {
     ///     {"type": "eclipse", "umbra_only": true}
     ///     {"type": "and", "constraints": [...]}
     ///     {"type": "or", "constraints": [...]}
+    ///     {"type": "xor", "constraints": [...]}  // exactly one violated -> violation
     ///     {"type": "not", "constraint": {...}}
     #[staticmethod]
     fn from_json(json_str: &str) -> PyResult<Self> {
@@ -434,6 +435,41 @@ impl PyConstraint {
 
         let config_json = serde_json::json!({
             "type": "or",
+            "constraints": configs
+        })
+        .to_string();
+
+        let evaluator = parse_constraint_json(&serde_json::from_str(&config_json).unwrap())?;
+
+        Ok(PyConstraint {
+            evaluator,
+            config_json,
+        })
+    }
+
+    /// Combine constraints with logical XOR
+    ///
+    /// Args:
+    ///     *constraints: Variable number of Constraint objects (minimum 2)
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint that is violated when EXACTLY ONE input constraint is violated
+    #[staticmethod]
+    #[pyo3(name = "xor_", signature = (*constraints))]
+    fn xor(constraints: Vec<PyRef<PyConstraint>>) -> PyResult<Self> {
+        if constraints.len() < 2 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "At least two constraints required for XOR",
+            ));
+        }
+
+        let configs: Vec<serde_json::Value> = constraints
+            .iter()
+            .map(|c| serde_json::from_str(&c.config_json).unwrap())
+            .collect();
+
+        let config_json = serde_json::json!({
+            "type": "xor",
             "constraints": configs
         })
         .to_string();
@@ -801,6 +837,24 @@ fn parse_constraint_json(value: &serde_json::Value) -> PyResult<Box<dyn Constrai
                 constraints: evaluators?,
             }))
         }
+        "xor" => {
+            let constraints = value
+                .get("constraints")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("Missing 'constraints' array for XOR")
+                })?;
+            if constraints.len() < 2 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "XOR requires at least two sub-constraints",
+                ));
+            }
+            let evaluators: Result<Vec<_>, _> =
+                constraints.iter().map(parse_constraint_json).collect();
+            Ok(Box::new(XorEvaluator {
+                constraints: evaluators?,
+            }))
+        }
         "not" => {
             let constraint = value.get("constraint").ok_or_else(|| {
                 pyo3::exceptions::PyValueError::new_err("Missing 'constraint' field for NOT")
@@ -1139,6 +1193,114 @@ impl ConstraintEvaluator for NotEvaluator {
 
     fn name(&self) -> String {
         format!("NOT({})", self.constraint.name())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+struct XorEvaluator {
+    constraints: Vec<Box<dyn ConstraintEvaluator>>,
+}
+
+impl ConstraintEvaluator for XorEvaluator {
+    fn evaluate(
+        &self,
+        times: &[DateTime<Utc>],
+        target_ra: f64,
+        target_dec: f64,
+        sun_positions: &Array2<f64>,
+        moon_positions: &Array2<f64>,
+        observer_positions: &Array2<f64>,
+    ) -> ConstraintResult {
+        // Evaluate all constraints
+        let results: Vec<_> = self
+            .constraints
+            .iter()
+            .map(|c| {
+                c.evaluate(
+                    times,
+                    target_ra,
+                    target_dec,
+                    sun_positions,
+                    moon_positions,
+                    observer_positions,
+                )
+            })
+            .collect();
+
+        // Violate when EXACTLY ONE sub-constraint is violated
+        let mut merged_violations = Vec::new();
+        let mut current_violation: Option<(usize, f64, Vec<String>)> = None;
+
+        for (i, time) in times.iter().enumerate() {
+            let time_str = time.to_rfc3339();
+            let mut active: Vec<&ConstraintViolation> = Vec::new();
+
+            for result in &results {
+                for violation in &result.violations {
+                    if violation.start_time <= time_str && time_str <= violation.end_time {
+                        active.push(violation);
+                        break;
+                    }
+                }
+            }
+
+            if active.len() == 1 {
+                let violation = active[0];
+                match &mut current_violation {
+                    Some((_, sev, descs)) => {
+                        *sev = sev.max(violation.max_severity);
+                        if !descs.iter().any(|d| d == &violation.description) {
+                            descs.push(violation.description.clone());
+                        }
+                    }
+                    None => {
+                        current_violation = Some((
+                            i,
+                            violation.max_severity,
+                            vec![violation.description.clone()],
+                        ));
+                    }
+                }
+            } else if let Some((start_idx, severity, descs)) = current_violation.take() {
+                merged_violations.push(ConstraintViolation {
+                    start_time: times[start_idx].to_rfc3339(),
+                    end_time: times[i - 1].to_rfc3339(),
+                    max_severity: severity,
+                    description: format!("XOR violation: {}", descs.join("; ")),
+                });
+            }
+        }
+
+        if let Some((start_idx, severity, descs)) = current_violation {
+            merged_violations.push(ConstraintViolation {
+                start_time: times[start_idx].to_rfc3339(),
+                end_time: times[times.len() - 1].to_rfc3339(),
+                max_severity: severity,
+                description: format!("XOR violation: {}", descs.join("; ")),
+            });
+        }
+
+        let all_satisfied = merged_violations.is_empty();
+        ConstraintResult::new(
+            merged_violations,
+            all_satisfied,
+            self.name(),
+            times.to_vec(),
+        )
+    }
+
+    fn name(&self) -> String {
+        format!(
+            "XOR({})",
+            self.constraints
+                .iter()
+                .map(|c| c.name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

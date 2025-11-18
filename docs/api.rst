@@ -202,6 +202,7 @@ Classes
     * ``Constraint.eclipse(umbra_only=True)`` — Create eclipse constraint
     * ``Constraint.and_(*constraints)`` — Combine constraints with logical AND
     * ``Constraint.or_(*constraints)`` — Combine constraints with logical OR
+    * ``Constraint.xor_(*constraints)`` — Combine constraints with logical XOR (violation when exactly one sub-constraint is violated)
     * ``Constraint.not_(constraint)`` — Negate a constraint with logical NOT
     * ``Constraint.from_json(json_str)`` — Create constraint from JSON configuration
   
@@ -376,6 +377,18 @@ The following Pydantic models are used to configure constraints. These can be se
     * ``type`` — Always "or"
     * ``constraints`` — List of constraints to combine with OR
 
+**XorConstraint**
+  Logical XOR combination of constraints.
+  
+  Violation semantics: The XOR constraint is violated when exactly one sub-constraint is violated; it is satisfied otherwise (i.e., when either none or more than one sub-constraints are violated). This mirrors boolean XOR over "violation" states.
+  
+  **Constructor:**
+    ``XorConstraint(constraints=[constraint1, constraint2, ...])``
+  
+  **Attributes:**
+    * ``type`` — Always "xor"
+    * ``constraints`` — List of constraints (minimum 2) evaluated with XOR violation semantics
+
 **NotConstraint**
   Logical NOT (negation) of a constraint.
   
@@ -392,6 +405,7 @@ Constraint configurations support Python bitwise operators for convenient combin
 
 * ``constraint1 & constraint2`` — Logical AND (equivalent to ``AndConstraint``)
 * ``constraint1 | constraint2`` — Logical OR (equivalent to ``OrConstraint``)
+* ``constraint1 ^ constraint2`` — Logical XOR (equivalent to ``XorConstraint``)
 * ``~constraint`` — Logical NOT (equivalent to ``NotConstraint``)
 
 Usage examples are provided in the examples section of the docs.

@@ -114,6 +114,17 @@ class RustConstraintMixin(BaseModel):
         """
         return OrConstraint(constraints=[cast("ConstraintConfig", self), other])
 
+    def xor_(self, other: "ConstraintConfig") -> "XorConstraint":
+        """Combine this constraint with another using logical XOR
+
+        Args:
+            other: Another constraint
+
+        Returns:
+            XorConstraint combining both constraints (violation when exactly one is violated)
+        """
+        return XorConstraint(constraints=[cast("ConstraintConfig", self), other])
+
     def not_(self) -> "NotConstraint":
         """Negate this constraint using logical NOT
 
@@ -153,6 +164,22 @@ class RustConstraintMixin(BaseModel):
             >>> combined = sun | moon
         """
         return self.or_(other)
+
+    def __xor__(self, other: "ConstraintConfig") -> "XorConstraint":
+        """Combine constraints using ^ operator (logical XOR)
+
+        Args:
+            other: Another constraint
+
+        Returns:
+            XorConstraint combining both constraints
+
+        Example:
+            >>> sun = SunConstraint(min_angle=45.0)
+            >>> moon = MoonConstraint(min_angle=30.0)
+            >>> exclusive = sun ^ moon
+        """
+        return self.xor_(other)
 
     def __invert__(self) -> "NotConstraint":
         """Negate constraint using ~ operator (logical NOT)
@@ -311,6 +338,24 @@ class OrConstraint(RustConstraintMixin):
     )
 
 
+class XorConstraint(RustConstraintMixin):
+    """Logical XOR constraint combinator
+
+    Satisfied if EXACTLY ONE sub-constraint is satisfied.
+
+    Attributes:
+        type: Always "xor"
+        constraints: List of constraints to combine with XOR (minimum 2)
+    """
+
+    type: Literal["xor"] = "xor"
+    constraints: List["ConstraintConfig"] = Field(
+        ...,
+        min_length=2,
+        description="Constraints to XOR together (exactly one satisfied)",
+    )
+
+
 class NotConstraint(RustConstraintMixin):
     """Logical NOT constraint combinator
 
@@ -334,6 +379,7 @@ ConstraintConfig = Union[
     BodyConstraint,
     AndConstraint,
     OrConstraint,
+    XorConstraint,
     NotConstraint,
 ]
 
@@ -341,6 +387,7 @@ ConstraintConfig = Union[
 # Update forward references after ConstraintConfig is defined
 AndConstraint.model_rebuild()
 OrConstraint.model_rebuild()
+XorConstraint.model_rebuild()
 NotConstraint.model_rebuild()
 
 

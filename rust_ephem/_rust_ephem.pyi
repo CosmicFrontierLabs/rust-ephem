@@ -225,6 +225,22 @@ class Constraint:
         ...
 
     @staticmethod
+    def xor_(*constraints: Constraint) -> Constraint:
+        """
+        Combine constraints with logical XOR.
+
+        Args:
+            *constraints: Variable number of Constraint objects (minimum 2)
+
+        Returns:
+            A new Constraint that is violated when EXACTLY ONE input constraint is violated.
+
+        Raises:
+            ValueError: If fewer than two constraints are provided
+        """
+        ...
+
+    @staticmethod
     def not_(constraint: Constraint) -> Constraint:
         """
         Negate a constraint with logical NOT.
@@ -250,6 +266,15 @@ class Constraint:
 
         Raises:
             ValueError: If JSON is invalid or contains unknown constraint type
+
+        Example JSON formats:
+            {"type": "sun", "min_angle": 45.0}
+            {"type": "moon", "min_angle": 10.0}
+            {"type": "eclipse", "umbra_only": true}
+            {"type": "and", "constraints": [ ... ]}
+            {"type": "or", "constraints": [ ... ]}
+            {"type": "xor", "constraints": [ ... ]}
+            {"type": "not", "constraint": { ... }}
         """
         ...
 
