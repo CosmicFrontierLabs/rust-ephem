@@ -2,6 +2,17 @@
 //!
 //! This module provides support for CCSDS Orbit Data Messages (OEM/OPM)
 //! which are standard formats for exchanging spacecraft orbit data.
+//!
+//! ## Reference Frame Requirements
+//!
+//! The OEM file must specify a reference frame that is compatible with GCRS
+//! (Geocentric Celestial Reference System). Compatible frames include:
+//! - J2000 / EME2000 (Earth Mean Equator and Equinox of J2000.0)
+//! - GCRF (Geocentric Celestial Reference Frame)
+//! - ICRF (International Celestial Reference Frame)
+//!
+//! If the OEM file uses a different reference frame, loading will fail with
+//! an error indicating the incompatible frame.
 
 use chrono::{DateTime, TimeZone, Utc};
 use ndarray::Array2;
@@ -229,7 +240,8 @@ impl OEMEphemeris {
 impl OEMEphemeris {
     /// Parse an OEM file and extract state vector records
     ///
-    /// This is a simple parser that handles basic OEM format with multiple segments
+    /// This parser handles basic OEM format with multiple segments and validates
+    /// that the reference frame is compatible with GCRS (J2000/EME2000, GCRF, or ICRF)
     fn parse_oem_file(path: &Path) -> PyResult<Vec<StateVectorRecord>> {
         let file = File::open(path).map_err(|e| {
             pyo3::exceptions::PyIOError::new_err(format!("Failed to open OEM file: {}", e))
@@ -239,6 +251,8 @@ impl OEMEphemeris {
         let mut records = Vec::new();
         let mut in_data_section = false;
         let mut past_meta = false;
+        let mut in_meta_section = false;
+        let mut ref_frame_validated = false;
 
         for line in reader.lines() {
             let line = line.map_err(|e| {
@@ -255,11 +269,33 @@ impl OEMEphemeris {
             if trimmed == "META_START" {
                 in_data_section = false;
                 past_meta = false;
+                in_meta_section = true;
                 continue;
+            }
+
+            // Parse metadata fields while in META section
+            if in_meta_section {
+                // Check and validate REF_FRAME
+                if trimmed.starts_with("REF_FRAME") {
+                    if let Some(frame_value) = trimmed.split('=').nth(1) {
+                        let frame = frame_value.trim();
+                        // Validate that the frame is compatible with GCRS
+                        if !Self::is_gcrs_compatible_frame(frame) {
+                            return Err(pyo3::exceptions::PyValueError::new_err(
+                                format!(
+                                    "Unsupported reference frame '{}'. OEM file must use a GCRS-compatible frame such as J2000, EME2000, GCRF, or ICRF.",
+                                    frame
+                                )
+                            ));
+                        }
+                        ref_frame_validated = true;
+                    }
+                }
             }
 
             // Track when we pass the metadata section
             if trimmed == "META_STOP" {
+                in_meta_section = false;
                 past_meta = true;
                 in_data_section = true; // Start reading data after META_STOP
                 continue;
@@ -293,7 +329,24 @@ impl OEMEphemeris {
             ));
         }
 
+        if !ref_frame_validated {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "OEM file does not specify a REF_FRAME. A GCRS-compatible frame (J2000, EME2000, GCRF, or ICRF) is required.",
+            ));
+        }
+
         Ok(records)
+    }
+
+    /// Check if a reference frame string is compatible with GCRS
+    ///
+    /// GCRS-compatible frames include J2000, EME2000, GCRF, and ICRF variants
+    fn is_gcrs_compatible_frame(frame: &str) -> bool {
+        let frame_upper = frame.to_uppercase();
+        matches!(
+            frame_upper.as_str(),
+            "J2000" | "EME2000" | "GCRF" | "ICRF" | "ICRF2" | "ICRF3"
+        )
     }
 
     /// Parse a single state vector line

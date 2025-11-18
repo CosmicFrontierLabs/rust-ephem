@@ -238,5 +238,70 @@ def test_ccsds_ephemeris_oem_timestamp(sample_oem_path):
     assert len(eph.timestamp) != len(oem_timestamps)
 
 
+def test_ccsds_ephemeris_invalid_reference_frame(tmp_path):
+    """Test that invalid reference frames are rejected"""
+    # Create OEM with ITRF (Earth-fixed) frame instead of inertial
+    oem_content = """CCSDS_OEM_VERS = 2.0
+CREATION_DATE = 2024-01-01T00:00:00.000
+ORIGINATOR = TEST
+
+META_START
+OBJECT_NAME = TEST_SAT
+OBJECT_ID = 2024-001A
+CENTER_NAME = EARTH
+REF_FRAME = ITRF
+TIME_SYSTEM = UTC
+START_TIME = 2024-01-01T00:00:00.000
+STOP_TIME = 2024-01-01T01:00:00.000
+META_STOP
+
+2024-01-01T00:00:00.000 7000.0 0.0 0.0 0.0 7.5 0.0
+2024-01-01T00:10:00.000 7000.0 4500.0 0.0 -0.3897 7.4856 0.0
+"""
+
+    oem_path = tmp_path / "invalid_frame.oem"
+    with open(oem_path, "w") as f:
+        f.write(oem_content)
+
+    begin = datetime(2024, 1, 1, 0, 0, 0)
+    end = datetime(2024, 1, 1, 0, 10, 0)
+
+    # Should raise ValueError for unsupported frame
+    with pytest.raises(ValueError, match="Unsupported reference frame 'ITRF'"):
+        OEMEphemeris(str(oem_path), begin=begin, end=end, step_size=60)
+
+
+def test_ccsds_ephemeris_missing_reference_frame(tmp_path):
+    """Test that missing reference frames are rejected"""
+    # Create OEM without REF_FRAME field
+    oem_content = """CCSDS_OEM_VERS = 2.0
+CREATION_DATE = 2024-01-01T00:00:00.000
+ORIGINATOR = TEST
+
+META_START
+OBJECT_NAME = TEST_SAT
+OBJECT_ID = 2024-001A
+CENTER_NAME = EARTH
+TIME_SYSTEM = UTC
+START_TIME = 2024-01-01T00:00:00.000
+STOP_TIME = 2024-01-01T01:00:00.000
+META_STOP
+
+2024-01-01T00:00:00.000 7000.0 0.0 0.0 0.0 7.5 0.0
+2024-01-01T00:10:00.000 7000.0 4500.0 0.0 -0.3897 7.4856 0.0
+"""
+
+    oem_path = tmp_path / "missing_frame.oem"
+    with open(oem_path, "w") as f:
+        f.write(oem_content)
+
+    begin = datetime(2024, 1, 1, 0, 0, 0)
+    end = datetime(2024, 1, 1, 0, 10, 0)
+
+    # Should raise ValueError for missing frame
+    with pytest.raises(ValueError, match="does not specify a REF_FRAME"):
+        OEMEphemeris(str(oem_path), begin=begin, end=end, step_size=60)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

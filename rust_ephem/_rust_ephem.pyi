@@ -751,7 +751,18 @@ class SPICEEphemeris:
         ...
 
 class OEMEphemeris:
-    """Ephemeris calculator using CCSDS Orbit Ephemeris Messages (OEM)"""
+    """
+    Ephemeris calculator using CCSDS Orbit Ephemeris Messages (OEM).
+
+    The OEM file must specify a reference frame that is compatible with GCRS
+    (Geocentric Celestial Reference System). Compatible frames include:
+    - J2000 / EME2000 (Earth Mean Equator and Equinox of J2000.0)
+    - GCRF (Geocentric Celestial Reference Frame)
+    - ICRF (International Celestial Reference Frame)
+
+    OEM files using Earth-fixed frames (e.g., ITRF) or other incompatible frames
+    will be rejected with a ValueError.
+    """
 
     def __init__(
         self,
@@ -773,7 +784,8 @@ class OEMEphemeris:
             polar_motion: Whether to apply polar motion correction (default: False)
 
         Raises:
-            ValueError: If OEM file cannot be parsed or time range exceeds available data
+            ValueError: If OEM file cannot be parsed, time range exceeds available data,
+                       reference frame is missing, or reference frame is incompatible with GCRS
         """
         ...
 

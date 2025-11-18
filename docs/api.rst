@@ -143,6 +143,9 @@ Classes
 **OEMEphemeris**
   Load and interpolate CCSDS Orbit Ephemeris Message (OEM) files for spacecraft ephemeris.
   
+  The OEM file must use a GCRS-compatible reference frame such as J2000, EME2000, GCRF, or ICRF.
+  Earth-fixed frames (e.g., ITRF) are not supported and will raise a ValueError.
+  
   **Constructor:**
     ``OEMEphemeris(oem_file_path, begin, end, step_size=60, *, polar_motion=False)``
     
@@ -151,6 +154,9 @@ Classes
     * ``end`` — End time for ephemeris (Python datetime)
     * ``step_size`` — Time step in seconds for interpolated ephemeris (default: 60)
     * ``polar_motion`` — Enable polar motion corrections (default: False)
+  
+  **Raises:**
+    * ``ValueError`` — If reference frame is missing or incompatible with GCRS
   
   **Attributes (read-only):**
     * ``oem_pv`` — Original OEM state vectors (PositionVelocityData) without interpolation
