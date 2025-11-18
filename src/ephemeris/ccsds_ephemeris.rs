@@ -1,6 +1,6 @@
 //! CCSDS Orbit Ephemeris Message (OEM) support
 //!
-//! This module provides support for CCSDS Orbit Data Messages (OEM/OPM)
+//! This module provides support for CCSDS Orbit Ephemeris Messages (OEM)
 //! which are standard formats for exchanging spacecraft orbit data.
 //!
 //! ## Reference Frame Requirements
