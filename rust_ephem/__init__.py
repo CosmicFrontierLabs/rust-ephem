@@ -1,4 +1,5 @@
 from ._rust_ephem import (  # type: ignore[import-untyped]
+    CCSDSEphemeris,
     Constraint,
     ConstraintResult,
     ConstraintViolation,
@@ -44,6 +45,7 @@ __all__ = [
     "NotConstraint",
     "TLEEphemeris",
     "SPICEEphemeris",
+    "CCSDSEphemeris",
     "GroundEphemeris",
     "Constraint",
     "ConstraintResult",

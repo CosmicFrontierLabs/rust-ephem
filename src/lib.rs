@@ -5,7 +5,7 @@ mod utils;
 
 // Re-export public API from ephemeris
 pub use ephemeris::position_velocity::PositionVelocityData;
-pub use ephemeris::{GroundEphemeris, SPICEEphemeris, TLEEphemeris};
+pub use ephemeris::{CCSDSEphemeris, GroundEphemeris, SPICEEphemeris, TLEEphemeris};
 
 // Re-export constraint types
 pub use constraints::{ConstraintResult, ConstraintViolation, PyConstraint, VisibilityWindow};
@@ -233,6 +233,7 @@ fn get_cache_dir() -> String {
 fn _rust_ephem(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TLEEphemeris>()?;
     m.add_class::<SPICEEphemeris>()?;
+    m.add_class::<CCSDSEphemeris>()?;
     m.add_class::<GroundEphemeris>()?;
     m.add_class::<PyConstraint>()?;
     m.add_class::<ConstraintResult>()?;

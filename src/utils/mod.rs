@@ -9,6 +9,7 @@ pub mod config;
 pub mod conversions;
 pub mod eop_cache;
 pub mod eop_provider;
+pub mod interpolation;
 pub mod leap_seconds;
 pub mod math_utils;
 pub mod naif_ids;
