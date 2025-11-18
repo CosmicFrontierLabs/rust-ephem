@@ -362,12 +362,12 @@ class TLEEphemeris:
         ...
 
     @property
-    def teme_pv(self) -> PositionVelocityData | None:
+    def teme_pv(self) -> PositionVelocityData:
         """Position and velocity data in TEME frame"""
         ...
 
     @property
-    def itrs_pv(self) -> PositionVelocityData | None:
+    def itrs_pv(self) -> PositionVelocityData:
         """Position and velocity data in ITRS (Earth-fixed) frame"""
         ...
 
@@ -397,12 +397,12 @@ class TLEEphemeris:
         ...
 
     @property
-    def gcrs_pv(self) -> PositionVelocityData | None:
+    def gcrs_pv(self) -> PositionVelocityData:
         """Position and velocity data in GCRS frame"""
         ...
 
     @property
-    def timestamp(self) -> npt.NDArray[np.object_] | None:
+    def timestamp(self) -> npt.NDArray[np.object_]:
         """
         Array of timestamps for the ephemeris.
 
@@ -585,12 +585,12 @@ class SPICEEphemeris:
         ...
 
     @property
-    def gcrs_pv(self) -> PositionVelocityData | None:
+    def gcrs_pv(self) -> PositionVelocityData:
         """Position and velocity data in GCRS frame"""
         ...
 
     @property
-    def itrs_pv(self) -> PositionVelocityData | None:
+    def itrs_pv(self) -> PositionVelocityData:
         """Position and velocity data in ITRS (Earth-fixed) frame"""
         ...
 
@@ -620,7 +620,7 @@ class SPICEEphemeris:
         ...
 
     @property
-    def timestamp(self) -> npt.NDArray[np.object_] | None:
+    def timestamp(self) -> npt.NDArray[np.object_]:
         """
         Array of timestamps for the ephemeris.
 
@@ -779,12 +779,12 @@ class GroundEphemeris:
         ...
 
     @property
-    def gcrs_pv(self) -> PositionVelocityData | None:
+    def gcrs_pv(self) -> PositionVelocityData:
         """Position and velocity data in GCRS frame"""
         ...
 
     @property
-    def itrs_pv(self) -> PositionVelocityData | None:
+    def itrs_pv(self) -> PositionVelocityData:
         """Position and velocity data in ITRS (Earth-fixed) frame"""
         ...
 
@@ -814,17 +814,17 @@ class GroundEphemeris:
         ...
 
     @property
-    def sun_pv(self) -> PositionVelocityData | None:
+    def sun_pv(self) -> PositionVelocityData:
         """Position and velocity data for Sun"""
         ...
 
     @property
-    def moon_pv(self) -> PositionVelocityData | None:
+    def moon_pv(self) -> PositionVelocityData:
         """Position and velocity data for Moon"""
         ...
 
     @property
-    def timestamp(self) -> npt.NDArray[np.object_] | None:
+    def timestamp(self) -> npt.NDArray[np.object_]:
         """
         Array of timestamps for the ephemeris.
 
@@ -834,12 +834,12 @@ class GroundEphemeris:
         ...
 
     @property
-    def obsgeoloc(self) -> Any | None:  # Returns astropy quantity array
+    def obsgeoloc(self) -> Any:  # Returns astropy quantity array
         """Observatory geocentric location for astropy"""
         ...
 
     @property
-    def obsgeovel(self) -> Any | None:  # Returns astropy quantity array
+    def obsgeovel(self) -> Any:  # Returns astropy quantity array
         """Observatory geocentric velocity for astropy"""
         ...
 
