@@ -255,7 +255,7 @@ class Constraint:
 
     def evaluate(
         self,
-        ephemeris: TLEEphemeris | SPICEEphemeris | GroundEphemeris,
+        ephemeris: TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris,
         target_ra: float,
         target_dec: float,
         times: datetime | list[datetime] | None = None,
@@ -291,7 +291,7 @@ class Constraint:
     def in_constraint(
         self,
         time: datetime,
-        ephemeris: TLEEphemeris | SPICEEphemeris | GroundEphemeris,
+        ephemeris: TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris,
         target_ra: float,
         target_dec: float,
     ) -> bool:
@@ -744,6 +744,259 @@ class SPICEEphemeris:
         Example:
             >>> from datetime import datetime
             >>> eph = SPICEEphemeris(...)
+            >>> target_time = datetime(2024, 1, 15, 12, 0, 0)
+            >>> idx = eph.index(target_time)
+            >>> position = eph.gcrs_pv.position[idx]
+        """
+        ...
+
+class OEMEphemeris:
+    """
+    Ephemeris calculator using CCSDS Orbit Ephemeris Messages (OEM).
+
+    The OEM file must specify a reference frame that is compatible with GCRS
+    (Geocentric Celestial Reference System). Compatible frames include:
+    - J2000 / EME2000 (Earth Mean Equator and Equinox of J2000.0)
+    - GCRF (Geocentric Celestial Reference Frame)
+    - ICRF (International Celestial Reference Frame)
+
+    OEM files using Earth-fixed frames (e.g., ITRF) or other incompatible frames
+    will be rejected with a ValueError.
+    """
+
+    def __init__(
+        self,
+        oem_path: str,
+        begin: datetime,
+        end: datetime,
+        step_size: int = 60,
+        *,
+        polar_motion: bool = False,
+    ) -> None:
+        """
+        Initialize CCSDS OEM ephemeris from an OEM file.
+
+        Args:
+            oem_path: Path to CCSDS OEM file
+            begin: Start time (naive datetime treated as UTC)
+            end: End time (naive datetime treated as UTC)
+            step_size: Time step in seconds (default: 60)
+            polar_motion: Whether to apply polar motion correction (default: False)
+
+        Raises:
+            ValueError: If OEM file cannot be parsed, time range exceeds available data,
+                       reference frame is missing, or reference frame is incompatible with GCRS
+        """
+        ...
+
+    @property
+    def gcrs_pv(self) -> PositionVelocityData:
+        """Position and velocity data in GCRS frame (interpolated)"""
+        ...
+
+    @property
+    def itrs_pv(self) -> PositionVelocityData:
+        """Position and velocity data in ITRS (Earth-fixed) frame"""
+        ...
+
+    @property
+    def itrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord object in ITRS frame"""
+        ...
+
+    @property
+    def gcrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord object in GCRS frame"""
+        ...
+
+    @property
+    def earth(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord object for Earth position relative to spacecraft"""
+        ...
+
+    @property
+    def sun(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord object for Sun position relative to spacecraft"""
+        ...
+
+    @property
+    def moon(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord object for Moon position relative to spacecraft"""
+        ...
+
+    @property
+    def timestamp(self) -> npt.NDArray[np.object_]:
+        """
+        Array of timestamps for the ephemeris.
+
+        Returns a NumPy array of datetime objects (not a list) for efficient indexing.
+        This property is cached for performance - repeated access is ~90x faster.
+        """
+        ...
+
+    @property
+    def oem_pv(self) -> PositionVelocityData:
+        """
+        Raw OEM position and velocity data without interpolation.
+
+        Returns the original state vectors from the OEM file.
+        """
+        ...
+
+    @property
+    def oem_timestamp(self) -> list[datetime]:
+        """
+        Raw OEM timestamps without interpolation.
+
+        Returns the original timestamps from the OEM file as UTC datetime objects.
+        """
+        ...
+
+    @property
+    def sun_pv(self) -> PositionVelocityData:
+        """Sun position and velocity in GCRS frame"""
+        ...
+
+    @property
+    def moon_pv(self) -> PositionVelocityData:
+        """Moon position and velocity in GCRS frame"""
+        ...
+
+    @property
+    def obsgeoloc(self) -> npt.NDArray[np.float64]:
+        """
+        Observer geocentric location (GCRS position).
+
+        Returns position in km, compatible with astropy's GCRS frame obsgeoloc parameter.
+        Shape: (N, 3) where N is the number of timestamps.
+        """
+        ...
+
+    @property
+    def obsgeovel(self) -> npt.NDArray[np.float64]:
+        """
+        Observer geocentric velocity (GCRS velocity).
+
+        Returns velocity in km/s, compatible with astropy's GCRS frame obsgeovel parameter.
+        Shape: (N, 3) where N is the number of timestamps.
+        """
+        ...
+
+    @property
+    def sun_radius(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Sun with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_radius_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Sun as seen from the spacecraft (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_radius(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Moon with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_radius_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Moon as seen from the spacecraft (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_radius(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Earth with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_radius_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Earth as seen from the spacecraft (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Sun as seen from the spacecraft (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Moon as seen from the spacecraft (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Earth as seen from the spacecraft (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    def index(self, time: datetime) -> int:
+        """
+        Find the index of the closest timestamp to the given datetime.
+
+        Returns the index in the ephemeris timestamp array that is closest to the provided time.
+        This can be used to index into any of the ephemeris arrays (positions, velocities, etc.)
+
+        Args:
+            time: Python datetime object to find the closest match for
+
+        Returns:
+            Index of the closest timestamp
+
+        Raises:
+            ValueError: If no timestamps are available in the ephemeris
+
+        Example:
+            >>> from datetime import datetime
+            >>> eph = OEMEphemeris("spacecraft.oem", ...)
             >>> target_time = datetime(2024, 1, 15, 12, 0, 0)
             >>> idx = eph.index(target_time)
             >>> position = eph.gcrs_pv.position[idx]
