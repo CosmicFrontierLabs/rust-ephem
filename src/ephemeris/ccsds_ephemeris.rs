@@ -185,6 +185,32 @@ impl OEMEphemeris {
             .collect()
     }
 
+    /// Get Sun position and velocity in GCRS frame
+    #[getter]
+    fn sun_pv(&self, py: Python) -> Option<Py<PositionVelocityData>> {
+        self.get_sun_pv(py)
+    }
+
+    /// Get Moon position and velocity in GCRS frame
+    #[getter]
+    fn moon_pv(&self, py: Python) -> Option<Py<PositionVelocityData>> {
+        self.get_moon_pv(py)
+    }
+
+    /// Get observer geocentric location (obsgeoloc) - alias for GCRS position
+    /// This is compatible with astropy's GCRS frame obsgeoloc parameter
+    #[getter]
+    fn obsgeoloc(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.get_obsgeoloc(py)
+    }
+
+    /// Get observer geocentric velocity (obsgeovel) - alias for GCRS velocity
+    /// This is compatible with astropy's GCRS frame obsgeovel parameter
+    #[getter]
+    fn obsgeovel(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.get_obsgeovel(py)
+    }
+
     /// Get angular radius of the Sun with astropy units (degrees)
     #[getter]
     fn sun_radius(&self, py: Python) -> PyResult<Py<PyAny>> {

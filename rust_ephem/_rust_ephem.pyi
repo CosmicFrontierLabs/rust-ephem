@@ -853,6 +853,36 @@ class OEMEphemeris:
         ...
 
     @property
+    def sun_pv(self) -> PositionVelocityData:
+        """Sun position and velocity in GCRS frame"""
+        ...
+
+    @property
+    def moon_pv(self) -> PositionVelocityData:
+        """Moon position and velocity in GCRS frame"""
+        ...
+
+    @property
+    def obsgeoloc(self) -> npt.NDArray[np.float64]:
+        """
+        Observer geocentric location (GCRS position).
+
+        Returns position in km, compatible with astropy's GCRS frame obsgeoloc parameter.
+        Shape: (N, 3) where N is the number of timestamps.
+        """
+        ...
+
+    @property
+    def obsgeovel(self) -> npt.NDArray[np.float64]:
+        """
+        Observer geocentric velocity (GCRS velocity).
+
+        Returns velocity in km/s, compatible with astropy's GCRS frame obsgeovel parameter.
+        Shape: (N, 3) where N is the number of timestamps.
+        """
+        ...
+
+    @property
     def sun_radius(self) -> Any:  # Returns astropy.units.Quantity
         """
         Angular radius of the Sun with astropy units (degrees).

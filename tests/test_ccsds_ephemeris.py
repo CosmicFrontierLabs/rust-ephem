@@ -303,5 +303,58 @@ META_STOP
         OEMEphemeris(str(oem_path), begin=begin, end=end, step_size=60)
 
 
+def test_ccsds_ephemeris_sun_moon_pv(sample_oem_path):
+    """Test that sun_pv and moon_pv properties are exposed"""
+    begin = datetime(2024, 1, 1, 0, 0, 0)
+    end = datetime(2024, 1, 1, 0, 10, 0)
+
+    eph = OEMEphemeris(sample_oem_path, begin=begin, end=end, step_size=300)
+
+    # Test sun_pv
+    sun_pv = eph.sun_pv
+    assert sun_pv is not None
+    assert hasattr(sun_pv, "position")
+    assert hasattr(sun_pv, "velocity")
+    assert sun_pv.position.shape[0] == 3  # 0, 5, 10 minutes
+    assert sun_pv.position.shape[1] == 3  # x, y, z
+    assert sun_pv.velocity.shape == sun_pv.position.shape
+
+    # Test moon_pv
+    moon_pv = eph.moon_pv
+    assert moon_pv is not None
+    assert hasattr(moon_pv, "position")
+    assert hasattr(moon_pv, "velocity")
+    assert moon_pv.position.shape[0] == 3
+    assert moon_pv.position.shape[1] == 3
+    assert moon_pv.velocity.shape == moon_pv.position.shape
+
+
+def test_ccsds_ephemeris_obsgeoloc_obsgeovel(sample_oem_path):
+    """Test that obsgeoloc and obsgeovel properties are exposed"""
+    begin = datetime(2024, 1, 1, 0, 0, 0)
+    end = datetime(2024, 1, 1, 0, 10, 0)
+
+    eph = OEMEphemeris(sample_oem_path, begin=begin, end=end, step_size=300)
+
+    # Test obsgeoloc (should be same as gcrs_pv.position)
+    obsgeoloc = eph.obsgeoloc
+    assert obsgeoloc is not None
+    assert obsgeoloc.shape[0] == 3  # 0, 5, 10 minutes
+    assert obsgeoloc.shape[1] == 3  # x, y, z
+
+    # Should match GCRS position
+    gcrs_pv = eph.gcrs_pv
+    assert np.allclose(obsgeoloc, gcrs_pv.position)
+
+    # Test obsgeovel (should be same as gcrs_pv.velocity)
+    obsgeovel = eph.obsgeovel
+    assert obsgeovel is not None
+    assert obsgeovel.shape[0] == 3
+    assert obsgeovel.shape[1] == 3
+
+    # Should match GCRS velocity
+    assert np.allclose(obsgeovel, gcrs_pv.velocity)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
