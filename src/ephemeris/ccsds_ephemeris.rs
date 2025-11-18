@@ -497,7 +497,9 @@ impl OEMEphemeris {
             // Pad or truncate to 9 digits (nanoseconds)
             let padded = format!("{:0<9}", frac_str);
             let truncated = &padded[..9];
-            truncated.parse::<u32>().unwrap_or(0)
+            truncated.parse::<u32>().map_err(|_| {
+                pyo3::exceptions::PyValueError::new_err("Invalid fractional seconds in epoch")
+            })?
         } else {
             0
         };
