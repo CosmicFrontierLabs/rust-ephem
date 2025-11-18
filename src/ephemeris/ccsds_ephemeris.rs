@@ -229,7 +229,7 @@ impl OEMEphemeris {
 impl OEMEphemeris {
     /// Parse an OEM file and extract state vector records
     ///
-    /// This is a simple parser that handles basic OEM format
+    /// This is a simple parser that handles basic OEM format with multiple segments
     fn parse_oem_file(path: &Path) -> PyResult<Vec<StateVectorRecord>> {
         let file = File::open(path).map_err(|e| {
             pyo3::exceptions::PyIOError::new_err(format!("Failed to open OEM file: {}", e))
@@ -251,6 +251,13 @@ impl OEMEphemeris {
                 continue;
             }
 
+            // Handle new segment - reset flags to process next segment
+            if trimmed == "META_START" {
+                in_data_section = false;
+                past_meta = false;
+                continue;
+            }
+
             // Track when we pass the metadata section
             if trimmed == "META_STOP" {
                 past_meta = true;
@@ -264,7 +271,10 @@ impl OEMEphemeris {
                 continue;
             }
             if trimmed == "DATA_STOP" {
-                break;
+                // Don't break - there might be more segments
+                in_data_section = false;
+                past_meta = false;
+                continue;
             }
 
             // Parse state vector records in the data section
