@@ -32,7 +32,7 @@ struct StateVectorRecord {
 }
 
 #[pyclass]
-pub struct CCSDSEphemeris {
+pub struct OEMEphemeris {
     #[allow(dead_code)] // Stored for debugging/inspection purposes
     oem_path: String,
     itrs: Option<Array2<f64>>,
@@ -46,7 +46,7 @@ pub struct CCSDSEphemeris {
 }
 
 #[pymethods]
-impl CCSDSEphemeris {
+impl OEMEphemeris {
     #[new]
     #[pyo3(signature = (oem_path, begin, end, step_size=60, *, polar_motion=false))]
     fn new(
@@ -87,8 +87,8 @@ impl CCSDSEphemeris {
         // Generate query timestamps
         let times = generate_timestamps(begin, end, step_size)?;
 
-        // Create the CCSDSEphemeris object
-        let mut ephemeris = CCSDSEphemeris {
+        // Create the OEMEphemeris object
+        let mut ephemeris = OEMEphemeris {
             oem_path,
             itrs: None,
             itrs_skycoord: OnceLock::new(),
@@ -210,7 +210,7 @@ impl CCSDSEphemeris {
     }
 }
 
-impl CCSDSEphemeris {
+impl OEMEphemeris {
     /// Parse an OEM file and extract state vector records
     ///
     /// This is a simple parser that handles basic OEM format
@@ -222,6 +222,7 @@ impl CCSDSEphemeris {
 
         let mut records = Vec::new();
         let mut in_data_section = false;
+        let mut past_meta = false;
 
         for line in reader.lines() {
             let line = line.map_err(|e| {
@@ -234,7 +235,14 @@ impl CCSDSEphemeris {
                 continue;
             }
 
-            // Check for data section markers
+            // Track when we pass the metadata section
+            if trimmed == "META_STOP" {
+                past_meta = true;
+                in_data_section = true; // Start reading data after META_STOP
+                continue;
+            }
+
+            // Check for explicit data section markers (if present)
             if trimmed == "DATA_START" {
                 in_data_section = true;
                 continue;
@@ -244,7 +252,9 @@ impl CCSDSEphemeris {
             }
 
             // Parse state vector records in the data section
-            if in_data_section {
+            // This includes both explicit DATA_START/STOP sections and
+            // data that comes directly after META_STOP
+            if in_data_section || past_meta {
                 if let Some(record) = Self::parse_state_vector_line(trimmed)? {
                     records.push(record);
                 }
@@ -443,8 +453,8 @@ impl CCSDSEphemeris {
     }
 }
 
-// Implement the EphemerisBase trait for CCSDSEphemeris
-impl EphemerisBase for CCSDSEphemeris {
+// Implement the EphemerisBase trait for OEMEphemeris
+impl EphemerisBase for OEMEphemeris {
     fn data(&self) -> &EphemerisData {
         &self.common_data
     }

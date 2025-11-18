@@ -10,6 +10,7 @@ use crate::constraints::moon_proximity::MoonProximityConfig;
 use crate::constraints::sun_proximity::SunProximityConfig;
 use crate::ephemeris::ephemeris_common::EphemerisBase;
 use crate::ephemeris::GroundEphemeris;
+use crate::ephemeris::OEMEphemeris;
 use crate::ephemeris::SPICEEphemeris;
 use crate::ephemeris::TLEEphemeris;
 use chrono::{DateTime, Utc};
@@ -523,9 +524,12 @@ impl PyConstraint {
         if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
             return self.eval_with_ephemeris(&*ephem, target_ra, target_dec, time_indices);
         }
+        if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+            return self.eval_with_ephemeris(&*ephem, target_ra, target_dec, time_indices);
+        }
 
         Err(pyo3::exceptions::PyTypeError::new_err(
-            "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, or GroundEphemeris",
+            "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
         ))
     }
 
@@ -544,6 +548,8 @@ impl PyConstraint {
             } else if let Ok(ephem) = ephemeris.extract::<PyRef<SPICEEphemeris>>() {
                 ephem.data().times.as_ref().cloned()
             } else if let Ok(ephem) = ephemeris.extract::<PyRef<GroundEphemeris>>() {
+                ephem.data().times.as_ref().cloned()
+            } else if let Ok(ephem) = ephemeris.extract::<PyRef<OEMEphemeris>>() {
                 ephem.data().times.as_ref().cloned()
             } else {
                 None

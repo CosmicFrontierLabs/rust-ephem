@@ -6,7 +6,7 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from rust_ephem import CCSDSEphemeris
+from rust_ephem import OEMEphemeris
 
 # Sample OEM data directory
 TEST_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "test_data")
@@ -51,11 +51,11 @@ def sample_oem_path(tmp_path):
 
 
 def test_ccsds_ephemeris_initialization(sample_oem_path):
-    """Test basic initialization of CCSDSEphemeris"""
+    """Test basic initialization of OEMEphemeris"""
     begin = datetime(2024, 1, 1, 0, 0, 0)
     end = datetime(2024, 1, 1, 0, 30, 0)
 
-    eph = CCSDSEphemeris(sample_oem_path, begin=begin, end=end, step_size=60)
+    eph = OEMEphemeris(sample_oem_path, begin=begin, end=end, step_size=60)
 
     assert eph is not None
     assert eph.timestamp is not None
@@ -67,7 +67,7 @@ def test_ccsds_ephemeris_gcrs_data(sample_oem_path):
     begin = datetime(2024, 1, 1, 0, 0, 0)
     end = datetime(2024, 1, 1, 0, 30, 0)
 
-    eph = CCSDSEphemeris(
+    eph = OEMEphemeris(
         sample_oem_path,
         begin=begin,
         end=end,
@@ -92,7 +92,7 @@ def test_ccsds_ephemeris_interpolation(sample_oem_path):
     end = datetime(2024, 1, 1, 0, 30, 0)
 
     # High-resolution ephemeris with 1-second steps
-    eph = CCSDSEphemeris(sample_oem_path, begin=begin, end=end, step_size=1)
+    eph = OEMEphemeris(sample_oem_path, begin=begin, end=end, step_size=1)
 
     # Check that interpolation produces continuous results
     velocities = eph.gcrs_pv.velocity
@@ -108,7 +108,7 @@ def test_ccsds_ephemeris_itrs_conversion(sample_oem_path):
     begin = datetime(2024, 1, 1, 0, 0, 0)
     end = datetime(2024, 1, 1, 0, 30, 0)
 
-    eph = CCSDSEphemeris(sample_oem_path, begin=begin, end=end, step_size=300)
+    eph = OEMEphemeris(sample_oem_path, begin=begin, end=end, step_size=300)
 
     # Check ITRS data exists
     itrs_pv = eph.itrs_pv
@@ -126,7 +126,7 @@ def test_ccsds_ephemeris_sun_moon(sample_oem_path):
     begin = datetime(2024, 1, 1, 0, 0, 0)
     end = datetime(2024, 1, 1, 0, 10, 0)
 
-    eph = CCSDSEphemeris(sample_oem_path, begin=begin, end=end, step_size=300)
+    eph = OEMEphemeris(sample_oem_path, begin=begin, end=end, step_size=300)
 
     # Check that Sun and Moon SkyCoord objects can be accessed
     sun = eph.sun
@@ -140,7 +140,7 @@ def test_ccsds_ephemeris_index_method(sample_oem_path):
     begin = datetime(2024, 1, 1, 0, 0, 0)
     end = datetime(2024, 1, 1, 0, 30, 0)
 
-    eph = CCSDSEphemeris(sample_oem_path, begin=begin, end=end, step_size=60)
+    eph = OEMEphemeris(sample_oem_path, begin=begin, end=end, step_size=60)
 
     # Test finding index for exact time
     target_time = datetime(2024, 1, 1, 0, 15, 0)
@@ -160,7 +160,7 @@ def test_ccsds_ephemeris_time_range_validation(sample_oem_path):
     end = datetime(2024, 1, 1, 3, 0, 0)
 
     with pytest.raises(ValueError, match="exceeds OEM data range"):
-        CCSDSEphemeris(sample_oem_path, begin=begin, end=end, step_size=60)
+        OEMEphemeris(sample_oem_path, begin=begin, end=end, step_size=60)
 
 
 def test_ccsds_ephemeris_oem_pv_property(sample_oem_path):
@@ -168,7 +168,7 @@ def test_ccsds_ephemeris_oem_pv_property(sample_oem_path):
     begin = datetime(2024, 1, 1, 0, 0, 0)
     end = datetime(2024, 1, 1, 0, 30, 0)
 
-    eph = CCSDSEphemeris(sample_oem_path, begin=begin, end=end, step_size=300)
+    eph = OEMEphemeris(sample_oem_path, begin=begin, end=end, step_size=300)
 
     # Access raw OEM data
     oem_pv = eph.oem_pv
@@ -185,7 +185,7 @@ def test_ccsds_ephemeris_angular_radius(sample_oem_path):
     begin = datetime(2024, 1, 1, 0, 0, 0)
     end = datetime(2024, 1, 1, 0, 10, 0)
 
-    eph = CCSDSEphemeris(sample_oem_path, begin=begin, end=end, step_size=300)
+    eph = OEMEphemeris(sample_oem_path, begin=begin, end=end, step_size=300)
 
     # Check that angular radius properties exist
     sun_radius_deg = eph.sun_radius_deg

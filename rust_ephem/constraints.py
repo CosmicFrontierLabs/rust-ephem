@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from rust_ephem import (
         ConstraintResult,
         GroundEphemeris,
+        OEMEphemeris,
         SPICEEphemeris,
         TLEEphemeris,
     )
@@ -27,7 +28,9 @@ class RustConstraintMixin(BaseModel):
 
     def evaluate(
         self,
-        ephemeris: Union["TLEEphemeris", "SPICEEphemeris", "GroundEphemeris"],
+        ephemeris: Union[
+            "TLEEphemeris", "SPICEEphemeris", "GroundEphemeris", "OEMEphemeris"
+        ],
         target_ra: float,
         target_dec: float,
         times: Union[datetime, list[datetime], None] = None,
@@ -40,7 +43,7 @@ class RustConstraintMixin(BaseModel):
         object on first use.
 
         Args:
-            ephemeris: One of TLEEphemeris, SPICEEphemeris, or GroundEphemeris
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
             target_ra: Target right ascension in degrees (ICRS/J2000)
             target_dec: Target declination in degrees (ICRS/J2000)
             times: Optional specific time(s) to evaluate
@@ -60,7 +63,9 @@ class RustConstraintMixin(BaseModel):
     def in_constraint(
         self,
         time: datetime,
-        ephemeris: Union["TLEEphemeris", "SPICEEphemeris", "GroundEphemeris"],
+        ephemeris: Union[
+            "TLEEphemeris", "SPICEEphemeris", "GroundEphemeris", "OEMEphemeris"
+        ],
         target_ra: float,
         target_dec: float,
     ) -> bool:
@@ -72,7 +77,7 @@ class RustConstraintMixin(BaseModel):
 
         Args:
             time: The time to check (must exist in ephemeris)
-            ephemeris: One of TLEEphemeris, SPICEEphemeris, or GroundEphemeris
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
             target_ra: Target right ascension in degrees (ICRS/J2000)
             target_dec: Target declination in degrees (ICRS/J2000)
 

@@ -12,7 +12,7 @@ pub mod spice_manager;
 pub mod tle_ephemeris;
 
 // Re-export main types
-pub use ccsds_ephemeris::CCSDSEphemeris;
+pub use ccsds_ephemeris::OEMEphemeris;
 pub use ground_ephemeris::GroundEphemeris;
 pub use spice_ephemeris::SPICEEphemeris;
 pub use tle_ephemeris::TLEEphemeris;

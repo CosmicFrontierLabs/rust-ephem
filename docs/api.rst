@@ -140,6 +140,49 @@ Classes
       - Returns: ``int`` index that can be used to access ephemeris arrays
       - Example: ``idx = eph.index(datetime(2024, 1, 1, 12, 0, 0))`` then ``sun_position = eph.sun_pv.position[idx]``
 
+**OEMEphemeris**
+  Load and interpolate CCSDS Orbit Ephemeris Message (OEM) files for spacecraft ephemeris.
+  
+  **Constructor:**
+    ``OEMEphemeris(oem_file_path, begin, end, step_size=60, *, polar_motion=False)``
+    
+    * ``oem_file_path`` — Path to CCSDS OEM file (.oem)
+    * ``begin`` — Start time for ephemeris (Python datetime)
+    * ``end`` — End time for ephemeris (Python datetime)
+    * ``step_size`` — Time step in seconds for interpolated ephemeris (default: 60)
+    * ``polar_motion`` — Enable polar motion corrections (default: False)
+  
+  **Attributes (read-only):**
+    * ``oem_pv`` — Original OEM state vectors (PositionVelocityData) without interpolation
+    * ``gcrs_pv`` — Interpolated position/velocity in GCRS frame (PositionVelocityData)
+    * ``itrs_pv`` — Position/velocity in ITRS frame (PositionVelocityData)
+    * ``sun_pv`` — Sun position/velocity in GCRS frame (PositionVelocityData)
+    * ``moon_pv`` — Moon position/velocity in GCRS frame (PositionVelocityData)
+    * ``timestamp`` — List of Python datetime objects for interpolated ephemeris
+    * ``itrs`` — ITRS coordinates as astropy SkyCoord
+    * ``gcrs`` — GCRS coordinates as astropy SkyCoord
+    * ``earth`` — Earth position as astropy SkyCoord
+    * ``sun`` — Sun position as astropy SkyCoord
+    * ``moon`` — Moon position as astropy SkyCoord
+    * ``obsgeoloc`` — Observer geocentric location (alias for GCRS position)
+    * ``obsgeovel`` — Observer geocentric velocity (alias for GCRS velocity)
+    * ``sun_radius`` — Sun angular radius as astropy Quantity (degrees)
+    * ``sun_radius_deg`` — Sun angular radius as NumPy array (degrees)
+    * ``sun_radius_rad`` — Sun angular radius as NumPy array (radians)
+    * ``moon_radius`` — Moon angular radius as astropy Quantity (degrees)
+    * ``moon_radius_deg`` — Moon angular radius as NumPy array (degrees)
+    * ``moon_radius_rad`` — Moon angular radius as NumPy array (radians)
+    * ``earth_radius`` — Earth angular radius as astropy Quantity (degrees)
+    * ``earth_radius_deg`` — Earth angular radius as NumPy array (degrees)
+    * ``earth_radius_rad`` — Earth angular radius as NumPy array (radians)
+  
+  **Methods:**
+    * ``index(time)`` — Find the index of the closest timestamp to the given datetime
+      
+      - ``time`` — Python datetime object
+      - Returns: ``int`` index that can be used to access ephemeris arrays
+      - Example: ``idx = eph.index(datetime(2032, 7, 1, 12, 0, 0))`` then ``position = eph.gcrs_pv.position[idx]``
+
 **Constraint**
   Evaluate astronomical observation constraints against ephemeris data.
   
@@ -158,7 +201,7 @@ Classes
   **Methods:**
     * ``evaluate(ephemeris, target_ra, target_dec, times=None, indices=None)`` — Evaluate constraint against ephemeris data
       
-      - ``ephemeris`` — TLEEphemeris, SPICEEphemeris, or GroundEphemeris object
+      - ``ephemeris`` — TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris object
       - ``target_ra`` — Target right ascension in degrees (ICRS/J2000)
       - ``target_dec`` — Target declination in degrees (ICRS/J2000)
       - ``times`` — Optional: specific datetime(s) to evaluate (must exist in ephemeris)

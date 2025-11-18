@@ -255,7 +255,7 @@ class Constraint:
 
     def evaluate(
         self,
-        ephemeris: TLEEphemeris | SPICEEphemeris | CCSDSEphemeris | GroundEphemeris,
+        ephemeris: TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris,
         target_ra: float,
         target_dec: float,
         times: datetime | list[datetime] | None = None,
@@ -291,7 +291,7 @@ class Constraint:
     def in_constraint(
         self,
         time: datetime,
-        ephemeris: TLEEphemeris | SPICEEphemeris | CCSDSEphemeris | GroundEphemeris,
+        ephemeris: TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris,
         target_ra: float,
         target_dec: float,
     ) -> bool:
@@ -750,7 +750,7 @@ class SPICEEphemeris:
         """
         ...
 
-class CCSDSEphemeris:
+class OEMEphemeris:
     """Ephemeris calculator using CCSDS Orbit Ephemeris Messages (OEM)"""
 
     def __init__(
@@ -945,7 +945,7 @@ class CCSDSEphemeris:
 
         Example:
             >>> from datetime import datetime
-            >>> eph = CCSDSEphemeris("spacecraft.oem", ...)
+            >>> eph = OEMEphemeris("spacecraft.oem", ...)
             >>> target_time = datetime(2024, 1, 15, 12, 0, 0)
             >>> idx = eph.index(target_time)
             >>> position = eph.gcrs_pv.position[idx]
