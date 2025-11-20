@@ -443,17 +443,17 @@ class TLEEphemeris:
 
     @property
     def height(self) -> Any:  # Returns astropy.units.Quantity
-        """Height above the WGS84 ellipsoid as an astropy Quantity array (meters), one per timestamp"""
+        """Geodetic height above the WGS84 ellipsoid as an astropy Quantity array (meters), one per timestamp"""
         ...
 
     @property
     def height_m(self) -> npt.NDArray[np.float64]:
-        """Height above the WGS84 ellipsoid as a raw NumPy array in meters (one per timestamp)"""
+        """Geodetic height above the WGS84 ellipsoid as a raw NumPy array in meters (one per timestamp)"""
         ...
 
     @property
     def height_km(self) -> npt.NDArray[np.float64]:
-        """Height above the WGS84 ellipsoid as a raw NumPy array in kilometers (one per timestamp)"""
+        """Geodetic height above the WGS84 ellipsoid as a raw NumPy array in kilometers (one per timestamp)"""
         ...
 
     @property
