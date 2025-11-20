@@ -51,6 +51,11 @@ planetary positions.
     earth_skycoord = spice.earth
     sun_skycoord = spice.sun
 
+    # Geodetic coordinates (deg) and height (m) derived per timestamp
+    print("Latitude (deg):", spice.latitude_deg[0])
+    print("Longitude (deg):", spice.longitude_deg[0])
+    print("Height (m):", spice.height_m[0])
+
 SPICEEphemeris Error Handling
 ------------------------------
 - If the SPK file is missing and ``download_if_missing=False`` was used, an

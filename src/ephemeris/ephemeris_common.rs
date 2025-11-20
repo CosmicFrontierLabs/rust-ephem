@@ -108,6 +108,9 @@ pub struct EphemerisData {
     pub moon_angular_radius_cache: OnceLock<Py<PyAny>>,
     pub earth_angular_radius_cache: OnceLock<Py<PyAny>>,
     pub sun_angular_radius_rad_cache: OnceLock<Py<PyAny>>,
+    pub latitude_qty_cache: OnceLock<Py<PyAny>>,
+    pub longitude_qty_cache: OnceLock<Py<PyAny>>,
+    pub height_qty_cache: OnceLock<Py<PyAny>>,
     pub latitude_deg_cache: OnceLock<Array1<f64>>,
     pub longitude_deg_cache: OnceLock<Array1<f64>>,
     pub latitude_rad_cache: OnceLock<Array1<f64>>,
@@ -135,6 +138,9 @@ impl EphemerisData {
             moon_angular_radius_cache: OnceLock::new(),
             earth_angular_radius_cache: OnceLock::new(),
             sun_angular_radius_rad_cache: OnceLock::new(),
+            latitude_qty_cache: OnceLock::new(),
+            longitude_qty_cache: OnceLock::new(),
+            height_qty_cache: OnceLock::new(),
             moon_angular_radius_rad_cache: OnceLock::new(),
             earth_angular_radius_rad_cache: OnceLock::new(),
             latitude_deg_cache: OnceLock::new(),
@@ -395,13 +401,20 @@ pub trait EphemerisBase {
     /// from observer geocentric coords (obsgeoloc). Returns None if obsgeoloc is missing.
     fn get_latitude(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         self.compute_latlon_caches()?;
+        // Return cached Quantity if present
+        if let Some(qty_cache) = self.data().latitude_qty_cache.get() {
+            return Ok(Some(qty_cache.clone_ref(py)));
+        }
         if let Some(lats) = self.data().latitude_deg_cache.get() {
             // Convert to numpy array and wrap as astropy Quantity deg
             let arr = lats.clone().into_pyarray(py);
             let modules = AstropyModules::import(py)?;
             let deg_unit = modules.units.getattr("deg")?;
             let qty = deg_unit.call_method1("__rmul__", (arr,))?;
-            Ok(Some(qty.into()))
+            let _ = self.data().latitude_qty_cache.set(qty.into());
+            Ok(Some(
+                self.data().latitude_qty_cache.get().unwrap().clone_ref(py),
+            ))
         } else {
             Ok(None)
         }
@@ -410,12 +423,18 @@ pub trait EphemerisBase {
     /// Get observer geodetic longitude as Quantity array (degrees)
     fn get_longitude(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         self.compute_latlon_caches()?;
+        if let Some(qty_cache) = self.data().longitude_qty_cache.get() {
+            return Ok(Some(qty_cache.clone_ref(py)));
+        }
         if let Some(lons) = self.data().longitude_deg_cache.get() {
             let arr = lons.clone().into_pyarray(py);
             let modules = AstropyModules::import(py)?;
             let deg_unit = modules.units.getattr("deg")?;
             let qty = deg_unit.call_method1("__rmul__", (arr,))?;
-            Ok(Some(qty.into()))
+            let _ = self.data().longitude_qty_cache.set(qty.into());
+            Ok(Some(
+                self.data().longitude_qty_cache.get().unwrap().clone_ref(py),
+            ))
         } else {
             Ok(None)
         }
@@ -465,12 +484,18 @@ pub trait EphemerisBase {
     /// Get observer geodetic height as Quantity array (meters)
     fn get_height(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         self.compute_latlon_caches()?;
+        if let Some(qty_cache) = self.data().height_qty_cache.get() {
+            return Ok(Some(qty_cache.clone_ref(py)));
+        }
         if let Some(h_m) = self.data().height_cache.get() {
             let arr = h_m.clone().into_pyarray(py);
             let modules = AstropyModules::import(py)?;
             let m_unit = modules.units.getattr("m")?;
             let qty = m_unit.call_method1("__rmul__", (arr,))?;
-            Ok(Some(qty.into()))
+            let _ = self.data().height_qty_cache.set(qty.into());
+            Ok(Some(
+                self.data().height_qty_cache.get().unwrap().clone_ref(py),
+            ))
         } else {
             Ok(None)
         }

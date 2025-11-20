@@ -9,5 +9,6 @@ Practical usage examples for the Python API.
    usage_tle
    usage_spice
    usage_ground
+   usage_oem
    usage_skycoord
    usage_constraints

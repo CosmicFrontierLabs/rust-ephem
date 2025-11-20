@@ -34,9 +34,11 @@ fixed location on Earth's surface.
     )
 
     # Access observatory location properties
-    print("Latitude:", observatory.latitude, "degrees")
-    print("Longitude:", observatory.longitude, "degrees")
-    print("Height:", observatory.height, "meters")
+    # `latitude_deg` and `longitude_deg` return numpy arrays (one per timestamp)
+    # For the stationary observatory these are constant arrays; index [0] gets the scalar value
+    print("Latitude:", observatory.latitude_deg[0], "degrees")
+    print("Longitude:", observatory.longitude_deg[0], "degrees")
+    print("Height:", observatory.height_m[0], "meters")
 
     # Access pre-computed frames (PositionVelocityData objects)
     pv_itrs = observatory.itrs_pv  # Earth-fixed frame

@@ -1,5 +1,4 @@
-use ndarray::Array2;
-use numpy::IntoPyArray;
+use ndarray::{Array1, Array2};
 use pyo3::{prelude::*, types::PyDateTime};
 use std::sync::OnceLock;
 
@@ -81,6 +80,23 @@ impl GroundEphemeris {
         ephemeris.compute_itrs_position()?;
         ephemeris.itrs_to_gcrs()?;
         ephemeris.calculate_sun_moon()?;
+
+        // Pre-populate geodetic caches with exact input values to preserve precision
+        if let Some(times_ref) = ephemeris.common_data.times.as_ref() {
+            let n_times = times_ref.len();
+            let lat_deg = Array1::from_vec(vec![latitude; n_times]);
+            let lon_deg = Array1::from_vec(vec![longitude; n_times]);
+            let lat_rad = lat_deg.mapv(|v| v.to_radians());
+            let lon_rad = lon_deg.mapv(|v| v.to_radians());
+            let h_m = Array1::from_vec(vec![height; n_times]);
+            let h_km = h_m.mapv(|v| v / 1000.0);
+            let _ = ephemeris.common_data.latitude_deg_cache.set(lat_deg);
+            let _ = ephemeris.common_data.longitude_deg_cache.set(lon_deg);
+            let _ = ephemeris.common_data.latitude_rad_cache.set(lat_rad);
+            let _ = ephemeris.common_data.longitude_rad_cache.set(lon_rad);
+            let _ = ephemeris.common_data.height_cache.set(h_m);
+            let _ = ephemeris.common_data.height_km_cache.set(h_km);
+        }
 
         // Note: SkyCoords are now created lazily on first access
 
@@ -331,104 +347,42 @@ impl GroundEphemeris {
 
     #[getter]
     fn latitude(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        // Return constant array filled with station latitude in degrees as Quantity
-        let times = self.common_data.times.as_ref();
-        if times.is_none() {
-            return Ok(None);
-        }
-        let n = times.unwrap().len();
-        let arr = ndarray::Array1::from_elem(n, self.latitude);
-        let py_arr = arr.into_pyarray(py).to_owned();
-        let modules = crate::utils::to_skycoord::AstropyModules::import(py)?;
-        let deg_unit = modules.units.getattr("deg")?;
-        let qty = deg_unit.call_method1("__rmul__", (py_arr,))?;
-        Ok(Some(qty.into()))
+        <Self as EphemerisBase>::get_latitude(self, py)
     }
 
     #[getter]
     fn longitude(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        let times = self.common_data.times.as_ref();
-        if times.is_none() {
-            return Ok(None);
-        }
-        let n = times.unwrap().len();
-        let arr = ndarray::Array1::from_elem(n, self.longitude);
-        let py_arr = arr.into_pyarray(py).to_owned();
-        let modules = crate::utils::to_skycoord::AstropyModules::import(py)?;
-        let deg_unit = modules.units.getattr("deg")?;
-        let qty = deg_unit.call_method1("__rmul__", (py_arr,))?;
-        Ok(Some(qty.into()))
+        <Self as EphemerisBase>::get_longitude(self, py)
     }
 
     #[getter]
     fn latitude_deg(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        let times = self.common_data.times.as_ref();
-        if times.is_none() {
-            return Ok(None);
-        }
-        let n = times.unwrap().len();
-        let arr = ndarray::Array1::from_elem(n, self.latitude);
-        Ok(Some(arr.into_pyarray(py).to_owned().into()))
+        <Self as EphemerisBase>::get_latitude_deg(self, py)
     }
 
     #[getter]
     fn longitude_deg(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        let times = self.common_data.times.as_ref();
-        if times.is_none() {
-            return Ok(None);
-        }
-        let n = times.unwrap().len();
-        let arr = ndarray::Array1::from_elem(n, self.longitude);
-        Ok(Some(arr.into_pyarray(py).to_owned().into()))
+        <Self as EphemerisBase>::get_longitude_deg(self, py)
     }
 
     #[getter]
     fn latitude_rad(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        let times = self.common_data.times.as_ref();
-        if times.is_none() {
-            return Ok(None);
-        }
-        let n = times.unwrap().len();
-        let arr = ndarray::Array1::from_elem(n, self.latitude.to_radians());
-        Ok(Some(arr.into_pyarray(py).to_owned().into()))
+        <Self as EphemerisBase>::get_latitude_rad(self, py)
     }
 
     #[getter]
     fn longitude_rad(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        let times = self.common_data.times.as_ref();
-        if times.is_none() {
-            return Ok(None);
-        }
-        let n = times.unwrap().len();
-        let arr = ndarray::Array1::from_elem(n, self.longitude.to_radians());
-        Ok(Some(arr.into_pyarray(py).to_owned().into()))
+        <Self as EphemerisBase>::get_longitude_rad(self, py)
     }
 
     #[getter]
     fn height(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        let times = self.common_data.times.as_ref();
-        if times.is_none() {
-            return Ok(None);
-        }
-        let n = times.unwrap().len();
-        // Return as Quantity in meters
-        let arr = ndarray::Array1::from_elem(n, self.height);
-        let py_arr = arr.into_pyarray(py).to_owned();
-        let modules = crate::utils::to_skycoord::AstropyModules::import(py)?;
-        let m_unit = modules.units.getattr("m")?;
-        let qty = m_unit.call_method1("__rmul__", (py_arr,))?;
-        Ok(Some(qty.into()))
+        <Self as EphemerisBase>::get_height(self, py)
     }
 
     #[getter]
     fn height_m(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        let times = self.common_data.times.as_ref();
-        if times.is_none() {
-            return Ok(None);
-        }
-        let n = times.unwrap().len();
-        let arr = ndarray::Array1::from_elem(n, self.height);
-        Ok(Some(arr.into_pyarray(py).to_owned().into()))
+        <Self as EphemerisBase>::get_height_m(self, py)
     }
 
     #[getter]

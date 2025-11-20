@@ -67,6 +67,9 @@ class TestModuleLevelFunctions:
         _, y = rust_ephem.get_polar_motion(test_time)
         assert isinstance(y, float)
 
+    def test_oem_ephemeris_has_height_km_attribute(self):
+        assert hasattr(rust_ephem.OEMEphemeris, "height_km")
+
 
 class TestTLEEphemerisTyping:
     """Test type signatures for TLEEphemeris class."""
@@ -115,6 +118,21 @@ class TestTLEEphemerisTyping:
         if teme_pv is None:
             pytest.skip("teme_pv is None")
         assert teme_pv.velocity.shape[1] == 3
+
+    def test_latitude_quantity_cached(self, tle_ephem):
+        # repeated calls should return the cached quantity object
+        lat1 = tle_ephem.latitude
+        lat2 = tle_ephem.latitude
+        if lat1 is None or lat2 is None:
+            pytest.skip("latitude is None")
+        assert id(lat1) == id(lat2)
+
+    def test_height_quantity_cached(self, tle_ephem):
+        h1 = tle_ephem.height
+        h2 = tle_ephem.height
+        if h1 is None or h2 is None:
+            pytest.skip("height is None")
+        assert id(h1) == id(h2)
 
     def test_gcrs_pv_property_not_none(self, tle_ephem):
         gcrs_pv = tle_ephem.gcrs_pv
@@ -177,6 +195,17 @@ class TestTLEEphemerisTyping:
             pytest.skip("timestamps is None")
         assert len(timestamps) > 0
 
+    def test_height_km_and_height_m_consistent(self, tle_ephem):
+        # height_m should exist as numpy array and height_km should be its /1000.0 equivalent
+        height_m = tle_ephem.height_m
+        if height_m is None:
+            pytest.skip("height_m is None")
+        km = tle_ephem.height_km
+        if km is None:
+            pytest.skip("height_km is None")
+        assert hasattr(km, "shape") and hasattr(height_m, "shape")
+        assert pytest.approx(float(km[0] * 1000.0), rel=1e-6) == float(height_m[0])
+
     def test_timestamp_first_element_has_year_attribute_when_present(self, tle_ephem):
         timestamps = tle_ephem.timestamp
         if timestamps is None or len(timestamps) == 0:
@@ -206,6 +235,9 @@ class TestSPICEEphemerisTyping:
 
     def test_spice_ephemeris_is_callable(self):
         assert callable(rust_ephem.SPICEEphemeris)
+
+    def test_spice_ephemeris_has_height_km_attribute(self):
+        assert hasattr(rust_ephem.SPICEEphemeris, "height_km")
 
 
 class TestGroundEphemerisTyping:
@@ -333,6 +365,24 @@ class TestGroundEphemerisTyping:
     def test_height_first_value_matches(self, ground_ephem):
         height = ground_ephem.height_m
         assert float(height[0]) == pytest.approx(0.1)
+
+    def test_latitude_quantity_cached(self, ground_ephem):
+        lat1 = ground_ephem.latitude
+        lat2 = ground_ephem.latitude
+        if lat1 is None or lat2 is None:
+            pytest.skip("latitude is None")
+        assert id(lat1) == id(lat2)
+
+    def test_height_quantity_cached(self, ground_ephem):
+        h1 = ground_ephem.height
+        h2 = ground_ephem.height
+        if h1 is None or h2 is None:
+            pytest.skip("height is None")
+        assert id(h1) == id(h2)
+
+    def test_height_km_first_value_matches(self, ground_ephem):
+        height_km = ground_ephem.height_km
+        assert float(height_km[0]) == pytest.approx(0.1 / 1000.0)
 
     def test_obsgeoloc_property_can_be_none_or_has_len(self, ground_ephem):
         obsgeoloc = ground_ephem.obsgeoloc

@@ -39,6 +39,15 @@ Classes
     * ``timestamp`` — List of Python datetime objects
     * ``itrs`` — ITRS coordinates as astropy SkyCoord
     * ``gcrs`` — GCRS coordinates as astropy SkyCoord
+    * ``latitude`` — Observatory latitude as an astropy Quantity array (degrees), one per timestamp
+    * ``latitude_deg`` — Observatory latitude as NumPy array (degrees), one per timestamp
+    * ``latitude_rad`` — Observatory latitude as NumPy array (radians), one per timestamp
+    * ``longitude`` — Observatory longitude as an astropy Quantity array (degrees), one per timestamp
+    * ``longitude_deg`` — Observatory longitude as NumPy array (degrees), one per timestamp
+    * ``longitude_rad`` — Observatory longitude as NumPy array (radians), one per timestamp
+    * ``height`` — Observatory height as an astropy Quantity array (meters), one per timestamp
+    * ``height_m`` — Observatory height as raw NumPy array (meters), one per timestamp
+    * ``height_km`` — Observatory height as raw NumPy array (kilometers), one per timestamp
     * ``earth`` — Earth position as astropy SkyCoord
     * ``sun`` — Sun position as astropy SkyCoord
     * ``moon`` — Moon position as astropy SkyCoord
@@ -78,6 +87,15 @@ Classes
     * ``earth`` — Earth position as astropy SkyCoord
     * ``sun`` — Sun position as astropy SkyCoord
     * ``moon`` — Moon position as astropy SkyCoord
+    * ``latitude`` — Geodetic latitude as an astropy Quantity array (degrees), one per timestamp
+    * ``latitude_deg`` — Geodetic latitude as NumPy array (degrees), one per timestamp
+    * ``latitude_rad`` — Geodetic latitude as NumPy array (radians), one per timestamp
+    * ``longitude`` — Geodetic longitude as an astropy Quantity array (degrees), one per timestamp
+    * ``longitude_deg`` — Geodetic longitude as NumPy array (degrees), one per timestamp
+    * ``longitude_rad`` — Geodetic longitude as NumPy array (radians), one per timestamp
+    * ``height`` — Height as an astropy Quantity array (meters), one per timestamp
+    * ``height_m`` — Height as raw NumPy array (meters), one per timestamp
+    * ``height_km`` — Height as raw NumPy array (kilometers), one per timestamp
     * ``obsgeoloc`` — Observer geocentric location (alias for GCRS position)
     * ``obsgeovel`` — Observer geocentric velocity (alias for GCRS velocity)
     * ``sun_radius`` — Sun angular radius as astropy Quantity (degrees)
@@ -108,9 +126,10 @@ Classes
     * ``height`` — Altitude in meters above WGS84 ellipsoid
   
   **Attributes (read-only):**
-    * ``latitude`` — Observatory latitude in degrees
-    * ``longitude`` — Observatory longitude in degrees
-    * ``height`` — Observatory height in meters
+    * ``latitude`` — Observatory latitude as an astropy Quantity array (degrees), one per timestamp
+    * ``longitude`` — Observatory longitude as an astropy Quantity array (degrees), one per timestamp
+    * ``height`` — Observatory height as an astropy Quantity array (meters), one per timestamp
+    * ``height_m`` — Observatory height raw numpy array (meters), one per timestamp
     * ``gcrs_pv`` — Position/velocity in GCRS frame (PositionVelocityData)
     * ``itrs_pv`` — Position/velocity in ITRS frame (PositionVelocityData)
     * ``sun_pv`` — Sun position/velocity in GCRS frame (PositionVelocityData)
@@ -121,6 +140,15 @@ Classes
     * ``earth`` — Earth position as astropy SkyCoord
     * ``sun`` — Sun position as astropy SkyCoord
     * ``moon`` — Moon position as astropy SkyCoord
+    * ``latitude`` — Geodetic latitude as an astropy Quantity array (degrees), one per timestamp
+    * ``latitude_deg`` — Geodetic latitude as NumPy array (degrees), one per timestamp
+    * ``latitude_rad`` — Geodetic latitude as NumPy array (radians), one per timestamp
+    * ``longitude`` — Geodetic longitude as an astropy Quantity array (degrees), one per timestamp
+    * ``longitude_deg`` — Geodetic longitude as NumPy array (degrees), one per timestamp
+    * ``longitude_rad`` — Geodetic longitude as NumPy array (radians), one per timestamp
+    * ``height`` — Height as an astropy Quantity array (meters), one per timestamp
+    * ``height_m`` — Height as raw NumPy array (meters), one per timestamp
+    * ``height_km`` — Height as raw NumPy array (kilometers), one per timestamp
     * ``obsgeoloc`` — Observer geocentric location (alias for GCRS position)
     * ``obsgeovel`` — Observer geocentric velocity (alias for GCRS velocity)
     * ``sun_radius`` — Sun angular radius as astropy Quantity (degrees)
@@ -171,6 +199,15 @@ Classes
     * ``earth`` — Earth position as astropy SkyCoord
     * ``sun`` — Sun position as astropy SkyCoord
     * ``moon`` — Moon position as astropy SkyCoord
+    * ``latitude`` — Geodetic latitude as an astropy Quantity array (degrees), one per timestamp
+    * ``latitude_deg`` — Geodetic latitude as NumPy array (degrees), one per timestamp
+    * ``latitude_rad`` — Geodetic latitude as NumPy array (radians), one per timestamp
+    * ``longitude`` — Geodetic longitude as an astropy Quantity array (degrees), one per timestamp
+    * ``longitude_deg`` — Geodetic longitude as NumPy array (degrees), one per timestamp
+    * ``longitude_rad`` — Geodetic longitude as NumPy array (radians), one per timestamp
+    * ``height`` — Height as an astropy Quantity array (meters), one per timestamp
+    * ``height_m`` — Height as raw NumPy array (meters), one per timestamp
+    * ``height_km`` — Height as raw NumPy array (kilometers), one per timestamp
     * ``obsgeoloc`` — Observer geocentric location (alias for GCRS position)
     * ``obsgeovel`` — Observer geocentric velocity (alias for GCRS velocity)
     * ``sun_radius`` — Sun angular radius as astropy Quantity (degrees)
