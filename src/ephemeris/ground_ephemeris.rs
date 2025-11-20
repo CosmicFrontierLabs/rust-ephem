@@ -165,9 +165,9 @@ impl GroundEphemeris {
         self.get_obsgeovel(py)
     }
 
-    // NOTE: GroundEphemeris exposes latitude/longitude getters explicitly later on to return
-    // constant arrays filled with the station's latitude/longitude. Avoid delegating to
-    // EphemerisBase here to prevent duplicate #[getter] definitions in the same impl block.
+    // GroundEphemeris pre-populates geodetic caches with constant arrays during construction (see lines 85-100),
+    // then uses the same EphemerisBase trait getters as other ephemeris types below. This approach avoids
+    // duplicate #[getter] definitions in the same impl block and clarifies why scalar getters were removed.
 
     // NOTE: `height` getters are implemented explicitly below (returning per-timestamp arrays)
 
