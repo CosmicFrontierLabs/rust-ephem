@@ -720,6 +720,11 @@ class SPICEEphemeris:
         ...
 
     @property
+    def height_km(self) -> npt.NDArray[np.float64]:
+        """Height above the WGS84 ellipsoid as a raw NumPy array in kilometers (one per timestamp)"""
+        ...
+
+    @property
     def sun(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object for Sun position relative to body"""
         ...
@@ -962,6 +967,11 @@ class OEMEphemeris:
     @property
     def height_m(self) -> npt.NDArray[np.float64]:
         """Height above the WGS84 ellipsoid as a raw NumPy array in meters (one per timestamp)"""
+        ...
+
+    @property
+    def height_km(self) -> npt.NDArray[np.float64]:
+        """Height above the WGS84 ellipsoid as a raw NumPy array in kilometers (one per timestamp)"""
         ...
 
     @property
@@ -1279,6 +1289,11 @@ class GroundEphemeris:
         """
         Altitude in meters as a raw NumPy array (one per timestamp)
         """
+        ...
+
+    @property
+    def height_km(self) -> npt.NDArray[np.float64]:
+        """Altitude in kilometers as a raw NumPy array (one per timestamp)"""
         ...
 
     @property
