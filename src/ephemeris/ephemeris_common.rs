@@ -113,8 +113,8 @@ pub struct EphemerisData {
     pub latitude_rad_cache: OnceLock<Array1<f64>>,
     pub longitude_rad_cache: OnceLock<Array1<f64>>,
     pub height_km_cache: OnceLock<Array1<f64>>,
-    pub moon_angular_radius_rad_cache: OnceLock<Py<PyAny>>,
     pub height_cache: OnceLock<Array1<f64>>,
+    pub moon_angular_radius_rad_cache: OnceLock<Py<PyAny>>,
     pub earth_angular_radius_rad_cache: OnceLock<Py<PyAny>>,
 }
 
