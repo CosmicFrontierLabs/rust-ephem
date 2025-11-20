@@ -47,7 +47,7 @@ pub fn ecef_to_geodetic_deg(positions: &Array2<f64>) -> (Array1<f64>, Array1<f64
     (lats, lons, hs)
 }
 
-/// Convert degrees array to radians in-place (Array1)
+/// Convert degrees array to radians (Array1)
 pub fn deg_to_rad_array(deg: &Array1<f64>) -> Array1<f64> {
     deg * (PI / 180.0)
 }
