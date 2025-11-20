@@ -201,7 +201,7 @@ class TestTLEEphemerisTyping:
         if km is None:
             pytest.skip("height_km is None")
         assert hasattr(km, "shape") and hasattr(height_m, "shape")
-        assert pytest.approx(float(km[0] * 1000.0), rel=1e-6) == float(height_m[0])
+        assert float(height_m[0]) == pytest.approx(float(km[0] * 1000.0), rel=1e-6)
 
     def test_timestamp_first_element_has_year_attribute_when_present(self, tle_ephem):
         timestamps = tle_ephem.timestamp
