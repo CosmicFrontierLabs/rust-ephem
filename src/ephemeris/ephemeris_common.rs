@@ -7,8 +7,11 @@ use std::sync::OnceLock;
 use crate::ephemeris::position_velocity::PositionVelocityData;
 use crate::utils::celestial::{calculate_moon_positions, calculate_sun_positions};
 use crate::utils::config::MAX_TIMESTAMPS;
+use crate::utils::conversions::{convert_frames, Frame};
+use crate::utils::geo::{deg_to_rad_array, ecef_to_geodetic_deg};
 use crate::utils::time_utils::python_datetime_to_utc;
 use crate::utils::to_skycoord::{to_skycoord, AstropyModules, SkyCoordConfig};
+use ndarray::Array1;
 
 /// Splits a stacked position+velocity (N x 6) array into a PositionVelocityData struct.
 ///
@@ -105,7 +108,13 @@ pub struct EphemerisData {
     pub moon_angular_radius_cache: OnceLock<Py<PyAny>>,
     pub earth_angular_radius_cache: OnceLock<Py<PyAny>>,
     pub sun_angular_radius_rad_cache: OnceLock<Py<PyAny>>,
+    pub latitude_deg_cache: OnceLock<Array1<f64>>,
+    pub longitude_deg_cache: OnceLock<Array1<f64>>,
+    pub latitude_rad_cache: OnceLock<Array1<f64>>,
+    pub longitude_rad_cache: OnceLock<Array1<f64>>,
+    pub height_km_cache: OnceLock<Array1<f64>>,
     pub moon_angular_radius_rad_cache: OnceLock<Py<PyAny>>,
+    pub height_cache: OnceLock<Array1<f64>>,
     pub earth_angular_radius_rad_cache: OnceLock<Py<PyAny>>,
 }
 
@@ -128,6 +137,12 @@ impl EphemerisData {
             sun_angular_radius_rad_cache: OnceLock::new(),
             moon_angular_radius_rad_cache: OnceLock::new(),
             earth_angular_radius_rad_cache: OnceLock::new(),
+            latitude_deg_cache: OnceLock::new(),
+            longitude_deg_cache: OnceLock::new(),
+            latitude_rad_cache: OnceLock::new(),
+            longitude_rad_cache: OnceLock::new(),
+            height_km_cache: OnceLock::new(),
+            height_cache: OnceLock::new(),
         }
     }
 }
@@ -376,12 +391,165 @@ pub trait EphemerisBase {
         }))
     }
 
+    /// Get observer geodetic latitude (astropy Quantity array). Uses EarthLocation
+    /// from observer geocentric coords (obsgeoloc). Returns None if obsgeoloc is missing.
+    fn get_latitude(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.compute_latlon_caches()?;
+        if let Some(lats) = self.data().latitude_deg_cache.get() {
+            // Convert to numpy array and wrap as astropy Quantity deg
+            let arr = lats.clone().into_pyarray(py);
+            let modules = AstropyModules::import(py)?;
+            let deg_unit = modules.units.getattr("deg")?;
+            let qty = deg_unit.call_method1("__rmul__", (arr,))?;
+            Ok(Some(qty.into()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get observer geodetic longitude as Quantity array (degrees)
+    fn get_longitude(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.compute_latlon_caches()?;
+        if let Some(lons) = self.data().longitude_deg_cache.get() {
+            let arr = lons.clone().into_pyarray(py);
+            let modules = AstropyModules::import(py)?;
+            let deg_unit = modules.units.getattr("deg")?;
+            let qty = deg_unit.call_method1("__rmul__", (arr,))?;
+            Ok(Some(qty.into()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Return raw deg float arrays (latitude_deg)
+    fn get_latitude_deg(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.compute_latlon_caches()?;
+        if let Some(lat_arr) = self.data().latitude_deg_cache.get() {
+            let arr = lat_arr.clone().into_pyarray(py).to_owned();
+            Ok(Some(arr.into()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn get_longitude_deg(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.compute_latlon_caches()?;
+        if let Some(lon_arr) = self.data().longitude_deg_cache.get() {
+            let arr = lon_arr.clone().into_pyarray(py).to_owned();
+            Ok(Some(arr.into()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn get_latitude_rad(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.compute_latlon_caches()?;
+        if let Some(lat_arr) = self.data().latitude_rad_cache.get() {
+            let arr = lat_arr.clone().into_pyarray(py).to_owned();
+            Ok(Some(arr.into()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn get_longitude_rad(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.compute_latlon_caches()?;
+        if let Some(lon_arr) = self.data().longitude_rad_cache.get() {
+            let arr = lon_arr.clone().into_pyarray(py).to_owned();
+            Ok(Some(arr.into()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get observer geodetic height as Quantity array (meters)
+    fn get_height(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.compute_latlon_caches()?;
+        if let Some(h_m) = self.data().height_cache.get() {
+            let arr = h_m.clone().into_pyarray(py);
+            let modules = AstropyModules::import(py)?;
+            let m_unit = modules.units.getattr("m")?;
+            let qty = m_unit.call_method1("__rmul__", (arr,))?;
+            Ok(Some(qty.into()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Return raw height array in meters
+    fn get_height_m(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.compute_latlon_caches()?;
+        if let Some(h_arr) = self.data().height_cache.get() {
+            let arr = h_arr.clone().into_pyarray(py).to_owned();
+            Ok(Some(arr.into()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Return raw height array in kilometers
+    fn get_height_km(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.compute_latlon_caches()?;
+        if let Some(h_arr) = self.data().height_km_cache.get() {
+            let arr = h_arr.clone().into_pyarray(py).to_owned();
+            Ok(Some(arr.into()))
+        } else if let Some(h_m_arr) = self.data().height_cache.get() {
+            // fallback: convert meters to kilometers if km cache missing
+            let h_km = h_m_arr.mapv(|v| v / 1000.0);
+            let arr = h_km.into_pyarray(py).to_owned();
+            Ok(Some(arr.into()))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Get observer geocentric velocity (obsgeovel) - alias for GCRS velocity
     fn get_obsgeovel(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         Ok(self.data().gcrs.as_ref().map(|arr| {
             let velocity = arr.slice(s![.., 3..6]).to_owned();
             velocity.into_pyarray(py).to_owned().into()
         }))
+    }
+
+    /// Ensure latitude/longitude caches are computed using pure Rust.
+    fn compute_latlon_caches(&self) -> PyResult<()> {
+        // Already computed
+        if self.data().latitude_deg_cache.get().is_some() {
+            return Ok(());
+        }
+
+        // Get ITRS positions if available, otherwise convert from GCRS
+        let positions_itrs_opt: Option<Array2<f64>> = if let Some(itrs) = self.get_itrs_data() {
+            Some(itrs.slice(s![.., 0..3]).to_owned())
+        } else if let Some(gcrs) = self.data().gcrs.as_ref() {
+            // Convert to ITRS
+            let times = self
+                .data()
+                .times
+                .as_ref()
+                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available"))?;
+            let itrs_array = convert_frames(gcrs, times, Frame::GCRS, Frame::ITRS, false);
+            Some(itrs_array.slice(s![.., 0..3]).to_owned())
+        } else {
+            None
+        };
+
+        if let Some(positions_itrs) = positions_itrs_opt {
+            let (lats_deg, lons_deg, h_km) = ecef_to_geodetic_deg(&positions_itrs);
+            let lats_rad = deg_to_rad_array(&lats_deg);
+            let lons_rad = deg_to_rad_array(&lons_deg);
+            // Convert height from km (returned by ecef_to_geodetic_deg) to meters
+            let h_m = h_km.mapv(|v| v * 1000.0);
+            let _ = self.data().latitude_deg_cache.set(lats_deg);
+            let _ = self.data().longitude_deg_cache.set(lons_deg);
+            let _ = self.data().latitude_rad_cache.set(lats_rad);
+            let _ = self.data().longitude_rad_cache.set(lons_rad);
+            // Store both km and m caches
+            let _ = self.data().height_km_cache.set(h_km);
+            let _ = self.data().height_cache.set(h_m);
+        }
+
+        Ok(())
     }
 
     /// Helper to build SkyCoordConfig with common data retrieval pattern

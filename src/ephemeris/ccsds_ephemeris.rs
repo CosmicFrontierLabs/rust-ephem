@@ -127,6 +127,21 @@ impl OEMEphemeris {
     }
 
     #[getter]
+    fn height(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        <Self as EphemerisBase>::get_height(self, py)
+    }
+
+    #[getter]
+    fn height_m(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        <Self as EphemerisBase>::get_height_m(self, py)
+    }
+
+    #[getter]
+    fn height_km(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        <Self as EphemerisBase>::get_height_km(self, py)
+    }
+
+    #[getter]
     fn itrs_pv(&self, py: Python) -> Option<Py<PositionVelocityData>> {
         self.get_itrs_pv(py)
     }
@@ -209,6 +224,36 @@ impl OEMEphemeris {
     #[getter]
     fn obsgeovel(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         self.get_obsgeovel(py)
+    }
+
+    #[getter]
+    fn latitude(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        <Self as EphemerisBase>::get_latitude(self, py)
+    }
+
+    #[getter]
+    fn latitude_deg(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        <Self as EphemerisBase>::get_latitude_deg(self, py)
+    }
+
+    #[getter]
+    fn latitude_rad(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        <Self as EphemerisBase>::get_latitude_rad(self, py)
+    }
+
+    #[getter]
+    fn longitude(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        <Self as EphemerisBase>::get_longitude(self, py)
+    }
+
+    #[getter]
+    fn longitude_deg(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        <Self as EphemerisBase>::get_longitude_deg(self, py)
+    }
+
+    #[getter]
+    fn longitude_rad(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        <Self as EphemerisBase>::get_longitude_rad(self, py)
     }
 
     /// Get angular radius of the Sun with astropy units (degrees)

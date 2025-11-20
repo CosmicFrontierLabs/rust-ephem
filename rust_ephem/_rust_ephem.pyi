@@ -412,6 +412,51 @@ class TLEEphemeris:
         ...
 
     @property
+    def latitude(self) -> Any:  # Returns astropy.units.Quantity
+        """Geodetic latitude as an astropy Quantity array (degrees), one per timestamp"""
+        ...
+
+    @property
+    def latitude_deg(self) -> npt.NDArray[np.float64]:
+        """Geodetic latitude in degrees as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def latitude_rad(self) -> npt.NDArray[np.float64]:
+        """Geodetic latitude in radians as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def longitude(self) -> Any:  # Returns astropy.units.Quantity
+        """Geodetic longitude as an astropy Quantity array (degrees), one per timestamp"""
+        ...
+
+    @property
+    def longitude_deg(self) -> npt.NDArray[np.float64]:
+        """Geodetic longitude in degrees as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def longitude_rad(self) -> npt.NDArray[np.float64]:
+        """Geodetic longitude in radians as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def height(self) -> Any:  # Returns astropy.units.Quantity
+        """Height above the WGS84 ellipsoid as an astropy Quantity array (meters), one per timestamp"""
+        ...
+
+    @property
+    def height_m(self) -> npt.NDArray[np.float64]:
+        """Height above the WGS84 ellipsoid as a raw NumPy array in meters (one per timestamp)"""
+        ...
+
+    @property
+    def height_km(self) -> npt.NDArray[np.float64]:
+        """Height above the WGS84 ellipsoid as a raw NumPy array in kilometers (one per timestamp)"""
+        ...
+
+    @property
     def sun(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object for Sun position relative to satellite"""
         ...
@@ -635,6 +680,46 @@ class SPICEEphemeris:
         ...
 
     @property
+    def latitude(self) -> Any:  # Returns astropy.units.Quantity
+        """Geodetic latitude as an astropy Quantity array (degrees), one per timestamp"""
+        ...
+
+    @property
+    def latitude_deg(self) -> npt.NDArray[np.float64]:
+        """Geodetic latitude in degrees as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def latitude_rad(self) -> npt.NDArray[np.float64]:
+        """Geodetic latitude in radians as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def longitude(self) -> Any:  # Returns astropy.units.Quantity
+        """Geodetic longitude as an astropy Quantity array (degrees), one per timestamp"""
+        ...
+
+    @property
+    def longitude_deg(self) -> npt.NDArray[np.float64]:
+        """Geodetic longitude in degrees as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def longitude_rad(self) -> npt.NDArray[np.float64]:
+        """Geodetic longitude in radians as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def height(self) -> Any:  # Returns astropy.units.Quantity
+        """Height above the WGS84 ellipsoid as an astropy Quantity array (meters), one per timestamp"""
+        ...
+
+    @property
+    def height_m(self) -> npt.NDArray[np.float64]:
+        """Height above the WGS84 ellipsoid as a raw NumPy array in meters (one per timestamp)"""
+        ...
+
+    @property
     def sun(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object for Sun position relative to body"""
         ...
@@ -837,6 +922,46 @@ class OEMEphemeris:
     @property
     def earth(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object for Earth position relative to spacecraft"""
+        ...
+
+    @property
+    def latitude(self) -> Any:  # Returns astropy.units.Quantity
+        """Geodetic latitude as an astropy Quantity array (degrees), one per timestamp"""
+        ...
+
+    @property
+    def latitude_deg(self) -> npt.NDArray[np.float64]:
+        """Geodetic latitude in degrees as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def latitude_rad(self) -> npt.NDArray[np.float64]:
+        """Geodetic latitude in radians as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def longitude(self) -> Any:  # Returns astropy.units.Quantity
+        """Geodetic longitude as an astropy Quantity array (degrees), one per timestamp"""
+        ...
+
+    @property
+    def longitude_deg(self) -> npt.NDArray[np.float64]:
+        """Geodetic longitude in degrees as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def longitude_rad(self) -> npt.NDArray[np.float64]:
+        """Geodetic longitude in radians as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def height(self) -> Any:  # Returns astropy.units.Quantity
+        """Height above the WGS84 ellipsoid as an astropy Quantity array (meters), one per timestamp"""
+        ...
+
+    @property
+    def height_m(self) -> npt.NDArray[np.float64]:
+        """Height above the WGS84 ellipsoid as a raw NumPy array in meters (one per timestamp)"""
         ...
 
     @property
@@ -1132,8 +1257,8 @@ class GroundEphemeris:
         ...
 
     @property
-    def height(self) -> float:
-        """Altitude in meters above WGS84 ellipsoid"""
+    def height(self) -> Any:  # Returns astropy.units.Quantity
+        """Altitude as an astropy Quantity (meters), one per timestamp"""
         ...
 
     @property
@@ -1146,6 +1271,13 @@ class GroundEphemeris:
 
         Returns:
             astropy Quantity array with units of degrees
+        """
+        ...
+
+    @property
+    def height_m(self) -> npt.NDArray[np.float64]:
+        """
+        Altitude in meters as a raw NumPy array (one per timestamp)
         """
         ...
 

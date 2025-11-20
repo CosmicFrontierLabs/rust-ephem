@@ -64,15 +64,15 @@ class TestGroundEphemerisBasicProperties:
 
     def test_preserves_latitude(self, kitt_peak_obs):
         """Test that latitude is preserved."""
-        assert kitt_peak_obs.latitude == 31.9583
+        assert float(kitt_peak_obs.latitude_deg[0]) == 31.9583
 
     def test_preserves_longitude(self, kitt_peak_obs):
         """Test that longitude is preserved."""
-        assert kitt_peak_obs.longitude == -111.6
+        assert float(kitt_peak_obs.longitude_deg[0]) == -111.6
 
     def test_preserves_height(self, kitt_peak_obs):
         """Test that height is preserved."""
-        assert kitt_peak_obs.height == 2096.0
+        assert float(kitt_peak_obs.height_m[0]) == 2096.0
 
 
 class TestGroundEphemerisTimestamps:
