@@ -1,5 +1,4 @@
 /// Unit tests for Sun and Moon position calculations
-
 #[cfg(test)]
 mod sun_moon_tests {
     use chrono::{DateTime, Utc};
@@ -65,19 +64,21 @@ mod sun_moon_tests {
     fn test_au_to_km_constant() {
         // Verify the AU to km conversion constant is correct
         // 1 AU = 149,597,870.7 km (IAU 2012 definition)
-        const AU_TO_KM: f64 = 149597870.7;
+        let au_to_km = 149597870.7;
 
         // Should be approximately 150 million km
-        assert!(AU_TO_KM > 149e6 && AU_TO_KM < 150e6);
+        assert!(au_to_km > 149e6);
+        assert!(au_to_km < 150e6);
     }
 
     #[test]
     fn test_earth_gm_constant() {
         // Verify Earth's gravitational parameter
         // GM_Earth = 398,600.4418 km^3/s^2
-        const GM_EARTH: f64 = 398600.4418;
+        let gm_earth = 398600.4418;
 
         // Should be around 400,000 km^3/s^2
-        assert!(GM_EARTH > 398000.0 && GM_EARTH < 399000.0);
+        assert!(gm_earth > 398000.0);
+        assert!(gm_earth < 399000.0);
     }
 }

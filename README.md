@@ -283,9 +283,9 @@ obs = rust_ephem.GroundEphemeris(
 )
 
 # Access observatory coordinates
-print(f"Latitude: {obs.latitude}°")
-print(f"Longitude: {obs.longitude}°")
-print(f"Altitude: {obs.height} m")
+print(f"Latitude: {obs.latitude_deg[0]}°")
+print(f"Longitude: {obs.longitude_deg[0]}°")
+print(f"Altitude: {obs.height_m[0]} m")
 
 # Get ITRS position (Earth-fixed frame)
 print("ITRS Position:", obs.itrs.position)  # km

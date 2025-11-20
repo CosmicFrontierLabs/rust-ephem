@@ -48,6 +48,12 @@ set and obtain positions in different frames.
     obsgeoloc = sat.obsgeoloc
     obsgeovel = sat.obsgeovel
 
+    # Geodetic coordinates for the observer (derived from positions)
+    # These are Quantity arrays — index [0] gives the scalar at first timestep
+    print("Latitude (deg):", sat.latitude_deg[0])
+    print("Longitude (deg):", sat.longitude_deg[0])
+    print("Height (m):", sat.height_m[0])
+
 TLEEphemeris Notes
 ------------------
 - Position magnitudes should be in LEO range (6500–8000 km); velocity around

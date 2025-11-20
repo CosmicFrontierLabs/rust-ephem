@@ -1,4 +1,5 @@
-use ndarray::Array2;
+use ndarray::{Array1, Array2};
+use numpy::IntoPyArray;
 use pyo3::{prelude::*, types::PyDateTime};
 use std::sync::OnceLock;
 
@@ -81,6 +82,23 @@ impl GroundEphemeris {
         ephemeris.itrs_to_gcrs()?;
         ephemeris.calculate_sun_moon()?;
 
+        // Pre-populate geodetic caches with exact input values to preserve precision
+        if let Some(times_ref) = ephemeris.common_data.times.as_ref() {
+            let n_times = times_ref.len();
+            let lat_deg = Array1::from_vec(vec![latitude; n_times]);
+            let lon_deg = Array1::from_vec(vec![longitude; n_times]);
+            let lat_rad = lat_deg.mapv(|v| v.to_radians());
+            let lon_rad = lon_deg.mapv(|v| v.to_radians());
+            let h_m = Array1::from_vec(vec![height; n_times]);
+            let h_km = h_m.mapv(|v| v / 1000.0);
+            let _ = ephemeris.common_data.latitude_deg_cache.set(lat_deg);
+            let _ = ephemeris.common_data.longitude_deg_cache.set(lon_deg);
+            let _ = ephemeris.common_data.latitude_rad_cache.set(lat_rad);
+            let _ = ephemeris.common_data.longitude_rad_cache.set(lon_rad);
+            let _ = ephemeris.common_data.height_cache.set(h_m);
+            let _ = ephemeris.common_data.height_km_cache.set(h_km);
+        }
+
         // Note: SkyCoords are now created lazily on first access
 
         // Return the GroundEphemeris object
@@ -147,23 +165,11 @@ impl GroundEphemeris {
         self.get_obsgeovel(py)
     }
 
-    /// Get the latitude of the observatory in degrees
-    #[getter]
-    fn latitude(&self) -> f64 {
-        self.latitude
-    }
+    // GroundEphemeris pre-populates geodetic caches with constant arrays during construction (see lines 85-100),
+    // then uses the same EphemerisBase trait getters as other ephemeris types below. This approach avoids
+    // duplicate #[getter] definitions in the same impl block and clarifies why scalar getters were removed.
 
-    /// Get the longitude of the observatory in degrees
-    #[getter]
-    fn longitude(&self) -> f64 {
-        self.longitude
-    }
-
-    /// Get the height of the observatory in meters
-    #[getter]
-    fn height(&self) -> f64 {
-        self.height
-    }
+    // NOTE: `height` getters are implemented explicitly below (returning per-timestamp arrays)
 
     /// Get position and velocity for any solar system body
     ///
@@ -338,6 +344,57 @@ impl GroundEphemeris {
     /// ```
     fn index(&self, time: &Bound<'_, PyDateTime>) -> PyResult<usize> {
         self.find_closest_index(time)
+    }
+
+    #[getter]
+    fn latitude(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        <Self as EphemerisBase>::get_latitude(self, py)
+    }
+
+    #[getter]
+    fn longitude(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        <Self as EphemerisBase>::get_longitude(self, py)
+    }
+
+    #[getter]
+    fn latitude_deg(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        <Self as EphemerisBase>::get_latitude_deg(self, py)
+    }
+
+    #[getter]
+    fn longitude_deg(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        <Self as EphemerisBase>::get_longitude_deg(self, py)
+    }
+
+    #[getter]
+    fn latitude_rad(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        <Self as EphemerisBase>::get_latitude_rad(self, py)
+    }
+
+    #[getter]
+    fn longitude_rad(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        <Self as EphemerisBase>::get_longitude_rad(self, py)
+    }
+
+    #[getter]
+    fn height(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        <Self as EphemerisBase>::get_height(self, py)
+    }
+
+    #[getter]
+    fn height_m(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        <Self as EphemerisBase>::get_height_m(self, py)
+    }
+
+    #[getter]
+    fn height_km(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        let times = self.common_data.times.as_ref();
+        if times.is_none() {
+            return Ok(None);
+        }
+        let n = times.unwrap().len();
+        let arr = ndarray::Array1::from_elem(n, self.height / 1000.0);
+        Ok(Some(arr.into_pyarray(py).to_owned().into()))
     }
 }
 
