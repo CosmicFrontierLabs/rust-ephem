@@ -59,9 +59,6 @@ class TestModuleLevelFunctions:
         test_time = datetime(2021, 1, 1, 12, 0, 0)
         x, y = rust_ephem.get_polar_motion(test_time)
         assert isinstance(x, float)
-        # Note: only one assert per method required by refactor,
-        # but we keep one per component in separate methods:
-
     def test_get_polar_motion_second_component_is_float(self):
         test_time = datetime(2021, 1, 1, 12, 0, 0)
         _, y = rust_ephem.get_polar_motion(test_time)
