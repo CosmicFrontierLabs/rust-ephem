@@ -387,7 +387,13 @@ impl GroundEphemeris {
 
     #[getter]
     fn height_km(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        <Self as EphemerisBase>::get_height_km(self, py)
+        let times = self.common_data.times.as_ref();
+        if times.is_none() {
+            return Ok(None);
+        }
+        let n = times.unwrap().len();
+        let arr = ndarray::Array1::from_elem(n, self.height / 1000.0);
+        Ok(Some(arr.into_pyarray(py).to_owned().into()))
     }
 }
 
