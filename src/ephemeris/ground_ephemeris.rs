@@ -1,4 +1,5 @@
 use ndarray::{Array1, Array2};
+use numpy::IntoPyArray;
 use pyo3::{prelude::*, types::PyDateTime};
 use std::sync::OnceLock;
 
