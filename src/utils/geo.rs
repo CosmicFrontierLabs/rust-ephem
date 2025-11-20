@@ -33,7 +33,11 @@ pub fn ecef_to_geodetic_deg(positions: &Array2<f64>) -> (Array1<f64>, Array1<f64
         // Radius of curvature in prime vertical
         let sin_lat = lat.sin();
         let n_phi = a / (1.0 - e_sq * sin_lat * sin_lat).sqrt();
-        let h = p / lat.cos() - n_phi;
+        let h = if p.abs() < 1e-6 {
+            z.abs() - b
+        } else {
+            p / lat.cos() - n_phi
+        };
 
         lats[i] = lat.to_degrees();
         lons[i] = lon.to_degrees();
