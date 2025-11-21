@@ -30,6 +30,11 @@ ephemeris objects for efficient visibility and planning calculations.
 ## Features
 
 - **TLE Propagation (TLEEphemeris)**: Propagate satellite positions from Two-Line Element (TLE) sets using SGP4
+  - Multiple input methods: direct TLE strings, file paths, URLs, or Celestrak queries
+  - Support for 2-line and 3-line TLE formats
+  - Automatic TLE epoch extraction
+  - URL downloading with 24-hour caching to avoid excessive requests
+  - Celestrak integration: fetch TLEs by NORAD ID or satellite name
 - **SPICE Ephemeris (SPICEEphemeris)**: Query satellite positions from SPICE kernels (SPK files) using ANISE
 - **Ground Observatory Ephemeris (GroundEphemeris)**: Calculate positions for ground-based observatories from geodetic coordinates (latitude, longitude, height)
 - **Coordinate Transformations**:
@@ -83,6 +88,8 @@ pip install target/wheels/*.whl
 
 ### TLE-Based Ephemeris (TLEEphemeris)
 
+#### Basic Usage (Legacy Method)
+
 ```python
 import rust_ephem
 from datetime import datetime, timezone
@@ -101,27 +108,121 @@ ephem = rust_ephem.TLEEphemeris(tle1, tle2, begin, end, step_size)
 # Access timestamps
 print("Timestamps:", ephem.timestamp)
 
+# Get TLE epoch
+print("TLE Epoch:", ephem.tle_epoch)  # datetime with timezone
+
 # Get TEME coordinates
-print("TEME Position:", ephem.teme.position)  # km
-print("TEME Velocity:", ephem.teme.velocity)  # km/s
+print("TEME Position:", ephem.teme_pv.position)  # km
+print("TEME Velocity:", ephem.teme_pv.velocity)  # km/s
 
 # Get GCRS coordinates (recommended for most applications)
-print("GCRS Position:", ephem.gcrs.position)  # km
-print("GCRS Velocity:", ephem.gcrs.velocity)  # km/s
+print("GCRS Position:", ephem.gcrs_pv.position)  # km
+print("GCRS Velocity:", ephem.gcrs_pv.velocity)  # km/s
 
 # Can also get ITRS (Earth-fixed frame) coordinates
-print("ITRS Position:", ephem.itrs.position)  # km
+print("ITRS Position:", ephem.itrs_pv.position)  # km
 
 # Access Sun and Moon positions in GCRS frame
-print("Sun Position:", ephem.sun.position)  # km
-print("Sun Velocity:", ephem.sun.velocity)  # km/s
-print("Moon Position:", ephem.moon.position)  # km
-print("Moon Velocity:", ephem.moon.velocity)  # km/s
+print("Sun Position:", ephem.sun_pv.position)  # km
+print("Sun Velocity:", ephem.sun_pv.velocity)  # km/s
+print("Moon Position:", ephem.moon_pv.position)  # km
+print("Moon Velocity:", ephem.moon_pv.velocity)  # km/s
 
 # For astropy compatibility: observer geocentric location and velocity
 print("Observer Location (obsgeoloc):", ephem.obsgeoloc)  # km
 print("Observer Velocity (obsgeovel):", ephem.obsgeovel)  # km/s
 ```
+
+#### Reading TLEs from Files
+
+TLEEphemeris now supports reading TLEs directly from files in both 2-line and 3-line formats:
+
+```python
+import rust_ephem
+from datetime import datetime, timezone
+
+begin = datetime(2025, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
+end = datetime(2025, 10, 14, 1, 0, 0, tzinfo=timezone.utc)
+
+# Read from a file (supports both 2-line and 3-line TLE formats)
+ephem = rust_ephem.TLEEphemeris(
+    tle="path/to/satellite.tle",
+    begin=begin,
+    end=end,
+    step_size=60
+)
+
+# Access TLE epoch
+print(f"TLE Epoch: {ephem.tle_epoch}")
+```
+
+**2-line TLE file format:**
+```
+1 28485U 04047A   25287.56748435  .00035474  00000+0  70906-3 0  9995
+2 28485  20.5535 247.0048 0005179 187.1586 172.8782 15.44937919148530
+```
+
+**3-line TLE file format (with satellite name):**
+```
+ISS (ZARYA)
+1 25544U 98067A   08264.51782528 -.00002182  00000-0 -11606-4 0  2927
+2 25544  51.6416 247.4627 0006703 130.5360 325.0288 15.72125391563537
+```
+
+#### Downloading TLEs from URLs
+
+Download TLEs directly from URLs with automatic caching (24-hour TTL):
+
+```python
+import rust_ephem
+from datetime import datetime, timezone
+
+begin = datetime(2025, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
+end = datetime(2025, 10, 14, 1, 0, 0, tzinfo=timezone.utc)
+
+# Download from URL (cached for 24 hours)
+ephem = rust_ephem.TLEEphemeris(
+    tle="https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=TLE",
+    begin=begin,
+    end=end,
+    step_size=60
+)
+```
+
+The downloaded TLE is cached in `~/.cache/rust_ephem/tle_cache/` with a 24-hour TTL to avoid excessive requests.
+
+#### Fetching from Celestrak by NORAD ID or Name
+
+Fetch TLEs directly from Celestrak using NORAD catalog numbers or satellite names:
+
+```python
+import rust_ephem
+from datetime import datetime, timezone
+
+begin = datetime(2025, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
+end = datetime(2025, 10, 14, 1, 0, 0, tzinfo=timezone.utc)
+
+# Fetch by NORAD catalog number (ISS = 25544)
+ephem = rust_ephem.TLEEphemeris(
+    norad_id=25544,
+    begin=begin,
+    end=end,
+    step_size=60
+)
+
+# Or fetch by satellite name
+ephem = rust_ephem.TLEEphemeris(
+    norad_name="ISS",
+    begin=begin,
+    end=end,
+    step_size=60
+)
+
+# Both methods support the tle_epoch attribute
+print(f"TLE Epoch: {ephem.tle_epoch}")
+```
+
+**Note:** Celestrak fetches are also cached for 24 hours to be respectful of the service.
 
 ### SPICE Kernel-Based Ephemeris (SPICEEphemeris)
 

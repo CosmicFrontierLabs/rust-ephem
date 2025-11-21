@@ -15,6 +15,7 @@ pub mod leap_seconds;
 pub mod math_utils;
 pub mod naif_ids;
 pub mod time_utils;
+pub mod tle_utils;
 pub mod to_skycoord;
 pub mod ut1_provider;
 pub mod vector_math;

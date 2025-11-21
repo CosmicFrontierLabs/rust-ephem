@@ -28,7 +28,23 @@ Classes
   Propagate Two-Line Element (TLE) sets with SGP4 and convert to coordinate frames.
   
   **Constructor:**
-    ``TLEEphemeris(tle1, tle2, begin, end, step_size=60, *, polar_motion=False)``
+    ``TLEEphemeris(tle1=None, tle2=None, begin=None, end=None, step_size=60, *, polar_motion=False, tle=None, norad_id=None, norad_name=None)``
+    
+    **Parameters:**
+      * ``tle1`` (str, optional) — First line of TLE (legacy method)
+      * ``tle2`` (str, optional) — Second line of TLE (legacy method)  
+      * ``tle`` (str, optional) — Path to TLE file or URL to download TLE from
+      * ``norad_id`` (int, optional) — NORAD catalog ID to fetch TLE from Celestrak
+      * ``norad_name`` (str, optional) — Satellite name to fetch TLE from Celestrak
+      * ``begin`` (datetime) — Start time for ephemeris (required)
+      * ``end`` (datetime) — End time for ephemeris (required)
+      * ``step_size`` (int) — Time step in seconds (default: 60)
+      * ``polar_motion`` (bool) — Apply polar motion corrections (default: False)
+    
+    **Notes:**
+      * Must provide exactly one of: (``tle1``, ``tle2``), ``tle``, ``norad_id``, or ``norad_name``
+      * ``begin`` and ``end`` parameters are required
+      * File paths and URLs are cached locally for performance
   
   **Attributes (read-only):**
     * ``teme_pv`` — Position/velocity in TEME frame (PositionVelocityData)
