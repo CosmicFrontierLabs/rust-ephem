@@ -16,7 +16,7 @@ use crate::utils::to_skycoord::AstropyModules;
 pub struct TLEEphemeris {
     tle1: String,
     tle2: String,
-    tle_epoch: Option<chrono::DateTime<chrono::Utc>>, // TLE epoch timestamp
+    tle_epoch: chrono::DateTime<chrono::Utc>, // TLE epoch timestamp
     teme: Option<Array2<f64>>,
     itrs: Option<Array2<f64>>,
     itrs_skycoord: OnceLock<Py<PyAny>>, // Lazy-initialized cached SkyCoord object for ITRS
@@ -129,7 +129,7 @@ impl TLEEphemeris {
         let mut ephemeris: TLEEphemeris = TLEEphemeris {
             tle1: line1,
             tle2: line2,
-            tle_epoch,
+            tle_epoch: tle_epoch.unwrap(),
             teme: None,
             itrs: None,
             itrs_skycoord: OnceLock::new(),
@@ -155,32 +155,30 @@ impl TLEEphemeris {
 
     /// Get the epoch of the TLE as a Python datetime object
     #[getter]
-    fn tle_epoch(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        if let Some(epoch) = self.tle_epoch {
-            // Convert chrono::DateTime<Utc> to Python datetime with UTC timezone
-            let dt = pyo3::types::PyDateTime::new(
-                py,
-                epoch.year(),
-                epoch.month() as u8,
-                epoch.day() as u8,
-                epoch.hour() as u8,
-                epoch.minute() as u8,
-                epoch.second() as u8,
-                epoch.timestamp_subsec_micros(),
-                None,
-            )?;
+    fn tle_epoch(&self, py: Python) -> PyResult<Py<PyAny>> {
+        // Convert chrono::DateTime<Utc> to Python datetime with UTC timezone
+        let epoch = self.tle_epoch;
 
-            // Get UTC timezone and replace
-            let datetime_mod = py.import("datetime")?;
-            let utc_tz = datetime_mod.getattr("timezone")?.getattr("utc")?;
-            let kwargs = pyo3::types::PyDict::new(py);
-            kwargs.set_item("tzinfo", utc_tz)?;
-            let dt_with_tz = dt.call_method("replace", (), Some(&kwargs))?;
+        let dt = pyo3::types::PyDateTime::new(
+            py,
+            epoch.year(),
+            epoch.month() as u8,
+            epoch.day() as u8,
+            epoch.hour() as u8,
+            epoch.minute() as u8,
+            epoch.second() as u8,
+            epoch.timestamp_subsec_micros(),
+            None,
+        )?;
 
-            Ok(Some(dt_with_tz.into()))
-        } else {
-            Ok(None)
-        }
+        // Get UTC timezone and replace
+        let datetime_mod = py.import("datetime")?;
+        let utc_tz = datetime_mod.getattr("timezone")?.getattr("utc")?;
+        let kwargs = pyo3::types::PyDict::new(py);
+        kwargs.set_item("tzinfo", utc_tz)?;
+        let dt_with_tz = dt.call_method("replace", (), Some(&kwargs))?;
+
+        Ok(dt_with_tz.into())
     }
 
     #[getter]
