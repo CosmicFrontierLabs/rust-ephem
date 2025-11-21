@@ -637,7 +637,7 @@ class TLEEphemeris:
         ...
 
     @property
-    def obsgeoloc(self) -> Any:  # Returns astropy quantity array
+    def obsgeoloc(self) -> npt.NDArray[np.float64] | None:  # Returns NumPy array or None if unavailable
         """
         Observer geocentric location (GCRS position).
 
