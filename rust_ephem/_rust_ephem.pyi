@@ -637,23 +637,19 @@ class TLEEphemeris:
         ...
 
     @property
-    def obsgeoloc(self) -> npt.NDArray[np.float64] | None:  # Returns NumPy array or None if unavailable
+    def obsgeoloc(
+        self,
+    ) -> npt.NDArray[np.float64] | None:  # Returns NumPy array or None if unavailable
         """
         Observer geocentric location (GCRS position).
 
         Returns position in km, compatible with astropy's GCRS frame obsgeoloc parameter.
-    def obsgeoloc(self) -> npt.NDArray[np.float64] | None:  # Returns a NumPy array or None if unavailable
-        """Observer geocentric location (alias for GCRS position)"""
+        """
         ...
 
     @property
-    def obsgeovel(self) -> npt.NDArray[np.float64] | None:  # Returns a NumPy array or None if unavailable
-        """
-        Observer geocentric velocity (GCRS velocity).
-
-        Returns velocity in km/s, compatible with astropy's GCRS frame obsgeovel parameter.
-        Shape: (N, 3) where N is the number of timestamps.
-        """
+    def obsgeovel(self) -> npt.NDArray[np.float64]:  # Returns astropy quantity array
+        """Observer geocentric velocity (alias for GCRS velocity)"""
         ...
 
     @property
@@ -1282,22 +1278,22 @@ class GroundEphemeris:
         ...
 
     @property
-    def obsgeoloc(self) -> Any:  # Returns astropy quantity array
+    def obsgeoloc(self) -> npt.NDArray[np.float64]:  # Returns astropy quantity array
         """Observatory geocentric location for astropy"""
         ...
 
     @property
-    def obsgeovel(self) -> Any:  # Returns astropy quantity array
+    def obsgeovel(self) -> npt.NDArray[np.float64]:  # Returns astropy quantity array
         """Observatory geocentric velocity for astropy"""
         ...
 
     @property
-    def latitude(self) -> float:
+    def latitude(self) -> npt.NDArray[np.float64]:
         """Geodetic latitude in degrees"""
         ...
 
     @property
-    def longitude(self) -> float:
+    def longitude(self) -> Any:
         """Geodetic longitude in degrees"""
         ...
 
