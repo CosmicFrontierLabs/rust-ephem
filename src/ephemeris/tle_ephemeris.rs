@@ -1,8 +1,8 @@
+use chrono::{Datelike, Timelike};
 use ndarray::Array2;
 use pyo3::{prelude::*, types::PyDateTime};
 use sgp4::{parse_2les, Constants};
 use std::sync::OnceLock;
-use chrono::{Datelike, Timelike};
 
 use crate::ephemeris::ephemeris_common::{
     generate_timestamps, split_pos_vel, EphemerisBase, EphemerisData,
@@ -29,6 +29,7 @@ pub struct TLEEphemeris {
 impl TLEEphemeris {
     #[new]
     #[pyo3(signature = (tle1=None, tle2=None, begin=None, end=None, step_size=60, *, polar_motion=false, tle=None, norad_id=None, norad_name=None))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         _py: Python,
         tle1: Option<String>,
@@ -44,46 +45,82 @@ impl TLEEphemeris {
         // Determine which method to use for getting TLE data
         let (line1, line2, tle_epoch) = if let (Some(l1), Some(l2)) = (tle1, tle2) {
             // Legacy method: tle1 and tle2 parameters
-            let epoch = tle_utils::extract_tle_epoch(&l1)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to extract TLE epoch: {}", e)))?;
+            let epoch = tle_utils::extract_tle_epoch(&l1).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Failed to extract TLE epoch: {}",
+                    e
+                ))
+            })?;
             (l1, l2, Some(epoch))
         } else if let Some(tle_param) = tle {
             // New method: tle parameter (file path or URL)
-            let tle_data = if tle_param.starts_with("http://") || tle_param.starts_with("https://") {
+            let tle_data = if tle_param.starts_with("http://") || tle_param.starts_with("https://")
+            {
                 // Download from URL with caching
-                tle_utils::download_tle_with_cache(&tle_param)
-                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to download TLE from URL: {}", e)))?
+                tle_utils::download_tle_with_cache(&tle_param).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "Failed to download TLE from URL: {}",
+                        e
+                    ))
+                })?
             } else {
                 // Read from file
-                tle_utils::read_tle_file(&tle_param)
-                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to read TLE from file: {}", e)))?
+                tle_utils::read_tle_file(&tle_param).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "Failed to read TLE from file: {}",
+                        e
+                    ))
+                })?
             };
-            let epoch = tle_utils::extract_tle_epoch(&tle_data.line1)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to extract TLE epoch: {}", e)))?;
+            let epoch = tle_utils::extract_tle_epoch(&tle_data.line1).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Failed to extract TLE epoch: {}",
+                    e
+                ))
+            })?;
             (tle_data.line1, tle_data.line2, Some(epoch))
         } else if let Some(nid) = norad_id {
             // Fetch from Celestrak by NORAD ID
-            let tle_data = tle_utils::fetch_tle_by_norad_id(nid)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to fetch TLE from Celestrak by NORAD ID: {}", e)))?;
-            let epoch = tle_utils::extract_tle_epoch(&tle_data.line1)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to extract TLE epoch: {}", e)))?;
+            let tle_data = tle_utils::fetch_tle_by_norad_id(nid).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Failed to fetch TLE from Celestrak by NORAD ID: {}",
+                    e
+                ))
+            })?;
+            let epoch = tle_utils::extract_tle_epoch(&tle_data.line1).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Failed to extract TLE epoch: {}",
+                    e
+                ))
+            })?;
             (tle_data.line1, tle_data.line2, Some(epoch))
         } else if let Some(name) = norad_name {
             // Fetch from Celestrak by satellite name
-            let tle_data = tle_utils::fetch_tle_by_name(&name)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to fetch TLE from Celestrak by name: {}", e)))?;
-            let epoch = tle_utils::extract_tle_epoch(&tle_data.line1)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to extract TLE epoch: {}", e)))?;
+            let tle_data = tle_utils::fetch_tle_by_name(&name).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Failed to fetch TLE from Celestrak by name: {}",
+                    e
+                ))
+            })?;
+            let epoch = tle_utils::extract_tle_epoch(&tle_data.line1).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Failed to extract TLE epoch: {}",
+                    e
+                ))
+            })?;
             (tle_data.line1, tle_data.line2, Some(epoch))
         } else {
             return Err(pyo3::exceptions::PyValueError::new_err(
-                "Must provide either (tle1, tle2), tle, norad_id, or norad_name parameters"
+                "Must provide either (tle1, tle2), tle, norad_id, or norad_name parameters",
             ));
         };
 
         // Check that begin and end are provided
-        let begin = begin.ok_or_else(|| pyo3::exceptions::PyValueError::new_err("begin parameter is required"))?;
-        let end = end.ok_or_else(|| pyo3::exceptions::PyValueError::new_err("end parameter is required"))?;
+        let begin = begin.ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("begin parameter is required")
+        })?;
+        let end = end
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("end parameter is required"))?;
 
         // Use common timestamp generation logic
         let times = generate_timestamps(begin, end, step_size)?;
@@ -132,14 +169,14 @@ impl TLEEphemeris {
                 epoch.timestamp_subsec_micros(),
                 None,
             )?;
-            
+
             // Get UTC timezone and replace
             let datetime_mod = py.import("datetime")?;
             let utc_tz = datetime_mod.getattr("timezone")?.getattr("utc")?;
             let kwargs = pyo3::types::PyDict::new(py);
             kwargs.set_item("tzinfo", utc_tz)?;
             let dt_with_tz = dt.call_method("replace", (), Some(&kwargs))?;
-            
+
             Ok(Some(dt_with_tz.into()))
         } else {
             Ok(None)

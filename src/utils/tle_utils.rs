@@ -8,10 +8,11 @@
 //! - Extracting TLE epoch information
 
 use crate::utils::config::CACHE_DIR;
-use chrono::{DateTime, NaiveDate, Utc};
+#[allow(unused_imports)]
+use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use std::error::Error;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -26,6 +27,7 @@ const TLE_CACHE_TTL: u64 = 86_400;
 pub struct TLEData {
     pub line1: String,
     pub line2: String,
+    #[allow(dead_code)]
     pub name: Option<String>,
 }
 
@@ -208,7 +210,7 @@ pub fn fetch_tle_by_name(name: &str) -> Result<TLEData, Box<dyn Error>> {
 /// TLE year convention (as per TLE specification):
 /// - Years 57-99 represent 1957-1999 (20th century)
 /// - Years 00-56 represent 2000-2056 (21st century)
-/// This convention will need updating after 2056
+///   This convention will need updating after 2056
 pub fn extract_tle_epoch(line1: &str) -> Result<DateTime<Utc>, Box<dyn Error>> {
     // TLE epoch is in columns 19-32 (0-indexed 18-31)
     let epoch_str = line1
@@ -226,12 +228,12 @@ pub fn extract_tle_epoch(line1: &str) -> Result<DateTime<Utc>, Box<dyn Error>> {
 
     let day_of_year_with_frac: f64 = day_str.parse()?;
     let day_of_year = day_of_year_with_frac.floor() as u32;
-    
+
     // Validate day of year
-    if day_of_year < 1 || day_of_year > 366 {
+    if !(1..=366).contains(&day_of_year) {
         return Err(format!("Invalid day of year in TLE: {}", day_of_year).into());
     }
-    
+
     let frac_day = day_of_year_with_frac.fract();
 
     // Convert day of year to date
