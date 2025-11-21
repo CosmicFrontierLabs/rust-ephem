@@ -14,7 +14,7 @@
 //! If the OEM file uses a different reference frame, loading will fail with
 //! an error indicating the incompatible frame.
 
-use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use ndarray::Array2;
 use pyo3::{prelude::*, types::PyDateTime};
 use std::fs::File;
@@ -28,7 +28,7 @@ use crate::ephemeris::ephemeris_common::{
 use crate::ephemeris::position_velocity::PositionVelocityData;
 use crate::utils::conversions;
 use crate::utils::interpolation::hermite_interpolate;
-use crate::utils::time_utils::python_datetime_to_utc;
+use crate::utils::time_utils::{python_datetime_to_utc, utc_to_python_datetime};
 
 /// A simple OEM state vector record
 #[derive(Debug, Clone)]
@@ -237,23 +237,7 @@ impl OEMEphemeris {
     fn begin(&self, py: Python) -> PyResult<Py<PyAny>> {
         if let Some(times) = &self.common_data.times {
             if let Some(first_time) = times.first() {
-                let dt = pyo3::types::PyDateTime::new(
-                    py,
-                    first_time.year(),
-                    first_time.month() as u8,
-                    first_time.day() as u8,
-                    first_time.hour() as u8,
-                    first_time.minute() as u8,
-                    first_time.second() as u8,
-                    first_time.timestamp_subsec_micros(),
-                    None,
-                )?;
-                let datetime_mod = py.import("datetime")?;
-                let utc_tz = datetime_mod.getattr("timezone")?.getattr("utc")?;
-                let kwargs = pyo3::types::PyDict::new(py);
-                kwargs.set_item("tzinfo", utc_tz)?;
-                let dt_with_tz = dt.call_method("replace", (), Some(&kwargs))?;
-                return Ok(dt_with_tz.into());
+                return utc_to_python_datetime(py, first_time);
             }
         }
         Err(pyo3::exceptions::PyValueError::new_err(
@@ -266,23 +250,7 @@ impl OEMEphemeris {
     fn end(&self, py: Python) -> PyResult<Py<PyAny>> {
         if let Some(times) = &self.common_data.times {
             if let Some(last_time) = times.last() {
-                let dt = pyo3::types::PyDateTime::new(
-                    py,
-                    last_time.year(),
-                    last_time.month() as u8,
-                    last_time.day() as u8,
-                    last_time.hour() as u8,
-                    last_time.minute() as u8,
-                    last_time.second() as u8,
-                    last_time.timestamp_subsec_micros(),
-                    None,
-                )?;
-                let datetime_mod = py.import("datetime")?;
-                let utc_tz = datetime_mod.getattr("timezone")?.getattr("utc")?;
-                let kwargs = pyo3::types::PyDict::new(py);
-                kwargs.set_item("tzinfo", utc_tz)?;
-                let dt_with_tz = dt.call_method("replace", (), Some(&kwargs))?;
-                return Ok(dt_with_tz.into());
+                return utc_to_python_datetime(py, last_time);
             }
         }
         Err(pyo3::exceptions::PyValueError::new_err(

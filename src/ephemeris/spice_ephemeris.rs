@@ -8,6 +8,7 @@ use std::sync::OnceLock;
 use crate::ephemeris::ephemeris_common::{generate_timestamps, EphemerisBase, EphemerisData};
 use crate::ephemeris::position_velocity::PositionVelocityData;
 use crate::utils::conversions;
+use crate::utils::time_utils::utc_to_python_datetime;
 use crate::utils::to_skycoord::AstropyModules;
 
 #[pyclass]
@@ -305,23 +306,7 @@ impl SPICEEphemeris {
     fn begin(&self, py: Python) -> PyResult<Py<PyAny>> {
         if let Some(times) = &self.common_data.times {
             if let Some(first_time) = times.first() {
-                let dt = pyo3::types::PyDateTime::new(
-                    py,
-                    first_time.year(),
-                    first_time.month() as u8,
-                    first_time.day() as u8,
-                    first_time.hour() as u8,
-                    first_time.minute() as u8,
-                    first_time.second() as u8,
-                    first_time.timestamp_subsec_micros(),
-                    None,
-                )?;
-                let datetime_mod = py.import("datetime")?;
-                let utc_tz = datetime_mod.getattr("timezone")?.getattr("utc")?;
-                let kwargs = pyo3::types::PyDict::new(py);
-                kwargs.set_item("tzinfo", utc_tz)?;
-                let dt_with_tz = dt.call_method("replace", (), Some(&kwargs))?;
-                return Ok(dt_with_tz.into());
+                return utc_to_python_datetime(py, first_time);
             }
         }
         Err(pyo3::exceptions::PyValueError::new_err(
@@ -334,23 +319,7 @@ impl SPICEEphemeris {
     fn end(&self, py: Python) -> PyResult<Py<PyAny>> {
         if let Some(times) = &self.common_data.times {
             if let Some(last_time) = times.last() {
-                let dt = pyo3::types::PyDateTime::new(
-                    py,
-                    last_time.year(),
-                    last_time.month() as u8,
-                    last_time.day() as u8,
-                    last_time.hour() as u8,
-                    last_time.minute() as u8,
-                    last_time.second() as u8,
-                    last_time.timestamp_subsec_micros(),
-                    None,
-                )?;
-                let datetime_mod = py.import("datetime")?;
-                let utc_tz = datetime_mod.getattr("timezone")?.getattr("utc")?;
-                let kwargs = pyo3::types::PyDict::new(py);
-                kwargs.set_item("tzinfo", utc_tz)?;
-                let dt_with_tz = dt.call_method("replace", (), Some(&kwargs))?;
-                return Ok(dt_with_tz.into());
+                return utc_to_python_datetime(py, last_time);
             }
         }
         Err(pyo3::exceptions::PyValueError::new_err(
