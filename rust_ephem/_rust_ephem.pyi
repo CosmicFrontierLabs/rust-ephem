@@ -649,7 +649,7 @@ class TLEEphemeris:
     @property
     def obsgeoloc(
         self,
-    ) -> npt.NDArray[np.float64] | None:  # Returns NumPy array or None if unavailable
+    ) -> npt.NDArray[np.float64]:  # Returns NumPy array or None if unavailable
         """
         Observer geocentric location (GCRS position).
 
@@ -663,7 +663,7 @@ class TLEEphemeris:
         ...
 
     @property
-    def tle_epoch(self) -> datetime | None:
+    def tle_epoch(self) -> datetime:
         """Epoch timestamp extracted from the TLE (UTC datetime or None if not available)"""
         ...
 
