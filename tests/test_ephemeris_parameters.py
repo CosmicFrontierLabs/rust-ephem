@@ -3,12 +3,6 @@
 Tests that all ephemeris classes properly reflect their constructor
 parameters back as readable properties, enabling introspection of
 ephemeris configuration.
-
-Tests cover:
-- TLEEphemeris: tle1, tle2, begin, end, step_size, polar_motion, tle_epoch
-- SPICEEphemeris: spk_path, naif_id, center_id, begin, end, step_size, polar_motion
-- OEMEphemeris: oem_path, begin, end, step_size, polar_motion
-- GroundEphemeris: input_latitude, input_longitude, input_height, begin, end, step_size, polar_motion
 """
 
 import os
@@ -60,58 +54,59 @@ class TestTLEEphemerisParameters:
     """Test parameter reflection for TLEEphemeris."""
 
     def test_tle1_parameter(self):
-        """Test that tle1 property returns the TLE line 1."""
         ephem = TLEEphemeris(VALID_TLE1, VALID_TLE2, BEGIN_TIME, END_TIME, STEP_SIZE)
         assert ephem.tle1 == VALID_TLE1
 
     def test_tle2_parameter(self):
-        """Test that tle2 property returns the TLE line 2."""
         ephem = TLEEphemeris(VALID_TLE1, VALID_TLE2, BEGIN_TIME, END_TIME, STEP_SIZE)
         assert ephem.tle2 == VALID_TLE2
 
-    def test_begin_parameter(self):
-        """Test that begin property returns the start time."""
+    def test_begin_parameter_value(self):
         ephem = TLEEphemeris(VALID_TLE1, VALID_TLE2, BEGIN_TIME, END_TIME, STEP_SIZE)
         assert ephem.begin == BEGIN_TIME
-        assert ephem.begin.tzinfo is not None  # Should have timezone
 
-    def test_end_parameter(self):
-        """Test that end property returns the end time."""
+    def test_begin_parameter_tzinfo(self):
+        ephem = TLEEphemeris(VALID_TLE1, VALID_TLE2, BEGIN_TIME, END_TIME, STEP_SIZE)
+        assert ephem.begin.tzinfo is not None
+
+    def test_end_parameter_value(self):
         ephem = TLEEphemeris(VALID_TLE1, VALID_TLE2, BEGIN_TIME, END_TIME, STEP_SIZE)
         assert ephem.end == END_TIME
+
+    def test_end_parameter_tzinfo(self):
+        ephem = TLEEphemeris(VALID_TLE1, VALID_TLE2, BEGIN_TIME, END_TIME, STEP_SIZE)
         assert ephem.end.tzinfo is not None
 
     def test_step_size_parameter(self):
-        """Test that step_size property returns the time step."""
         ephem = TLEEphemeris(VALID_TLE1, VALID_TLE2, BEGIN_TIME, END_TIME, STEP_SIZE)
         assert ephem.step_size == STEP_SIZE
 
     def test_polar_motion_parameter_default(self):
-        """Test that polar_motion defaults to False."""
         ephem = TLEEphemeris(VALID_TLE1, VALID_TLE2, BEGIN_TIME, END_TIME, STEP_SIZE)
         assert ephem.polar_motion is False
 
     def test_polar_motion_parameter_true(self):
-        """Test that polar_motion can be set to True."""
         ephem = TLEEphemeris(
             VALID_TLE1, VALID_TLE2, BEGIN_TIME, END_TIME, STEP_SIZE, polar_motion=True
         )
         assert ephem.polar_motion is True
 
-    def test_tle_epoch_parameter(self):
-        """Test that tle_epoch is extracted from TLE data."""
+    def test_tle_epoch_not_none(self):
         ephem = TLEEphemeris(VALID_TLE1, VALID_TLE2, BEGIN_TIME, END_TIME, STEP_SIZE)
         assert ephem.tle_epoch is not None
-        # TLE epoch should be in 2008 based on the test TLE
+
+    def test_tle_epoch_year_2008(self):
+        ephem = TLEEphemeris(VALID_TLE1, VALID_TLE2, BEGIN_TIME, END_TIME, STEP_SIZE)
         assert ephem.tle_epoch.year == 2008
+
+    def test_tle_epoch_tzinfo(self):
+        ephem = TLEEphemeris(VALID_TLE1, VALID_TLE2, BEGIN_TIME, END_TIME, STEP_SIZE)
         assert ephem.tle_epoch.tzinfo is not None
 
     def test_all_parameters_accessible(self):
-        """Test that all parameters are accessible without errors."""
         ephem = TLEEphemeris(
             VALID_TLE1, VALID_TLE2, BEGIN_TIME, END_TIME, STEP_SIZE, polar_motion=True
         )
-        # Access all properties to ensure no exceptions
         _ = ephem.tle1
         _ = ephem.tle2
         _ = ephem.begin
@@ -126,18 +121,16 @@ class TestSPICEEphemerisParameters:
 
     @pytest.fixture
     def spk_path(self):
-        """Return path to SPICE kernel if available."""
         path = "test_data/de440s.bsp"
         if not os.path.exists(path):
             pytest.skip(f"SPICE kernel not found at {path}")
         return path
 
     def test_spk_path_parameter(self, spk_path):
-        """Test that spk_path property returns the kernel path."""
         ephem = SPICEEphemeris(
             spk_path=spk_path,
-            naif_id=301,  # Moon
-            center_id=399,  # Earth
+            naif_id=301,
+            center_id=399,
             begin=BEGIN_TIME,
             end=END_TIME,
             step_size=STEP_SIZE,
@@ -145,7 +138,6 @@ class TestSPICEEphemerisParameters:
         assert ephem.spk_path == spk_path
 
     def test_naif_id_parameter(self, spk_path):
-        """Test that naif_id property returns the target body ID."""
         ephem = SPICEEphemeris(
             spk_path=spk_path,
             naif_id=301,
@@ -157,7 +149,6 @@ class TestSPICEEphemerisParameters:
         assert ephem.naif_id == 301
 
     def test_center_id_parameter(self, spk_path):
-        """Test that center_id property returns the center body ID."""
         ephem = SPICEEphemeris(
             spk_path=spk_path,
             naif_id=301,
@@ -168,8 +159,7 @@ class TestSPICEEphemerisParameters:
         )
         assert ephem.center_id == 399
 
-    def test_begin_parameter(self, spk_path):
-        """Test that begin property returns the start time."""
+    def test_begin_parameter_value(self, spk_path):
         ephem = SPICEEphemeris(
             spk_path=spk_path,
             naif_id=301,
@@ -179,10 +169,19 @@ class TestSPICEEphemerisParameters:
             step_size=STEP_SIZE,
         )
         assert ephem.begin == BEGIN_TIME
+
+    def test_begin_parameter_tzinfo(self, spk_path):
+        ephem = SPICEEphemeris(
+            spk_path=spk_path,
+            naif_id=301,
+            center_id=399,
+            begin=BEGIN_TIME,
+            end=END_TIME,
+            step_size=STEP_SIZE,
+        )
         assert ephem.begin.tzinfo is not None
 
-    def test_end_parameter(self, spk_path):
-        """Test that end property returns the end time."""
+    def test_end_parameter_value(self, spk_path):
         ephem = SPICEEphemeris(
             spk_path=spk_path,
             naif_id=301,
@@ -192,10 +191,19 @@ class TestSPICEEphemerisParameters:
             step_size=STEP_SIZE,
         )
         assert ephem.end == END_TIME
+
+    def test_end_parameter_tzinfo(self, spk_path):
+        ephem = SPICEEphemeris(
+            spk_path=spk_path,
+            naif_id=301,
+            center_id=399,
+            begin=BEGIN_TIME,
+            end=END_TIME,
+            step_size=STEP_SIZE,
+        )
         assert ephem.end.tzinfo is not None
 
     def test_step_size_parameter(self, spk_path):
-        """Test that step_size property returns the time step."""
         ephem = SPICEEphemeris(
             spk_path=spk_path,
             naif_id=301,
@@ -207,7 +215,6 @@ class TestSPICEEphemerisParameters:
         assert ephem.step_size == STEP_SIZE
 
     def test_polar_motion_parameter_default(self, spk_path):
-        """Test that polar_motion defaults to False."""
         ephem = SPICEEphemeris(
             spk_path=spk_path,
             naif_id=301,
@@ -219,7 +226,6 @@ class TestSPICEEphemerisParameters:
         assert ephem.polar_motion is False
 
     def test_polar_motion_parameter_true(self, spk_path):
-        """Test that polar_motion can be set to True."""
         ephem = SPICEEphemeris(
             spk_path=spk_path,
             naif_id=301,
@@ -232,7 +238,6 @@ class TestSPICEEphemerisParameters:
         assert ephem.polar_motion is True
 
     def test_all_parameters_accessible(self, spk_path):
-        """Test that all parameters are accessible without errors."""
         ephem = SPICEEphemeris(
             spk_path=spk_path,
             naif_id=301,
@@ -242,7 +247,6 @@ class TestSPICEEphemerisParameters:
             step_size=STEP_SIZE,
             polar_motion=True,
         )
-        # Access all properties to ensure no exceptions
         _ = ephem.spk_path
         _ = ephem.naif_id
         _ = ephem.center_id
@@ -256,44 +260,48 @@ class TestOEMEphemerisParameters:
     """Test parameter reflection for OEMEphemeris."""
 
     def test_oem_path_parameter(self, sample_oem_file):
-        """Test that oem_path property returns the OEM file path."""
         ephem = OEMEphemeris(
             sample_oem_file, begin=BEGIN_TIME, end=END_TIME, step_size=STEP_SIZE
         )
         assert ephem.oem_path == sample_oem_file
 
-    def test_begin_parameter(self, sample_oem_file):
-        """Test that begin property returns the start time."""
+    def test_begin_parameter_value(self, sample_oem_file):
         ephem = OEMEphemeris(
             sample_oem_file, begin=BEGIN_TIME, end=END_TIME, step_size=STEP_SIZE
         )
         assert ephem.begin == BEGIN_TIME
+
+    def test_begin_parameter_tzinfo(self, sample_oem_file):
+        ephem = OEMEphemeris(
+            sample_oem_file, begin=BEGIN_TIME, end=END_TIME, step_size=STEP_SIZE
+        )
         assert ephem.begin.tzinfo is not None
 
-    def test_end_parameter(self, sample_oem_file):
-        """Test that end property returns the end time."""
+    def test_end_parameter_value(self, sample_oem_file):
         ephem = OEMEphemeris(
             sample_oem_file, begin=BEGIN_TIME, end=END_TIME, step_size=STEP_SIZE
         )
         assert ephem.end == END_TIME
+
+    def test_end_parameter_tzinfo(self, sample_oem_file):
+        ephem = OEMEphemeris(
+            sample_oem_file, begin=BEGIN_TIME, end=END_TIME, step_size=STEP_SIZE
+        )
         assert ephem.end.tzinfo is not None
 
     def test_step_size_parameter(self, sample_oem_file):
-        """Test that step_size property returns the time step."""
         ephem = OEMEphemeris(
             sample_oem_file, begin=BEGIN_TIME, end=END_TIME, step_size=STEP_SIZE
         )
         assert ephem.step_size == STEP_SIZE
 
     def test_polar_motion_parameter_default(self, sample_oem_file):
-        """Test that polar_motion defaults to False."""
         ephem = OEMEphemeris(
             sample_oem_file, begin=BEGIN_TIME, end=END_TIME, step_size=STEP_SIZE
         )
         assert ephem.polar_motion is False
 
     def test_polar_motion_parameter_true(self, sample_oem_file):
-        """Test that polar_motion can be set to True."""
         ephem = OEMEphemeris(
             sample_oem_file,
             begin=BEGIN_TIME,
@@ -304,7 +312,6 @@ class TestOEMEphemerisParameters:
         assert ephem.polar_motion is True
 
     def test_all_parameters_accessible(self, sample_oem_file):
-        """Test that all parameters are accessible without errors."""
         ephem = OEMEphemeris(
             sample_oem_file,
             begin=BEGIN_TIME,
@@ -312,7 +319,6 @@ class TestOEMEphemerisParameters:
             step_size=STEP_SIZE,
             polar_motion=True,
         )
-        # Access all properties to ensure no exceptions
         _ = ephem.oem_path
         _ = ephem.begin
         _ = ephem.end
@@ -324,7 +330,6 @@ class TestGroundEphemerisParameters:
     """Test parameter reflection for GroundEphemeris."""
 
     def test_input_latitude_parameter(self):
-        """Test that input_latitude property returns the latitude."""
         ephem = GroundEphemeris(
             latitude=35.5,
             longitude=-120.7,
@@ -336,7 +341,6 @@ class TestGroundEphemerisParameters:
         assert ephem.input_latitude == 35.5
 
     def test_input_longitude_parameter(self):
-        """Test that input_longitude property returns the longitude."""
         ephem = GroundEphemeris(
             latitude=35.5,
             longitude=-120.7,
@@ -348,7 +352,6 @@ class TestGroundEphemerisParameters:
         assert ephem.input_longitude == -120.7
 
     def test_input_height_parameter(self):
-        """Test that input_height property returns the height."""
         ephem = GroundEphemeris(
             latitude=35.5,
             longitude=-120.7,
@@ -359,8 +362,7 @@ class TestGroundEphemerisParameters:
         )
         assert ephem.input_height == 250.0
 
-    def test_begin_parameter(self):
-        """Test that begin property returns the start time."""
+    def test_begin_parameter_value(self):
         ephem = GroundEphemeris(
             latitude=35.5,
             longitude=-120.7,
@@ -370,10 +372,19 @@ class TestGroundEphemerisParameters:
             step_size=STEP_SIZE,
         )
         assert ephem.begin == BEGIN_TIME
+
+    def test_begin_parameter_tzinfo(self):
+        ephem = GroundEphemeris(
+            latitude=35.5,
+            longitude=-120.7,
+            height=250.0,
+            begin=BEGIN_TIME,
+            end=END_TIME,
+            step_size=STEP_SIZE,
+        )
         assert ephem.begin.tzinfo is not None
 
-    def test_end_parameter(self):
-        """Test that end property returns the end time."""
+    def test_end_parameter_value(self):
         ephem = GroundEphemeris(
             latitude=35.5,
             longitude=-120.7,
@@ -383,10 +394,19 @@ class TestGroundEphemerisParameters:
             step_size=STEP_SIZE,
         )
         assert ephem.end == END_TIME
+
+    def test_end_parameter_tzinfo(self):
+        ephem = GroundEphemeris(
+            latitude=35.5,
+            longitude=-120.7,
+            height=250.0,
+            begin=BEGIN_TIME,
+            end=END_TIME,
+            step_size=STEP_SIZE,
+        )
         assert ephem.end.tzinfo is not None
 
     def test_step_size_parameter(self):
-        """Test that step_size property returns the time step."""
         ephem = GroundEphemeris(
             latitude=35.5,
             longitude=-120.7,
@@ -398,7 +418,6 @@ class TestGroundEphemerisParameters:
         assert ephem.step_size == STEP_SIZE
 
     def test_polar_motion_parameter_default(self):
-        """Test that polar_motion defaults to False."""
         ephem = GroundEphemeris(
             latitude=35.5,
             longitude=-120.7,
@@ -410,7 +429,6 @@ class TestGroundEphemerisParameters:
         assert ephem.polar_motion is False
 
     def test_polar_motion_parameter_true(self):
-        """Test that polar_motion can be set to True."""
         ephem = GroundEphemeris(
             latitude=35.5,
             longitude=-120.7,
@@ -422,8 +440,7 @@ class TestGroundEphemerisParameters:
         )
         assert ephem.polar_motion is True
 
-    def test_negative_latitude(self):
-        """Test parameter reflection with negative latitude (southern hemisphere)."""
+    def test_negative_latitude_value(self):
         ephem = GroundEphemeris(
             latitude=-33.9,
             longitude=18.4,
@@ -433,11 +450,30 @@ class TestGroundEphemerisParameters:
             step_size=STEP_SIZE,
         )
         assert ephem.input_latitude == -33.9
+
+    def test_negative_latitude_longitude(self):
+        ephem = GroundEphemeris(
+            latitude=-33.9,
+            longitude=18.4,
+            height=10.0,
+            begin=BEGIN_TIME,
+            end=END_TIME,
+            step_size=STEP_SIZE,
+        )
         assert ephem.input_longitude == 18.4
+
+    def test_negative_latitude_height(self):
+        ephem = GroundEphemeris(
+            latitude=-33.9,
+            longitude=18.4,
+            height=10.0,
+            begin=BEGIN_TIME,
+            end=END_TIME,
+            step_size=STEP_SIZE,
+        )
         assert ephem.input_height == 10.0
 
-    def test_zero_coordinates(self):
-        """Test parameter reflection with zero coordinates (equator/prime meridian)."""
+    def test_zero_coords_latitude(self):
         ephem = GroundEphemeris(
             latitude=0.0,
             longitude=0.0,
@@ -447,11 +483,30 @@ class TestGroundEphemerisParameters:
             step_size=STEP_SIZE,
         )
         assert ephem.input_latitude == 0.0
+
+    def test_zero_coords_longitude(self):
+        ephem = GroundEphemeris(
+            latitude=0.0,
+            longitude=0.0,
+            height=0.0,
+            begin=BEGIN_TIME,
+            end=END_TIME,
+            step_size=STEP_SIZE,
+        )
         assert ephem.input_longitude == 0.0
+
+    def test_zero_coords_height(self):
+        ephem = GroundEphemeris(
+            latitude=0.0,
+            longitude=0.0,
+            height=0.0,
+            begin=BEGIN_TIME,
+            end=END_TIME,
+            step_size=STEP_SIZE,
+        )
         assert ephem.input_height == 0.0
 
     def test_all_parameters_accessible(self):
-        """Test that all parameters are accessible without errors."""
         ephem = GroundEphemeris(
             latitude=35.5,
             longitude=-120.7,
@@ -461,7 +516,6 @@ class TestGroundEphemerisParameters:
             step_size=STEP_SIZE,
             polar_motion=True,
         )
-        # Access all properties to ensure no exceptions
         _ = ephem.input_latitude
         _ = ephem.input_longitude
         _ = ephem.input_height
@@ -474,22 +528,28 @@ class TestGroundEphemerisParameters:
 class TestCommonParameterBehavior:
     """Test common behavior across all ephemeris classes."""
 
-    def test_step_size_calculated_from_timestamps(self):
-        """Test that step_size is computed from actual timestamps."""
-        # Test with TLE
+    def test_step_size_tle(self):
         tle_ephem = TLEEphemeris(
             VALID_TLE1, VALID_TLE2, BEGIN_TIME, END_TIME, step_size=300
         )
         assert tle_ephem.step_size == 300
 
-        # Test with Ground
+    def test_step_size_ground(self):
         ground_ephem = GroundEphemeris(
             35.5, -120.7, 250.0, BEGIN_TIME, END_TIME, step_size=600
         )
         assert ground_ephem.step_size == 600
 
-    def test_begin_end_preserved_exactly(self):
-        """Test that begin/end times match exactly what was provided."""
+    def test_begin_preserved(self):
+        custom_begin = datetime(2024, 6, 15, 10, 30, 45, tzinfo=timezone.utc)
+        custom_end = datetime(2024, 6, 15, 12, 30, 45, tzinfo=timezone.utc)
+
+        ephem = TLEEphemeris(
+            VALID_TLE1, VALID_TLE2, custom_begin, custom_end, step_size=60
+        )
+        assert ephem.begin == custom_begin
+
+    def test_end_preserved(self):
         custom_begin = datetime(2024, 6, 15, 10, 30, 45, tzinfo=timezone.utc)
         custom_end = datetime(2024, 6, 15, 12, 30, 45, tzinfo=timezone.utc)
 
@@ -497,57 +557,106 @@ class TestCommonParameterBehavior:
             VALID_TLE1, VALID_TLE2, custom_begin, custom_end, step_size=60
         )
 
-        assert ephem.begin == custom_begin
         assert ephem.end == custom_end
+
+    def test_begin_preserved_year(self):
+        custom_begin = datetime(2024, 6, 15, 10, 30, 45, tzinfo=timezone.utc)
+        ephem = TLEEphemeris(
+            VALID_TLE1, VALID_TLE2, custom_begin, custom_begin, step_size=60
+        )
         assert ephem.begin.year == 2024
+
+    def test_begin_preserved_month(self):
+        custom_begin = datetime(2024, 6, 15, 10, 30, 45, tzinfo=timezone.utc)
+        ephem = TLEEphemeris(
+            VALID_TLE1, VALID_TLE2, custom_begin, custom_begin, step_size=60
+        )
         assert ephem.begin.month == 6
+
+    def test_begin_preserved_day(self):
+        custom_begin = datetime(2024, 6, 15, 10, 30, 45, tzinfo=timezone.utc)
+        ephem = TLEEphemeris(
+            VALID_TLE1, VALID_TLE2, custom_begin, custom_begin, step_size=60
+        )
         assert ephem.begin.day == 15
+
+    def test_begin_preserved_hour(self):
+        custom_begin = datetime(2024, 6, 15, 10, 30, 45, tzinfo=timezone.utc)
+        ephem = TLEEphemeris(
+            VALID_TLE1, VALID_TLE2, custom_begin, custom_begin, step_size=60
+        )
         assert ephem.begin.hour == 10
+
+    def test_begin_preserved_minute(self):
+        custom_begin = datetime(2024, 6, 15, 10, 30, 45, tzinfo=timezone.utc)
+        ephem = TLEEphemeris(
+            VALID_TLE1, VALID_TLE2, custom_begin, custom_begin, step_size=60
+        )
         assert ephem.begin.minute == 30
+
+    def test_begin_preserved_second(self):
+        custom_begin = datetime(2024, 6, 15, 10, 30, 45, tzinfo=timezone.utc)
+        ephem = TLEEphemeris(
+            VALID_TLE1, VALID_TLE2, custom_begin, custom_begin, step_size=60
+        )
         assert ephem.begin.second == 45
 
-    def test_polar_motion_flag_behavior(self):
-        """Test that polar_motion flag behaves correctly for all classes."""
-        # Test default (False)
+    def test_polar_motion_default_tle(self):
         tle_false = TLEEphemeris(VALID_TLE1, VALID_TLE2, BEGIN_TIME, END_TIME, 60)
         assert tle_false.polar_motion is False
 
-        # Test explicit True
+    def test_polar_motion_true_tle(self):
         tle_true = TLEEphemeris(
             VALID_TLE1, VALID_TLE2, BEGIN_TIME, END_TIME, 60, polar_motion=True
         )
         assert tle_true.polar_motion is True
 
-        # Test with Ground ephemeris
+    def test_polar_motion_default_ground(self):
         ground_false = GroundEphemeris(0, 0, 0, BEGIN_TIME, END_TIME, 60)
         assert ground_false.polar_motion is False
 
+    def test_polar_motion_true_ground(self):
         ground_true = GroundEphemeris(
             0, 0, 0, BEGIN_TIME, END_TIME, 60, polar_motion=True
         )
         assert ground_true.polar_motion is True
 
-    def test_timezone_awareness(self):
-        """Test that all datetime properties maintain timezone information."""
+    def test_timezone_awareness_begin(self):
         ephem = TLEEphemeris(VALID_TLE1, VALID_TLE2, BEGIN_TIME, END_TIME, 120)
-
         assert ephem.begin.tzinfo == timezone.utc
+
+    def test_timezone_awareness_end(self):
+        ephem = TLEEphemeris(VALID_TLE1, VALID_TLE2, BEGIN_TIME, END_TIME, 120)
         assert ephem.end.tzinfo == timezone.utc
+
+    def test_timezone_awareness_tle_epoch(self):
+        ephem = TLEEphemeris(VALID_TLE1, VALID_TLE2, BEGIN_TIME, END_TIME, 120)
         assert ephem.tle_epoch.tzinfo is not None
 
-    def test_parameter_types(self):
-        """Test that parameters return expected types."""
+    def test_parameter_type_latitude(self):
         ephem = GroundEphemeris(35.5, -120.7, 250.0, BEGIN_TIME, END_TIME, 120)
-
-        # Numeric types
         assert isinstance(ephem.input_latitude, float)
+
+    def test_parameter_type_longitude(self):
+        ephem = GroundEphemeris(35.5, -120.7, 250.0, BEGIN_TIME, END_TIME, 120)
         assert isinstance(ephem.input_longitude, float)
+
+    def test_parameter_type_height(self):
+        ephem = GroundEphemeris(35.5, -120.7, 250.0, BEGIN_TIME, END_TIME, 120)
         assert isinstance(ephem.input_height, float)
+
+    def test_parameter_type_step_size(self):
+        ephem = GroundEphemeris(35.5, -120.7, 250.0, BEGIN_TIME, END_TIME, 120)
         assert isinstance(ephem.step_size, int)
 
-        # Boolean type
+    def test_parameter_type_polar_motion_bool(self):
+        ephem = GroundEphemeris(35.5, -120.7, 250.0, BEGIN_TIME, END_TIME, 120)
         assert isinstance(ephem.polar_motion, bool)
 
-        # Datetime types
+    def test_parameter_type_begin_datetime(self):
+        ephem = GroundEphemeris(35.5, -120.7, 250.0, BEGIN_TIME, END_TIME, 120)
         assert isinstance(ephem.begin, datetime)
+
+    def test_parameter_type_end_datetime(self):
+        ephem = GroundEphemeris(35.5, -120.7, 250.0, BEGIN_TIME, END_TIME, 120)
         assert isinstance(ephem.end, datetime)
