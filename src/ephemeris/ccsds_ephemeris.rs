@@ -226,6 +226,36 @@ impl OEMEphemeris {
         self.get_obsgeovel(py)
     }
 
+    /// Get the OEM file path
+    #[getter]
+    fn oem_path(&self) -> &str {
+        &self.oem_path
+    }
+
+    /// Get the start time of the ephemeris
+    #[getter]
+    fn begin(&self, py: Python) -> PyResult<Py<PyAny>> {
+        crate::ephemeris::ephemeris_common::get_begin_time(&self.common_data.times, py)
+    }
+
+    /// Get the end time of the ephemeris
+    #[getter]
+    fn end(&self, py: Python) -> PyResult<Py<PyAny>> {
+        crate::ephemeris::ephemeris_common::get_end_time(&self.common_data.times, py)
+    }
+
+    /// Get the time step size in seconds
+    #[getter]
+    fn step_size(&self) -> PyResult<i64> {
+        crate::ephemeris::ephemeris_common::get_step_size(&self.common_data.times)
+    }
+
+    /// Get whether polar motion correction is applied
+    #[getter]
+    fn polar_motion(&self) -> bool {
+        self.polar_motion
+    }
+
     #[getter]
     fn latitude(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         <Self as EphemerisBase>::get_latitude(self, py)

@@ -166,6 +166,48 @@ impl GroundEphemeris {
         self.get_obsgeovel(py)
     }
 
+    /// Get the input latitude in degrees (constructor argument)
+    #[getter]
+    fn input_latitude(&self) -> f64 {
+        self.latitude
+    }
+
+    /// Get the input longitude in degrees (constructor argument)
+    #[getter]
+    fn input_longitude(&self) -> f64 {
+        self.longitude
+    }
+
+    /// Get the input height in meters (constructor argument)
+    #[getter]
+    fn input_height(&self) -> f64 {
+        self.height
+    }
+
+    /// Get the start time of the ephemeris
+    #[getter]
+    fn begin(&self, py: Python) -> PyResult<Py<PyAny>> {
+        crate::ephemeris::ephemeris_common::get_begin_time(&self.common_data.times, py)
+    }
+
+    /// Get the end time of the ephemeris
+    #[getter]
+    fn end(&self, py: Python) -> PyResult<Py<PyAny>> {
+        crate::ephemeris::ephemeris_common::get_end_time(&self.common_data.times, py)
+    }
+
+    /// Get the time step size in seconds
+    #[getter]
+    fn step_size(&self) -> PyResult<i64> {
+        crate::ephemeris::ephemeris_common::get_step_size(&self.common_data.times)
+    }
+
+    /// Get whether polar motion correction is applied
+    #[getter]
+    fn polar_motion(&self) -> bool {
+        self.polar_motion
+    }
+
     // GroundEphemeris pre-populates geodetic caches with constant arrays during construction (see lines 85-100),
     // then uses the same EphemerisBase trait getters as other ephemeris types below. This approach avoids
     // duplicate #[getter] definitions in the same impl block and clarifies why scalar getters were removed.

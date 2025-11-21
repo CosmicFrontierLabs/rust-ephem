@@ -282,6 +282,48 @@ impl SPICEEphemeris {
         self.get_obsgeovel(py)
     }
 
+    /// Get the SPK file path
+    #[getter]
+    fn spk_path(&self) -> &str {
+        &self.spk_path
+    }
+
+    /// Get the NAIF ID of the target body
+    #[getter]
+    fn naif_id(&self) -> i32 {
+        self.naif_id
+    }
+
+    /// Get the NAIF ID of the center body
+    #[getter]
+    fn center_id(&self) -> i32 {
+        self.center_id
+    }
+
+    /// Get the start time of the ephemeris
+    #[getter]
+    fn begin(&self, py: Python) -> PyResult<Py<PyAny>> {
+        crate::ephemeris::ephemeris_common::get_begin_time(&self.common_data.times, py)
+    }
+
+    /// Get the end time of the ephemeris
+    #[getter]
+    fn end(&self, py: Python) -> PyResult<Py<PyAny>> {
+        crate::ephemeris::ephemeris_common::get_end_time(&self.common_data.times, py)
+    }
+
+    /// Get the time step size in seconds
+    #[getter]
+    fn step_size(&self) -> PyResult<i64> {
+        crate::ephemeris::ephemeris_common::get_step_size(&self.common_data.times)
+    }
+
+    /// Get whether polar motion correction is applied
+    #[getter]
+    fn polar_motion(&self) -> bool {
+        self.polar_motion
+    }
+
     /// Get position and velocity for any solar system body
     ///
     /// Analogous to astropy's `get_body()` function. Returns position and velocity

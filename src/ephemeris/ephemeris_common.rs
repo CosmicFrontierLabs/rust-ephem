@@ -9,9 +9,49 @@ use crate::utils::celestial::{calculate_moon_positions, calculate_sun_positions}
 use crate::utils::config::MAX_TIMESTAMPS;
 use crate::utils::conversions::{convert_frames, Frame};
 use crate::utils::geo::{deg_to_rad_array, ecef_to_geodetic_deg};
-use crate::utils::time_utils::python_datetime_to_utc;
+use crate::utils::time_utils::{python_datetime_to_utc, utc_to_python_datetime};
 use crate::utils::to_skycoord::{to_skycoord, AstropyModules, SkyCoordConfig};
 use ndarray::Array1;
+
+/// Helper function for getting begin time from ephemeris common data
+#[inline]
+pub fn get_begin_time(times: &Option<Vec<DateTime<Utc>>>, py: Python) -> PyResult<Py<PyAny>> {
+    if let Some(times) = times {
+        if let Some(first_time) = times.first() {
+            return utc_to_python_datetime(py, first_time);
+        }
+    }
+    Err(pyo3::exceptions::PyValueError::new_err(
+        "No times available",
+    ))
+}
+
+/// Helper function for getting end time from ephemeris common data
+#[inline]
+pub fn get_end_time(times: &Option<Vec<DateTime<Utc>>>, py: Python) -> PyResult<Py<PyAny>> {
+    if let Some(times) = times {
+        if let Some(last_time) = times.last() {
+            return utc_to_python_datetime(py, last_time);
+        }
+    }
+    Err(pyo3::exceptions::PyValueError::new_err(
+        "No times available",
+    ))
+}
+
+/// Helper function for getting step size from ephemeris common data
+#[inline]
+pub fn get_step_size(times: &Option<Vec<DateTime<Utc>>>) -> PyResult<i64> {
+    if let Some(times) = times {
+        if times.len() >= 2 {
+            let step = times[1].signed_duration_since(times[0]);
+            return Ok(step.num_seconds());
+        }
+    }
+    Err(pyo3::exceptions::PyValueError::new_err(
+        "Cannot compute step size",
+    ))
+}
 
 /// Splits a stacked position+velocity (N x 6) array into a PositionVelocityData struct.
 ///
