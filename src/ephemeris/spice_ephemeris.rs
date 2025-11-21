@@ -8,7 +8,6 @@ use std::sync::OnceLock;
 use crate::ephemeris::ephemeris_common::{generate_timestamps, EphemerisBase, EphemerisData};
 use crate::ephemeris::position_velocity::PositionVelocityData;
 use crate::utils::conversions;
-use crate::utils::time_utils::utc_to_python_datetime;
 use crate::utils::to_skycoord::AstropyModules;
 
 #[pyclass]
@@ -304,41 +303,19 @@ impl SPICEEphemeris {
     /// Get the start time of the ephemeris
     #[getter]
     fn begin(&self, py: Python) -> PyResult<Py<PyAny>> {
-        if let Some(times) = &self.common_data.times {
-            if let Some(first_time) = times.first() {
-                return utc_to_python_datetime(py, first_time);
-            }
-        }
-        Err(pyo3::exceptions::PyValueError::new_err(
-            "No times available",
-        ))
+        crate::ephemeris::ephemeris_common::get_begin_time(&self.common_data.times, py)
     }
 
     /// Get the end time of the ephemeris
     #[getter]
     fn end(&self, py: Python) -> PyResult<Py<PyAny>> {
-        if let Some(times) = &self.common_data.times {
-            if let Some(last_time) = times.last() {
-                return utc_to_python_datetime(py, last_time);
-            }
-        }
-        Err(pyo3::exceptions::PyValueError::new_err(
-            "No times available",
-        ))
+        crate::ephemeris::ephemeris_common::get_end_time(&self.common_data.times, py)
     }
 
     /// Get the time step size in seconds
     #[getter]
     fn step_size(&self) -> PyResult<i64> {
-        if let Some(times) = &self.common_data.times {
-            if times.len() >= 2 {
-                let step = times[1].signed_duration_since(times[0]);
-                return Ok(step.num_seconds());
-            }
-        }
-        Err(pyo3::exceptions::PyValueError::new_err(
-            "Cannot compute step size",
-        ))
+        crate::ephemeris::ephemeris_common::get_step_size(&self.common_data.times)
     }
 
     /// Get whether polar motion correction is applied
