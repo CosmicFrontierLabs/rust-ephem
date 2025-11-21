@@ -482,6 +482,16 @@ class TLEEphemeris:
         ...
 
     @property
+    def sun_pv(self) -> PositionVelocityData:
+        """Sun position and velocity in GCRS frame"""
+        ...
+
+    @property
+    def moon_pv(self) -> PositionVelocityData:
+        """Moon position and velocity in GCRS frame"""
+        ...
+
+    @property
     def timestamp(self) -> npt.NDArray[np.object_]:
         """
         Array of timestamps for the ephemeris.
@@ -772,6 +782,36 @@ class SPICEEphemeris:
 
         Returns a NumPy array of datetime objects (not a list) for efficient indexing.
         This property is cached for performance - repeated access is ~90x faster.
+        """
+        ...
+
+    @property
+    def sun_pv(self) -> PositionVelocityData:
+        """Sun position and velocity in GCRS frame"""
+        ...
+
+    @property
+    def moon_pv(self) -> PositionVelocityData:
+        """Moon position and velocity in GCRS frame"""
+        ...
+
+    @property
+    def obsgeoloc(self) -> npt.NDArray[np.float64]:
+        """
+        Observer geocentric location (GCRS position).
+
+        Returns position in km, compatible with astropy's GCRS frame obsgeoloc parameter.
+        Shape: (N, 3) where N is the number of timestamps.
+        """
+        ...
+
+    @property
+    def obsgeovel(self) -> npt.NDArray[np.float64]:
+        """
+        Observer geocentric velocity (GCRS velocity).
+
+        Returns velocity in km/s, compatible with astropy's GCRS frame obsgeovel parameter.
+        Shape: (N, 3) where N is the number of timestamps.
         """
         ...
 
