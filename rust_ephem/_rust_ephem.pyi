@@ -1288,18 +1288,48 @@ class GroundEphemeris:
         ...
 
     @property
-    def latitude(self) -> npt.NDArray[np.float64]:
-        """Geodetic latitude in degrees"""
+    def latitude(self) -> Any:  # Returns astropy.units.Quantity
+        """Geodetic latitude as an astropy Quantity array (degrees), one per timestamp"""
         ...
 
     @property
-    def longitude(self) -> Any:
-        """Geodetic longitude in degrees"""
+    def latitude_deg(self) -> npt.NDArray[np.float64]:
+        """Geodetic latitude in degrees as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def latitude_rad(self) -> npt.NDArray[np.float64]:
+        """Geodetic latitude in radians as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def longitude(self) -> Any:  # Returns astropy.units.Quantity
+        """Geodetic longitude as an astropy Quantity array (degrees), one per timestamp"""
+        ...
+
+    @property
+    def longitude_deg(self) -> npt.NDArray[np.float64]:
+        """Geodetic longitude in degrees as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def longitude_rad(self) -> npt.NDArray[np.float64]:
+        """Geodetic longitude in radians as a raw NumPy array (one per timestamp)"""
         ...
 
     @property
     def height(self) -> Any:  # Returns astropy.units.Quantity
-        """Altitude as an astropy Quantity (meters), one per timestamp"""
+        """Geodetic height above the WGS84 ellipsoid as an astropy Quantity array (meters), one per timestamp"""
+        ...
+
+    @property
+    def height_m(self) -> npt.NDArray[np.float64]:
+        """Geodetic height above the WGS84 ellipsoid as a raw NumPy array in meters (one per timestamp)"""
+        ...
+
+    @property
+    def height_km(self) -> npt.NDArray[np.float64]:
+        """Geodetic height above the WGS84 ellipsoid as a raw NumPy array in kilometers (one per timestamp)"""
         ...
 
     @property
@@ -1313,18 +1343,6 @@ class GroundEphemeris:
         Returns:
             astropy Quantity array with units of degrees
         """
-        ...
-
-    @property
-    def height_m(self) -> npt.NDArray[np.float64]:
-        """
-        Altitude in meters as a raw NumPy array (one per timestamp)
-        """
-        ...
-
-    @property
-    def height_km(self) -> npt.NDArray[np.float64]:
-        """Altitude in kilometers as a raw NumPy array (one per timestamp)"""
         ...
 
     @property
