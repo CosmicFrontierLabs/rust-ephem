@@ -365,24 +365,34 @@ class TLEEphemeris:
 
     def __init__(
         self,
-        tle1: str,
-        tle2: str,
-        begin: datetime,
-        end: datetime,
+        tle1: str | None = None,
+        tle2: str | None = None,
+        begin: datetime | None = None,
+        end: datetime | None = None,
         step_size: int = 60,
         *,
         polar_motion: bool = False,
+        tle: str | None = None,
+        norad_id: int | None = None,
+        norad_name: str | None = None,
     ) -> None:
         """
-        Initialize TLE ephemeris from TLE lines.
+        Initialize TLE ephemeris from various TLE sources.
 
         Args:
-            tle1: First or second line of TLE (line order doesn't matter)
-            tle2: Second or first line of TLE (line order doesn't matter)
-            begin: Start time (naive datetime treated as UTC)
-            end: End time (naive datetime treated as UTC)
+            tle1: First line of TLE (legacy method, use with tle2)
+            tle2: Second line of TLE (legacy method, use with tle1)
+            tle: Path to TLE file or URL to download TLE from
+            norad_id: NORAD catalog ID to fetch TLE from Celestrak
+            norad_name: Satellite name to fetch TLE from Celestrak
+            begin: Start time (naive datetime treated as UTC, required)
+            end: End time (naive datetime treated as UTC, required)
             step_size: Time step in seconds (default: 60)
             polar_motion: Whether to apply polar motion correction (default: False)
+
+        Note:
+            Must provide exactly one of: (tle1, tle2), tle, norad_id, or norad_name.
+            begin and end parameters are required.
         """
         ...
 
@@ -469,6 +479,16 @@ class TLEEphemeris:
     @property
     def gcrs_pv(self) -> PositionVelocityData:
         """Position and velocity data in GCRS frame"""
+        ...
+
+    @property
+    def sun_pv(self) -> PositionVelocityData:
+        """Sun position and velocity in GCRS frame"""
+        ...
+
+    @property
+    def moon_pv(self) -> PositionVelocityData:
+        """Moon position and velocity in GCRS frame"""
         ...
 
     @property
@@ -626,6 +646,27 @@ class TLEEphemeris:
         """
         ...
 
+    @property
+    def obsgeoloc(
+        self,
+    ) -> npt.NDArray[np.float64]:  # Returns NumPy array or None if unavailable
+        """
+        Observer geocentric location (GCRS position).
+
+        Returns position in km, compatible with astropy's GCRS frame obsgeoloc parameter.
+        """
+        ...
+
+    @property
+    def obsgeovel(self) -> npt.NDArray[np.float64]:  # Returns astropy quantity array
+        """Observer geocentric velocity (alias for GCRS velocity)"""
+        ...
+
+    @property
+    def tle_epoch(self) -> datetime:
+        """Epoch timestamp extracted from the TLE (UTC datetime or None if not available)"""
+        ...
+
 class SPICEEphemeris:
     """Ephemeris calculator using SPICE kernels"""
 
@@ -741,6 +782,36 @@ class SPICEEphemeris:
 
         Returns a NumPy array of datetime objects (not a list) for efficient indexing.
         This property is cached for performance - repeated access is ~90x faster.
+        """
+        ...
+
+    @property
+    def sun_pv(self) -> PositionVelocityData:
+        """Sun position and velocity in GCRS frame"""
+        ...
+
+    @property
+    def moon_pv(self) -> PositionVelocityData:
+        """Moon position and velocity in GCRS frame"""
+        ...
+
+    @property
+    def obsgeoloc(self) -> npt.NDArray[np.float64]:
+        """
+        Observer geocentric location (GCRS position).
+
+        Returns position in km, compatible with astropy's GCRS frame obsgeoloc parameter.
+        Shape: (N, 3) where N is the number of timestamps.
+        """
+        ...
+
+    @property
+    def obsgeovel(self) -> npt.NDArray[np.float64]:
+        """
+        Observer geocentric velocity (GCRS velocity).
+
+        Returns velocity in km/s, compatible with astropy's GCRS frame obsgeovel parameter.
+        Shape: (N, 3) where N is the number of timestamps.
         """
         ...
 
@@ -1247,28 +1318,58 @@ class GroundEphemeris:
         ...
 
     @property
-    def obsgeoloc(self) -> Any:  # Returns astropy quantity array
+    def obsgeoloc(self) -> npt.NDArray[np.float64]:  # Returns astropy quantity array
         """Observatory geocentric location for astropy"""
         ...
 
     @property
-    def obsgeovel(self) -> Any:  # Returns astropy quantity array
+    def obsgeovel(self) -> npt.NDArray[np.float64]:  # Returns astropy quantity array
         """Observatory geocentric velocity for astropy"""
         ...
 
     @property
-    def latitude(self) -> float:
-        """Geodetic latitude in degrees"""
+    def latitude(self) -> Any:  # Returns astropy.units.Quantity
+        """Geodetic latitude as an astropy Quantity array (degrees), one per timestamp"""
         ...
 
     @property
-    def longitude(self) -> float:
-        """Geodetic longitude in degrees"""
+    def latitude_deg(self) -> npt.NDArray[np.float64]:
+        """Geodetic latitude in degrees as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def latitude_rad(self) -> npt.NDArray[np.float64]:
+        """Geodetic latitude in radians as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def longitude(self) -> Any:  # Returns astropy.units.Quantity
+        """Geodetic longitude as an astropy Quantity array (degrees), one per timestamp"""
+        ...
+
+    @property
+    def longitude_deg(self) -> npt.NDArray[np.float64]:
+        """Geodetic longitude in degrees as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def longitude_rad(self) -> npt.NDArray[np.float64]:
+        """Geodetic longitude in radians as a raw NumPy array (one per timestamp)"""
         ...
 
     @property
     def height(self) -> Any:  # Returns astropy.units.Quantity
-        """Altitude as an astropy Quantity (meters), one per timestamp"""
+        """Geodetic height above the WGS84 ellipsoid as an astropy Quantity array (meters), one per timestamp"""
+        ...
+
+    @property
+    def height_m(self) -> npt.NDArray[np.float64]:
+        """Geodetic height above the WGS84 ellipsoid as a raw NumPy array in meters (one per timestamp)"""
+        ...
+
+    @property
+    def height_km(self) -> npt.NDArray[np.float64]:
+        """Geodetic height above the WGS84 ellipsoid as a raw NumPy array in kilometers (one per timestamp)"""
         ...
 
     @property
@@ -1282,18 +1383,6 @@ class GroundEphemeris:
         Returns:
             astropy Quantity array with units of degrees
         """
-        ...
-
-    @property
-    def height_m(self) -> npt.NDArray[np.float64]:
-        """
-        Altitude in meters as a raw NumPy array (one per timestamp)
-        """
-        ...
-
-    @property
-    def height_km(self) -> npt.NDArray[np.float64]:
-        """Altitude in kilometers as a raw NumPy array (one per timestamp)"""
         ...
 
     @property
