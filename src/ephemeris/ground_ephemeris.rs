@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 
 use crate::ephemeris::ephemeris_common::{generate_timestamps, EphemerisBase, EphemerisData};
 use crate::ephemeris::position_velocity::PositionVelocityData;
+use crate::utils::config::OMEGA_EARTH;
 use crate::utils::conversions::{self, Frame};
 use crate::utils::to_skycoord::AstropyModules;
 
@@ -432,9 +433,6 @@ impl GroundEphemeris {
         let x = (n + h_km) * lat_rad.cos() * lon_rad.cos();
         let y = (n + h_km) * lat_rad.cos() * lon_rad.sin();
         let z = (n * (1.0 - E_SQ) + h_km) * lat_rad.sin();
-
-        // Earth's rotation rate (rad/s)
-        const OMEGA_EARTH: f64 = 7.292115e-5;
 
         // Velocity due to Earth's rotation (km/s)
         // v = omega × r, where omega is along z-axis

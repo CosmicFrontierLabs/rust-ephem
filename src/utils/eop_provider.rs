@@ -5,7 +5,7 @@
 //!
 //! Data is downloaded from JPL's EOP2 service and cached for reuse.
 
-use crate::utils::config::ARCSEC_TO_RAD;
+use crate::utils::config::{ARCSEC_TO_RAD, MJD_UNIX_EPOCH, SECONDS_PER_DAY};
 use crate::utils::eop_cache::load_or_download_eop2_text;
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
@@ -122,8 +122,6 @@ impl EopProvider {
         // MJD = JD - 2400000.5
         // JD for Unix epoch (1970-01-01 00:00:00) = 2440587.5
         // MJD for Unix epoch = 40587.0
-        const MJD_UNIX_EPOCH: f64 = 40587.0;
-        const SECONDS_PER_DAY: f64 = 86400.0;
 
         let unix_seconds = dt.timestamp() as f64;
         let unix_nanos = dt.timestamp_subsec_nanos() as f64;

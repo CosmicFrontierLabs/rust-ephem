@@ -7,7 +7,7 @@
 //! - Fetching TLEs from Celestrak by NORAD ID or name
 //! - Extracting TLE epoch information
 
-use crate::utils::config::CACHE_DIR;
+use crate::utils::config::{CACHE_DIR, CELESTRAK_API_BASE, TLE_CACHE_TTL};
 #[allow(unused_imports)]
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use std::error::Error;
@@ -15,12 +15,6 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
-
-/// Celestrak GP TLE API endpoint
-const CELESTRAK_API_BASE: &str = "https://celestrak.org/NORAD/elements/gp.php";
-
-/// TTL for cached TLE downloads (24 hours)
-const TLE_CACHE_TTL: u64 = 86_400;
 
 /// Result of parsing a TLE - contains the two lines and optional satellite name
 #[derive(Debug, Clone)]
@@ -154,17 +148,17 @@ fn try_read_fresh_cache(path: &Path, ttl: Duration) -> Option<String> {
 /// Save TLE content to cache
 fn save_to_cache(path: &Path, content: &str) {
     if let Some(parent) = path.parent() {
-        if let Err(e) = fs::create_dir_all(parent) {
+        if let Err(_e) = fs::create_dir_all(parent) {
             // Log error but don't fail - caching is optional
             #[cfg(debug_assertions)]
-            eprintln!("Warning: Failed to create TLE cache directory: {}", e);
+            eprintln!("Warning: Failed to create TLE cache directory: {}", _e);
             return;
         }
     }
-    if let Err(e) = fs::File::create(path).and_then(|mut f| f.write_all(content.as_bytes())) {
+    if let Err(_e) = fs::File::create(path).and_then(|mut f| f.write_all(content.as_bytes())) {
         // Log error but don't fail - caching is optional
         #[cfg(debug_assertions)]
-        eprintln!("Warning: Failed to write TLE to cache: {}", e);
+        eprintln!("Warning: Failed to write TLE to cache: {}", _e);
     }
 }
 
