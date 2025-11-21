@@ -19,10 +19,24 @@ set and obtain positions in different frames.
     end = dt.datetime(2024, 1, 1, 1, 0, 0, tzinfo=dt.timezone.utc)
     step_size = 60  # seconds
 
-    # Create ephemeris from TLE
-    # All frames are pre-computed during initialization
+    # Create ephemeris from TLE - several methods available:
+    
+    # Method 1: Direct TLE strings (legacy)
     sat = re.TLEEphemeris(tle1, tle2, begin, end, step_size, polar_motion=False)
+    
+    # Method 2: From file path
+    # sat = re.TLEEphemeris(tle="path/to/tle_file.txt", begin=begin, end=end, step_size=step_size)
+    
+    # Method 3: From URL (with caching)
+    # sat = re.TLEEphemeris(tle="https://celestrak.org/NORAD/elements/gp.php?CATNR=25544", begin=begin, end=end, step_size=step_size)
+    
+    # Method 4: From NORAD ID (fetches from Celestrak)
+    # sat = re.TLEEphemeris(norad_id=25544, begin=begin, end=end, step_size=step_size)
+    
+    # Method 5: From satellite name (fetches from Celestrak)
+    # sat = re.TLEEphemeris(norad_name="ISS (ZARYA)", begin=begin, end=end, step_size=step_size)
 
+    # All frames are pre-computed during initialization
     # Access pre-computed frames (PositionVelocityData objects)
     pv_teme = sat.teme_pv
     pv_itrs = sat.itrs_pv
@@ -60,4 +74,6 @@ TLEEphemeris Notes
   7–8 km/s.
 - All coordinate frames are pre-computed during initialization for efficiency.
 - The ``polar_motion`` parameter enables polar motion corrections (requires EOP data).
+- TLE data can be provided in multiple ways: direct strings, file paths, URLs, NORAD IDs, or satellite names.
+- File and URL TLE sources are cached locally for improved performance on subsequent uses.
 - See tests under ``tests/`` for more examples and validation.
