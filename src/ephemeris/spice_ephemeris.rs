@@ -282,6 +282,102 @@ impl SPICEEphemeris {
         self.get_obsgeovel(py)
     }
 
+    /// Get the SPK file path
+    #[getter]
+    fn spk_path(&self) -> &str {
+        &self.spk_path
+    }
+
+    /// Get the NAIF ID of the target body
+    #[getter]
+    fn naif_id(&self) -> i32 {
+        self.naif_id
+    }
+
+    /// Get the NAIF ID of the center body
+    #[getter]
+    fn center_id(&self) -> i32 {
+        self.center_id
+    }
+
+    /// Get the start time of the ephemeris
+    #[getter]
+    fn begin(&self, py: Python) -> PyResult<Py<PyAny>> {
+        if let Some(times) = &self.common_data.times {
+            if let Some(first_time) = times.first() {
+                let dt = pyo3::types::PyDateTime::new(
+                    py,
+                    first_time.year(),
+                    first_time.month() as u8,
+                    first_time.day() as u8,
+                    first_time.hour() as u8,
+                    first_time.minute() as u8,
+                    first_time.second() as u8,
+                    first_time.timestamp_subsec_micros(),
+                    None,
+                )?;
+                let datetime_mod = py.import("datetime")?;
+                let utc_tz = datetime_mod.getattr("timezone")?.getattr("utc")?;
+                let kwargs = pyo3::types::PyDict::new(py);
+                kwargs.set_item("tzinfo", utc_tz)?;
+                let dt_with_tz = dt.call_method("replace", (), Some(&kwargs))?;
+                return Ok(dt_with_tz.into());
+            }
+        }
+        Err(pyo3::exceptions::PyValueError::new_err(
+            "No times available",
+        ))
+    }
+
+    /// Get the end time of the ephemeris
+    #[getter]
+    fn end(&self, py: Python) -> PyResult<Py<PyAny>> {
+        if let Some(times) = &self.common_data.times {
+            if let Some(last_time) = times.last() {
+                let dt = pyo3::types::PyDateTime::new(
+                    py,
+                    last_time.year(),
+                    last_time.month() as u8,
+                    last_time.day() as u8,
+                    last_time.hour() as u8,
+                    last_time.minute() as u8,
+                    last_time.second() as u8,
+                    last_time.timestamp_subsec_micros(),
+                    None,
+                )?;
+                let datetime_mod = py.import("datetime")?;
+                let utc_tz = datetime_mod.getattr("timezone")?.getattr("utc")?;
+                let kwargs = pyo3::types::PyDict::new(py);
+                kwargs.set_item("tzinfo", utc_tz)?;
+                let dt_with_tz = dt.call_method("replace", (), Some(&kwargs))?;
+                return Ok(dt_with_tz.into());
+            }
+        }
+        Err(pyo3::exceptions::PyValueError::new_err(
+            "No times available",
+        ))
+    }
+
+    /// Get the time step size in seconds
+    #[getter]
+    fn step_size(&self) -> PyResult<i64> {
+        if let Some(times) = &self.common_data.times {
+            if times.len() >= 2 {
+                let step = times[1].signed_duration_since(times[0]);
+                return Ok(step.num_seconds());
+            }
+        }
+        Err(pyo3::exceptions::PyValueError::new_err(
+            "Cannot compute step size",
+        ))
+    }
+
+    /// Get whether polar motion correction is applied
+    #[getter]
+    fn polar_motion(&self) -> bool {
+        self.polar_motion
+    }
+
     /// Get position and velocity for any solar system body
     ///
     /// Analogous to astropy's `get_body()` function. Returns position and velocity

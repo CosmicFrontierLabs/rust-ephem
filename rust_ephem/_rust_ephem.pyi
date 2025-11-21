@@ -397,6 +397,41 @@ class TLEEphemeris:
         ...
 
     @property
+    def tle1(self) -> str:
+        """First line of the TLE"""
+        ...
+
+    @property
+    def tle2(self) -> str:
+        """Second line of the TLE"""
+        ...
+
+    @property
+    def begin(self) -> datetime:
+        """Start time of the ephemeris"""
+        ...
+
+    @property
+    def end(self) -> datetime:
+        """End time of the ephemeris"""
+        ...
+
+    @property
+    def step_size(self) -> int:
+        """Time step in seconds"""
+        ...
+
+    @property
+    def polar_motion(self) -> bool:
+        """Whether polar motion correction is applied"""
+        ...
+
+    @property
+    def tle_epoch(self) -> datetime:
+        """Epoch timestamp extracted from the TLE (UTC datetime)"""
+        ...
+
+    @property
     def teme_pv(self) -> PositionVelocityData:
         """Position and velocity data in TEME frame"""
         ...
@@ -662,11 +697,6 @@ class TLEEphemeris:
         """Observer geocentric velocity (alias for GCRS velocity)"""
         ...
 
-    @property
-    def tle_epoch(self) -> datetime:
-        """Epoch timestamp extracted from the TLE (UTC datetime or None if not available)"""
-        ...
-
 class SPICEEphemeris:
     """Ephemeris calculator using SPICE kernels"""
 
@@ -693,6 +723,41 @@ class SPICEEphemeris:
             center_id: NAIF ID of the observer/center (default: 399 = Earth)
             polar_motion: Whether to apply polar motion correction (default: False)
         """
+        ...
+
+    @property
+    def spk_path(self) -> str:
+        """Path to SPICE SPK kernel file"""
+        ...
+
+    @property
+    def naif_id(self) -> int:
+        """NAIF ID of the target body"""
+        ...
+
+    @property
+    def center_id(self) -> int:
+        """NAIF ID of the observer/center body"""
+        ...
+
+    @property
+    def begin(self) -> datetime:
+        """Start time of the ephemeris"""
+        ...
+
+    @property
+    def end(self) -> datetime:
+        """End time of the ephemeris"""
+        ...
+
+    @property
+    def step_size(self) -> int:
+        """Time step in seconds"""
+        ...
+
+    @property
+    def polar_motion(self) -> bool:
+        """Whether polar motion correction is applied"""
         ...
 
     @property
@@ -973,6 +1038,31 @@ class OEMEphemeris:
             ValueError: If OEM file cannot be parsed, time range exceeds available data,
                        reference frame is missing, or reference frame is incompatible with GCRS
         """
+        ...
+
+    @property
+    def oem_path(self) -> str:
+        """Path to the CCSDS OEM file"""
+        ...
+
+    @property
+    def begin(self) -> datetime:
+        """Start time of ephemeris"""
+        ...
+
+    @property
+    def end(self) -> datetime:
+        """End time of ephemeris"""
+        ...
+
+    @property
+    def step_size(self) -> int:
+        """Time step in seconds"""
+        ...
+
+    @property
+    def polar_motion(self) -> bool:
+        """Whether polar motion correction is applied"""
         ...
 
     @property
@@ -1260,6 +1350,41 @@ class GroundEphemeris:
             step_size: Time step in seconds (default: 60)
             polar_motion: Whether to apply polar motion correction (default: False)
         """
+        ...
+
+    @property
+    def input_latitude(self) -> float:
+        """Input geodetic latitude in degrees"""
+        ...
+
+    @property
+    def input_longitude(self) -> float:
+        """Input geodetic longitude in degrees"""
+        ...
+
+    @property
+    def input_height(self) -> float:
+        """Input altitude in meters above WGS84 ellipsoid"""
+        ...
+
+    @property
+    def begin(self) -> datetime:
+        """Start time of ephemeris"""
+        ...
+
+    @property
+    def end(self) -> datetime:
+        """End time of ephemeris"""
+        ...
+
+    @property
+    def step_size(self) -> int:
+        """Time step in seconds"""
+        ...
+
+    @property
+    def polar_motion(self) -> bool:
+        """Whether polar motion correction is applied"""
         ...
 
     @property
