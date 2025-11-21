@@ -638,7 +638,12 @@ class TLEEphemeris:
 
     @property
     def obsgeoloc(self) -> Any:  # Returns astropy quantity array
-        """Observer geocentric location (alias for GCRS position)"""
+        """
+        Observer geocentric location (GCRS position).
+
+        Returns position in km, compatible with astropy's GCRS frame obsgeoloc parameter.
+        Shape: (N, 3) where N is the number of timestamps.
+        """
         ...
 
     @property
