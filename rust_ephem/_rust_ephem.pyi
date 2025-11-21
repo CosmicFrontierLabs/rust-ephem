@@ -642,12 +642,12 @@ class TLEEphemeris:
         Observer geocentric location (GCRS position).
 
         Returns position in km, compatible with astropy's GCRS frame obsgeoloc parameter.
-        Shape: (N, 3) where N is the number of timestamps.
-        """
+    def obsgeoloc(self) -> npt.NDArray[np.float64] | None:  # Returns a NumPy array or None if unavailable
+        """Observer geocentric location (alias for GCRS position)"""
         ...
 
     @property
-    def obsgeovel(self) -> Any:  # Returns astropy quantity array
+    def obsgeovel(self) -> npt.NDArray[np.float64] | None:  # Returns a NumPy array or None if unavailable
         """
         Observer geocentric velocity (GCRS velocity).
 
