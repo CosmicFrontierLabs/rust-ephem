@@ -643,7 +643,12 @@ class TLEEphemeris:
 
     @property
     def obsgeovel(self) -> Any:  # Returns astropy quantity array
-        """Observer geocentric velocity (alias for GCRS velocity)"""
+        """
+        Observer geocentric velocity (GCRS velocity).
+
+        Returns velocity in km/s, compatible with astropy's GCRS frame obsgeovel parameter.
+        Shape: (N, 3) where N is the number of timestamps.
+        """
         ...
 
     @property
