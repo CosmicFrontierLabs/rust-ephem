@@ -365,24 +365,34 @@ class TLEEphemeris:
 
     def __init__(
         self,
-        tle1: str,
-        tle2: str,
-        begin: datetime,
-        end: datetime,
+        tle1: str | None = None,
+        tle2: str | None = None,
+        begin: datetime | None = None,
+        end: datetime | None = None,
         step_size: int = 60,
         *,
         polar_motion: bool = False,
+        tle: str | None = None,
+        norad_id: int | None = None,
+        norad_name: str | None = None,
     ) -> None:
         """
-        Initialize TLE ephemeris from TLE lines.
+        Initialize TLE ephemeris from various TLE sources.
 
         Args:
-            tle1: First or second line of TLE (line order doesn't matter)
-            tle2: Second or first line of TLE (line order doesn't matter)
-            begin: Start time (naive datetime treated as UTC)
-            end: End time (naive datetime treated as UTC)
+            tle1: First line of TLE (legacy method, use with tle2)
+            tle2: Second line of TLE (legacy method, use with tle1)
+            tle: Path to TLE file or URL to download TLE from
+            norad_id: NORAD catalog ID to fetch TLE from Celestrak
+            norad_name: Satellite name to fetch TLE from Celestrak
+            begin: Start time (naive datetime treated as UTC, required)
+            end: End time (naive datetime treated as UTC, required)
             step_size: Time step in seconds (default: 60)
             polar_motion: Whether to apply polar motion correction (default: False)
+
+        Note:
+            Must provide exactly one of: (tle1, tle2), tle, norad_id, or norad_name.
+            begin and end parameters are required.
         """
         ...
 
@@ -624,6 +634,21 @@ class TLEEphemeris:
             >>> idx = eph.index(target_time)
             >>> position = eph.gcrs_pv.position[idx]
         """
+        ...
+
+    @property
+    def obsgeoloc(self) -> Any:  # Returns astropy quantity array
+        """Observer geocentric location (alias for GCRS position)"""
+        ...
+
+    @property
+    def obsgeovel(self) -> Any:  # Returns astropy quantity array
+        """Observer geocentric velocity (alias for GCRS velocity)"""
+        ...
+
+    @property
+    def tle_epoch(self) -> datetime | None:
+        """Epoch timestamp extracted from the TLE (UTC datetime or None if not available)"""
         ...
 
 class SPICEEphemeris:
