@@ -60,6 +60,40 @@ class RustConstraintMixin(BaseModel):
             ephemeris, target_ra, target_dec, times, indices
         )
 
+    def evaluate_batch(
+        self,
+        ephemeris: Union[
+            "TLEEphemeris", "SPICEEphemeris", "GroundEphemeris", "OEMEphemeris"
+        ],
+        target_ras: List[float],
+        target_decs: List[float],
+        times: Union[datetime, list[datetime], None] = None,
+        indices: Union[int, list[int], None] = None,
+    ):
+        """
+        Evaluate the constraint for multiple targets at once (vectorized).
+
+        This method lazily creates the corresponding Rust constraint
+        object on first use and evaluates it for multiple RA/Dec positions.
+
+        Args:
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+            target_ras: List of target right ascensions in degrees (ICRS/J2000)
+            target_decs: List of target declinations in degrees (ICRS/J2000)
+            times: Optional specific time(s) to evaluate
+            indices: Optional specific time index/indices to evaluate
+
+        Returns:
+            2D numpy array of shape (n_targets, n_times) with boolean violation status
+        """
+        if not hasattr(self, "_rust_constraint"):
+            from rust_ephem import Constraint
+
+            self._rust_constraint = Constraint.from_json(self.model_dump_json())
+        return self._rust_constraint.evaluate_batch(
+            ephemeris, target_ras, target_decs, times, indices
+        )
+
     def in_constraint(
         self,
         time: datetime,
