@@ -1,7 +1,8 @@
 /// Earth limb avoidance constraint implementation
 use super::core::{ConstraintConfig, ConstraintEvaluator, ConstraintResult, ConstraintViolation};
 use crate::utils::vector_math::{
-    dot_product, normalize_vector, radec_to_unit_vector, vector_magnitude,
+    dot_product, normalize_vector, radec_to_unit_vector, radec_to_unit_vectors_batch,
+    vector_magnitude,
 };
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
@@ -192,5 +193,90 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    /// Vectorized batch evaluation - MUCH faster than calling evaluate() in a loop
+    fn evaluate_batch(
+        &self,
+        times: &[DateTime<Utc>],
+        target_ras: &[f64],
+        target_decs: &[f64],
+        _sun_positions: &Array2<f64>,
+        _moon_positions: &Array2<f64>,
+        observer_positions: &Array2<f64>,
+    ) -> pyo3::PyResult<Array2<bool>> {
+        // Earth radius in km
+        const EARTH_RADIUS: f64 = 6378.137;
+
+        // Validate inputs
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+
+        // Convert all target RA/Dec to unit vectors at once
+        let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
+
+        let n_targets = target_ras.len();
+        let n_times = times.len();
+        let mut result = Array2::<bool>::from_elem((n_targets, n_times), true);
+
+        // Pre-compute thresholds for each time point (they're the same for all targets)
+        let mut thresholds = vec![0.0; n_times];
+        for t in 0..n_times {
+            let obs_pos = [
+                observer_positions[[t, 0]],
+                observer_positions[[t, 1]],
+                observer_positions[[t, 2]],
+            ];
+
+            let r = vector_magnitude(&obs_pos);
+            let ratio = (EARTH_RADIUS / r).clamp(-1.0, 1.0);
+            let earth_ang_radius_deg = ratio.asin().to_degrees();
+
+            let horizon_dip_correction = if self.horizon_dip && (r - EARTH_RADIUS).abs() < 100.0 {
+                let dip_angle_deg = (EARTH_RADIUS / r).clamp(-1.0, 1.0).acos().to_degrees();
+                let refraction = if self.include_refraction { 0.57 } else { 0.0 };
+                dip_angle_deg + refraction
+            } else {
+                0.0
+            };
+
+            thresholds[t] = earth_ang_radius_deg + self.min_angle_deg + horizon_dip_correction;
+        }
+
+        // Vectorized evaluation for each target
+        for i in 0..n_targets {
+            let target_vec = [
+                target_vectors[[i, 0]],
+                target_vectors[[i, 1]],
+                target_vectors[[i, 2]],
+            ];
+
+            for t in 0..n_times {
+                let obs_pos = [
+                    observer_positions[[t, 0]],
+                    observer_positions[[t, 1]],
+                    observer_positions[[t, 2]],
+                ];
+
+                // Calculate angle from Earth center direction
+                let center_unit = normalize_vector(&[-obs_pos[0], -obs_pos[1], -obs_pos[2]]);
+                let cos_angle = dot_product(&target_vec, &center_unit);
+                let angle_deg = cos_angle.clamp(-1.0, 1.0).acos().to_degrees();
+
+                // Check constraint - INVERTED: false = satisfied, true = violated
+                let is_violated = if let Some(max_angle) = self.max_angle_deg {
+                    angle_deg < thresholds[t] || angle_deg > max_angle
+                } else {
+                    angle_deg < thresholds[t]
+                };
+
+                result[[i, t]] = is_violated;
+            }
+        }
+
+        Ok(result)
     }
 }
