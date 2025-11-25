@@ -142,6 +142,7 @@ pub fn radec_to_unit_vectors_batch(ras_deg: &[f64], decs_deg: &[f64]) -> Array2<
 ///
 /// # Returns
 /// Array1 with shape (N,) containing angular separations in degrees
+#[allow(dead_code)]
 pub fn calculate_angular_separations_batch(
     target_vectors: &Array2<f64>,
     body_position: &[f64; 3],
@@ -185,6 +186,7 @@ pub fn calculate_angular_separations_batch(
 ///
 /// # Returns
 /// Array2 with shape (N_targets, N_times) containing angular separations in degrees
+#[allow(dead_code)]
 pub fn calculate_angular_separations_batch_times(
     target_vectors: &Array2<f64>,
     body_positions: &Array2<f64>,
