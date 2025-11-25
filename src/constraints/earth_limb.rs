@@ -222,8 +222,11 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         let n_times = times.len();
         let mut result = Array2::<bool>::from_elem((n_targets, n_times), true);
 
-        // Pre-compute thresholds for each time point (they're the same for all targets)
+        // Pre-compute thresholds and center unit vectors for each time point
+        // These only depend on time, not on target, so compute once and reuse
         let mut thresholds = vec![0.0; n_times];
+        let mut center_units = vec![[0.0; 3]; n_times];
+
         for t in 0..n_times {
             let obs_pos = [
                 observer_positions[[t, 0]],
@@ -244,6 +247,9 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
             };
 
             thresholds[t] = earth_ang_radius_deg + self.min_angle_deg + horizon_dip_correction;
+
+            // Pre-compute Earth center direction unit vector
+            center_units[t] = normalize_vector(&[-obs_pos[0], -obs_pos[1], -obs_pos[2]]);
         }
 
         // Vectorized evaluation for each target
@@ -255,15 +261,8 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
             ];
 
             for t in 0..n_times {
-                let obs_pos = [
-                    observer_positions[[t, 0]],
-                    observer_positions[[t, 1]],
-                    observer_positions[[t, 2]],
-                ];
-
-                // Calculate angle from Earth center direction
-                let center_unit = normalize_vector(&[-obs_pos[0], -obs_pos[1], -obs_pos[2]]);
-                let cos_angle = dot_product(&target_vec, &center_unit);
+                // Use pre-computed center unit vector
+                let cos_angle = dot_product(&target_vec, &center_units[t]);
                 let angle_deg = cos_angle.clamp(-1.0, 1.0).acos().to_degrees();
 
                 // Check constraint - INVERTED: false = satisfied, true = violated
