@@ -220,7 +220,8 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
 
         let n_targets = target_ras.len();
         let n_times = times.len();
-        let mut result = Array2::<bool>::from_elem((n_targets, n_times), true);
+        // Initialize to false (not violated) for consistency with default implementation
+        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
 
         // Pre-compute thresholds and center unit vectors for each time point
         // These only depend on time, not on target, so compute once and reuse
