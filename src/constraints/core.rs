@@ -377,31 +377,63 @@ pub trait ConstraintEvaluator: Send + Sync {
 
 /// Macro to generate common methods for proximity evaluators
 /// This is exported so constraint modules can use it
-#[macro_export]
-macro_rules! impl_proximity_evaluator_helpers {
-    ($evaluator:ty, $body_name:expr, $friendly_name:expr) => {
+macro_rules! impl_proximity_evaluator {
+    ($evaluator:ty, $body_name:expr, $friendly_name:expr, $positions:ident) => {
         impl $evaluator {
-            fn final_violation_description(&self) -> String {
-                match self.max_angle_deg {
-                    Some(max) => format!(
-                        "Target too close to {} (min: {:.1}°) or too far (max: {:.1}°)",
-                        $friendly_name, self.min_angle_deg, max
-                    ),
-                    None => format!(
-                        "Target too close to {} (min allowed: {:.1}°)",
-                        $friendly_name, self.min_angle_deg
-                    ),
-                }
-            }
+            fn evaluate_common(
+                &self,
+                times: &[DateTime<Utc>],
+                target_ra_dec: (f64, f64),
+                $positions: &Array2<f64>,
+                observer_positions: &Array2<f64>,
+                final_desc_fn: impl Fn() -> String,
+                intermediate_desc_fn: impl Fn() -> String,
+            ) -> ConstraintResult {
+                // Cache target vector computation outside the loop
+                let target_vec = crate::utils::vector_math::radec_to_unit_vector(
+                    target_ra_dec.0,
+                    target_ra_dec.1,
+                );
 
-            fn format_name(&self) -> String {
-                match self.max_angle_deg {
-                    Some(max) => format!(
-                        "{}Proximity(min={}°, max={}°)",
-                        $body_name, self.min_angle_deg, max
-                    ),
-                    None => format!("{}Proximity(min={}°)", $body_name, self.min_angle_deg),
-                }
+                let violations = track_violations(
+                    times,
+                    |i| {
+                        let body_pos = [$positions[[i, 0]], $positions[[i, 1]], $positions[[i, 2]]];
+                        let obs_pos = [
+                            observer_positions[[i, 0]],
+                            observer_positions[[i, 1]],
+                            observer_positions[[i, 2]],
+                        ];
+                        let angle_deg = crate::utils::vector_math::calculate_angular_separation(
+                            &target_vec,
+                            &body_pos,
+                            &obs_pos,
+                        );
+
+                        let is_violated = angle_deg < self.min_angle_deg
+                            || self.max_angle_deg.is_some_and(|max| angle_deg > max);
+
+                        let severity = if angle_deg < self.min_angle_deg {
+                            (self.min_angle_deg - angle_deg) / self.min_angle_deg
+                        } else if let Some(max) = self.max_angle_deg {
+                            (angle_deg - max) / max
+                        } else {
+                            0.0
+                        };
+
+                        (is_violated, severity)
+                    },
+                    |_, is_final| {
+                        if is_final {
+                            final_desc_fn()
+                        } else {
+                            intermediate_desc_fn()
+                        }
+                    },
+                );
+
+                let all_satisfied = violations.is_empty();
+                ConstraintResult::new(violations, all_satisfied, self.name(), times.to_vec())
             }
         }
     };
