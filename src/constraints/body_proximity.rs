@@ -81,7 +81,7 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
         target_decs: &[f64],
         sun_positions: &Array2<f64>,
         _moon_positions: &Array2<f64>,
-        _observer_positions: &Array2<f64>,
+        observer_positions: &Array2<f64>,
     ) -> pyo3::PyResult<Array2<bool>> {
         // Body proximity uses sun_positions slot for body positions (passed from wrapper)
         // This is vectorized like sun_proximity
@@ -118,11 +118,21 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
                     sun_positions[[j, 1]],
                     sun_positions[[j, 2]],
                 ];
+                let obs_pos = [
+                    observer_positions[[j, 0]],
+                    observer_positions[[j, 1]],
+                    observer_positions[[j, 2]],
+                ];
 
-                // Normalize body position
-                let body_dist = (body_pos[0] * body_pos[0]
-                    + body_pos[1] * body_pos[1]
-                    + body_pos[2] * body_pos[2])
+                // Compute relative body position from observer
+                let body_rel = [
+                    body_pos[0] - obs_pos[0],
+                    body_pos[1] - obs_pos[1],
+                    body_pos[2] - obs_pos[2],
+                ];
+                let body_dist = (body_rel[0] * body_rel[0]
+                    + body_rel[1] * body_rel[1]
+                    + body_rel[2] * body_rel[2])
                     .sqrt();
 
                 if body_dist == 0.0 {
@@ -130,9 +140,9 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
                 }
 
                 let body_unit = [
-                    body_pos[0] / body_dist,
-                    body_pos[1] / body_dist,
-                    body_pos[2] / body_dist,
+                    body_rel[0] / body_dist,
+                    body_rel[1] / body_dist,
+                    body_rel[2] / body_dist,
                 ];
 
                 // Dot product
