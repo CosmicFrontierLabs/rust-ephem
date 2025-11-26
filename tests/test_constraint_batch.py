@@ -35,7 +35,7 @@ def test_sun_proximity_batch():
     target_decs = [0.0, 30.0, -30.0, 60.0]
 
     # Evaluate for all targets at once
-    result = constraint.evaluate_batch(ephem, target_ras, target_decs)
+    result = constraint.in_constraint_batch(ephem, target_ras, target_decs)
 
     # Check result shape
     assert result.shape == (4, 3), f"Expected shape (4, 3), got {result.shape}"
@@ -83,7 +83,7 @@ def test_batch_with_times_filter():
         datetime.datetime(2024, 1, 1, 3, 0, 0, tzinfo=datetime.timezone.utc),
     ]
 
-    result = constraint.evaluate_batch(ephem, target_ras, target_decs, times=times)
+    result = constraint.in_constraint_batch(ephem, target_ras, target_decs, times=times)
 
     # Should have 3 targets x 2 times
     assert result.shape == (3, 2), f"Expected shape (3, 2), got {result.shape}"
@@ -111,7 +111,9 @@ def test_batch_with_indices_filter():
     # Only evaluate at specific indices
     indices = [0, 2, 4]
 
-    result = constraint.evaluate_batch(ephem, target_ras, target_decs, indices=indices)
+    result = constraint.in_constraint_batch(
+        ephem, target_ras, target_decs, indices=indices
+    )
 
     # Should have 2 targets x 3 times
     assert result.shape == (2, 3), f"Expected shape (2, 3), got {result.shape}"
@@ -139,7 +141,7 @@ def test_batch_mismatched_array_lengths():
     with pytest.raises(
         ValueError, match="target_ras and target_decs must have the same length"
     ):
-        constraint.evaluate_batch(ephem, target_ras, target_decs)
+        constraint.in_constraint_batch(ephem, target_ras, target_decs)
 
 
 def test_batch_empty_arrays():
@@ -158,7 +160,7 @@ def test_batch_empty_arrays():
     constraint = SunConstraint(min_angle=45.0)
 
     # Empty arrays
-    result = constraint.evaluate_batch(ephem, [], [])
+    result = constraint.in_constraint_batch(ephem, [], [])
 
     # Should return empty array with correct shape (0, 3)
     assert result.shape == (0, 3), f"Expected shape (0, 3), got {result.shape}"
@@ -183,7 +185,7 @@ def test_batch_single_target():
     dec = -23.67
 
     # Single target batch evaluation
-    batch_result = constraint.evaluate_batch(ephem, [ra], [dec])
+    batch_result = constraint.in_constraint_batch(ephem, [ra], [dec])
 
     # Regular evaluation
     single_result = constraint.evaluate(ephem, ra, dec).constraint_array
@@ -218,7 +220,7 @@ def test_earth_limb_batch():
     target_decs = [89.0, 60.0, 30.0, 0.0, -30.0, -60.0, 0.0, 45.0]
 
     # Evaluate for all targets at once
-    result = constraint.evaluate_batch(ephem, target_ras, target_decs)
+    result = constraint.in_constraint_batch(ephem, target_ras, target_decs)
 
     # Check result shape: 8 targets × 7 time points
     assert result.shape == (8, 7), f"Expected shape (8, 7), got {result.shape}"
@@ -260,7 +262,7 @@ def test_earth_limb_batch_with_max_angle():
     target_ras = [0.0, 90.0, 180.0, 270.0]
     target_decs = [60.0, 30.0, -30.0, 0.0]
 
-    result = constraint.evaluate_batch(ephem, target_ras, target_decs)
+    result = constraint.in_constraint_batch(ephem, target_ras, target_decs)
 
     assert result.shape == (4, 3), f"Expected shape (4, 3), got {result.shape}"
 
@@ -307,7 +309,7 @@ def test_earth_limb_batch_large_scale():
     assert len(target_ras) == 648
 
     # Evaluate all targets at once
-    result = constraint.evaluate_batch(ephem, target_ras, target_decs)
+    result = constraint.in_constraint_batch(ephem, target_ras, target_decs)
 
     # Check shape: 648 targets × 7 time points
     assert result.shape == (648, 7), f"Expected shape (648, 7), got {result.shape}"

@@ -340,10 +340,10 @@ pub trait ConstraintEvaluator: Send + Sync {
         observer_positions: &Array2<f64>,
     ) -> ConstraintResult;
 
-    /// Evaluate the constraint for multiple RA/Dec positions
+    /// Check if targets are in-constraint for multiple RA/Dec positions (vectorized)
     ///
     /// This method provides vectorized evaluation for multiple targets,
-    /// returning a 2D array of constraint violations where:
+    /// returning a 2D array of constraint satisfaction where:
     /// - Rows correspond to different RA/Dec positions
     /// - Columns correspond to time indices
     ///
@@ -358,7 +358,7 @@ pub trait ConstraintEvaluator: Send + Sync {
     /// # Returns
     /// 2D boolean array (M x N) where True indicates constraint violation
     /// at that (target, time) combination
-    fn evaluate_batch(
+    fn in_constraint_batch(
         &self,
         times: &[DateTime<Utc>],
         target_ras: &[f64],
@@ -366,37 +366,7 @@ pub trait ConstraintEvaluator: Send + Sync {
         sun_positions: &Array2<f64>,
         moon_positions: &Array2<f64>,
         observer_positions: &Array2<f64>,
-    ) -> PyResult<Array2<bool>> {
-        // Default implementation: loop over each RA/Dec and call evaluate
-        if target_ras.len() != target_decs.len() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_ras and target_decs must have the same length",
-            ));
-        }
-
-        let n_targets = target_ras.len();
-        let n_times = times.len();
-        let mut result = Array2::from_elem((n_targets, n_times), false);
-
-        for (i, (&ra, &dec)) in target_ras.iter().zip(target_decs.iter()).enumerate() {
-            let constraint_result = self.evaluate(
-                times,
-                ra,
-                dec,
-                sun_positions,
-                moon_positions,
-                observer_positions,
-            );
-
-            // Convert constraint violations to boolean array
-            let violated_vec = constraint_result._compute_constraint_vec();
-            for (j, &violated) in violated_vec.iter().enumerate() {
-                result[[i, j]] = violated;
-            }
-        }
-
-        Ok(result)
-    }
+    ) -> PyResult<Array2<bool>>;
 
     /// Get constraint name
     fn name(&self) -> String;
@@ -407,31 +377,63 @@ pub trait ConstraintEvaluator: Send + Sync {
 
 /// Macro to generate common methods for proximity evaluators
 /// This is exported so constraint modules can use it
-#[macro_export]
-macro_rules! impl_proximity_evaluator_helpers {
-    ($evaluator:ty, $body_name:expr, $friendly_name:expr) => {
+macro_rules! impl_proximity_evaluator {
+    ($evaluator:ty, $body_name:expr, $friendly_name:expr, $positions:ident) => {
         impl $evaluator {
-            fn final_violation_description(&self) -> String {
-                match self.max_angle_deg {
-                    Some(max) => format!(
-                        "Target too close to {} (min: {:.1}°) or too far (max: {:.1}°)",
-                        $friendly_name, self.min_angle_deg, max
-                    ),
-                    None => format!(
-                        "Target too close to {} (min allowed: {:.1}°)",
-                        $friendly_name, self.min_angle_deg
-                    ),
-                }
-            }
+            fn evaluate_common(
+                &self,
+                times: &[DateTime<Utc>],
+                target_ra_dec: (f64, f64),
+                $positions: &Array2<f64>,
+                observer_positions: &Array2<f64>,
+                final_desc_fn: impl Fn() -> String,
+                intermediate_desc_fn: impl Fn() -> String,
+            ) -> ConstraintResult {
+                // Cache target vector computation outside the loop
+                let target_vec = crate::utils::vector_math::radec_to_unit_vector(
+                    target_ra_dec.0,
+                    target_ra_dec.1,
+                );
 
-            fn format_name(&self) -> String {
-                match self.max_angle_deg {
-                    Some(max) => format!(
-                        "{}Proximity(min={}°, max={}°)",
-                        $body_name, self.min_angle_deg, max
-                    ),
-                    None => format!("{}Proximity(min={}°)", $body_name, self.min_angle_deg),
-                }
+                let violations = track_violations(
+                    times,
+                    |i| {
+                        let body_pos = [$positions[[i, 0]], $positions[[i, 1]], $positions[[i, 2]]];
+                        let obs_pos = [
+                            observer_positions[[i, 0]],
+                            observer_positions[[i, 1]],
+                            observer_positions[[i, 2]],
+                        ];
+                        let angle_deg = crate::utils::vector_math::calculate_angular_separation(
+                            &target_vec,
+                            &body_pos,
+                            &obs_pos,
+                        );
+
+                        let is_violated = angle_deg < self.min_angle_deg
+                            || self.max_angle_deg.is_some_and(|max| angle_deg > max);
+
+                        let severity = if angle_deg < self.min_angle_deg {
+                            (self.min_angle_deg - angle_deg) / self.min_angle_deg
+                        } else if let Some(max) = self.max_angle_deg {
+                            (angle_deg - max) / max
+                        } else {
+                            0.0
+                        };
+
+                        (is_violated, severity)
+                    },
+                    |_, is_final| {
+                        if is_final {
+                            final_desc_fn()
+                        } else {
+                            intermediate_desc_fn()
+                        }
+                    },
+                );
+
+                let all_satisfied = violations.is_empty();
+                ConstraintResult::new(violations, all_satisfied, self.name(), times.to_vec())
             }
         }
     };
