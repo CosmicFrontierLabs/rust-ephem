@@ -257,12 +257,7 @@ impl ConstraintEvaluator for EclipseEvaluator {
         let time_results = self.compute_eclipse_mask(times, sun_positions, observer_positions);
 
         // Broadcast to all targets (same result for each RA/Dec)
-        let mut result = Array2::from_elem((n_targets, n_times), false);
-        for i in 0..n_targets {
-            for j in 0..n_times {
-                result[[i, j]] = time_results[j];
-            }
-        }
+        let result = Array2::from_shape_fn((n_targets, n_times), |(_, j)| time_results[j]);
 
         Ok(result)
     }

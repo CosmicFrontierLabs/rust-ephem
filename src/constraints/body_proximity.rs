@@ -102,10 +102,8 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
         // Initialize result array (false = not violated)
         let mut result = Array2::from_elem((n_targets, n_times), false);
 
-        // Pre-compute threshold for each time
-        let thresholds: Vec<f64> = (0..n_times)
-            .map(|_| self.min_angle_deg.to_radians().cos())
-            .collect();
+        // Pre-compute threshold (constant for all times)
+        let threshold = self.min_angle_deg.to_radians().cos();
 
         let max_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
 
@@ -143,7 +141,7 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
                     + target_unit[2] * body_unit[2];
 
                 // Check constraints
-                let too_close = cos_angle > thresholds[j];
+                let too_close = cos_angle > threshold;
                 let too_far = if let Some(max_thresh) = max_threshold {
                     cos_angle < max_thresh
                 } else {
