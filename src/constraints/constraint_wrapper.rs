@@ -569,6 +569,134 @@ impl PyConstraint {
         ))
     }
 
+    /// Evaluate constraint for multiple RA/Dec positions (vectorized)
+    ///
+    /// This method efficiently evaluates the constraint for many target positions
+    /// at once, returning a 2D boolean array where rows correspond to targets
+    /// and columns correspond to times.
+    ///
+    /// Args:
+    ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+    ///     target_ras (array-like): Array of right ascensions in degrees (ICRS/J2000)
+    ///     target_decs (array-like): Array of declinations in degrees (ICRS/J2000)
+    ///     times (datetime or list[datetime], optional): Specific times to evaluate
+    ///     indices (int or list[int], optional): Specific time index/indices to evaluate
+    ///
+    /// Returns:
+    ///     numpy.ndarray: 2D boolean array of shape (n_targets, n_times) where True
+    ///                    indicates the constraint is violated for that target at that time
+    ///
+    /// Example:
+    ///     >>> ras = [10.0, 20.0, 30.0]  # Three targets
+    ///     >>> decs = [45.0, -10.0, 60.0]
+    ///     >>> violations = constraint.evaluate_batch(ephem, ras, decs)
+    ///     >>> violations.shape  # (3, n_times)
+    ///     >>> violations[0, :]  # Violations for first target across all times
+    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None))]
+    fn evaluate_batch(
+        &self,
+        py: Python,
+        ephemeris: Py<PyAny>,
+        target_ras: Vec<f64>,
+        target_decs: Vec<f64>,
+        times: Option<&Bound<PyAny>>,
+        indices: Option<&Bound<PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+
+        // Parse time filtering options
+        let bound = ephemeris.bind(py);
+        let time_indices = if let Some(times_arg) = times {
+            if indices.is_some() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Cannot specify both 'times' and 'indices' parameters",
+                ));
+            }
+            Some(self.parse_times_to_indices(bound, times_arg)?)
+        } else if let Some(indices_arg) = indices {
+            Some(self.parse_indices(indices_arg)?)
+        } else {
+            None
+        };
+
+        // Get ephemeris data based on type
+        let (mut times_vec, mut sun_positions, mut moon_positions, mut observer_positions) =
+            if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
+                (
+                    ephem.get_times()?,
+                    ephem.get_sun_positions()?,
+                    ephem.get_moon_positions()?,
+                    ephem.get_gcrs_positions()?,
+                )
+            } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
+                (
+                    ephem.get_times()?,
+                    ephem.get_sun_positions()?,
+                    ephem.get_moon_positions()?,
+                    ephem.get_gcrs_positions()?,
+                )
+            } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
+                (
+                    ephem.get_times()?,
+                    ephem.get_sun_positions()?,
+                    ephem.get_moon_positions()?,
+                    ephem.get_gcrs_positions()?,
+                )
+            } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+                (
+                    ephem.get_times()?,
+                    ephem.get_sun_positions()?,
+                    ephem.get_moon_positions()?,
+                    ephem.get_gcrs_positions()?,
+                )
+            } else {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
+                ));
+            };
+
+        // Filter by time indices if provided
+        if let Some(ref indices) = time_indices {
+            // Validate indices
+            let n_times = times_vec.len();
+            for &idx in indices {
+                if idx >= n_times {
+                    return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                        "Index {idx} out of range for ephemeris with {n_times} timestamps"
+                    )));
+                }
+            }
+
+            // Filter times and positions
+            times_vec = indices.iter().map(|&i| times_vec[i]).collect();
+            sun_positions =
+                Array2::from_shape_fn((indices.len(), 3), |(i, j)| sun_positions[[indices[i], j]]);
+            moon_positions =
+                Array2::from_shape_fn((indices.len(), 3), |(i, j)| moon_positions[[indices[i], j]]);
+            observer_positions = Array2::from_shape_fn((indices.len(), 3), |(i, j)| {
+                observer_positions[[indices[i], j]]
+            });
+        }
+
+        // Call batch evaluation
+        let result_array = self.evaluator.evaluate_batch(
+            &times_vec,
+            &target_ras,
+            &target_decs,
+            &sun_positions,
+            &moon_positions,
+            &observer_positions,
+        )?;
+
+        // Convert to numpy array
+        use numpy::IntoPyArray;
+        Ok(result_array.into_pyarray(py).into())
+    }
+
     /// Helper to parse times parameter and convert to indices
     fn parse_times_to_indices(
         &self,
