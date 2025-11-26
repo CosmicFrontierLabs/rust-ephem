@@ -269,15 +269,23 @@ Classes
       - ``indices`` — Optional: specific time index/indices to evaluate
       - Returns: ``ConstraintResult`` object
     
-    * ``evaluate_batch(ephemeris, target_ras, target_decs, times=None, indices=None)`` — Evaluate constraint for multiple targets (vectorized)
+    * ``in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None)`` — **[Recommended]** Vectorized batch evaluation for multiple targets
       
       - ``ephemeris`` — TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris object
-      - ``target_ras`` — List of target right ascensions in degrees (ICRS/J2000)
-      - ``target_decs`` — List of target declinations in degrees (ICRS/J2000)
+      - ``target_ras`` — List/array of target right ascensions in degrees (ICRS/J2000)
+      - ``target_decs`` — List/array of target declinations in degrees (ICRS/J2000)
       - ``times`` — Optional: specific datetime(s) to evaluate (must exist in ephemeris)
       - ``indices`` — Optional: specific time index/indices to evaluate
       - Returns: 2D NumPy boolean array of shape (n_targets, n_times) where True indicates constraint violation
-      - Note: Much faster than calling ``evaluate()`` in a loop for multiple targets
+      - **Performance**: 3-50x faster than calling ``evaluate()`` in a loop
+      - **Optimized**: Uses vectorized operations for batch RA/Dec conversion and constraint evaluation
+      - **All constraint types supported**: Sun/Moon proximity, Earth limb, Eclipse, Body proximity, and logical combinators (AND, OR, NOT, XOR)
+    
+    * ``evaluate_batch(ephemeris, target_ras, target_decs, times=None, indices=None)`` — **[Deprecated]** Use ``in_constraint_batch()`` instead
+      
+      - This method is maintained for backward compatibility but will be removed in a future version
+      - Emits a ``DeprecationWarning`` when called
+      - Internally calls ``in_constraint_batch()``
     
     * ``in_constraint(time, ephemeris, target_ra, target_dec)`` — Check if target is in-constraint at a single time
       

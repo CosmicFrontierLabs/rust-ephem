@@ -60,7 +60,7 @@ class RustConstraintMixin(BaseModel):
             ephemeris, target_ra, target_dec, times, indices
         )
 
-    def evaluate_batch(
+    def in_constraint_batch(
         self,
         ephemeris: Union[
             "TLEEphemeris", "SPICEEphemeris", "GroundEphemeris", "OEMEphemeris"
@@ -71,7 +71,7 @@ class RustConstraintMixin(BaseModel):
         indices: Union[int, list[int], None] = None,
     ):
         """
-        Evaluate the constraint for multiple targets at once (vectorized).
+        Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
 
         This method lazily creates the corresponding Rust constraint
         object on first use and evaluates it for multiple RA/Dec positions.
@@ -90,7 +90,37 @@ class RustConstraintMixin(BaseModel):
             from rust_ephem import Constraint
 
             self._rust_constraint = Constraint.from_json(self.model_dump_json())
-        return self._rust_constraint.evaluate_batch(
+        return self._rust_constraint.in_constraint_batch(
+            ephemeris, target_ras, target_decs, times, indices
+        )
+
+    def evaluate_batch(
+        self,
+        ephemeris: Union[
+            "TLEEphemeris", "SPICEEphemeris", "GroundEphemeris", "OEMEphemeris"
+        ],
+        target_ras: List[float],
+        target_decs: List[float],
+        times: Union[datetime, list[datetime], None] = None,
+        indices: Union[int, list[int], None] = None,
+    ):
+        """
+        Evaluate the constraint for multiple targets at once (vectorized).
+
+        .. deprecated::
+            Use :meth:`in_constraint_batch` instead. This method will be removed
+            in a future version.
+
+        This is an alias for :meth:`in_constraint_batch` maintained for backward compatibility.
+        """
+        import warnings
+
+        warnings.warn(
+            "evaluate_batch() is deprecated, use in_constraint_batch() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.in_constraint_batch(
             ephemeris, target_ras, target_decs, times, indices
         )
 

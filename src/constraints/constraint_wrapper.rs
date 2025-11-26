@@ -569,7 +569,7 @@ impl PyConstraint {
         ))
     }
 
-    /// Evaluate constraint for multiple RA/Dec positions (vectorized)
+    /// Check if targets are in-constraint for multiple RA/Dec positions (vectorized)
     ///
     /// This method efficiently evaluates the constraint for many target positions
     /// at once, returning a 2D boolean array where rows correspond to targets
@@ -589,11 +589,11 @@ impl PyConstraint {
     /// Example:
     ///     >>> ras = [10.0, 20.0, 30.0]  # Three targets
     ///     >>> decs = [45.0, -10.0, 60.0]
-    ///     >>> violations = constraint.evaluate_batch(ephem, ras, decs)
+    ///     >>> violations = constraint.in_constraint_batch(ephem, ras, decs)
     ///     >>> violations.shape  # (3, n_times)
     ///     >>> violations[0, :]  # Violations for first target across all times
     #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None))]
-    fn evaluate_batch(
+    fn in_constraint_batch(
         &self,
         py: Python,
         ephemeris: Py<PyAny>,
@@ -683,7 +683,7 @@ impl PyConstraint {
         }
 
         // Call batch evaluation
-        let result_array = self.evaluator.evaluate_batch(
+        let result_array = self.evaluator.in_constraint_batch(
             &times_vec,
             &target_ras,
             &target_decs,
@@ -695,6 +695,36 @@ impl PyConstraint {
         // Convert to numpy array
         use numpy::IntoPyArray;
         Ok(result_array.into_pyarray(py).into())
+    }
+
+    /// Evaluate constraint for multiple RA/Dec positions (vectorized)
+    ///
+    /// **DEPRECATED:** Use `in_constraint_batch()` instead. This method will be removed
+    /// in a future version.
+    ///
+    /// This is an alias for `in_constraint_batch()` maintained for backward compatibility.
+    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None))]
+    fn evaluate_batch(
+        &self,
+        py: Python,
+        ephemeris: Py<PyAny>,
+        target_ras: Vec<f64>,
+        target_decs: Vec<f64>,
+        times: Option<&Bound<PyAny>>,
+        indices: Option<&Bound<PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        // Emit deprecation warning
+        let warnings = py.import("warnings")?;
+        warnings.call_method1(
+            "warn",
+            (
+                "evaluate_batch() is deprecated, use in_constraint_batch() instead",
+                py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+            ),
+        )?;
+
+        // Delegate to in_constraint_batch
+        self.in_constraint_batch(py, ephemeris, target_ras, target_decs, times, indices)
     }
 
     /// Helper to parse times parameter and convert to indices
@@ -1104,6 +1134,53 @@ impl ConstraintEvaluator for AndEvaluator {
         )
     }
 
+    fn in_constraint_batch(
+        &self,
+        times: &[DateTime<Utc>],
+        target_ras: &[f64],
+        target_decs: &[f64],
+        sun_positions: &Array2<f64>,
+        moon_positions: &Array2<f64>,
+        observer_positions: &Array2<f64>,
+    ) -> pyo3::PyResult<Array2<bool>> {
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+
+        // Evaluate all sub-constraints in batch
+        let results: Result<Vec<_>, _> = self
+            .constraints
+            .iter()
+            .map(|c| {
+                c.in_constraint_batch(
+                    times,
+                    target_ras,
+                    target_decs,
+                    sun_positions,
+                    moon_positions,
+                    observer_positions,
+                )
+            })
+            .collect();
+        let results = results?;
+
+        let n_targets = target_ras.len();
+        let n_times = times.len();
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+
+        // AND logic: violated only if ALL sub-constraints are violated
+        for i in 0..n_targets {
+            for j in 0..n_times {
+                let all_violated = results.iter().all(|r| r[[i, j]]);
+                result[[i, j]] = all_violated;
+            }
+        }
+
+        Ok(result)
+    }
+
     fn name(&self) -> String {
         format!(
             "AND({})",
@@ -1221,6 +1298,53 @@ impl ConstraintEvaluator for OrEvaluator {
         )
     }
 
+    fn in_constraint_batch(
+        &self,
+        times: &[DateTime<Utc>],
+        target_ras: &[f64],
+        target_decs: &[f64],
+        sun_positions: &Array2<f64>,
+        moon_positions: &Array2<f64>,
+        observer_positions: &Array2<f64>,
+    ) -> pyo3::PyResult<Array2<bool>> {
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+
+        // Evaluate all sub-constraints in batch
+        let results: Result<Vec<_>, _> = self
+            .constraints
+            .iter()
+            .map(|c| {
+                c.in_constraint_batch(
+                    times,
+                    target_ras,
+                    target_decs,
+                    sun_positions,
+                    moon_positions,
+                    observer_positions,
+                )
+            })
+            .collect();
+        let results = results?;
+
+        let n_targets = target_ras.len();
+        let n_times = times.len();
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+
+        // OR logic: violated if ANY sub-constraint is violated
+        for i in 0..n_targets {
+            for j in 0..n_times {
+                let any_violated = results.iter().any(|r| r[[i, j]]);
+                result[[i, j]] = any_violated;
+            }
+        }
+
+        Ok(result)
+    }
+
     fn name(&self) -> String {
         format!(
             "OR({})",
@@ -1317,6 +1441,39 @@ impl ConstraintEvaluator for NotEvaluator {
             self.name(),
             times.to_vec(),
         )
+    }
+
+    fn in_constraint_batch(
+        &self,
+        times: &[DateTime<Utc>],
+        target_ras: &[f64],
+        target_decs: &[f64],
+        sun_positions: &Array2<f64>,
+        moon_positions: &Array2<f64>,
+        observer_positions: &Array2<f64>,
+    ) -> pyo3::PyResult<Array2<bool>> {
+        // Evaluate sub-constraint in batch
+        let sub_result = self.constraint.in_constraint_batch(
+            times,
+            target_ras,
+            target_decs,
+            sun_positions,
+            moon_positions,
+            observer_positions,
+        )?;
+
+        let n_targets = target_ras.len();
+        let n_times = times.len();
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+
+        // NOT logic: invert all values
+        for i in 0..n_targets {
+            for j in 0..n_times {
+                result[[i, j]] = !sub_result[[i, j]];
+            }
+        }
+
+        Ok(result)
     }
 
     fn name(&self) -> String {
@@ -1418,6 +1575,53 @@ impl ConstraintEvaluator for XorEvaluator {
             self.name(),
             times.to_vec(),
         )
+    }
+
+    fn in_constraint_batch(
+        &self,
+        times: &[DateTime<Utc>],
+        target_ras: &[f64],
+        target_decs: &[f64],
+        sun_positions: &Array2<f64>,
+        moon_positions: &Array2<f64>,
+        observer_positions: &Array2<f64>,
+    ) -> pyo3::PyResult<Array2<bool>> {
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+
+        // Evaluate all sub-constraints in batch
+        let results: Result<Vec<_>, _> = self
+            .constraints
+            .iter()
+            .map(|c| {
+                c.in_constraint_batch(
+                    times,
+                    target_ras,
+                    target_decs,
+                    sun_positions,
+                    moon_positions,
+                    observer_positions,
+                )
+            })
+            .collect();
+        let results = results?;
+
+        let n_targets = target_ras.len();
+        let n_times = times.len();
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+
+        // XOR logic: violated when EXACTLY ONE sub-constraint is violated
+        for i in 0..n_targets {
+            for j in 0..n_times {
+                let violation_count = results.iter().filter(|r| r[[i, j]]).count();
+                result[[i, j]] = violation_count == 1;
+            }
+        }
+
+        Ok(result)
     }
 
     fn name(&self) -> String {

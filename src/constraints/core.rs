@@ -340,10 +340,10 @@ pub trait ConstraintEvaluator: Send + Sync {
         observer_positions: &Array2<f64>,
     ) -> ConstraintResult;
 
-    /// Evaluate the constraint for multiple RA/Dec positions
+    /// Check if targets are in-constraint for multiple RA/Dec positions (vectorized)
     ///
     /// This method provides vectorized evaluation for multiple targets,
-    /// returning a 2D array of constraint violations where:
+    /// returning a 2D array of constraint satisfaction where:
     /// - Rows correspond to different RA/Dec positions
     /// - Columns correspond to time indices
     ///
@@ -358,7 +358,7 @@ pub trait ConstraintEvaluator: Send + Sync {
     /// # Returns
     /// 2D boolean array (M x N) where True indicates constraint violation
     /// at that (target, time) combination
-    fn evaluate_batch(
+    fn in_constraint_batch(
         &self,
         times: &[DateTime<Utc>],
         target_ras: &[f64],
@@ -366,37 +366,7 @@ pub trait ConstraintEvaluator: Send + Sync {
         sun_positions: &Array2<f64>,
         moon_positions: &Array2<f64>,
         observer_positions: &Array2<f64>,
-    ) -> PyResult<Array2<bool>> {
-        // Default implementation: loop over each RA/Dec and call evaluate
-        if target_ras.len() != target_decs.len() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_ras and target_decs must have the same length",
-            ));
-        }
-
-        let n_targets = target_ras.len();
-        let n_times = times.len();
-        let mut result = Array2::from_elem((n_targets, n_times), false);
-
-        for (i, (&ra, &dec)) in target_ras.iter().zip(target_decs.iter()).enumerate() {
-            let constraint_result = self.evaluate(
-                times,
-                ra,
-                dec,
-                sun_positions,
-                moon_positions,
-                observer_positions,
-            );
-
-            // Convert constraint violations to boolean array
-            let violated_vec = constraint_result._compute_constraint_vec();
-            for (j, &violated) in violated_vec.iter().enumerate() {
-                result[[i, j]] = violated;
-            }
-        }
-
-        Ok(result)
-    }
+    ) -> PyResult<Array2<bool>>;
 
     /// Get constraint name
     fn name(&self) -> String;

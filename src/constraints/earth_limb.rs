@@ -196,7 +196,7 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
     }
 
     /// Vectorized batch evaluation - MUCH faster than calling evaluate() in a loop
-    fn evaluate_batch(
+    fn in_constraint_batch(
         &self,
         times: &[DateTime<Utc>],
         target_ras: &[f64],

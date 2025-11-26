@@ -313,6 +313,46 @@ class Constraint:
         """
         ...
 
+    def in_constraint_batch(
+        self,
+        ephemeris: TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris,
+        target_ras: list[float],
+        target_decs: list[float],
+        times: datetime | list[datetime] | None = None,
+        indices: int | list[int] | None = None,
+    ) -> np.ndarray:
+        """
+        Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
+
+        This method is more efficient than calling in_constraint() multiple times
+        when you need to check many target positions.
+
+        Args:
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, OEMEphemeris, or GroundEphemeris
+            target_ras: List of target right ascensions in degrees (ICRS/J2000)
+            target_decs: List of target declinations in degrees (ICRS/J2000)
+            times: Optional specific time(s) to evaluate. Can be a single datetime
+                   or list of datetimes. If provided, only these times will be
+                   evaluated (must exist in the ephemeris).
+            indices: Optional specific time index/indices to evaluate. Can be a
+                     single index or list of indices into the ephemeris timestamp array.
+
+        Returns:
+            2D numpy boolean array of shape (n_targets, n_times) where True indicates
+            constraint violation at that target/time combination.
+
+        Raises:
+            ValueError: If target_ras and target_decs have different lengths,
+                       or if both times and indices are provided, or if times/indices
+                       are not found in the ephemeris
+            TypeError: If ephemeris type is not supported
+
+        Note:
+            Only one of `times` or `indices` should be provided. If neither is
+            provided, all ephemeris times are evaluated.
+        """
+        ...
+
     def evaluate_batch(
         self,
         ephemeris: TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris,
@@ -324,8 +364,11 @@ class Constraint:
         """
         Evaluate constraint for multiple targets at once (vectorized).
 
-        This method is more efficient than calling evaluate() multiple times
-        when you need to check many target positions.
+        .. deprecated::
+            Use :meth:`in_constraint_batch` instead. This method will be removed
+            in a future version.
+
+        This is an alias for :meth:`in_constraint_batch` maintained for backward compatibility.
 
         Args:
             ephemeris: One of TLEEphemeris, SPICEEphemeris, OEMEphemeris, or GroundEphemeris

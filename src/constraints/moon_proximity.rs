@@ -1,8 +1,11 @@
 /// Moon proximity constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
-use crate::utils::vector_math::{calculate_angular_separation, radec_to_unit_vector};
+use crate::utils::vector_math::{
+    calculate_angular_separation, radec_to_unit_vector, radec_to_unit_vectors_batch,
+};
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
+use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
 
 /// Configuration for Moon proximity constraint
@@ -84,6 +87,87 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
 
         let all_satisfied = violations.is_empty();
         ConstraintResult::new(violations, all_satisfied, self.name(), times.to_vec())
+    }
+
+    /// Vectorized batch evaluation - MUCH faster than calling evaluate() in a loop
+    fn in_constraint_batch(
+        &self,
+        times: &[DateTime<Utc>],
+        target_ras: &[f64],
+        target_decs: &[f64],
+        _sun_positions: &Array2<f64>,
+        moon_positions: &Array2<f64>,
+        observer_positions: &Array2<f64>,
+    ) -> PyResult<Array2<bool>> {
+        // Validate inputs
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+
+        let n_targets = target_ras.len();
+        let n_times = times.len();
+
+        // Convert all target RA/Dec to unit vectors at once
+        let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
+
+        // Initialize result array: false = not violated (constraint satisfied)
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+
+        // For each time, check all targets
+        for t in 0..n_times {
+            let moon_pos = [
+                moon_positions[[t, 0]],
+                moon_positions[[t, 1]],
+                moon_positions[[t, 2]],
+            ];
+            let obs_pos = [
+                observer_positions[[t, 0]],
+                observer_positions[[t, 1]],
+                observer_positions[[t, 2]],
+            ];
+
+            // Compute relative moon position from observer
+            let moon_rel = [
+                moon_pos[0] - obs_pos[0],
+                moon_pos[1] - obs_pos[1],
+                moon_pos[2] - obs_pos[2],
+            ];
+            let moon_dist =
+                (moon_rel[0] * moon_rel[0] + moon_rel[1] * moon_rel[1] + moon_rel[2] * moon_rel[2])
+                    .sqrt();
+            let moon_unit = [
+                moon_rel[0] / moon_dist,
+                moon_rel[1] / moon_dist,
+                moon_rel[2] / moon_dist,
+            ];
+
+            // Check all targets at this time
+            for target_idx in 0..n_targets {
+                let target_vec = [
+                    target_vectors[[target_idx, 0]],
+                    target_vectors[[target_idx, 1]],
+                    target_vectors[[target_idx, 2]],
+                ];
+
+                // Calculate angle between target and moon
+                let dot = target_vec[0] * moon_unit[0]
+                    + target_vec[1] * moon_unit[1]
+                    + target_vec[2] * moon_unit[2];
+                let dot_clamped = dot.clamp(-1.0, 1.0);
+                let angle_rad = dot_clamped.acos();
+                let angle_deg = angle_rad.to_degrees();
+
+                // Check if violated
+                let is_violated = angle_deg < self.min_angle_deg
+                    || self.max_angle_deg.is_some_and(|max| angle_deg > max);
+
+                result[[target_idx, t]] = is_violated;
+            }
+        }
+
+        Ok(result)
     }
 
     fn name(&self) -> String {
