@@ -262,7 +262,7 @@ class TestEarthAngularRadius:
 
     def test_earth_radius_quantity_near_90_for_ground_observer(self, ground_ephemeris):
         """Earth radius Quantity should be ~90 degrees for ground-based observer"""
-        from astropy import units as u
+        from astropy import units as u  # type: ignore[import-untyped]
 
         radius = ground_ephemeris.earth_radius
         # Should have astropy units
