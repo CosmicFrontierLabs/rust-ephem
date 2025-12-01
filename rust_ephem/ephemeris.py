@@ -11,7 +11,7 @@ from ._rust_ephem import (  # type: ignore[import-untyped]
 
 
 class Ephemeris(abc.ABC):
-    """Abstract base class for all ephemeris types that supports isinstance checks."""
+    """Abstract base class for all Ephemeris types that supports isinstance checks."""
 
     # Abstract properties that all ephemeris types must have
     @property
