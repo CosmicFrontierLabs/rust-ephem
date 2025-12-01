@@ -110,6 +110,10 @@ class TestEphemerisABCBehavior:
             "moon_radius_rad",
             "earth_radius_rad",
             "index",
+            "begin",
+            "end",
+            "step_size",
+            "polar_motion",
         }
 
         # Get all abstract methods from Ephemeris
@@ -287,6 +291,22 @@ class TestEphemerisABCBehavior:
     def test_ephemeris_instance_index_is_callable(self, ground_ephemeris):
         """Test that ephemeris index attribute is callable."""
         assert callable(getattr(ground_ephemeris, "index"))
+
+    def test_ephemeris_instance_has_begin_attribute(self, ground_ephemeris):
+        """Test that ephemeris instances have begin attribute."""
+        assert hasattr(ground_ephemeris, "begin")
+
+    def test_ephemeris_instance_has_end_attribute(self, ground_ephemeris):
+        """Test that ephemeris instances have end attribute."""
+        assert hasattr(ground_ephemeris, "end")
+
+    def test_ephemeris_instance_has_step_size_attribute(self, ground_ephemeris):
+        """Test that ephemeris instances have step_size attribute."""
+        assert hasattr(ground_ephemeris, "step_size")
+
+    def test_ephemeris_instance_has_polar_motion_attribute(self, ground_ephemeris):
+        """Test that ephemeris instances have polar_motion attribute."""
+        assert hasattr(ground_ephemeris, "polar_motion")
 
     def test_ephemeris_type_annotation_accepts_ephemeris_instance(
         self, ground_ephemeris

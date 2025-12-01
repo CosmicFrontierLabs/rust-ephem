@@ -164,6 +164,26 @@ class Ephemeris:
         """Find the index of the closest timestamp to the given datetime."""
         ...
 
+    @property
+    def begin(self) -> datetime:
+        """Start time of the ephemeris."""
+        ...
+
+    @property
+    def end(self) -> datetime:
+        """End time of the ephemeris."""
+        ...
+
+    @property
+    def step_size(self) -> int:
+        """Time step size in seconds between ephemeris points."""
+        ...
+
+    @property
+    def polar_motion(self) -> bool:
+        """Whether polar motion corrections are applied."""
+        ...
+
 class PositionVelocityData:
     """Position and velocity data container"""
 

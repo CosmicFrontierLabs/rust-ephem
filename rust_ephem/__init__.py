@@ -227,6 +227,30 @@ class Ephemeris(abc.ABC):
         """Find the index of the closest timestamp to the given datetime."""
         ...
 
+    @property
+    @abc.abstractmethod
+    def begin(self):
+        """Start time of the ephemeris."""
+        ...
+
+    @property
+    @abc.abstractmethod
+    def end(self):
+        """End time of the ephemeris."""
+        ...
+
+    @property
+    @abc.abstractmethod
+    def step_size(self):
+        """Time step size in seconds between ephemeris points."""
+        ...
+
+    @property
+    @abc.abstractmethod
+    def polar_motion(self):
+        """Whether polar motion corrections are applied."""
+        ...
+
 
 # Register all concrete ephemeris classes as virtual subclasses
 Ephemeris.register(TLEEphemeris)
