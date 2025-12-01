@@ -28,7 +28,7 @@ class RustConstraintMixin(BaseModel):
 
     def evaluate(
         self,
-        ephemeris: (TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris),
+        ephemeris: TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris,
         target_ra: float,
         target_dec: float,
         times: datetime | list[datetime] | None = None,
@@ -60,7 +60,7 @@ class RustConstraintMixin(BaseModel):
 
     def in_constraint_batch(
         self,
-        ephemeris: (TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris),
+        ephemeris: TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris,
         target_ras: list[float],
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
@@ -92,7 +92,7 @@ class RustConstraintMixin(BaseModel):
 
     def evaluate_batch(
         self,
-        ephemeris: (TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris),
+        ephemeris: TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris,
         target_ras: list[float],
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
@@ -121,7 +121,7 @@ class RustConstraintMixin(BaseModel):
     def in_constraint(
         self,
         time: datetime,
-        ephemeris: (TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris),
+        ephemeris: TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris,
         target_ra: float,
         target_dec: float,
     ) -> bool:
