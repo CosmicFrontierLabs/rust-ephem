@@ -11,6 +11,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal, Union
 
+import numpy as np
+import numpy.typing as npt
 from pydantic import BaseModel, TypeAdapter
 
 from .ephemeris import Ephemeris
@@ -36,7 +38,7 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-    ): ...
+    ) -> npt.NDArray[np.bool_]: ...
     def evaluate_batch(
         self,
         ephemeris: Ephemeris,
@@ -44,7 +46,7 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-    ): ...
+    ) -> npt.NDArray[np.bool_]: ...
     def in_constraint(
         self,
         time: datetime,
