@@ -1,7 +1,7 @@
 """Type stubs for the Rust extension module _rust_ephem"""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, NoReturn
 
 import numpy as np
 import numpy.typing as npt
@@ -9,6 +9,10 @@ import numpy.typing as npt
 # Type alias for all ephemeris types
 class Ephemeris:
     """Type alias for all ephemeris types that supports isinstance checks."""
+
+    def __new__(cls, *args, **kwargs) -> NoReturn:
+        """Prevent instantiation of the abstract Ephemeris class."""
+        ...
 
     @property
     def timestamp(self) -> npt.NDArray[np.object_]:

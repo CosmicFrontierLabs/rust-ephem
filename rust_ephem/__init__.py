@@ -47,7 +47,12 @@ class _EphemerisMeta(type):
 class Ephemeris(metaclass=_EphemerisMeta):
     """Type alias for all ephemeris types that supports isinstance checks."""
 
-    pass
+    def __new__(cls, *args, **kwargs):
+        raise TypeError(
+            f"{cls.__name__} cannot be instantiated directly. "
+            "Use one of the concrete ephemeris classes: "
+            "TLEEphemeris, SPICEEphemeris, OEMEphemeris, or GroundEphemeris"
+        )
 
 
 # Also create a Union type for type checking
