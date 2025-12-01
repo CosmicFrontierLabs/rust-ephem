@@ -24,6 +24,7 @@ from .constraints import (
     AndConstraint,
     BodyConstraint,
     CombinedConstraintConfig,
+    ConstraintConfig,
     EarthLimbConstraint,
     EclipseConstraint,
     MoonConstraint,
@@ -32,6 +33,7 @@ from .constraints import (
     SunConstraint,
     XorConstraint,
 )
+from .ephemeris import Ephemeris, EphemerisType
 
 __all__ = [
     "ConstraintConfig",
@@ -49,6 +51,8 @@ __all__ = [
     "SPICEEphemeris",
     "OEMEphemeris",
     "GroundEphemeris",
+    "Ephemeris",
+    "EphemerisType",
     "Constraint",
     "ConstraintResult",
     "ConstraintViolation",

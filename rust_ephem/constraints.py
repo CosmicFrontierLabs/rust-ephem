@@ -9,18 +9,14 @@ to configure the Rust constraint evaluators.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, List, Literal, Union, cast
+from typing import TYPE_CHECKING, Literal, Union, cast
 
 from pydantic import BaseModel, Field, TypeAdapter
 
+from .ephemeris import Ephemeris
+
 if TYPE_CHECKING:
-    from rust_ephem import (
-        ConstraintResult,
-        GroundEphemeris,
-        OEMEphemeris,
-        SPICEEphemeris,
-        TLEEphemeris,
-    )
+    from rust_ephem import ConstraintResult
 
 
 class RustConstraintMixin(BaseModel):
@@ -28,14 +24,12 @@ class RustConstraintMixin(BaseModel):
 
     def evaluate(
         self,
-        ephemeris: Union[
-            "TLEEphemeris", "SPICEEphemeris", "GroundEphemeris", "OEMEphemeris"
-        ],
+        ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
-        times: Union[datetime, list[datetime], None] = None,
-        indices: Union[int, list[int], None] = None,
-    ) -> "ConstraintResult":
+        times: datetime | list[datetime] | None = None,
+        indices: int | list[int] | None = None,
+    ) -> ConstraintResult:
         """
         Evaluate the constraint using the Rust backend.
 
@@ -57,18 +51,20 @@ class RustConstraintMixin(BaseModel):
 
             self._rust_constraint = Constraint.from_json(self.model_dump_json())
         return self._rust_constraint.evaluate(
-            ephemeris, target_ra, target_dec, times, indices
+            ephemeris,
+            target_ra,
+            target_dec,
+            times,
+            indices,
         )
 
     def in_constraint_batch(
         self,
-        ephemeris: Union[
-            "TLEEphemeris", "SPICEEphemeris", "GroundEphemeris", "OEMEphemeris"
-        ],
-        target_ras: List[float],
-        target_decs: List[float],
-        times: Union[datetime, list[datetime], None] = None,
-        indices: Union[int, list[int], None] = None,
+        ephemeris: Ephemeris,
+        target_ras: list[float],
+        target_decs: list[float],
+        times: datetime | list[datetime] | None = None,
+        indices: int | list[int] | None = None,
     ):
         """
         Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
@@ -91,18 +87,20 @@ class RustConstraintMixin(BaseModel):
 
             self._rust_constraint = Constraint.from_json(self.model_dump_json())
         return self._rust_constraint.in_constraint_batch(
-            ephemeris, target_ras, target_decs, times, indices
+            ephemeris,
+            target_ras,
+            target_decs,
+            times,
+            indices,
         )
 
     def evaluate_batch(
         self,
-        ephemeris: Union[
-            "TLEEphemeris", "SPICEEphemeris", "GroundEphemeris", "OEMEphemeris"
-        ],
-        target_ras: List[float],
-        target_decs: List[float],
-        times: Union[datetime, list[datetime], None] = None,
-        indices: Union[int, list[int], None] = None,
+        ephemeris: Ephemeris,
+        target_ras: list[float],
+        target_decs: list[float],
+        times: datetime | list[datetime] | None = None,
+        indices: int | list[int] | None = None,
     ):
         """
         Evaluate the constraint for multiple targets at once (vectorized).
@@ -121,15 +119,17 @@ class RustConstraintMixin(BaseModel):
             stacklevel=2,
         )
         return self.in_constraint_batch(
-            ephemeris, target_ras, target_decs, times, indices
+            ephemeris,
+            target_ras,
+            target_decs,
+            times,
+            indices,
         )
 
     def in_constraint(
         self,
         time: datetime,
-        ephemeris: Union[
-            "TLEEphemeris", "SPICEEphemeris", "GroundEphemeris", "OEMEphemeris"
-        ],
+        ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
     ) -> bool:
@@ -153,10 +153,13 @@ class RustConstraintMixin(BaseModel):
 
             self._rust_constraint = Constraint.from_json(self.model_dump_json())
         return self._rust_constraint.in_constraint(
-            time, ephemeris, target_ra, target_dec
+            time,
+            ephemeris,
+            target_ra,
+            target_dec,
         )
 
-    def and_(self, other: "ConstraintConfig") -> "AndConstraint":
+    def and_(self, other: ConstraintConfig) -> AndConstraint:
         """Combine this constraint with another using logical AND
 
         Args:
@@ -167,7 +170,7 @@ class RustConstraintMixin(BaseModel):
         """
         return AndConstraint(constraints=[cast("ConstraintConfig", self), other])
 
-    def or_(self, other: "ConstraintConfig") -> "OrConstraint":
+    def or_(self, other: ConstraintConfig) -> OrConstraint:
         """Combine this constraint with another using logical OR
 
         Args:
@@ -178,7 +181,7 @@ class RustConstraintMixin(BaseModel):
         """
         return OrConstraint(constraints=[cast("ConstraintConfig", self), other])
 
-    def xor_(self, other: "ConstraintConfig") -> "XorConstraint":
+    def xor_(self, other: ConstraintConfig) -> XorConstraint:
         """Combine this constraint with another using logical XOR
 
         Args:
@@ -189,7 +192,7 @@ class RustConstraintMixin(BaseModel):
         """
         return XorConstraint(constraints=[cast("ConstraintConfig", self), other])
 
-    def not_(self) -> "NotConstraint":
+    def not_(self) -> NotConstraint:
         """Negate this constraint using logical NOT
 
         Returns:
@@ -197,7 +200,7 @@ class RustConstraintMixin(BaseModel):
         """
         return NotConstraint(constraint=cast("ConstraintConfig", self))
 
-    def __and__(self, other: "ConstraintConfig") -> "AndConstraint":
+    def __and__(self, other: ConstraintConfig) -> AndConstraint:
         """Combine constraints using & operator (logical AND)
 
         Args:
@@ -213,7 +216,7 @@ class RustConstraintMixin(BaseModel):
         """
         return self.and_(other)
 
-    def __or__(self, other: "ConstraintConfig") -> "OrConstraint":
+    def __or__(self, other: ConstraintConfig) -> OrConstraint:
         """Combine constraints using | operator (logical OR)
 
         Args:
@@ -229,7 +232,7 @@ class RustConstraintMixin(BaseModel):
         """
         return self.or_(other)
 
-    def __xor__(self, other: "ConstraintConfig") -> "XorConstraint":
+    def __xor__(self, other: ConstraintConfig) -> XorConstraint:
         """Combine constraints using ^ operator (logical XOR)
 
         Args:
@@ -245,7 +248,7 @@ class RustConstraintMixin(BaseModel):
         """
         return self.xor_(other)
 
-    def __invert__(self) -> "NotConstraint":
+    def __invert__(self) -> NotConstraint:
         """Negate constraint using ~ operator (logical NOT)
 
         Returns:
@@ -381,7 +384,7 @@ class AndConstraint(RustConstraintMixin):
     """
 
     type: Literal["and"] = "and"
-    constraints: List["ConstraintConfig"] = Field(
+    constraints: list[ConstraintConfig] = Field(
         ..., min_length=1, description="Constraints to AND together"
     )
 
@@ -397,7 +400,7 @@ class OrConstraint(RustConstraintMixin):
     """
 
     type: Literal["or"] = "or"
-    constraints: List["ConstraintConfig"] = Field(
+    constraints: list[ConstraintConfig] = Field(
         ..., min_length=1, description="Constraints to OR together"
     )
 
@@ -413,7 +416,7 @@ class XorConstraint(RustConstraintMixin):
     """
 
     type: Literal["xor"] = "xor"
-    constraints: List["ConstraintConfig"] = Field(
+    constraints: list[ConstraintConfig] = Field(
         ...,
         min_length=2,
         description="Constraints to XOR together (exactly one satisfied)",
@@ -431,7 +434,7 @@ class NotConstraint(RustConstraintMixin):
     """
 
     type: Literal["not"] = "not"
-    constraint: "ConstraintConfig" = Field(..., description="Constraint to negate")
+    constraint: ConstraintConfig = Field(..., description="Constraint to negate")
 
 
 # Union type for all constraints

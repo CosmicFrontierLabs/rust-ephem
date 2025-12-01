@@ -6,6 +6,8 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
+from .ephemeris import Ephemeris
+
 class PositionVelocityData:
     """Position and velocity data container"""
 
@@ -280,7 +282,7 @@ class Constraint:
 
     def evaluate(
         self,
-        ephemeris: TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris,
+        ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
         times: datetime | list[datetime] | None = None,
@@ -315,7 +317,7 @@ class Constraint:
 
     def in_constraint_batch(
         self,
-        ephemeris: TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris,
+        ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
@@ -355,7 +357,7 @@ class Constraint:
 
     def evaluate_batch(
         self,
-        ephemeris: TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris,
+        ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
@@ -399,7 +401,7 @@ class Constraint:
     def in_constraint(
         self,
         time: datetime,
-        ephemeris: TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris,
+        ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
     ) -> bool:
@@ -443,7 +445,7 @@ class Constraint:
 
     def __repr__(self) -> str: ...
 
-class TLEEphemeris:
+class TLEEphemeris(Ephemeris):
     """Ephemeris calculator using Two-Line Element (TLE) data"""
 
     def __init__(
@@ -780,7 +782,7 @@ class TLEEphemeris:
         """Observer geocentric velocity (alias for GCRS velocity)"""
         ...
 
-class SPICEEphemeris:
+class SPICEEphemeris(Ephemeris):
     """Ephemeris calculator using SPICE kernels"""
 
     def __init__(
@@ -1084,7 +1086,7 @@ class SPICEEphemeris:
         """
         ...
 
-class OEMEphemeris:
+class OEMEphemeris(Ephemeris):
     """
     Ephemeris calculator using CCSDS Orbit Ephemeris Messages (OEM).
 
@@ -1407,7 +1409,7 @@ class OEMEphemeris:
         """
         ...
 
-class GroundEphemeris:
+class GroundEphemeris(Ephemeris):
     """Ephemeris for a fixed ground location"""
 
     def __init__(

@@ -1,11 +1,13 @@
 import pathlib
+from typing import Optional
 
 import pytest
 
+rust_ephem: Optional[object] = None
 try:
     import rust_ephem  # type: ignore[import-untyped]
 except Exception:  # pragma: no cover
-    rust_ephem = None
+    pass
 
 
 class TestSpicePreload:
