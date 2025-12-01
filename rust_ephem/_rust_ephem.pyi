@@ -10,7 +10,237 @@ import numpy.typing as npt
 class Ephemeris:
     """Type alias for all ephemeris types that supports isinstance checks."""
 
-    pass
+    @property
+    def timestamp(self) -> npt.NDArray[np.object_]:
+        """
+        Array of timestamps for the ephemeris.
+
+        Returns a NumPy array of datetime objects (not a list) for efficient indexing.
+        This property is cached for performance - repeated access is ~90x faster.
+        """
+        ...
+
+    @property
+    def gcrs_pv(self) -> PositionVelocityData:
+        """Position and velocity data in GCRS frame"""
+        ...
+
+    @property
+    def itrs_pv(self) -> PositionVelocityData:
+        """Position and velocity data in ITRS (Earth-fixed) frame"""
+        ...
+
+    @property
+    def itrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord object in ITRS frame"""
+        ...
+
+    @property
+    def gcrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord object in GCRS frame"""
+        ...
+
+    @property
+    def earth(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord object for Earth position relative to observer"""
+        ...
+
+    @property
+    def sun(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord object for Sun position relative to observer"""
+        ...
+
+    @property
+    def moon(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord object for Moon position relative to observer"""
+        ...
+
+    @property
+    def sun_pv(self) -> PositionVelocityData:
+        """Sun position and velocity in GCRS frame"""
+        ...
+
+    @property
+    def moon_pv(self) -> PositionVelocityData:
+        """Moon position and velocity in GCRS frame"""
+        ...
+
+    @property
+    def obsgeoloc(self) -> npt.NDArray[np.float64]:
+        """
+        Observer geocentric location (GCRS position).
+
+        Returns position in km, compatible with astropy's GCRS frame obsgeoloc parameter.
+        """
+        ...
+
+    @property
+    def obsgeovel(self) -> npt.NDArray[np.float64]:
+        """
+        Observer geocentric velocity (GCRS velocity).
+
+        Returns velocity in km/s, compatible with astropy's GCRS frame obsgeovel parameter.
+        """
+        ...
+
+    @property
+    def latitude(self) -> Any:  # Returns astropy.units.Quantity
+        """Geodetic latitude as an astropy Quantity array (degrees), one per timestamp"""
+        ...
+
+    @property
+    def latitude_deg(self) -> npt.NDArray[np.float64]:
+        """Geodetic latitude in degrees as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def latitude_rad(self) -> npt.NDArray[np.float64]:
+        """Geodetic latitude in radians as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def longitude(self) -> Any:  # Returns astropy.units.Quantity
+        """Geodetic longitude as an astropy Quantity array (degrees), one per timestamp"""
+        ...
+
+    @property
+    def longitude_deg(self) -> npt.NDArray[np.float64]:
+        """Geodetic longitude in degrees as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def longitude_rad(self) -> npt.NDArray[np.float64]:
+        """Geodetic longitude in radians as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def height(self) -> Any:  # Returns astropy.units.Quantity
+        """Geodetic height above the WGS84 ellipsoid as an astropy Quantity array (meters), one per timestamp"""
+        ...
+
+    @property
+    def height_m(self) -> npt.NDArray[np.float64]:
+        """Geodetic height above the WGS84 ellipsoid as a raw NumPy array in meters (one per timestamp)"""
+        ...
+
+    @property
+    def height_km(self) -> npt.NDArray[np.float64]:
+        """Geodetic height above the WGS84 ellipsoid as a raw NumPy array in kilometers (one per timestamp)"""
+        ...
+
+    @property
+    def sun_radius(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Sun with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_radius_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Sun as seen from the observer (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_radius(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Moon with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_radius_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Moon as seen from the observer (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_radius(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Earth with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_radius_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Earth as seen from the observer (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Sun as seen from the observer (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Moon as seen from the observer (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Earth as seen from the observer (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    def index(self, time: datetime) -> int:
+        """
+        Find the index of the closest timestamp to the given datetime.
+
+        Returns the index in the ephemeris timestamp array that is closest to the provided time.
+        This can be used to index into any of the ephemeris arrays (positions, velocities, etc.)
+
+        Args:
+            time: Python datetime object to find the closest match for
+
+        Returns:
+            Index of the closest timestamp
+
+        Raises:
+            ValueError: If no timestamps are available in the ephemeris
+        """
+        ...
 
 class PositionVelocityData:
     """Position and velocity data container"""
@@ -449,7 +679,7 @@ class Constraint:
 
     def __repr__(self) -> str: ...
 
-class TLEEphemeris:
+class TLEEphemeris(Ephemeris):
     """Ephemeris calculator using Two-Line Element (TLE) data"""
 
     def __init__(
@@ -786,7 +1016,7 @@ class TLEEphemeris:
         """Observer geocentric velocity (alias for GCRS velocity)"""
         ...
 
-class SPICEEphemeris:
+class SPICEEphemeris(Ephemeris):
     """Ephemeris calculator using SPICE kernels"""
 
     def __init__(
@@ -1090,7 +1320,7 @@ class SPICEEphemeris:
         """
         ...
 
-class OEMEphemeris:
+class OEMEphemeris(Ephemeris):
     """
     Ephemeris calculator using CCSDS Orbit Ephemeris Messages (OEM).
 
@@ -1413,7 +1643,7 @@ class OEMEphemeris:
         """
         ...
 
-class GroundEphemeris:
+class GroundEphemeris(Ephemeris):
     """Ephemeris for a fixed ground location"""
 
     def __init__(
