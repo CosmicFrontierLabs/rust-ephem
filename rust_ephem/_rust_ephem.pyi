@@ -6,6 +6,12 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
+# Type alias for all ephemeris types
+class Ephemeris:
+    """Type alias for all ephemeris types that supports isinstance checks."""
+
+    pass
+
 class PositionVelocityData:
     """Position and velocity data container"""
 

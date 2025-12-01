@@ -1,4 +1,3 @@
-# Type alias for all ephemeris types
 from typing import Union
 
 from ._rust_ephem import (  # type: ignore[import-untyped]
@@ -36,7 +35,23 @@ from .constraints import (
     XorConstraint,
 )
 
-Ephemeris = Union[TLEEphemeris, SPICEEphemeris, OEMEphemeris, GroundEphemeris]
+
+# Create a type alias that supports isinstance checks
+class _EphemerisMeta(type):
+    def __instancecheck__(cls, instance):
+        return isinstance(
+            instance, (TLEEphemeris, SPICEEphemeris, OEMEphemeris, GroundEphemeris)
+        )
+
+
+class Ephemeris(metaclass=_EphemerisMeta):
+    """Type alias for all ephemeris types that supports isinstance checks."""
+
+    pass
+
+
+# Also create a Union type for type checking
+EphemerisType = Union[TLEEphemeris, SPICEEphemeris, OEMEphemeris, GroundEphemeris]
 
 __all__ = [
     "ConstraintConfig",
