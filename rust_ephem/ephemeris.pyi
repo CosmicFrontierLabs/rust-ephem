@@ -13,7 +13,7 @@ from ._rust_ephem import (
     TLEEphemeris as TLEEphemeris,
 )
 
-class Ephemeris(abc.ABC, metaclass=abc.ABCMeta):
+class Ephemeris(abc.ABC):
     @property
     @abc.abstractmethod
     def timestamp(self): ...

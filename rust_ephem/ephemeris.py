@@ -1,6 +1,5 @@
 # Create a type alias that supports isinstance checks
 import abc
-from typing import Union
 
 from ._rust_ephem import (  # type: ignore[import-untyped]
     GroundEphemeris,
@@ -232,4 +231,4 @@ Ephemeris.register(GroundEphemeris)
 
 
 # Also create a Union type for type checking
-EphemerisType = Union[TLEEphemeris, SPICEEphemeris, OEMEphemeris, GroundEphemeris]
+EphemerisType = TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris

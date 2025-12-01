@@ -98,6 +98,9 @@ from rust_ephem.constraints import (
 from .ephemeris import (
     Ephemeris as Ephemeris,
 )
+from .ephemeris import (
+    EphemerisType as EphemerisType,
+)
 
 # Optional convenience functions (may not be available)
 def and_constraint(*args: Any, **kwargs: Any) -> Any: ...
@@ -108,7 +111,6 @@ def not_constraint(*args: Any, **kwargs: Any) -> Any: ...
 def sun_proximity(*args: Any, **kwargs: Any) -> Any: ...
 
 __all__ = [
-    "Ephemeris",
     "SunConstraint",
     "MoonConstraint",
     "EarthLimbConstraint",
@@ -119,6 +121,8 @@ __all__ = [
     "OrConstraint",
     "XorConstraint",
     "NotConstraint",
+    "Ephemeris",
+    "EphemerisType",
     "TLEEphemeris",
     "SPICEEphemeris",
     "OEMEphemeris",

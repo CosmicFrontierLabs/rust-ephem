@@ -24,6 +24,7 @@ from .constraints import (
     AndConstraint,
     BodyConstraint,
     CombinedConstraintConfig,
+    ConstraintConfig,
     EarthLimbConstraint,
     EclipseConstraint,
     MoonConstraint,
