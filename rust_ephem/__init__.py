@@ -1,3 +1,6 @@
+# Type alias for all ephemeris types
+from typing import Union
+
 from ._rust_ephem import (  # type: ignore[import-untyped]
     Constraint,
     ConstraintResult,
@@ -33,6 +36,8 @@ from .constraints import (
     XorConstraint,
 )
 
+Ephemeris = Union[TLEEphemeris, SPICEEphemeris, OEMEphemeris, GroundEphemeris]
+
 __all__ = [
     "ConstraintConfig",
     "SunConstraint",
@@ -49,6 +54,7 @@ __all__ = [
     "SPICEEphemeris",
     "OEMEphemeris",
     "GroundEphemeris",
+    "Ephemeris",
     "Constraint",
     "ConstraintResult",
     "ConstraintViolation",
