@@ -6,183 +6,7 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
-# Type alias for all ephemeris types
-class Ephemeris:
-    """Abstract base class for all ephemeris types that supports isinstance checks."""
-
-    @property
-    def timestamp(self) -> npt.NDArray[np.object_]:
-        """Array of timestamps for the ephemeris."""
-        ...
-
-    @property
-    def gcrs_pv(self) -> PositionVelocityData:
-        """Position and velocity data in GCRS frame."""
-        ...
-
-    @property
-    def itrs_pv(self) -> PositionVelocityData:
-        """Position and velocity data in ITRS (Earth-fixed) frame."""
-        ...
-
-    @property
-    def itrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
-        """SkyCoord object in ITRS frame."""
-        ...
-
-    @property
-    def gcrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
-        """SkyCoord object in GCRS frame."""
-        ...
-
-    @property
-    def earth(self) -> Any:  # Returns astropy.coordinates.SkyCoord
-        """SkyCoord object for Earth position relative to observer."""
-        ...
-
-    @property
-    def sun(self) -> Any:  # Returns astropy.coordinates.SkyCoord
-        """SkyCoord object for Sun position relative to observer."""
-        ...
-
-    @property
-    def moon(self) -> Any:  # Returns astropy.coordinates.SkyCoord
-        """SkyCoord object for Moon position relative to observer."""
-        ...
-
-    @property
-    def sun_pv(self) -> PositionVelocityData:
-        """Sun position and velocity in GCRS frame."""
-        ...
-
-    @property
-    def moon_pv(self) -> PositionVelocityData:
-        """Moon position and velocity in GCRS frame."""
-        ...
-
-    @property
-    def obsgeoloc(self) -> npt.NDArray[np.float64]:
-        """Observer geocentric location (GCRS position)."""
-        ...
-
-    @property
-    def obsgeovel(self) -> npt.NDArray[np.float64]:
-        """Observer geocentric velocity (GCRS velocity)."""
-        ...
-
-    @property
-    def latitude(self) -> Any:  # Returns astropy.units.Quantity
-        """Geodetic latitude as an astropy Quantity array (degrees)."""
-        ...
-
-    @property
-    def latitude_deg(self) -> npt.NDArray[np.float64]:
-        """Geodetic latitude in degrees as a raw NumPy array."""
-        ...
-
-    @property
-    def latitude_rad(self) -> npt.NDArray[np.float64]:
-        """Geodetic latitude in radians as a raw NumPy array."""
-        ...
-
-    @property
-    def longitude(self) -> Any:  # Returns astropy.units.Quantity
-        """Geodetic longitude as an astropy Quantity array (degrees)."""
-        ...
-
-    @property
-    def longitude_deg(self) -> npt.NDArray[np.float64]:
-        """Geodetic longitude in degrees as a raw NumPy array."""
-        ...
-
-    @property
-    def longitude_rad(self) -> npt.NDArray[np.float64]:
-        """Geodetic longitude in radians as a raw NumPy array."""
-        ...
-
-    @property
-    def height(self) -> Any:  # Returns astropy.units.Quantity
-        """Geodetic height above the WGS84 ellipsoid as an astropy Quantity array (meters)."""
-        ...
-
-    @property
-    def height_m(self) -> npt.NDArray[np.float64]:
-        """Geodetic height above the WGS84 ellipsoid as a raw NumPy array in meters."""
-        ...
-
-    @property
-    def height_km(self) -> npt.NDArray[np.float64]:
-        """Geodetic height above the WGS84 ellipsoid as a raw NumPy array in kilometers."""
-        ...
-
-    @property
-    def sun_radius(self) -> Any:  # Returns astropy.units.Quantity
-        """Angular radius of the Sun with astropy units (degrees)."""
-        ...
-
-    @property
-    def sun_radius_deg(self) -> npt.NDArray[np.float64]:
-        """Angular radius of the Sun as seen from the observer (in degrees)."""
-        ...
-
-    @property
-    def moon_radius(self) -> Any:  # Returns astropy.units.Quantity
-        """Angular radius of the Moon with astropy units (degrees)."""
-        ...
-
-    @property
-    def moon_radius_deg(self) -> npt.NDArray[np.float64]:
-        """Angular radius of the Moon as seen from the observer (in degrees)."""
-        ...
-
-    @property
-    def earth_radius(self) -> Any:  # Returns astropy.units.Quantity
-        """Angular radius of the Earth with astropy units (degrees)."""
-        ...
-
-    @property
-    def earth_radius_deg(self) -> npt.NDArray[np.float64]:
-        """Angular radius of the Earth as seen from the observer (in degrees)."""
-        ...
-
-    @property
-    def sun_radius_rad(self) -> npt.NDArray[np.float64]:
-        """Angular radius of the Sun as seen from the observer (in radians)."""
-        ...
-
-    @property
-    def moon_radius_rad(self) -> npt.NDArray[np.float64]:
-        """Angular radius of the Moon as seen from the observer (in radians)."""
-        ...
-
-    @property
-    def earth_radius_rad(self) -> npt.NDArray[np.float64]:
-        """Angular radius of the Earth as seen from the observer (in radians)."""
-        ...
-
-    def index(self, time: datetime) -> int:
-        """Find the index of the closest timestamp to the given datetime."""
-        ...
-
-    @property
-    def begin(self) -> datetime:
-        """Start time of the ephemeris."""
-        ...
-
-    @property
-    def end(self) -> datetime:
-        """End time of the ephemeris."""
-        ...
-
-    @property
-    def step_size(self) -> int:
-        """Time step size in seconds between ephemeris points."""
-        ...
-
-    @property
-    def polar_motion(self) -> bool:
-        """Whether polar motion corrections are applied."""
-        ...
+from .ephemeris import Ephemeris
 
 class PositionVelocityData:
     """Position and velocity data container"""
@@ -458,7 +282,7 @@ class Constraint:
 
     def evaluate(
         self,
-        ephemeris: TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris,
+        ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
         times: datetime | list[datetime] | None = None,
@@ -493,7 +317,7 @@ class Constraint:
 
     def in_constraint_batch(
         self,
-        ephemeris: TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris,
+        ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
@@ -533,7 +357,7 @@ class Constraint:
 
     def evaluate_batch(
         self,
-        ephemeris: TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris,
+        ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
@@ -577,7 +401,7 @@ class Constraint:
     def in_constraint(
         self,
         time: datetime,
-        ephemeris: TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris,
+        ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
     ) -> bool:

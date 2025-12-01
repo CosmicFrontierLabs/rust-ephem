@@ -13,15 +13,10 @@ from typing import TYPE_CHECKING, Literal, Union, cast
 
 from pydantic import BaseModel, Field, TypeAdapter
 
+from .ephemeris import Ephemeris
+
 if TYPE_CHECKING:
-    from rust_ephem import (
-        ConstraintResult,
-        Ephemeris,
-        GroundEphemeris,
-        OEMEphemeris,
-        SPICEEphemeris,
-        TLEEphemeris,
-    )
+    from rust_ephem import ConstraintResult
 
 
 class RustConstraintMixin(BaseModel):
@@ -56,10 +51,7 @@ class RustConstraintMixin(BaseModel):
 
             self._rust_constraint = Constraint.from_json(self.model_dump_json())
         return self._rust_constraint.evaluate(
-            cast(
-                "TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris",
-                ephemeris,
-            ),
+            ephemeris,
             target_ra,
             target_dec,
             times,
@@ -95,10 +87,7 @@ class RustConstraintMixin(BaseModel):
 
             self._rust_constraint = Constraint.from_json(self.model_dump_json())
         return self._rust_constraint.in_constraint_batch(
-            cast(
-                "TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris",
-                ephemeris,
-            ),
+            ephemeris,
             target_ras,
             target_decs,
             times,
@@ -130,10 +119,7 @@ class RustConstraintMixin(BaseModel):
             stacklevel=2,
         )
         return self.in_constraint_batch(
-            cast(
-                "TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris",
-                ephemeris,
-            ),
+            ephemeris,
             target_ras,
             target_decs,
             times,
@@ -168,10 +154,7 @@ class RustConstraintMixin(BaseModel):
             self._rust_constraint = Constraint.from_json(self.model_dump_json())
         return self._rust_constraint.in_constraint(
             time,
-            cast(
-                "TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris",
-                ephemeris,
-            ),
+            ephemeris,
             target_ra,
             target_dec,
         )
