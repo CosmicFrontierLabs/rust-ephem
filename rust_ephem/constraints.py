@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, TypeAdapter
 if TYPE_CHECKING:
     from rust_ephem import (
         ConstraintResult,
+        Ephemeris,
         GroundEphemeris,
         OEMEphemeris,
         SPICEEphemeris,
@@ -28,7 +29,7 @@ class RustConstraintMixin(BaseModel):
 
     def evaluate(
         self,
-        ephemeris: TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris,
+        ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
         times: datetime | list[datetime] | None = None,
@@ -55,12 +56,19 @@ class RustConstraintMixin(BaseModel):
 
             self._rust_constraint = Constraint.from_json(self.model_dump_json())
         return self._rust_constraint.evaluate(
-            ephemeris, target_ra, target_dec, times, indices
+            cast(
+                "TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris",
+                ephemeris,
+            ),
+            target_ra,
+            target_dec,
+            times,
+            indices,
         )
 
     def in_constraint_batch(
         self,
-        ephemeris: TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris,
+        ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
@@ -87,12 +95,19 @@ class RustConstraintMixin(BaseModel):
 
             self._rust_constraint = Constraint.from_json(self.model_dump_json())
         return self._rust_constraint.in_constraint_batch(
-            ephemeris, target_ras, target_decs, times, indices
+            cast(
+                "TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris",
+                ephemeris,
+            ),
+            target_ras,
+            target_decs,
+            times,
+            indices,
         )
 
     def evaluate_batch(
         self,
-        ephemeris: TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris,
+        ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
@@ -115,13 +130,20 @@ class RustConstraintMixin(BaseModel):
             stacklevel=2,
         )
         return self.in_constraint_batch(
-            ephemeris, target_ras, target_decs, times, indices
+            cast(
+                "TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris",
+                ephemeris,
+            ),
+            target_ras,
+            target_decs,
+            times,
+            indices,
         )
 
     def in_constraint(
         self,
         time: datetime,
-        ephemeris: TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris,
+        ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
     ) -> bool:
@@ -145,7 +167,13 @@ class RustConstraintMixin(BaseModel):
 
             self._rust_constraint = Constraint.from_json(self.model_dump_json())
         return self._rust_constraint.in_constraint(
-            time, ephemeris, target_ra, target_dec
+            time,
+            cast(
+                "TLEEphemeris | SPICEEphemeris | GroundEphemeris | OEMEphemeris",
+                ephemeris,
+            ),
+            target_ra,
+            target_dec,
         )
 
     def and_(self, other: ConstraintConfig) -> AndConstraint:
