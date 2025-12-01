@@ -21,30 +21,17 @@ STEP_SIZE = 120  # 2 minutes
 
 
 class TestTLEEphemerisType:
-    def test_tle_ephemeris_type(self):
+    def test_tle_ephemeris_type(self, tle_ephemeris):
         assert isinstance(
-            TLEEphemeris(
-                tle1=VALID_TLE1,
-                tle2=VALID_TLE2,
-                begin=BEGIN_TIME,
-                end=END_TIME,
-                step_size=STEP_SIZE,
-            ),
+            tle_ephemeris,
             Ephemeris,
         )
 
 
 class TestGroundEphemerisType:
-    def test_ground_ephemeris_type(self):
+    def test_ground_ephemeris_type(self, ground_ephemeris):
         assert isinstance(
-            GroundEphemeris(
-                latitude=34.0,
-                longitude=-118.0,
-                height=100.0,
-                begin=BEGIN_TIME,
-                end=END_TIME,
-                step_size=STEP_SIZE,
-            ),
+            ground_ephemeris,
             Ephemeris,
         )
 
@@ -145,28 +132,13 @@ class TestEphemerisABCBehavior:
         """Test that GroundEphemeris is registered as a virtual subclass of Ephemeris."""
         assert issubclass(GroundEphemeris, Ephemeris)
 
-    def test_ground_ephemeris_isinstance_check(self):
+    def test_ground_ephemeris_isinstance_check(self, ground_ephemeris):
         """Test isinstance check works for GroundEphemeris."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert isinstance(ground_eph, Ephemeris)
+        assert isinstance(ground_ephemeris, Ephemeris)
 
-    def test_tle_ephemeris_isinstance_check(self):
+    def test_tle_ephemeris_isinstance_check(self, tle_ephemeris):
         """Test isinstance check works for TLEEphemeris."""
-        tle_eph = TLEEphemeris(
-            tle1=VALID_TLE1,
-            tle2=VALID_TLE2,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert isinstance(tle_eph, Ephemeris)
+        assert isinstance(tle_ephemeris, Ephemeris)
 
     def test_ephemeris_is_subclass_of_abc_again(self):
         """Test that Ephemeris is a subclass of ABC (redundant check for completeness)."""
@@ -188,406 +160,143 @@ class TestEphemerisABCBehavior:
         """Test that GroundEphemeris is a subclass of ABC."""
         assert issubclass(GroundEphemeris, ABC)
 
-    def test_ephemeris_instance_has_timestamp_attribute(self):
+    def test_ephemeris_instance_has_timestamp_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have timestamp attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "timestamp")
+        assert hasattr(ground_ephemeris, "timestamp")
 
-    def test_ephemeris_instance_has_gcrs_pv_attribute(self):
+    def test_ephemeris_instance_has_gcrs_pv_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have gcrs_pv attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "gcrs_pv")
+        assert hasattr(ground_ephemeris, "gcrs_pv")
 
-    def test_ephemeris_instance_has_itrs_pv_attribute(self):
+    def test_ephemeris_instance_has_itrs_pv_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have itrs_pv attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "itrs_pv")
+        assert hasattr(ground_ephemeris, "itrs_pv")
 
-    def test_ephemeris_instance_has_itrs_attribute(self):
+    def test_ephemeris_instance_has_itrs_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have itrs attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "itrs")
+        assert hasattr(ground_ephemeris, "itrs")
 
-    def test_ephemeris_instance_has_gcrs_attribute(self):
+    def test_ephemeris_instance_has_gcrs_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have gcrs attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "gcrs")
+        assert hasattr(ground_ephemeris, "gcrs")
 
-    def test_ephemeris_instance_has_earth_attribute(self):
+    def test_ephemeris_instance_has_earth_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have earth attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "earth")
+        assert hasattr(ground_ephemeris, "earth")
 
-    def test_ephemeris_instance_has_sun_attribute(self):
+    def test_ephemeris_instance_has_sun_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have sun attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "sun")
+        assert hasattr(ground_ephemeris, "sun")
 
-    def test_ephemeris_instance_has_moon_attribute(self):
+    def test_ephemeris_instance_has_moon_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have moon attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "moon")
+        assert hasattr(ground_ephemeris, "moon")
 
-    def test_ephemeris_instance_has_sun_pv_attribute(self):
+    def test_ephemeris_instance_has_sun_pv_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have sun_pv attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "sun_pv")
+        assert hasattr(ground_ephemeris, "sun_pv")
 
-    def test_ephemeris_instance_has_moon_pv_attribute(self):
+    def test_ephemeris_instance_has_moon_pv_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have moon_pv attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "moon_pv")
+        assert hasattr(ground_ephemeris, "moon_pv")
 
-    def test_ephemeris_instance_has_obsgeoloc_attribute(self):
+    def test_ephemeris_instance_has_obsgeoloc_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have obsgeoloc attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "obsgeoloc")
+        assert hasattr(ground_ephemeris, "obsgeoloc")
 
-    def test_ephemeris_instance_has_obsgeovel_attribute(self):
+    def test_ephemeris_instance_has_obsgeovel_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have obsgeovel attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "obsgeovel")
+        assert hasattr(ground_ephemeris, "obsgeovel")
 
-    def test_ephemeris_instance_has_latitude_attribute(self):
+    def test_ephemeris_instance_has_latitude_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have latitude attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "latitude")
+        assert hasattr(ground_ephemeris, "latitude")
 
-    def test_ephemeris_instance_has_latitude_deg_attribute(self):
+    def test_ephemeris_instance_has_latitude_deg_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have latitude_deg attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "latitude_deg")
+        assert hasattr(ground_ephemeris, "latitude_deg")
 
-    def test_ephemeris_instance_has_latitude_rad_attribute(self):
+    def test_ephemeris_instance_has_latitude_rad_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have latitude_rad attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "latitude_rad")
+        assert hasattr(ground_ephemeris, "latitude_rad")
 
-    def test_ephemeris_instance_has_longitude_attribute(self):
+    def test_ephemeris_instance_has_longitude_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have longitude attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "longitude")
+        assert hasattr(ground_ephemeris, "longitude")
 
-    def test_ephemeris_instance_has_longitude_deg_attribute(self):
+    def test_ephemeris_instance_has_longitude_deg_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have longitude_deg attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "longitude_deg")
+        assert hasattr(ground_ephemeris, "longitude_deg")
 
-    def test_ephemeris_instance_has_longitude_rad_attribute(self):
+    def test_ephemeris_instance_has_longitude_rad_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have longitude_rad attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "longitude_rad")
+        assert hasattr(ground_ephemeris, "longitude_rad")
 
-    def test_ephemeris_instance_has_height_attribute(self):
+    def test_ephemeris_instance_has_height_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have height attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "height")
+        assert hasattr(ground_ephemeris, "height")
 
-    def test_ephemeris_instance_has_height_m_attribute(self):
+    def test_ephemeris_instance_has_height_m_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have height_m attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "height_m")
+        assert hasattr(ground_ephemeris, "height_m")
 
-    def test_ephemeris_instance_has_height_km_attribute(self):
+    def test_ephemeris_instance_has_height_km_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have height_km attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "height_km")
+        assert hasattr(ground_ephemeris, "height_km")
 
-    def test_ephemeris_instance_has_sun_radius_attribute(self):
+    def test_ephemeris_instance_has_sun_radius_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have sun_radius attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "sun_radius")
+        assert hasattr(ground_ephemeris, "sun_radius")
 
-    def test_ephemeris_instance_has_sun_radius_deg_attribute(self):
+    def test_ephemeris_instance_has_sun_radius_deg_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have sun_radius_deg attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "sun_radius_deg")
+        assert hasattr(ground_ephemeris, "sun_radius_deg")
 
-    def test_ephemeris_instance_has_moon_radius_attribute(self):
+    def test_ephemeris_instance_has_moon_radius_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have moon_radius attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "moon_radius")
+        assert hasattr(ground_ephemeris, "moon_radius")
 
-    def test_ephemeris_instance_has_moon_radius_deg_attribute(self):
+    def test_ephemeris_instance_has_moon_radius_deg_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have moon_radius_deg attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "moon_radius_deg")
+        assert hasattr(ground_ephemeris, "moon_radius_deg")
 
-    def test_ephemeris_instance_has_earth_radius_attribute(self):
+    def test_ephemeris_instance_has_earth_radius_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have earth_radius attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "earth_radius")
+        assert hasattr(ground_ephemeris, "earth_radius")
 
-    def test_ephemeris_instance_has_earth_radius_deg_attribute(self):
+    def test_ephemeris_instance_has_earth_radius_deg_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have earth_radius_deg attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "earth_radius_deg")
+        assert hasattr(ground_ephemeris, "earth_radius_deg")
 
-    def test_ephemeris_instance_has_sun_radius_rad_attribute(self):
+    def test_ephemeris_instance_has_sun_radius_rad_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have sun_radius_rad attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "sun_radius_rad")
+        assert hasattr(ground_ephemeris, "sun_radius_rad")
 
-    def test_ephemeris_instance_has_moon_radius_rad_attribute(self):
+    def test_ephemeris_instance_has_moon_radius_rad_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have moon_radius_rad attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "moon_radius_rad")
+        assert hasattr(ground_ephemeris, "moon_radius_rad")
 
-    def test_ephemeris_instance_has_earth_radius_rad_attribute(self):
+    def test_ephemeris_instance_has_earth_radius_rad_attribute(self, ground_ephemeris):
         """Test that ephemeris instances have earth_radius_rad attribute."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "earth_radius_rad")
+        assert hasattr(ground_ephemeris, "earth_radius_rad")
 
-    def test_ephemeris_instance_has_index_method(self):
+    def test_ephemeris_instance_has_index_method(self, ground_ephemeris):
         """Test that ephemeris instances have index method."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert hasattr(ground_eph, "index")
+        assert hasattr(ground_ephemeris, "index")
 
-    def test_ephemeris_instance_index_is_callable(self):
+    def test_ephemeris_instance_index_is_callable(self, ground_ephemeris):
         """Test that ephemeris index attribute is callable."""
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert callable(getattr(ground_eph, "index"))
+        assert callable(getattr(ground_ephemeris, "index"))
 
-    def test_ephemeris_type_annotation_accepts_ephemeris_instance(self):
+    def test_ephemeris_type_annotation_accepts_ephemeris_instance(
+        self, ground_ephemeris
+    ):
         """Test that Ephemeris can be used in type annotations and accepts ephemeris instances."""
 
         def accepts_ephemeris(eph: Ephemeris) -> bool:
             return isinstance(eph, Ephemeris)
 
-        ground_eph = GroundEphemeris(
-            latitude=34.0,
-            longitude=-118.0,
-            height=100.0,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-
-        assert accepts_ephemeris(ground_eph)
+        assert accepts_ephemeris(ground_ephemeris)
 
     def test_ephemeris_type_hints_include_eph_parameter(self):
         """Test that type hints work for functions accepting Ephemeris."""
@@ -609,16 +318,9 @@ class TestEphemerisABCBehavior:
         ground_mro = [cls.__name__ for cls in GroundEphemeris.__mro__]
         assert "Ephemeris" not in ground_mro
 
-    def test_tle_ephemeris_instance_passes_isinstance_check(self):
+    def test_tle_ephemeris_instance_passes_isinstance_check(self, tle_ephemeris):
         """Test that TLEEphemeris instances pass isinstance check with Ephemeris."""
-        tle_eph = TLEEphemeris(
-            tle1=VALID_TLE1,
-            tle2=VALID_TLE2,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-        )
-        assert isinstance(tle_eph, Ephemeris)
+        assert isinstance(tle_ephemeris, Ephemeris)
 
     def test_integer_not_ephemeris_instance(self):
         """Test that integers are not considered Ephemeris instances."""
