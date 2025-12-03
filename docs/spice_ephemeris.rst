@@ -123,6 +123,6 @@ SPK Error Handling
     if re.is_planetary_ephemeris_initialized():
         print("Ready to create SPICEEphemeris objects")
 
-See also: :doc:`examples/usage_spice` and :doc:`accuracy_precision`.
+See also: :doc:`ephemeris_spice` and :doc:`accuracy_precision`.
 
 
