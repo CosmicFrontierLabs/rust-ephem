@@ -4,7 +4,7 @@ rust-ephem Documentation
 .. image:: _static/logo.png
    :alt: rust-ephem logo
    :align: center
-   :width: 200px
+   :width: 300px
 
 .. image:: https://img.shields.io/badge/python-3.10+-blue.svg
    :alt: Python 3.10 +
