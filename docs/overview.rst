@@ -1,86 +1,91 @@
-Project overview
+Project Overview
 ================
 
 ``rust-ephem`` is a Rust library with Python bindings for high-performance
 satellite and planetary ephemeris calculations. It propagates Two-Line Element
 (TLE) data and SPICE kernels, outputs standard coordinate frames (ITRS, GCRS),
-and integrates with astropy for Python workflows. It achieves meters-level
-accuracy for Low Earth Orbit (LEO) satellites with proper time corrections. It
-also supports ground-based observatory ephemerides.
+and integrates with astropy for Python workflows.
 
-Built for performance: generates ephemerides for thousands of time steps using
-Rust's speed and efficient memory handling. Ideal for visibility calculators
-where speed is critical (e.g. APIs serving many users) and large-scale
-ephemeris tasks where it outperforms pure-Python libraries by an order of
-magnitude.
+Why rust-ephem?
+---------------
 
-``rust-ephem`` supports outputting calculated ephemerides as ``astropy`` ``SkyCoord``
-objects, alleviating the need to manually convert raw ephemeris data into astropy
-frames. This makes it easy to integrate into existing Python astronomy workflows
-that rely on astropy for coordinate transformations and time system handling.
+**Performance**: Built in Rust for speed, ``rust-ephem`` generates ephemerides for
+thousands of time steps efficiently. Ideal for visibility calculators where speed
+is critical (e.g., APIs serving many users) and large-scale ephemeris tasks where
+it outperforms pure-Python libraries by an order of magnitude.
 
-By default ephemeris calculation includes locations the Sun and Moon in
-``SkyCoord``, with observatory location and velocity included, so calculations of
-distance between Sun and Moon will correctly account for the observer's motion.
-Therefore issues that arise with LEO spacecraft observatories such as Moon
-parallax are properly handled. In addition it can calculate ephemerides for
-other solar system bodies.
+**Accuracy**: Achieves 10-20 meter accuracy for Low Earth Orbit (LEO) satellites
+with proper time corrections (UT1, polar motion, leap seconds).
 
-It provides:
+**Integration**: Outputs ``astropy`` ``SkyCoord`` objects directly, including Sun
+and Moon positions with observer location and velocity. This correctly handles
+effects like Moon parallax for LEO spacecraft observatories.
 
-- TLE propagation using the SGP4 algorithm
-- Coordinate transformations between TEME, ITRS, and GCRS frames
-- Ground-based observatory ephemeris for fixed Earth locations
-- Access to planetary ephemerides (SPICE, e.g. DE440S)
-- Time system conversions (TAI, UT1, UTC) with leap seconds
-- Earth Orientation Parameters (EOP) for polar motion corrections
-- A concise Python API for high-performance workflows
+**Constraints**: A flexible constraint system enables observation planning with
+Sun/Moon proximity, Earth limb avoidance, and eclipse detection. Logical operators
+(AND, OR, NOT, XOR) allow combining constraints with Python's ``&``, ``|``, ``~``,
+``^`` operators.
 
-Key technologies
+Core Capabilities
+-----------------
+
+- **TLE propagation** using the SGP4 algorithm
+- **SPICE kernel access** for high-precision planetary ephemerides
+- **Ground observatory ephemeris** for fixed Earth locations
+- **OEM file support** for CCSDS Orbit Ephemeris Messages
+- **Coordinate transformations** between TEME, ITRS, and GCRS frames
+- **Time system conversions** (TAI, UT1, UTC) with leap seconds
+- **Earth Orientation Parameters** (EOP) for polar motion corrections
+- **Constraint evaluation** for observation planning
+
+Key Technologies
 ----------------
 
-- Language: `Rust (2021 edition) <https://www.rust-lang.org/>`_
-- Python integration: `PyO3 <https://pyo3.rs/>`_, distributed via `maturin <https://www.maturin.rs>`_ wheels
-- Astronomy libraries:
+- **Language**: `Rust (2021 edition) <https://www.rust-lang.org/>`_
+- **Python integration**: `PyO3 <https://pyo3.rs/>`_ with `maturin <https://www.maturin.rs>`_ wheels
+- **Astronomy libraries**:
   
   - `ERFA <https://docs.rs/erfa/latest/erfa/index.html>`_ (IAU standards)
-  - `SGP4 <https://github.com/neuromorphicsystems/sgp4>`_ (pure-Rust TLE propogation)
-  - `ANISE <https://github.com/nyx-space/anise>`_ (pure-Python SPICE kernel propogation)
-  - `astropy <https://astropy.org>`_ - natively outputs astropy SkyCoord objects
-- Timing libraries: 
-  
-  - `hifitime <https://github.com/nyx-space/hifitime>`_ for high-precision time
-    handling and corrections.
+  - `SGP4 <https://github.com/neuromorphicsystems/sgp4>`_ (pure-Rust TLE propagation)
+  - `ANISE <https://github.com/nyx-space/anise>`_ (SPICE kernel handling)
+  - `astropy <https://astropy.org>`_ (SkyCoord output)
 
-- Arrays: NumPy integration
+- **Time handling**: `hifitime <https://github.com/nyx-space/hifitime>`_ for high-precision time
+- **Arrays**: NumPy integration for efficient data handling
 
+Typical Workflows
+-----------------
 
-Typical workflow
-----------------
+**Satellite Ephemeris (TLE)**
 
-**For satellite ephemeris (TLE):**
+1. Create ``TLEEphemeris`` from TLE data (file, URL, or Celestrak query)
+2. Access TEME, ITRS, or GCRS coordinates as ``SkyCoord`` objects
+3. Query Sun/Moon positions relative to the satellite
 
-1. Parse a TLE and propagate with SGP4 to get TEME position/velocity
-2. Transform TEME → ITRS → GCRS (or TEME → GCRS) using ERFA routines
-3. Optionally query Sun/Moon positions in GCRS
+**Planetary Ephemeris (SPICE)**
 
-**For planetary ephemeris (SPICE):**
-
-1. Ensure planetary SPK file is available (automatically downloads if needed)
-2. Create SPICEEphemeris for a specific celestial body
+1. Call ``ensure_planetary_ephemeris()`` to load SPK data
+2. Create ``SPICEEphemeris`` for a celestial body
 3. Access positions in GCRS or ITRS frames
 
-**For ground observatory:**
+**Ground Observatory**
 
-1. Define observatory location (latitude, longitude, height)
-2. Create GroundEphemeris for a time range
-3. Access observatory positions in ITRS/GCRS and Sun/Moon positions
+1. Create ``GroundEphemeris`` with latitude, longitude, height
+2. Access observatory positions in ITRS/GCRS
+3. Query Sun/Moon positions from the observatory
 
-**For constraint evaluation:**
+**Constraint Evaluation**
 
-1. Configure constraints (Sun/Moon proximity, eclipse avoidance, etc.)
-2. Combine constraints using logical operators (AND, OR, NOT)
-3. Evaluate against ephemeris data to find violation windows
-4. Analyze results for observation planning
+1. Configure constraints (Sun proximity, Moon avoidance, eclipse, etc.)
+2. Combine constraints with ``&``, ``|``, ``~`` operators
+3. Evaluate against ephemeris to find visibility windows
+4. Use batch evaluation for multiple targets efficiently
 
-See :doc:`api` for the Python surface and :doc:`examples/index` for practical code.
+Next Steps
+----------
+
+- :doc:`frames` — Coordinate frame details
+- :doc:`time_systems` — Time scale handling
+- :doc:`accuracy_precision` — Accuracy information
+- :doc:`api` — Complete API reference
+- :doc:`examples/index` — Practical code examples

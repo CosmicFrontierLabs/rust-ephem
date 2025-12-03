@@ -1,4 +1,14 @@
+<p align="center">
+  <img src="docs/_static/logo.png" alt="rust-ephem logo" width="200">
+</p>
+
 # rust-ephem
+
+[![PyPI version](https://img.shields.io/pypi/v/rust-ephem.svg)](https://pypi.org/project/rust-ephem/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Rust](https://img.shields.io/badge/rust-2021-orange.svg)](https://www.rust-lang.org/)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg)](https://cosmicfrontierlabs.github.io/rust-ephem/)
 
 `rust-ephem` is a Rust library with Python bindings for high-performance
 satellite and planetary ephemeris calculations. It propagates Two-Line Element

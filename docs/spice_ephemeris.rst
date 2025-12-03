@@ -95,8 +95,8 @@ The library supports any SPICE SPK (ephemeris) file. Common options:
 - **de440.bsp** — Full planetary ephemeris (1550-2650)
 - Custom mission SPK files for specific spacecraft
 
-Performance notes
------------------
+SPK Loading Performance
+-----------------------
 
 - SPICE loading is done once during initialization; subsequent queries are fast
 - All frames are pre-computed during object creation for efficiency

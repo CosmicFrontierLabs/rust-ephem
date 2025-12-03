@@ -24,6 +24,34 @@ may be mocked (see `docs/README.md`).
 Classes
 ^^^^^^^
 
+**Ephemeris** (Abstract Base Class)
+  Common interface for all ephemeris types. All concrete ephemeris classes
+  (TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris) implement this
+  interface and can be used interchangeably where an ``Ephemeris`` is expected.
+  
+  Use ``isinstance(obj, Ephemeris)`` to check if an object is any ephemeris type.
+  
+  **Common Properties:**
+    * ``timestamp`` — Array of UTC timestamps
+    * ``gcrs_pv`` — Position/velocity in GCRS frame
+    * ``itrs_pv`` — Position/velocity in ITRS frame
+    * ``gcrs`` — GCRS coordinates as astropy SkyCoord
+    * ``itrs`` — ITRS coordinates as astropy SkyCoord
+    * ``sun``, ``moon``, ``earth`` — Celestial body SkyCoord objects
+    * ``sun_pv``, ``moon_pv`` — Celestial body position/velocity data
+    * ``obsgeoloc``, ``obsgeovel`` — Observer location/velocity in GCRS
+    * ``latitude_deg``, ``longitude_deg``, ``height_m`` — Geodetic coordinates
+    * ``sun_radius_deg``, ``moon_radius_deg``, ``earth_radius_deg`` — Angular radii
+    * ``begin``, ``end``, ``step_size``, ``polar_motion`` — Time range properties
+  
+  **Common Methods:**
+    * ``index(time)`` — Find closest timestamp index
+    * ``get_body(body)`` — Get SkyCoord for a celestial body
+    * ``get_body_pv(body)`` — Get position/velocity for a celestial body
+  
+  **Type Alias:**
+    ``EphemerisType = TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris``
+
 **TLEEphemeris**
   Propagate Two-Line Element (TLE) sets with SGP4 and convert to coordinate frames.
   
@@ -85,6 +113,18 @@ Classes
       - ``time`` — Python datetime object
       - Returns: ``int`` index that can be used to access ephemeris arrays
       - Example: ``idx = eph.index(datetime(2024, 1, 1, 12, 0, 0))`` then ``position = eph.gcrs_pv.position[idx]``
+    
+    * ``get_body_pv(body)`` — Get position/velocity of a solar system body relative to observer
+      
+      - ``body`` — Body name (e.g., "Sun", "Moon", "Mars") or NAIF ID as string (e.g., "10", "301")
+      - Returns: ``PositionVelocityData`` with position/velocity in GCRS frame
+      - Requires: ``ensure_planetary_ephemeris()`` called first
+    
+    * ``get_body(body)`` — Get SkyCoord for a solar system body with observer location set
+      
+      - ``body`` — Body name or NAIF ID as string
+      - Returns: ``astropy.coordinates.SkyCoord`` in GCRS frame with obsgeoloc/obsgeovel set
+      - Requires: ``ensure_planetary_ephemeris()`` called first
 
 **SPICEEphemeris**
   Access planetary ephemerides (SPK files) for celestial body positions.
@@ -130,6 +170,16 @@ Classes
       - ``time`` — Python datetime object
       - Returns: ``int`` index that can be used to access ephemeris arrays
       - Example: ``idx = eph.index(datetime(2024, 1, 1, 12, 0, 0))`` then ``position = eph.gcrs_pv.position[idx]``
+    
+    * ``get_body_pv(body)`` — Get position/velocity of a solar system body relative to observer
+      
+      - ``body`` — Body name (e.g., "Sun", "Moon", "Mars") or NAIF ID as string
+      - Returns: ``PositionVelocityData`` with position/velocity in GCRS frame
+    
+    * ``get_body(body)`` — Get SkyCoord for a solar system body with observer location set
+      
+      - ``body`` — Body name or NAIF ID as string
+      - Returns: ``astropy.coordinates.SkyCoord`` in GCRS frame
 
 **GroundEphemeris**
   Ground-based observatory ephemeris for a fixed point on Earth's surface.
@@ -183,6 +233,17 @@ Classes
       - ``time`` — Python datetime object
       - Returns: ``int`` index that can be used to access ephemeris arrays
       - Example: ``idx = eph.index(datetime(2024, 1, 1, 12, 0, 0))`` then ``sun_position = eph.sun_pv.position[idx]``
+    
+    * ``get_body_pv(body)`` — Get position/velocity of a solar system body relative to observer
+      
+      - ``body`` — Body name (e.g., "Sun", "Moon", "Mars") or NAIF ID as string
+      - Returns: ``PositionVelocityData`` with position/velocity in GCRS frame
+      - Requires: ``ensure_planetary_ephemeris()`` called first
+    
+    * ``get_body(body)`` — Get SkyCoord for a solar system body with observer location set
+      
+      - ``body`` — Body name or NAIF ID as string
+      - Returns: ``astropy.coordinates.SkyCoord`` in GCRS frame
 
 **OEMEphemeris**
   Load and interpolate CCSDS Orbit Ephemeris Message (OEM) files for spacecraft ephemeris.
@@ -242,6 +303,17 @@ Classes
       - ``time`` — Python datetime object
       - Returns: ``int`` index that can be used to access ephemeris arrays
       - Example: ``idx = eph.index(datetime(2032, 7, 1, 12, 0, 0))`` then ``position = eph.gcrs_pv.position[idx]``
+    
+    * ``get_body_pv(body)`` — Get position/velocity of a solar system body relative to observer
+      
+      - ``body`` — Body name (e.g., "Sun", "Moon", "Mars") or NAIF ID as string
+      - Returns: ``PositionVelocityData`` with position/velocity in GCRS frame
+      - Requires: ``ensure_planetary_ephemeris()`` called first
+    
+    * ``get_body(body)`` — Get SkyCoord for a solar system body with observer location set
+      
+      - ``body`` — Body name or NAIF ID as string
+      - Returns: ``astropy.coordinates.SkyCoord`` in GCRS frame
 
 **Constraint**
   Evaluate astronomical observation constraints against ephemeris data.
@@ -499,6 +571,20 @@ Constraint configurations support Python bitwise operators for convenient combin
 * ``~constraint`` — Logical NOT (equivalent to ``NotConstraint``)
 
 Usage examples are provided in the examples section of the docs.
+
+**Type Aliases**
+
+``ConstraintConfig``
+  Union type for all constraint configuration classes::
+  
+    ConstraintConfig = (
+        SunConstraint | MoonConstraint | EclipseConstraint |
+        EarthLimbConstraint | BodyConstraint | AndConstraint |
+        OrConstraint | XorConstraint | NotConstraint
+    )
+
+``CombinedConstraintConfig``
+  Pydantic TypeAdapter for parsing constraint configurations from JSON.
 
 Performance Notes
 ^^^^^^^^^^^^^^^^^
