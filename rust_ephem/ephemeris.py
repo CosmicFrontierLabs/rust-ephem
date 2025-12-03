@@ -40,31 +40,31 @@ class Ephemeris(abc.ABC):
 
     @property
     @abc.abstractmethod
-    def itrs(self) -> SkyCoord:
+    def itrs(self) -> "SkyCoord":
         """SkyCoord object in ITRS frame."""
         ...
 
     @property
     @abc.abstractmethod
-    def gcrs(self) -> SkyCoord:
+    def gcrs(self) -> "SkyCoord":
         """SkyCoord object in GCRS frame."""
         ...
 
     @property
     @abc.abstractmethod
-    def earth(self) -> SkyCoord:
+    def earth(self) -> "SkyCoord":
         """SkyCoord object for Earth position relative to observer."""
         ...
 
     @property
     @abc.abstractmethod
-    def sun(self) -> SkyCoord:
+    def sun(self) -> "SkyCoord":
         """SkyCoord object for Sun position relative to observer."""
         ...
 
     @property
     @abc.abstractmethod
-    def moon(self) -> SkyCoord:
+    def moon(self) -> "SkyCoord":
         """SkyCoord object for Moon position relative to observer."""
         ...
 
