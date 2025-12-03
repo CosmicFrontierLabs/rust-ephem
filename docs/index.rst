@@ -135,7 +135,7 @@ Documentation Contents
 
    api
    constraints_api
-   spice_ephemeris
+   planetary_ephemeris
 
 Indices and Tables
 ------------------
