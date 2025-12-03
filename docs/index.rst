@@ -113,16 +113,29 @@ Documentation Contents
 
 .. toctree::
    :maxdepth: 2
-   :caption: Reference
+   :caption: Ephemeris Generation
 
-   api
-   spice_ephemeris
+   ephemeris_tle
+   ephemeris_spice
+   ephemeris_ground
+   ephemeris_oem
+   ephemeris_skycoord
+   ephemeris_get_body
 
 .. toctree::
    :maxdepth: 2
-   :caption: Examples
+   :caption: Observation Planning
 
-   examples/index
+   planning_constraints
+   planning_visibility
+
+.. toctree::
+   :maxdepth: 2
+   :caption: API Reference
+
+   api
+   constraints_api
+   spice_ephemeris
 
 Indices and Tables
 ------------------
