@@ -84,7 +84,7 @@ class MoonConstraint(RustConstraintMixin):
 
 class EclipseConstraint(RustConstraintMixin):
     type: Literal["eclipse"] = "eclipse"
-    umbra_only: bool = False
+    umbra_only: bool = True
 
 class AndConstraint(RustConstraintMixin):
     type: Literal["and"] = "and"
