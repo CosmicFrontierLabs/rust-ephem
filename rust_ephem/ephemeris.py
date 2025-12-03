@@ -219,7 +219,7 @@ class Ephemeris(abc.ABC):
 
     @property
     @abc.abstractmethod
-    def step_size(self) -> float:
+    def step_size(self) -> int:
         """Time step size in seconds between ephemeris points."""
         ...
 
