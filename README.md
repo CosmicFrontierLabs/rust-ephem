@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/_static/logo.png" alt="rust-ephem logo" width="200">
+  <img src="docs/_static/logo.png" alt="rust-ephem logo" width="300">
 </p>
 
 # rust-ephem
