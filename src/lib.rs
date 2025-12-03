@@ -235,6 +235,7 @@ fn _rust_ephem(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SPICEEphemeris>()?;
     m.add_class::<OEMEphemeris>()?;
     m.add_class::<GroundEphemeris>()?;
+    m.add_class::<PositionVelocityData>()?;
     m.add_class::<PyConstraint>()?;
     m.add_class::<ConstraintResult>()?;
     m.add_class::<ConstraintViolation>()?;
