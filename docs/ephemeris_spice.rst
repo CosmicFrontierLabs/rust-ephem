@@ -1,8 +1,16 @@
 Using SPICEEphemeris
 ====================
 
-This example shows how to ensure a planetary SPK file is available and query
-planetary positions.
+``SPICEEphemeris`` loads spacecraft trajectory data from SPICE SPK files. This is
+the standard format for NASA and ESA mission ephemeris data.
+
+.. note::
+   ``SPICEEphemeris`` is for **spacecraft** trajectories stored in SPK files.
+   To query planetary body positions (Sun, Moon, planets), use ``get_body()``
+   or ``get_body_pv()`` on any ephemeris type.
+
+Basic Usage
+-----------
 
 .. code-block:: python
 
@@ -10,8 +18,7 @@ planetary positions.
     import numpy as np
     import rust_ephem as re
 
-    # Ensure the planetary ephemeris is available; download if missing.
-    # Uses default DE440S path and URL.
+    # Initialize planetary ephemeris for Sun/Moon positions
     re.ensure_planetary_ephemeris()
 
     # Define time range
@@ -19,49 +26,67 @@ planetary positions.
     end = dt.datetime(2024, 1, 1, 1, 0, 0, tzinfo=dt.timezone.utc)
     step_size = 60  # seconds
 
-    # Create SPICE ephemeris for a specific body
-    # Example: Moon (NAIF ID 301) relative to Earth center (399)
-    spk_path = "path/to/your/spk/file.bsp"
+    # Create SPICE ephemeris for your spacecraft
+    # You need an SPK file containing your spacecraft's trajectory
+    spk_path = "path/to/your/spacecraft.bsp"
     spice = re.SPICEEphemeris(
         spk_path=spk_path,
-        naif_id=301,  # Moon
+        naif_id=-12345,   # Your spacecraft's NAIF ID (typically negative)
         begin=begin,
         end=end,
         step_size=step_size,
-        center_id=399,  # Earth
+        center_id=399,    # Observer center: Earth (default)
         polar_motion=False
     )
 
-    # Access pre-computed frames (PositionVelocityData objects)
+    # Access spacecraft positions (PositionVelocityData objects)
     pv_gcrs = spice.gcrs_pv
     pv_itrs = spice.itrs_pv
 
-    # Access Sun and Moon positions/velocities
+    # Access Sun and Moon positions relative to spacecraft
     sun = spice.sun_pv
     moon = spice.moon_pv
 
     # Access timestamps
     times = spice.timestamp
 
-    print("GCRS position (km):", pv_gcrs.position[0])  # First timestep
-    print("Sun position norm (km):", np.linalg.norm(sun.position[0]))
+    print("Spacecraft GCRS position (km):", pv_gcrs.position[0])
+    print("Distance from Earth (km):", np.linalg.norm(pv_gcrs.position[0]))
 
-    # Access astropy SkyCoord objects (requires astropy)
+    # Access astropy SkyCoord objects
     gcrs_skycoord = spice.gcrs
     earth_skycoord = spice.earth
     sun_skycoord = spice.sun
 
-    # Geodetic coordinates (deg) and height (m) derived per timestamp
-    print("Latitude (deg):", spice.latitude_deg[0])
-    print("Longitude (deg):", spice.longitude_deg[0])
-    print("Height (m):", spice.height_m[0])
+    # Geodetic coordinates (lat/lon/height) of spacecraft sub-point
+    print("Sub-satellite latitude (deg):", spice.latitude_deg[0])
+    print("Sub-satellite longitude (deg):", spice.longitude_deg[0])
+    print("Altitude (m):", spice.height_m[0])
 
 SPICEEphemeris Error Handling
-------------------------------
-- If the SPK file is missing and ``download_if_missing=False`` was used, an
-  exception is raised.
-- Use ``is_planetary_ephemeris_initialized()`` to test readiness before creating
-  SPICEEphemeris objects.
+-----------------------------
+
+- If the SPK file doesn't exist or doesn't contain data for the requested NAIF ID
+  and time range, an exception is raised.
+- Use ``is_planetary_ephemeris_initialized()`` to check if planetary ephemeris
+  (for Sun/Moon) is ready before accessing ``.sun`` or ``.moon`` properties.
+
+Where to Get SPK Files
+----------------------
+
+Spacecraft SPK files are available from:
+
+- **NASA NAIF**: https://naif.jpl.nasa.gov/naif/data.html
+- **ESA SPICE Service**: https://www.cosmos.esa.int/web/spice
+- **Mission-specific archives** (PDS, mission websites)
+
+Common spacecraft NAIF IDs:
+
+- -82: Cassini
+- -98: New Horizons
+- -143: Mars Reconnaissance Orbiter
+
+Check your SPK file's documentation for the correct NAIF ID.
 
 Additional Time System Functions
 ---------------------------------

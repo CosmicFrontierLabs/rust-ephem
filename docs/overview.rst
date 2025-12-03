@@ -30,7 +30,7 @@ Core Capabilities
 -----------------
 
 - **TLE propagation** using the SGP4 algorithm
-- **SPICE kernel access** for high-precision planetary ephemerides
+- **SPICE kernel access** for spacecraft ephemeris from SPK files
 - **Ground observatory ephemeris** for fixed Earth locations
 - **OEM file support** for CCSDS Orbit Ephemeris Messages
 - **Coordinate transformations** between TEME, ITRS, and GCRS frames
@@ -62,11 +62,12 @@ Typical Workflows
 2. Access TEME, ITRS, or GCRS coordinates as ``SkyCoord`` objects
 3. Query Sun/Moon positions relative to the satellite
 
-**Planetary Ephemeris (SPICE)**
+**Spacecraft Ephemeris (SPICE)**
 
-1. Call ``ensure_planetary_ephemeris()`` to load SPK data
-2. Create ``SPICEEphemeris`` for a celestial body
+1. Obtain SPK file for your spacecraft (from mission provider or NAIF)
+2. Create ``SPICEEphemeris`` with the SPK path and spacecraft NAIF ID
 3. Access positions in GCRS or ITRS frames
+4. Call ``ensure_planetary_ephemeris()`` if you need Sun/Moon positions
 
 **Ground Observatory**
 
@@ -88,4 +89,3 @@ Next Steps
 - :doc:`time_systems` — Time scale handling
 - :doc:`accuracy_precision` — Accuracy information
 - :doc:`api` — Complete API reference
-- :doc:`examples/index` — Practical code examples

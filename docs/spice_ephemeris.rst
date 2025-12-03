@@ -1,14 +1,21 @@
-Planetary ephemeris (SPICE)
-===========================
+SPICE Ephemeris
+===============
 
-``SPICEEphemeris`` provides access to celestial body positions via SPK files (e.g.
-DE440S). The class computes positions and velocities for any SPICE-supported body
-in GCRS and ITRS coordinate frames.
+``SPICEEphemeris`` provides spacecraft ephemeris from SPICE SPK (Spacecraft and
+Planet Kernel) files. This is ideal for missions that distribute their trajectory
+data in SPICE format, which is the standard for NASA and ESA missions.
 
-Key functions
--------------
+.. note::
+   ``SPICEEphemeris`` is for **spacecraft** ephemeris from SPK files, not for
+   querying planetary positions. To get Sun, Moon, and planet positions relative
+   to any observer, use the ``get_body()`` and ``get_body_pv()`` methods available
+   on all ephemeris types after calling ``ensure_planetary_ephemeris()``.
 
-**Planetary Ephemeris Management**
+Planetary Ephemeris Setup
+-------------------------
+
+Before using Sun/Moon positions or the ``get_body()`` method with any ephemeris
+type, you must initialize the planetary ephemeris:
 
 ``ensure_planetary_ephemeris(py_path=None, download_if_missing=True, spk_url=None)``
     Download (if needed) and initialize the planetary SPK. If no path is provided,
@@ -32,7 +39,7 @@ Usage example
     import numpy as np
     import rust_ephem as re
 
-    # Ensure planetary ephemeris is available (downloads if missing)
+    # Ensure planetary ephemeris is available for Sun/Moon positions
     re.ensure_planetary_ephemeris()
 
     # Define time range
@@ -40,60 +47,71 @@ Usage example
     end = dt.datetime(2024, 1, 1, 1, 0, 0, tzinfo=dt.timezone.utc)
     step_size = 60  # seconds
 
-    # Create SPICE ephemeris for Moon (NAIF ID 301) relative to Earth (399)
-    moon_ephem = re.SPICEEphemeris(
-        spk_path="path/to/moon.bsp",  # Your SPK file
-        naif_id=301,                   # Moon
+    # Create SPICE ephemeris for a spacecraft
+    # The SPK file contains your spacecraft's trajectory
+    spacecraft_ephem = re.SPICEEphemeris(
+        spk_path="path/to/spacecraft.bsp",  # Your spacecraft SPK file
+        naif_id=-12345,                      # Your spacecraft's NAIF ID
         begin=begin,
         end=end,
         step_size=step_size,
-        center_id=399,                 # Earth center
+        center_id=399,                       # Earth center (default)
         polar_motion=False
     )
 
-    # Access pre-computed positions
-    gcrs = moon_ephem.gcrs  # Position/velocity in GCRS
-    itrs = moon_ephem.itrs  # Position/velocity in ITRS
+    # Access spacecraft positions
+    gcrs = spacecraft_ephem.gcrs  # Position/velocity in GCRS as SkyCoord
+    itrs = spacecraft_ephem.itrs  # Position/velocity in ITRS as SkyCoord
 
-    # Access Sun and Moon positions from planetary ephemeris
-    sun = moon_ephem.sun
-    moon = moon_ephem.moon
+    # Access Sun and Moon positions relative to spacecraft
+    sun = spacecraft_ephem.sun
+    moon = spacecraft_ephem.moon
 
     # Access timestamps
-    times = moon_ephem.timestamp
+    times = spacecraft_ephem.timestamp
 
-    print("Moon GCRS position (km):", gcrs.position[0])
-    print("Moon distance (km):", np.linalg.norm(gcrs.position[0]))
-
-    # Access astropy SkyCoord objects (requires astropy)
-    gcrs_sc = moon_ephem.gcrs_sc
-    earth_sc = moon_ephem.earth_sc
-    sun_sc = moon_ephem.sun_sc
+    print("Spacecraft GCRS position (km):", spacecraft_ephem.gcrs_pv.position[0])
+    print("Distance from Earth (km):", np.linalg.norm(spacecraft_ephem.gcrs_pv.position[0]))
 
 NAIF ID Reference
 -----------------
 
-Common NAIF IDs for celestial bodies:
+Spacecraft NAIF IDs are typically negative numbers assigned by NAIF or the
+mission. Common spacecraft IDs include:
+
+- -82: Cassini
+- -98: New Horizons
+- -143: Mars Reconnaissance Orbiter
+- -236: MESSENGER
+- -140: Deep Impact
+
+For your spacecraft, check your SPK file documentation or the NAIF website.
+
+Solar system body IDs (for ``center_id`` or ``get_body()``):
 
 - 10: Sun
-- 199: Mercury
-- 299: Venus
 - 301: Moon
 - 399: Earth
 - 499: Mars
 - 599: Jupiter
 - 699: Saturn
-- 799: Uranus
-- 899: Neptune
 
 SPK Files
 ---------
 
-The library supports any SPICE SPK (ephemeris) file. Common options:
+SPK (Spacecraft and Planet Kernel) files contain trajectory data. Sources include:
 
-- **de440s.bsp** — Compact planetary ephemeris (1849-2150)
-- **de440.bsp** — Full planetary ephemeris (1550-2650)
-- Custom mission SPK files for specific spacecraft
+**Spacecraft SPK files** (for ``SPICEEphemeris``):
+
+- Mission-specific files from NAIF: https://naif.jpl.nasa.gov/naif/data.html
+- ESA SPICE Service: https://www.cosmos.esa.int/web/spice
+- Mission websites and data archives
+
+**Planetary SPK files** (for ``ensure_planetary_ephemeris()``):
+
+- **de440s.bsp** — Compact planetary ephemeris (1849-2150), ~32 MB
+- **de440.bsp** — Full planetary ephemeris (1550-2650), ~114 MB
+- Download from: https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/
 
 SPK Loading Performance
 -----------------------

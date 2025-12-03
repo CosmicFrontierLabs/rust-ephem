@@ -36,7 +36,7 @@ Key Features
 
 📡 **Multiple Ephemeris Types**
    - **TLEEphemeris**: Satellite tracking from Two-Line Elements (SGP4)
-   - **SPICEEphemeris**: High-precision planetary ephemeris from SPICE kernels
+   - **SPICEEphemeris**: Spacecraft ephemeris from SPICE kernel (SPK) files
    - **GroundEphemeris**: Fixed ground station positions
    - **OEMEphemeris**: CCSDS Orbit Ephemeris Message files
 

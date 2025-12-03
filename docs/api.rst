@@ -127,10 +127,15 @@ Classes
       - Requires: ``ensure_planetary_ephemeris()`` called first
 
 **SPICEEphemeris**
-  Access planetary ephemerides (SPK files) for celestial body positions.
+  Spacecraft ephemeris from SPICE SPK (Spacecraft and Planet Kernel) files.
+  Use this for missions that provide trajectory data in SPICE format.
   
   **Constructor:**
     ``SPICEEphemeris(spk_path, naif_id, begin, end, step_size=60, center_id=399, *, polar_motion=False)``
+    
+    * ``spk_path`` — Path to the SPICE SPK file containing spacecraft trajectory
+    * ``naif_id`` — NAIF ID of the spacecraft (typically negative, e.g., -82 for Cassini)
+    * ``center_id`` — NAIF ID of the observer center (default: 399 = Earth)
   
   **Attributes (read-only):**
     * ``gcrs_pv`` — Position/velocity in GCRS frame (PositionVelocityData)
