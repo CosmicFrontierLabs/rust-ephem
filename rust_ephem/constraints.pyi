@@ -1,4 +1,10 @@
-"""Type stubs for constraint configuration models"""
+"""
+Pydantic models for constraint configuration
+
+This module provides type-safe configuration models for constraints
+using Pydantic. These models can be serialized to/from JSON and used
+to configure the Rust constraint evaluators.
+"""
 
 from __future__ import annotations
 
@@ -54,46 +60,46 @@ class RustConstraintMixin(BaseModel):
     def __invert__(self) -> NotConstraint: ...
 
 class SunConstraint(RustConstraintMixin):
-    type: Literal["sun"]
+    type: Literal["sun"] = "sun"
     min_angle: float
-    max_angle: float | None
+    max_angle: float | None = None
 
 class EarthLimbConstraint(RustConstraintMixin):
-    type: Literal["earth_limb"]
+    type: Literal["earth_limb"] = "earth_limb"
     min_angle: float
-    max_angle: float | None
-    include_refraction: bool
-    horizon_dip: bool
+    max_angle: float | None = None
+    include_refraction: bool = False
+    horizon_dip: bool = False
 
 class BodyConstraint(RustConstraintMixin):
-    type: Literal["body"]
+    type: Literal["body"] = "body"
     body: str
     min_angle: float
-    max_angle: float | None
+    max_angle: float | None = None
 
 class MoonConstraint(RustConstraintMixin):
-    type: Literal["moon"]
+    type: Literal["moon"] = "moon"
     min_angle: float
-    max_angle: float | None
+    max_angle: float | None = None
 
 class EclipseConstraint(RustConstraintMixin):
-    type: Literal["eclipse"]
-    umbra_only: bool
+    type: Literal["eclipse"] = "eclipse"
+    umbra_only: bool = False
 
 class AndConstraint(RustConstraintMixin):
-    type: Literal["and"]
+    type: Literal["and"] = "and"
     constraints: list[ConstraintConfig]
 
 class OrConstraint(RustConstraintMixin):
-    type: Literal["or"]
+    type: Literal["or"] = "or"
     constraints: list[ConstraintConfig]
 
 class XorConstraint(RustConstraintMixin):
-    type: Literal["xor"]
+    type: Literal["xor"] = "xor"
     constraints: list[ConstraintConfig]
 
 class NotConstraint(RustConstraintMixin):
-    type: Literal["not"]
+    type: Literal["not"] = "not"
     constraint: ConstraintConfig
 
 ConstraintConfig = (
