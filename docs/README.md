@@ -1,44 +1,52 @@
-# Building the documentation
+# Building the Documentation
 
-This project exposes a Python extension module named ``rust_ephem`` built from
-Rust sources using maturin. The Sphinx documentation in this directory uses
-``autodoc`` to import the compiled extension. There are two common workflows:
+This directory contains the Sphinx documentation for ``rust-ephem``.
 
-1. ReadTheDocs (recommended for hosted builds)
-   - Configure RTD to run `pip install .` or use the pyproject.toml build with
-     maturin. RTD will then build and import the extension during the docs
-     build.
-
-2. Local build (developer machine)
-   - Install the extension in your Python environment so Sphinx can import it.
-
-Local build steps (example)
+## Quick Start (Local Build)
 
 ```bash
-# Create and activate a virtual environment (optional but recommended)
+# From repository root
+cd docs
+
+# Install dependencies
+pip install -r requirements-docs.txt
+
+# Build HTML docs
+make html
+
+# View in browser
+open _build/html/index.html
+```
+
+## Full Build with Extension
+
+For complete documentation including API autodoc:
+
+```bash
+# Create virtual environment
 python -m venv .venv
 source .venv/bin/activate
 
-# Install build tooling
-pip install -U pip build maturin
+# Install build tools and extension
+pip install maturin
+maturin develop --release
 
-# Build and install the Python extension in editable/develop mode
-# maturin develop --release
+# Install Sphinx requirements
+pip install -r docs/requirements-docs.txt
 
-# Install Sphinx and requirements for docs
-pip install -r docs/requirements.txt
-
-# Build the docs
+# Build docs
 cd docs
-sphinx-build -b html . _build/html
+make html
 ```
 
-Notes
------
-- If you cannot or do not want to build the native extension locally, the
-  Sphinx config mocks the extension module so the docs can still be generated
-  (but member signatures and docstrings coming from the compiled extension
-  will not be available). See `conf.py` for the mocked module list.
-- For ReadTheDocs, configure the project to run the necessary build commands
-  (for example: `pip install .`). See ReadTheDocs documentation for native
-  extensions and Rust-based wheels.
+## ReadTheDocs
+
+The documentation is configured for automatic builds on ReadTheDocs. See
+``.readthedocs.yaml`` in the repository root for configuration.
+
+## Notes
+
+- If the native extension is not installed, Sphinx will mock the module
+  (API signatures won't be available, but other docs will build)
+- See ``conf.py`` for Sphinx configuration and mock settings
+- Run ``make clean`` before rebuilding if you see stale content
