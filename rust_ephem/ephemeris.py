@@ -82,13 +82,13 @@ class Ephemeris(abc.ABC):
 
     @property
     @abc.abstractmethod
-    def obsgeoloc(self) -> PositionVelocityData:
+    def obsgeoloc(self) -> npt.NDArray[np.float64]:
         """Observer geocentric location (GCRS position)."""
         ...
 
     @property
     @abc.abstractmethod
-    def obsgeovel(self) -> PositionVelocityData:
+    def obsgeovel(self) -> npt.NDArray[np.float64]:
         """Observer geocentric velocity (GCRS velocity)."""
         ...
 
