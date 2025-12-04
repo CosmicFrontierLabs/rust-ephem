@@ -612,7 +612,7 @@ class TLEEphemeris(Ephemeris):
         ...
 
     @property
-    def timestamp(self) -> npt.NDArray[np.object_]:
+    def timestamp(self) -> npt.NDArray[np.datetime64]:
         """
         Array of timestamps for the ephemeris.
 
@@ -926,7 +926,7 @@ class SPICEEphemeris(Ephemeris):
         ...
 
     @property
-    def timestamp(self) -> npt.NDArray[np.object_]:
+    def timestamp(self) -> npt.NDArray[np.datetime64]:
         """
         Array of timestamps for the ephemeris.
 
@@ -1231,7 +1231,7 @@ class OEMEphemeris(Ephemeris):
         ...
 
     @property
-    def timestamp(self) -> npt.NDArray[np.object_]:
+    def timestamp(self) -> npt.NDArray[np.datetime64]:
         """
         Array of timestamps for the ephemeris.
 
@@ -1518,7 +1518,7 @@ class GroundEphemeris(Ephemeris):
         ...
 
     @property
-    def timestamp(self) -> npt.NDArray[np.object_]:
+    def timestamp(self) -> npt.NDArray[np.datetime64]:
         """
         Array of timestamps for the ephemeris.
 
