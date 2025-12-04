@@ -89,8 +89,9 @@ Quick Start
 
    rust_ephem.ensure_planetary_ephemeris()
 
-   # Create combined constraint
-   constraint = SunConstraint(min_angle=45.0) & MoonConstraint(min_angle=10.0)
+   # Create combined constraint, not the use of or operator, this means a
+   # target is constrained if it's too close to either the Sun or the Moon.
+   constraint = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=10.0)
 
    # Evaluate for a target (Crab Nebula)
    result = constraint.evaluate(ephem, target_ra=83.63, target_dec=22.01)
