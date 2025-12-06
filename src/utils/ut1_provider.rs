@@ -9,7 +9,10 @@ use crate::utils::time_utils::{chrono_to_epoch, get_tai_utc_offset};
 pub use hifitime::ut1::Ut1Provider;
 
 static UT1_PROVIDER: Lazy<Mutex<Option<Ut1Provider>>> = Lazy::new(|| {
-    match load_or_download_eop2_text().and_then(|t| Ok(Ut1Provider::from_eop_data(t)?)) {
+    match load_or_download_eop2_text()
+        .map_err(|e| e.to_string())
+        .and_then(|t| Ut1Provider::from_eop_data(t).map_err(|e| e.to_string()))
+    {
         Ok(p) => {
             eprintln!("UT1 provider initialized (EOP2 short, cached)");
             Mutex::new(Some(p))
@@ -35,7 +38,10 @@ pub fn get_ut1_utc_offset(dt: &DateTime<Utc>) -> f64 {
 /// Initialize/refresh UT1 provider
 pub fn init_ut1_provider() -> bool {
     let mut guard = UT1_PROVIDER.lock().unwrap();
-    match load_or_download_eop2_text().and_then(|t| Ok(Ut1Provider::from_eop_data(t)?)) {
+    match load_or_download_eop2_text()
+        .map_err(|e| e.to_string())
+        .and_then(|t| Ut1Provider::from_eop_data(t).map_err(|e| e.to_string()))
+    {
         Ok(p) => {
             *guard = Some(p);
             true
