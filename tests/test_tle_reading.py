@@ -101,7 +101,9 @@ class TestFileReading:
 
     def test_file_not_found(self):
         """Test error handling when file doesn't exist."""
-        with pytest.raises(ValueError, match="Failed to read TLE from file"):
+        with pytest.raises(
+            ValueError, match="(Failed to read TLE from file|No such file or directory)"
+        ):
             rust_ephem.TLEEphemeris(
                 tle="/nonexistent/file.tle", begin=BEGIN, end=END, step_size=STEP_SIZE
             )

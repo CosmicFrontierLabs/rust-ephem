@@ -7,6 +7,7 @@
 //! - Fetching TLEs from Celestrak by NORAD ID or name
 //! - Fetching TLEs from Space-Track.org by NORAD ID with epoch support
 //! - Extracting TLE epoch information
+//! - Unified TLE fetching from multiple sources
 
 use crate::utils::config::{
     CACHE_DIR, CELESTRAK_API_BASE, DEFAULT_EPOCH_TOLERANCE_DAYS, SPACETRACK_API_BASE,
@@ -489,6 +490,124 @@ fn find_closest_tle_to_epoch(
     }
 
     best_tle.ok_or_else(|| "No valid TLE found in Space-Track response".into())
+}
+
+// ============================================================================
+// TLE Fetching with Caching
+// ============================================================================
+
+/// Result from the unified TLE fetch operation
+#[derive(Debug, Clone)]
+pub struct FetchedTLE {
+    pub line1: String,
+    pub line2: String,
+    pub name: Option<String>,
+    pub epoch: DateTime<Utc>,
+    pub source: &'static str,
+}
+
+/// Unified TLE fetching from multiple sources
+///
+/// This function consolidates TLE fetching logic used by both `fetch_tle()` Python API
+/// and `TLEEphemeris::new()`. It handles:
+/// - File paths and URLs via the `tle` parameter
+/// - NORAD ID lookups with Space-Track.org (with Celestrak failover)
+/// - Satellite name lookups via Celestrak
+///
+/// # Arguments
+/// * `tle_path` - Optional file path or URL to a TLE file
+/// * `norad_id` - Optional NORAD catalog ID
+/// * `norad_name` - Optional satellite name for Celestrak lookup
+/// * `target_epoch` - Optional target epoch for Space-Track lookups
+/// * `credentials` - Optional Space-Track.org credentials
+/// * `epoch_tolerance_days` - Optional tolerance for Space-Track cache matching
+///
+/// # Returns
+/// `FetchedTLE` containing the TLE data, epoch, and source information
+pub fn fetch_tle_unified(
+    tle_path: Option<&str>,
+    norad_id: Option<u32>,
+    norad_name: Option<&str>,
+    target_epoch: Option<&DateTime<Utc>>,
+    credentials: Option<SpaceTrackCredentials>,
+    epoch_tolerance_days: Option<f64>,
+) -> Result<FetchedTLE, Box<dyn Error>> {
+    if let Some(tle_param) = tle_path {
+        // tle parameter: file path or URL
+        let (tle_data, src) =
+            if tle_param.starts_with("http://") || tle_param.starts_with("https://") {
+                let data = download_tle_with_cache(tle_param)?;
+                (data, "url")
+            } else {
+                let data = read_tle_file(tle_param)?;
+                (data, "file")
+            };
+        let epoch = extract_tle_epoch(&tle_data.line1)?;
+        Ok(FetchedTLE {
+            line1: tle_data.line1,
+            line2: tle_data.line2,
+            name: tle_data.name,
+            epoch,
+            source: src,
+        })
+    } else if let Some(nid) = norad_id {
+        // Try Space-Track.org first if credentials are available
+        if let Some(creds) = credentials {
+            // Use provided target_epoch or current time
+            let target = target_epoch.cloned().unwrap_or_else(chrono::Utc::now);
+
+            match fetch_tle_from_spacetrack(nid, &target, Some(creds), epoch_tolerance_days) {
+                Ok(tle_with_epoch) => Ok(FetchedTLE {
+                    line1: tle_with_epoch.tle.line1,
+                    line2: tle_with_epoch.tle.line2,
+                    name: tle_with_epoch.tle.name,
+                    epoch: tle_with_epoch.epoch,
+                    source: "spacetrack",
+                }),
+                Err(_spacetrack_err) => {
+                    // Failover to Celestrak
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Space-Track.org fetch failed, falling back to Celestrak: {}",
+                        _spacetrack_err
+                    );
+                    let tle_data = fetch_tle_by_norad_id(nid)?;
+                    let epoch = extract_tle_epoch(&tle_data.line1)?;
+                    Ok(FetchedTLE {
+                        line1: tle_data.line1,
+                        line2: tle_data.line2,
+                        name: tle_data.name,
+                        epoch,
+                        source: "celestrak",
+                    })
+                }
+            }
+        } else {
+            // No Space-Track credentials, use Celestrak directly
+            let tle_data = fetch_tle_by_norad_id(nid)?;
+            let epoch = extract_tle_epoch(&tle_data.line1)?;
+            Ok(FetchedTLE {
+                line1: tle_data.line1,
+                line2: tle_data.line2,
+                name: tle_data.name,
+                epoch,
+                source: "celestrak",
+            })
+        }
+    } else if let Some(name_query) = norad_name {
+        // Fetch from Celestrak by satellite name
+        let tle_data = fetch_tle_by_name(name_query)?;
+        let epoch = extract_tle_epoch(&tle_data.line1)?;
+        Ok(FetchedTLE {
+            line1: tle_data.line1,
+            line2: tle_data.line2,
+            name: tle_data.name,
+            epoch,
+            source: "celestrak",
+        })
+    } else {
+        Err("Must provide one of: tle path/URL, norad_id, or norad_name".into())
+    }
 }
 
 /// Extract TLE epoch from TLE lines
