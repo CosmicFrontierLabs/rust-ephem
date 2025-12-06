@@ -83,14 +83,23 @@ Quick Start
 
 **Constraint Evaluation**
 
+Constraints are created by instantiating constraint classes and can be combined
+using logical operators. The example below creates a constraint that requires
+a target to be at least 45 degrees from the Sun **or** at least 10 degrees from
+the Moon. Python logical operators are overloaded to allow combining
+constraints. As we are evaluating constraints, and not visibilities, we
+combined constraints with "or" (`|`), if we used "and" (`&`), the target would
+only be constrained if it violated both Sun and Moon constraints simultaneously.
+
 .. code-block:: python
 
    from rust_ephem.constraints import SunConstraint, MoonConstraint
 
    rust_ephem.ensure_planetary_ephemeris()
 
-   # Create combined constraint
-   constraint = SunConstraint(min_angle=45.0) & MoonConstraint(min_angle=10.0)
+   # Create combined constraint, not the use of or operator, this means a
+   # target is constrained if it's too close to either the Sun or the Moon.
+   constraint = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=10.0)
 
    # Evaluate for a target (Crab Nebula)
    result = constraint.evaluate(ephem, target_ra=83.63, target_dec=22.01)
