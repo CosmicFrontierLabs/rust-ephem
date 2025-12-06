@@ -233,23 +233,23 @@ fn get_cache_dir() -> String {
 ///
 /// Returns a dict with keys: line1, line2, name (optional), epoch, source
 #[pyfunction]
-#[pyo3(signature = (*, tle=None, norad_id=None, norad_name=None, target_epoch=None, spacetrack_username=None, spacetrack_password=None, epoch_tolerance_days=None))]
+#[pyo3(signature = (*, tle=None, norad_id=None, norad_name=None, epoch=None, spacetrack_username=None, spacetrack_password=None, epoch_tolerance_days=None))]
 #[allow(clippy::too_many_arguments)]
 fn fetch_tle(
     py: Python,
     tle: Option<String>,
     norad_id: Option<u32>,
     norad_name: Option<String>,
-    target_epoch: Option<&Bound<'_, pyo3::types::PyDateTime>>,
+    epoch: Option<&Bound<'_, pyo3::types::PyDateTime>>,
     spacetrack_username: Option<String>,
     spacetrack_password: Option<String>,
     epoch_tolerance_days: Option<f64>,
 ) -> PyResult<pyo3::Py<pyo3::types::PyDict>> {
     use crate::utils::tle_utils;
 
-    // Convert target_epoch if provided
-    let target_epoch_chrono =
-        target_epoch.and_then(|te| crate::utils::time_utils::python_datetime_to_utc(te).ok());
+    // Convert epoch if provided
+    let epoch_chrono =
+        epoch.and_then(|te| crate::utils::time_utils::python_datetime_to_utc(te).ok());
 
     // Build credentials if provided, otherwise try environment
     let credentials = match (&spacetrack_username, &spacetrack_password) {
@@ -269,7 +269,7 @@ fn fetch_tle(
         tle.as_deref(),
         norad_id,
         norad_name.as_deref(),
-        target_epoch_chrono.as_ref(),
+        epoch_chrono.as_ref(),
         credentials,
         epoch_tolerance_days,
     )

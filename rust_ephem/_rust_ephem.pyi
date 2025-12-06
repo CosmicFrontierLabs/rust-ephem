@@ -1927,7 +1927,7 @@ def fetch_tle(
     tle: str | None = None,
     norad_id: int | None = None,
     norad_name: str | None = None,
-    target_epoch: datetime | None = None,
+    epoch: datetime | None = None,
     spacetrack_username: str | None = None,
     spacetrack_password: str | None = None,
     epoch_tolerance_days: float | None = None,
@@ -1943,7 +1943,7 @@ def fetch_tle(
         norad_id: NORAD catalog ID to fetch TLE. If Space-Track credentials
             are available, Space-Track is tried first with failover to Celestrak.
         norad_name: Satellite name to fetch TLE from Celestrak
-        target_epoch: Target epoch for Space-Track queries. If not specified,
+        epoch: Target epoch for Space-Track queries. If not specified,
             current time is used. Space-Track will fetch the TLE with epoch
             closest to this time.
         spacetrack_username: Space-Track.org username (or use SPACETRACK_USERNAME env var)
