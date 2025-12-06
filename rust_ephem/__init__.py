@@ -1,4 +1,4 @@
-from ._rust_ephem import (  # type: ignore[import-untyped]
+from ._rust_ephem import (
     Constraint,
     ConstraintResult,
     ConstraintViolation,
@@ -35,6 +35,7 @@ from .constraints import (
     XorConstraint,
 )
 from .ephemeris import Ephemeris, EphemerisType
+from .tle import TLERecord, fetch_tle
 
 __all__ = [
     "ConstraintConfig",
@@ -71,4 +72,6 @@ __all__ = [
     "is_eop_available",
     "init_eop_provider",
     "get_cache_dir",
+    "TLERecord",
+    "fetch_tle",
 ]

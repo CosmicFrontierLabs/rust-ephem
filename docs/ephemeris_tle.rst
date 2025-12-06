@@ -30,11 +30,22 @@ set and obtain positions in different frames.
     # Method 3: From URL (with caching)
     # sat = re.TLEEphemeris(tle="https://celestrak.org/NORAD/elements/gp.php?CATNR=25544", begin=begin, end=end, step_size=step_size)
     
-    # Method 4: From NORAD ID (fetches from Celestrak)
+    # Method 4: From NORAD ID (Celestrak, or Space-Track.org if credentials are set)
+    # If SPACETRACK_USERNAME and SPACETRACK_PASSWORD are set, Space-Track.org is
+    # tried first with automatic failover to Celestrak on failure.
     # sat = re.TLEEphemeris(norad_id=25544, begin=begin, end=end, step_size=step_size)
     
     # Method 5: From satellite name (fetches from Celestrak)
     # sat = re.TLEEphemeris(norad_name="ISS (ZARYA)", begin=begin, end=end, step_size=step_size)
+    
+    # Method 6: Explicit Space-Track.org credentials with norad_id
+    # sat = re.TLEEphemeris(
+    #     norad_id=25544,
+    #     spacetrack_username="your_username",
+    #     spacetrack_password="your_password",
+    #     begin=begin, end=end, step_size=step_size,
+    #     epoch_tolerance_days=4.0  # Optional: cache tolerance in days
+    # )
 
     # All frames are pre-computed during initialization
     # Access pre-computed frames (PositionVelocityData objects)
@@ -74,6 +85,34 @@ TLEEphemeris Notes
   7–8 km/s.
 - All coordinate frames are pre-computed during initialization for efficiency.
 - The ``polar_motion`` parameter enables polar motion corrections (requires EOP data).
-- TLE data can be provided in multiple ways: direct strings, file paths, URLs, NORAD IDs, or satellite names.
+- TLE data can be provided in multiple ways: direct strings, file paths, URLs, NORAD IDs, satellite names, or Space-Track.org.
 - File and URL TLE sources are cached locally for improved performance on subsequent uses.
+- Space-Track.org fetches use epoch-aware caching: cached TLEs are reused if their epoch is within the configured tolerance (default: ±4 days) of the requested begin time.
 - See tests under ``tests/`` for more examples and validation.
+
+Space-Track.org Integration
+---------------------------
+
+When Space-Track.org credentials are available, the ``norad_id`` parameter will:
+
+1. Try fetching from Space-Track.org first (with epoch-based queries)
+2. Fall back to Celestrak automatically if Space-Track.org fails
+
+Credentials can be provided via:
+
+1. Explicit parameters: ``spacetrack_username`` and ``spacetrack_password``
+2. Environment variables: ``SPACETRACK_USERNAME`` and ``SPACETRACK_PASSWORD``
+3. ``.env`` file in the current directory or home directory
+
+If no credentials are found, ``norad_id`` uses Celestrak directly.
+
+Space-Track.org provides historical TLE data with epoch-based queries. When you specify
+a ``begin`` time, the library fetches the TLE with an epoch closest to that time.
+This ensures the most accurate propagation for your time range.
+
+The ``epoch_tolerance_days`` parameter controls caching behavior. If a cached TLE
+exists with an epoch within ±N days of the requested begin time, it will be used
+instead of making a new API request. Default tolerance is 4 days.
+
+**Note:** Please follow Space-Track.org's `usage guidelines <https://www.space-track.org/documentation#api>`_
+(max 1 TLE query per hour for automated scripts). TLEs are cached in ``~/.cache/rust_ephem/spacetrack_cache/``.
