@@ -38,10 +38,13 @@ pub const EOP2_URL: &str = "https://eop2-external.jpl.nasa.gov/eop2/latest_eop2.
 pub const AU_TO_KM: f64 = 149597870.7;
 pub const SECONDS_PER_DAY: f64 = 86400.0;
 pub const SECS_PER_DAY: f64 = SECONDS_PER_DAY;
+#[allow(dead_code)]
 pub const SECONDS_PER_DAY_RECIP: f64 = 1.0 / SECONDS_PER_DAY;
+#[allow(dead_code)]
 pub const NANOS_TO_DAYS: f64 = 1.0 / (1_000_000_000.0 * SECONDS_PER_DAY);
 pub const AU_PER_DAY_TO_KM_PER_SEC: f64 = AU_TO_KM / SECONDS_PER_DAY;
 pub const ARCSEC_TO_RAD: f64 = 4.848_136_811_095_36e-6;
+#[allow(dead_code)]
 pub const MJD_UNIX_EPOCH: f64 = 40587.0;
 
 // Time offsets
@@ -51,7 +54,9 @@ pub const TT_TAI_SECONDS: f64 = 32.184;
 // This remains as a fallback approximation (assumes TAI-UTC = 37, valid since 2017)
 #[allow(dead_code)]
 pub const TT_OFFSET_DAYS: f64 = 69.184 / SECONDS_PER_DAY;
+#[allow(dead_code)]
 pub const JD_UNIX_EPOCH: f64 = 2440587.5;
+#[allow(dead_code)]
 pub const JD1: f64 = 2400000.5;
 
 // Earth / orbital constants

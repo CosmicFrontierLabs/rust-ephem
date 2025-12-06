@@ -10,6 +10,7 @@ pub mod conversions;
 pub mod eop_cache;
 pub mod eop_provider;
 pub mod geo;
+pub mod hifi_time;
 pub mod interpolation;
 pub mod leap_seconds;
 pub mod math_utils;

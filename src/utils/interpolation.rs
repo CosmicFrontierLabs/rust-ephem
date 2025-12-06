@@ -2,8 +2,15 @@
 //!
 //! Provides Hermite interpolation for state vectors (position and velocity)
 
+use crate::utils::hifi_time::chrono_to_epoch;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
+
+/// Difference between two DateTimes in seconds
+#[inline]
+fn diff_seconds(dt1: &DateTime<Utc>, dt2: &DateTime<Utc>) -> f64 {
+    (chrono_to_epoch(dt1) - chrono_to_epoch(dt2)).to_seconds()
+}
 
 /// Hermite interpolation for state vectors (position and velocity)
 ///
@@ -31,14 +38,11 @@ pub fn hermite_interpolate(
     let mut result = Array2::<f64>::zeros((query_times.len(), 6));
 
     // Convert times to seconds since first epoch for easier computation
-    let t0 = data_times[0];
-    let data_t_secs: Vec<f64> = data_times
-        .iter()
-        .map(|t| (*t - t0).num_milliseconds() as f64 / 1000.0)
-        .collect();
+    let t0 = &data_times[0];
+    let data_t_secs: Vec<f64> = data_times.iter().map(|t| diff_seconds(t, t0)).collect();
 
     for (out_idx, query_time) in query_times.iter().enumerate() {
-        let query_t_sec = (*query_time - t0).num_milliseconds() as f64 / 1000.0;
+        let query_t_sec = diff_seconds(query_time, t0);
 
         // Find the interval containing query_time
         let idx = find_interval(&data_t_secs, query_t_sec);
