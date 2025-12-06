@@ -251,18 +251,12 @@ fn fetch_tle(
     let epoch_chrono =
         epoch.and_then(|te| crate::utils::time_utils::python_datetime_to_utc(te).ok());
 
-    // Build credentials if provided, otherwise try environment
-    let credentials = match (&spacetrack_username, &spacetrack_password) {
-        (Some(u), Some(p)) => {
-            Some(tle_utils::SpaceTrackCredentials::new(u.clone(), p.clone()))
-        }
-        (None, None) => tle_utils::SpaceTrackCredentials::from_env().ok(),
-        _ => {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "Both spacetrack_username and spacetrack_password must be provided together, or omit both to use environment variables"
-            ))
-        }
-    };
+    // Build credentials using helper function
+    let credentials = tle_utils::build_credentials(
+        spacetrack_username.as_deref(),
+        spacetrack_password.as_deref(),
+    )
+    .map_err(pyo3::exceptions::PyValueError::new_err)?;
 
     // Use the unified fetch function
     let fetched = tle_utils::fetch_tle_unified(

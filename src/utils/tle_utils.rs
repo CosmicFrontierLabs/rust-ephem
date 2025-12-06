@@ -506,6 +506,63 @@ pub struct FetchedTLE {
     pub source: &'static str,
 }
 
+impl FetchedTLE {
+    /// Create a FetchedTLE from raw TLE lines
+    ///
+    /// This is useful when you have TLE lines directly (e.g., from a TLERecord object)
+    /// and want to create a FetchedTLE without going through the fetch process.
+    pub fn from_lines(
+        line1: String,
+        line2: String,
+        name: Option<String>,
+        epoch: Option<DateTime<Utc>>,
+    ) -> Result<Self, Box<dyn Error>> {
+        // Validate the TLE lines
+        validate_tle_lines(&line1, &line2)?;
+
+        // Extract epoch from line1 if not provided
+        let epoch = match epoch {
+            Some(e) => e,
+            None => extract_tle_epoch(&line1)?,
+        };
+
+        Ok(FetchedTLE {
+            line1,
+            line2,
+            name,
+            epoch,
+            source: "direct",
+        })
+    }
+}
+
+/// Build SpaceTrack credentials from optional username/password parameters
+///
+/// This helper consolidates the credential-building logic used in multiple places.
+///
+/// # Arguments
+/// * `username` - Optional explicit username
+/// * `password` - Optional explicit password
+///
+/// # Returns
+/// - `Ok(Some(credentials))` if both username and password are provided
+/// - `Ok(Some(credentials))` if neither provided but env vars are available
+/// - `Ok(None)` if neither provided and env vars are not available
+/// - `Err` if only one of username/password is provided
+pub fn build_credentials(
+    username: Option<&str>,
+    password: Option<&str>,
+) -> Result<Option<SpaceTrackCredentials>, &'static str> {
+    match (username, password) {
+        (Some(u), Some(p)) => Ok(Some(SpaceTrackCredentials::new(
+            u.to_string(),
+            p.to_string(),
+        ))),
+        (None, None) => Ok(SpaceTrackCredentials::from_env().ok()),
+        _ => Err("Both spacetrack_username and spacetrack_password must be provided together, or omit both to use environment variables"),
+    }
+}
+
 /// Unified TLE fetching from multiple sources
 ///
 /// This function consolidates TLE fetching logic used by both `fetch_tle()` Python API
