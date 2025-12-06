@@ -1,28 +1,7 @@
-//! Time utilities for astronomical calculations
+//! Python datetime conversion utilities
 
-use crate::utils::hifi_time;
-use crate::utils::ut1_provider;
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use pyo3::prelude::*;
-
-/// Convert DateTime to two-part Julian Date for ERFA
-#[inline]
-pub fn datetime_to_jd(dt: &DateTime<Utc>) -> (f64, f64) {
-    hifi_time::datetime_to_jd(dt)
-}
-
-/// Get TT-UTC offset in days
-#[inline]
-pub fn get_tt_offset_days(dt: &DateTime<Utc>) -> f64 {
-    hifi_time::get_tt_utc_offset_seconds(dt) / 86400.0
-}
-
-/// Convert DateTime to two-part Julian Date in UT1 time scale
-#[inline]
-pub fn datetime_to_jd_ut1(dt: &DateTime<Utc>) -> (f64, f64) {
-    let (jd1, jd2) = hifi_time::datetime_to_jd(dt);
-    (jd1, jd2 + ut1_provider::get_ut1_utc_offset(dt) / 86400.0)
-}
 
 /// Convert Python datetime to chrono DateTime<Utc>
 pub fn python_datetime_to_utc(py_dt: &Bound<PyAny>) -> PyResult<DateTime<Utc>> {

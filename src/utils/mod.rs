@@ -12,7 +12,6 @@ pub mod eop_provider;
 pub mod geo;
 pub mod hifi_time;
 pub mod interpolation;
-pub mod leap_seconds;
 pub mod math_utils;
 pub mod naif_ids;
 pub mod time_utils;

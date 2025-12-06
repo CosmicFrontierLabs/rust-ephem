@@ -11,8 +11,8 @@ use ndarray::Array2;
 
 use crate::utils::config::*;
 use crate::utils::eop_provider::get_polar_motion_rad;
+use crate::utils::hifi_time::{datetime_to_jd_tt, datetime_to_jd_ut1};
 use crate::utils::math_utils::{polar_motion_matrix, transpose_matrix};
-use crate::utils::time_utils::{datetime_to_jd, datetime_to_jd_ut1, get_tt_offset_days};
 
 /// Supported coordinate frames for conversion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -155,9 +155,7 @@ fn get_rotation(from: Frame, to: Frame, dt: &DateTime<Utc>, polar_motion: bool) 
     match (from, to) {
         // Precession-nutation transformation (TEME <-> GCRS)
         (Frame::TEME, Frame::GCRS) | (Frame::GCRS, Frame::TEME) => {
-            let (jd_utc1, jd_utc2) = datetime_to_jd(dt);
-            let jd_tt1 = jd_utc1;
-            let jd_tt2 = jd_utc2 + get_tt_offset_days(dt);
+            let (jd_tt1, jd_tt2) = datetime_to_jd_tt(dt);
             let matrix = pn_matrix_06a(jd_tt1, jd_tt2);
             Rotation::Matrix3x3 { matrix }
         }

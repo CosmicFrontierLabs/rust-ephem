@@ -48,9 +48,10 @@ pub const ARCSEC_TO_RAD: f64 = 4.848_136_811_095_36e-6;
 pub const MJD_UNIX_EPOCH: f64 = 40587.0;
 
 // Time offsets
-// TT-TAI is exactly 32.184 seconds by definition
+// TT-TAI is exactly 32.184 seconds by definition (not used - hifitime handles this)
+#[allow(dead_code)]
 pub const TT_TAI_SECONDS: f64 = 32.184;
-// TT_OFFSET_DAYS is now deprecated, use leap_seconds module for accurate conversions
+// TT_OFFSET_DAYS is now deprecated, use hifi_time module for accurate conversions
 // This remains as a fallback approximation (assumes TAI-UTC = 37, valid since 2017)
 #[allow(dead_code)]
 pub const TT_OFFSET_DAYS: f64 = 69.184 / SECONDS_PER_DAY;

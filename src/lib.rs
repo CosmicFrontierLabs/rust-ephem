@@ -188,7 +188,7 @@ fn pydatetime_to_chrono(
 #[pyfunction]
 fn get_tai_utc_offset(py_datetime: &Bound<'_, pyo3::types::PyDateTime>) -> PyResult<Option<f64>> {
     let dt = pydatetime_to_chrono(py_datetime)?;
-    Ok(utils::leap_seconds::get_tai_utc_offset(&dt))
+    Ok(utils::hifi_time::get_tai_utc_offset(&dt))
 }
 
 #[pyfunction]
