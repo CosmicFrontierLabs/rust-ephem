@@ -241,13 +241,19 @@ print(f"TLE Epoch: {ephem.tle_epoch}")
 
 **Note:** Celestrak fetches are also cached for 24 hours to be respectful of the service.
 
-#### Fetching from Space-Track.org by NORAD ID
+#### Using Space-Track.org with Automatic Failover
 
-For users with Space-Track.org accounts, you can fetch TLEs directly from Space-Track.org. This is particularly useful for:
+When Space-Track.org credentials are available, the `norad_id` parameter will automatically:
+
+1. Try fetching from Space-Track.org first (with epoch-based queries)
+2. Fall back to Celestrak if Space-Track.org fails
+
+This is particularly useful for:
 
 - Historical TLE data with epoch-based queries
 - Access to classified or restricted TLE data
 - More reliable access to specific TLE epochs
+- Automatic failover when Space-Track.org is unavailable
 
 ```python
 import rust_ephem
@@ -259,8 +265,9 @@ end = datetime(2025, 10, 14, 1, 0, 0, tzinfo=timezone.utc)
 # Method 1: Using environment variables (recommended)
 # Set SPACETRACK_USERNAME and SPACETRACK_PASSWORD in your environment
 # or create a .env file with these variables
+# If credentials exist, Space-Track is tried first with failover to Celestrak
 ephem = rust_ephem.TLEEphemeris(
-    spacetrack_id=25544,  # ISS NORAD ID
+    norad_id=25544,  # ISS NORAD ID
     begin=begin,
     end=end,
     step_size=60
@@ -268,7 +275,7 @@ ephem = rust_ephem.TLEEphemeris(
 
 # Method 2: Passing credentials explicitly
 ephem = rust_ephem.TLEEphemeris(
-    spacetrack_id=25544,
+    norad_id=25544,
     spacetrack_username="your_username",
     spacetrack_password="your_password",
     begin=begin,
@@ -288,6 +295,8 @@ Credentials can be provided in three ways (checked in order):
 2. Environment variables: `SPACETRACK_USERNAME` and `SPACETRACK_PASSWORD`
 3. `.env` file in current directory or home directory
 
+If no credentials are found, `norad_id` uses Celestrak directly.
+
 **Example .env file:**
 
 ```bash
@@ -304,7 +313,7 @@ Space-Track.org queries fetch the TLE with epoch closest to your `begin` time. T
 ```python
 # Fetch a historical TLE (TLE epoch will be close to Jan 1, 2020)
 historical_ephem = rust_ephem.TLEEphemeris(
-    spacetrack_id=25544,
+    norad_id=25544,
     begin=datetime(2020, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
     end=datetime(2020, 1, 1, 1, 0, 0, tzinfo=timezone.utc),
     step_size=60
@@ -312,7 +321,7 @@ historical_ephem = rust_ephem.TLEEphemeris(
 
 # Customize epoch tolerance for caching (default: 4 days)
 ephem = rust_ephem.TLEEphemeris(
-    spacetrack_id=25544,
+    norad_id=25544,
     begin=begin,
     end=end,
     step_size=60,

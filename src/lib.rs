@@ -229,6 +229,191 @@ fn get_cache_dir() -> String {
     utils::config::CACHE_DIR.to_string_lossy().to_string()
 }
 
+/// Fetch a TLE from various sources (file, URL, Celestrak, Space-Track.org)
+///
+/// Returns a dict with keys: line1, line2, name (optional), epoch, source
+#[pyfunction]
+#[pyo3(signature = (*, tle=None, norad_id=None, norad_name=None, target_epoch=None, spacetrack_username=None, spacetrack_password=None, epoch_tolerance_days=None))]
+#[allow(clippy::too_many_arguments)]
+fn fetch_tle(
+    py: Python,
+    tle: Option<String>,
+    norad_id: Option<u32>,
+    norad_name: Option<String>,
+    target_epoch: Option<&Bound<'_, pyo3::types::PyDateTime>>,
+    spacetrack_username: Option<String>,
+    spacetrack_password: Option<String>,
+    epoch_tolerance_days: Option<f64>,
+) -> PyResult<pyo3::Py<pyo3::types::PyDict>> {
+    use crate::utils::tle_utils;
+
+    // Convert target_epoch if provided
+    let target_epoch_chrono =
+        target_epoch.and_then(|te| crate::utils::time_utils::python_datetime_to_utc(te).ok());
+
+    // Determine which method to use for getting TLE data
+    let (line1, line2, name, epoch, source) = if let Some(tle_param) = tle {
+        // tle parameter: file path or URL
+        let (tle_data, src) =
+            if tle_param.starts_with("http://") || tle_param.starts_with("https://") {
+                let data = tle_utils::download_tle_with_cache(&tle_param).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "Failed to download TLE from URL: {}",
+                        e
+                    ))
+                })?;
+                (data, "url")
+            } else {
+                let data = tle_utils::read_tle_file(&tle_param).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "Failed to read TLE from file: {}",
+                        e
+                    ))
+                })?;
+                (data, "file")
+            };
+        let epoch = tle_utils::extract_tle_epoch(&tle_data.line1).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Failed to extract TLE epoch: {}", e))
+        })?;
+        (tle_data.line1, tle_data.line2, tle_data.name, epoch, src)
+    } else if let Some(nid) = norad_id {
+        // Try Space-Track.org first if credentials are available
+        let credentials = match (&spacetrack_username, &spacetrack_password) {
+            (Some(u), Some(p)) => {
+                Some(tle_utils::SpaceTrackCredentials::new(u.clone(), p.clone()))
+            }
+            (None, None) => tle_utils::SpaceTrackCredentials::from_env().ok(),
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Both spacetrack_username and spacetrack_password must be provided together, or omit both to use environment variables"
+                ))
+            }
+        };
+
+        if let Some(creds) = credentials {
+            // Use provided target_epoch or current time
+            let target = target_epoch_chrono.unwrap_or_else(chrono::Utc::now);
+
+            match tle_utils::fetch_tle_from_spacetrack(
+                nid,
+                &target,
+                Some(creds),
+                epoch_tolerance_days,
+            ) {
+                Ok(tle_with_epoch) => (
+                    tle_with_epoch.tle.line1,
+                    tle_with_epoch.tle.line2,
+                    tle_with_epoch.tle.name,
+                    tle_with_epoch.epoch,
+                    "spacetrack",
+                ),
+                Err(_spacetrack_err) => {
+                    // Failover to Celestrak
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "Space-Track.org fetch failed, falling back to Celestrak: {}",
+                        _spacetrack_err
+                    );
+                    let tle_data = tle_utils::fetch_tle_by_norad_id(nid).map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to fetch TLE from both Space-Track.org and Celestrak: {}",
+                            e
+                        ))
+                    })?;
+                    let epoch = tle_utils::extract_tle_epoch(&tle_data.line1).map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to extract TLE epoch: {}",
+                            e
+                        ))
+                    })?;
+                    (
+                        tle_data.line1,
+                        tle_data.line2,
+                        tle_data.name,
+                        epoch,
+                        "celestrak",
+                    )
+                }
+            }
+        } else {
+            // No Space-Track credentials, use Celestrak directly
+            let tle_data = tle_utils::fetch_tle_by_norad_id(nid).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Failed to fetch TLE from Celestrak by NORAD ID: {}",
+                    e
+                ))
+            })?;
+            let epoch = tle_utils::extract_tle_epoch(&tle_data.line1).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Failed to extract TLE epoch: {}",
+                    e
+                ))
+            })?;
+            (
+                tle_data.line1,
+                tle_data.line2,
+                tle_data.name,
+                epoch,
+                "celestrak",
+            )
+        }
+    } else if let Some(name_query) = norad_name {
+        // Fetch from Celestrak by satellite name
+        let tle_data = tle_utils::fetch_tle_by_name(&name_query).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "Failed to fetch TLE from Celestrak by name: {}",
+                e
+            ))
+        })?;
+        let epoch = tle_utils::extract_tle_epoch(&tle_data.line1).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Failed to extract TLE epoch: {}", e))
+        })?;
+        (
+            tle_data.line1,
+            tle_data.line2,
+            tle_data.name,
+            epoch,
+            "celestrak",
+        )
+    } else {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Must provide one of: tle, norad_id, or norad_name",
+        ));
+    };
+
+    // Build the result dictionary
+    let dict = pyo3::types::PyDict::new(py);
+    dict.set_item("line1", line1)?;
+    dict.set_item("line2", line2)?;
+    dict.set_item("name", name)?;
+
+    // Convert epoch to Python datetime with UTC timezone
+    use chrono::{Datelike, Timelike};
+    let py_epoch = pyo3::types::PyDateTime::new(
+        py,
+        epoch.year(),
+        epoch.month() as u8,
+        epoch.day() as u8,
+        epoch.hour() as u8,
+        epoch.minute() as u8,
+        epoch.second() as u8,
+        epoch.timestamp_subsec_micros(),
+        None,
+    )?;
+
+    // Add UTC timezone
+    let datetime_mod = py.import("datetime")?;
+    let utc_tz = datetime_mod.getattr("timezone")?.getattr("utc")?;
+    let kwargs = pyo3::types::PyDict::new(py);
+    kwargs.set_item("tzinfo", utc_tz)?;
+    let dt_with_tz = py_epoch.call_method("replace", (), Some(&kwargs))?;
+
+    dict.set_item("epoch", dt_with_tz)?;
+    dict.set_item("source", source)?;
+
+    Ok(dict.into())
+}
+
 #[pymodule]
 fn _rust_ephem(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TLEEphemeris>()?;
@@ -252,5 +437,6 @@ fn _rust_ephem(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(is_eop_available, m)?)?;
     m.add_function(wrap_pyfunction!(init_eop_provider, m)?)?;
     m.add_function(wrap_pyfunction!(get_cache_dir, m)?)?;
+    m.add_function(wrap_pyfunction!(fetch_tle, m)?)?;
     Ok(())
 }

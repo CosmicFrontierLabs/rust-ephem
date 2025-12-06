@@ -38,7 +38,7 @@ impl TLEEphemeris {
         end: Option<&Bound<'_, PyDateTime>>,
         step_size: i64,
         polar_motion: bool,
-        tle: Option<String>,
+        tle: Option<&Bound<'_, pyo3::PyAny>>,
         norad_id: Option<u32>,
         norad_name: Option<String>,
         spacetrack_username: Option<String>,
@@ -60,33 +60,59 @@ impl TLEEphemeris {
                 ))
             })?;
             (l1, l2, Some(epoch))
-        } else if let Some(tle_param) = tle {
-            // New method: tle parameter (file path or URL)
-            let tle_data = if tle_param.starts_with("http://") || tle_param.starts_with("https://")
-            {
-                // Download from URL with caching
-                tle_utils::download_tle_with_cache(&tle_param).map_err(|e| {
+        } else if let Some(tle_obj) = tle {
+            // tle parameter: can be a string (file path/URL) or a TLERecord object
+            if let Ok(tle_string) = tle_obj.extract::<String>() {
+                // String: file path or URL
+                let tle_data =
+                    if tle_string.starts_with("http://") || tle_string.starts_with("https://") {
+                        // Download from URL with caching
+                        tle_utils::download_tle_with_cache(&tle_string).map_err(|e| {
+                            pyo3::exceptions::PyValueError::new_err(format!(
+                                "Failed to download TLE from URL: {}",
+                                e
+                            ))
+                        })?
+                    } else {
+                        // Read from file
+                        tle_utils::read_tle_file(&tle_string).map_err(|e| {
+                            pyo3::exceptions::PyValueError::new_err(format!(
+                                "Failed to read TLE from file: {}",
+                                e
+                            ))
+                        })?
+                    };
+                let epoch = tle_utils::extract_tle_epoch(&tle_data.line1).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!(
-                        "Failed to download TLE from URL: {}",
+                        "Failed to extract TLE epoch: {}",
                         e
                     ))
-                })?
+                })?;
+                (tle_data.line1, tle_data.line2, Some(epoch))
+            } else if tle_obj.hasattr("line1")? && tle_obj.hasattr("line2")? {
+                // Object with line1/line2 attributes (TLERecord or similar)
+                let line1: String = tle_obj.getattr("line1")?.extract()?;
+                let line2: String = tle_obj.getattr("line2")?.extract()?;
+                let epoch = if tle_obj.hasattr("epoch")? {
+                    // Try to get epoch from the object
+                    let epoch_obj = tle_obj.getattr("epoch")?;
+                    let epoch_dt: &Bound<'_, PyDateTime> = epoch_obj.downcast()?;
+                    crate::utils::time_utils::python_datetime_to_utc(epoch_dt)?
+                } else {
+                    // Extract from line1
+                    tle_utils::extract_tle_epoch(&line1).map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to extract TLE epoch: {}",
+                            e
+                        ))
+                    })?
+                };
+                (line1, line2, Some(epoch))
             } else {
-                // Read from file
-                tle_utils::read_tle_file(&tle_param).map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!(
-                        "Failed to read TLE from file: {}",
-                        e
-                    ))
-                })?
-            };
-            let epoch = tle_utils::extract_tle_epoch(&tle_data.line1).map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!(
-                    "Failed to extract TLE epoch: {}",
-                    e
-                ))
-            })?;
-            (tle_data.line1, tle_data.line2, Some(epoch))
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "tle parameter must be a string (file path or URL) or an object with line1/line2 attributes"
+                ));
+            }
         } else if let Some(nid) = norad_id {
             // Try Space-Track.org first if credentials are available, otherwise fall back to Celestrak
             // Build credentials if provided, otherwise try environment

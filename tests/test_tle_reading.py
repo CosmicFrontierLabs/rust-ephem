@@ -413,5 +413,128 @@ class TestSpaceTrackIntegration:
         )
 
 
+class TestFetchTLE:
+    """Test the fetch_tle function and TLERecord class."""
+
+    def test_fetch_tle_from_file(self):
+        """Test fetch_tle from a file."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
+            f.write(TLE_3LINE)
+            f.flush()
+            filepath = f.name
+
+        try:
+            tle_record = rust_ephem.fetch_tle(tle=filepath)
+            assert tle_record is not None
+            assert tle_record.line1.startswith("1 ")
+            assert tle_record.line2.startswith("2 ")
+            assert tle_record.source == "file"
+            assert tle_record.epoch is not None
+            assert tle_record.name == "ISS (ZARYA)"
+        finally:
+            os.unlink(filepath)
+
+    def test_tle_record_properties(self):
+        """Test TLERecord computed properties."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
+            f.write(TLE_3LINE)
+            f.flush()
+            filepath = f.name
+
+        try:
+            tle_record = rust_ephem.fetch_tle(tle=filepath)
+            # Test computed properties
+            assert tle_record.norad_id == 25544
+            assert tle_record.classification == "U"  # Unclassified
+            assert "98067A" in tle_record.international_designator
+        finally:
+            os.unlink(filepath)
+
+    def test_tle_record_to_string(self):
+        """Test TLERecord to_tle_string method."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
+            f.write(TLE_3LINE)
+            f.flush()
+            filepath = f.name
+
+        try:
+            tle_record = rust_ephem.fetch_tle(tle=filepath)
+            tle_string = tle_record.to_tle_string()
+            # Should have 3 lines (name + line1 + line2)
+            lines = tle_string.strip().split("\n")
+            assert len(lines) == 3
+            assert lines[0] == "ISS (ZARYA)"
+        finally:
+            os.unlink(filepath)
+
+    def test_tle_record_json_serialization(self):
+        """Test TLERecord can be serialized to JSON."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
+            f.write(TLE_3LINE)
+            f.flush()
+            filepath = f.name
+
+        try:
+            tle_record = rust_ephem.fetch_tle(tle=filepath)
+            json_str = tle_record.model_dump_json()
+            assert "line1" in json_str
+            assert "line2" in json_str
+            assert "epoch" in json_str
+
+            # Test round-trip
+            from rust_ephem import TLERecord
+
+            reconstructed = TLERecord.model_validate_json(json_str)
+            assert reconstructed.line1 == tle_record.line1
+            assert reconstructed.line2 == tle_record.line2
+        finally:
+            os.unlink(filepath)
+
+    def test_tle_record_with_ephemeris(self):
+        """Test passing TLERecord to TLEEphemeris."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
+            f.write(TLE_3LINE)
+            f.flush()
+            filepath = f.name
+
+        try:
+            # Fetch TLE
+            tle_record = rust_ephem.fetch_tle(tle=filepath)
+
+            # Use TLERecord with TLEEphemeris
+            ephem = rust_ephem.TLEEphemeris(
+                tle=tle_record, begin=BEGIN, end=END, step_size=STEP_SIZE
+            )
+            assert ephem is not None
+            assert ephem.timestamp is not None
+            assert len(ephem.timestamp) == 61
+            # Epoch should match
+            assert ephem.tle_epoch.year == tle_record.epoch.year
+        finally:
+            os.unlink(filepath)
+
+    def test_fetch_tle_missing_params(self):
+        """Test that fetch_tle raises error with no params."""
+        with pytest.raises(ValueError):
+            rust_ephem.fetch_tle()
+
+    def test_tle_record_immutable(self):
+        """Test that TLERecord is immutable (frozen)."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
+            f.write(TLE_3LINE)
+            f.flush()
+            filepath = f.name
+
+        try:
+            tle_record = rust_ephem.fetch_tle(tle=filepath)
+            # Should raise error when trying to modify
+            from pydantic import ValidationError
+
+            with pytest.raises(ValidationError):
+                tle_record.line1 = "modified"
+        finally:
+            os.unlink(filepath)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
