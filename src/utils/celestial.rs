@@ -6,7 +6,7 @@ use ndarray::Array2;
 use std::sync::Arc;
 
 use crate::utils::math_utils::transpose_matrix;
-use crate::utils::time_utils::{datetime_to_jd, get_tt_offset_days};
+use crate::utils::time_utils::datetime_to_jd_tt;
 use crate::{is_planetary_ephemeris_initialized, utils::config::*};
 
 /// Calculate Sun positions for multiple timestamps
@@ -18,9 +18,9 @@ pub fn calculate_sun_positions_erfa(times: &[DateTime<Utc>]) -> Array2<f64> {
     // uses AU_TO_KM, AU_PER_DAY_TO_KM_PER_SEC from config
 
     for (i, dt) in times.iter().enumerate() {
-        let (jd_utc1, jd_utc2) = datetime_to_jd(dt);
+        let (jd_tt1, jd_tt2) = datetime_to_jd_tt(dt);
 
-        let (_warning, pvh, _pvb) = position_velocity_00(jd_utc1, jd_utc2 + get_tt_offset_days(dt));
+        let (_warning, pvh, _pvb) = position_velocity_00(jd_tt1, jd_tt2);
 
         // Sun position is negative of Earth's heliocentric position
         let mut row = out.row_mut(i);
@@ -44,10 +44,11 @@ pub fn calculate_moon_positions_meeus(times: &[DateTime<Utc>]) -> Array2<f64> {
     // uses GM_EARTH, JD_J2000, DAYS_PER_CENTURY from config
 
     for (i, dt) in times.iter().enumerate() {
-        let (jd_utc1, jd_utc2) = datetime_to_jd(dt);
-        let jd = jd_utc1 + jd_utc2;
+        // Meeus formulae use dynamical time (TT)
+        let (jd_tt1, jd_tt2) = datetime_to_jd_tt(dt);
+        let jd = jd_tt1 + jd_tt2;
 
-        // Julian centuries from J2000.0
+        // Julian centuries from J2000.0 in TT
         let t = (jd - JD_J2000) / DAYS_PER_CENTURY;
         let t_sq = t * t;
         let t_cb = t_sq * t;
@@ -217,8 +218,7 @@ pub fn calculate_moon_positions_meeus(times: &[DateTime<Utc>]) -> Array2<f64> {
         let vz_eq_date = vy_ecl * sin_epsilon + vz_ecl * cos_epsilon;
 
         // Transform from mean equatorial of date to GCRS (J2000) using precession matrix
-        let jd_tt1 = jd_utc1;
-        let jd_tt2 = jd_utc2 + get_tt_offset_days(dt);
+        let (jd_tt1, jd_tt2) = datetime_to_jd_tt(dt);
 
         // Get the precession matrix from J2000 to date
         let prec_matrix = precession_matrix_06(jd_tt1, jd_tt2);
