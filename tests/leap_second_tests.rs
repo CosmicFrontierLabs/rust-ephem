@@ -2,9 +2,8 @@
 // These tests verify the accuracy of TAI-UTC offset calculations
 // using reference IERS leap second data.
 //
-// Note: The actual implementation in leap_seconds.rs now uses hifitime
-// for leap second data. These tests use a local copy of leap second data
-// to verify the expected behavior independently.
+// Note: The actual implementation now uses hifitime via time_utils::get_tai_utc_offset().
+// These tests use a local copy of leap second data to verify the expected behavior independently.
 //
 // Since this is a cdylib crate, we test the leap second logic
 // as integration tests using reference data.
