@@ -28,7 +28,7 @@ pub struct TLEEphemeris {
 #[pymethods]
 impl TLEEphemeris {
     #[new]
-    #[pyo3(signature = (tle1=None, tle2=None, begin=None, end=None, step_size=60, *, polar_motion=false, tle=None, norad_id=None, norad_name=None, spacetrack_id=None, spacetrack_username=None, spacetrack_password=None, epoch_tolerance_days=None))]
+    #[pyo3(signature = (tle1=None, tle2=None, begin=None, end=None, step_size=60, *, polar_motion=false, tle=None, norad_id=None, norad_name=None, spacetrack_username=None, spacetrack_password=None, epoch_tolerance_days=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         _py: Python,
@@ -41,7 +41,6 @@ impl TLEEphemeris {
         tle: Option<String>,
         norad_id: Option<u32>,
         norad_name: Option<String>,
-        spacetrack_id: Option<u32>,
         spacetrack_username: Option<String>,
         spacetrack_password: Option<String>,
         epoch_tolerance_days: Option<f64>,
@@ -88,56 +87,74 @@ impl TLEEphemeris {
                 ))
             })?;
             (tle_data.line1, tle_data.line2, Some(epoch))
-        } else if let Some(st_id) = spacetrack_id {
-            // Fetch from Space-Track.org by NORAD ID
-            let target_epoch = begin_for_epoch.ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "begin parameter is required when using spacetrack_id to determine target epoch"
-                )
-            })?;
-
+        } else if let Some(nid) = norad_id {
+            // Try Space-Track.org first if credentials are available, otherwise fall back to Celestrak
             // Build credentials if provided, otherwise try environment
-            let credentials = match (spacetrack_username, spacetrack_password) {
-                (Some(u), Some(p)) => Some(tle_utils::SpaceTrackCredentials::new(u, p)),
-                (None, None) => None, // Will try env vars
+            let credentials = match (&spacetrack_username, &spacetrack_password) {
+                (Some(u), Some(p)) => Some(tle_utils::SpaceTrackCredentials::new(u.clone(), p.clone())),
+                (None, None) => tle_utils::SpaceTrackCredentials::from_env().ok(), // Try env vars
                 _ => return Err(pyo3::exceptions::PyValueError::new_err(
                     "Both spacetrack_username and spacetrack_password must be provided together, or omit both to use environment variables"
                 )),
             };
 
-            let tle_with_epoch = tle_utils::fetch_tle_from_spacetrack(
-                st_id,
-                &target_epoch,
-                credentials,
-                epoch_tolerance_days,
-            )
-            .map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!(
-                    "Failed to fetch TLE from Space-Track.org: {}",
-                    e
-                ))
-            })?;
+            // If credentials are available, try Space-Track first
+            if let Some(creds) = credentials {
+                let target_epoch = begin_for_epoch.ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "begin parameter is required when using norad_id to determine target epoch for Space-Track"
+                    )
+                })?;
 
-            (
-                tle_with_epoch.tle.line1,
-                tle_with_epoch.tle.line2,
-                Some(tle_with_epoch.epoch),
-            )
-        } else if let Some(nid) = norad_id {
-            // Fetch from Celestrak by NORAD ID
-            let tle_data = tle_utils::fetch_tle_by_norad_id(nid).map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!(
-                    "Failed to fetch TLE from Celestrak by NORAD ID: {}",
-                    e
-                ))
-            })?;
-            let epoch = tle_utils::extract_tle_epoch(&tle_data.line1).map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!(
-                    "Failed to extract TLE epoch: {}",
-                    e
-                ))
-            })?;
-            (tle_data.line1, tle_data.line2, Some(epoch))
+                match tle_utils::fetch_tle_from_spacetrack(
+                    nid,
+                    &target_epoch,
+                    Some(creds),
+                    epoch_tolerance_days,
+                ) {
+                    Ok(tle_with_epoch) => (
+                        tle_with_epoch.tle.line1,
+                        tle_with_epoch.tle.line2,
+                        Some(tle_with_epoch.epoch),
+                    ),
+                    Err(_spacetrack_err) => {
+                        // Failover to Celestrak
+                        #[cfg(debug_assertions)]
+                        eprintln!(
+                            "Space-Track.org fetch failed, falling back to Celestrak: {}",
+                            _spacetrack_err
+                        );
+                        let tle_data = tle_utils::fetch_tle_by_norad_id(nid).map_err(|e| {
+                            pyo3::exceptions::PyValueError::new_err(format!(
+                                "Failed to fetch TLE from both Space-Track.org and Celestrak: {}",
+                                e
+                            ))
+                        })?;
+                        let epoch = tle_utils::extract_tle_epoch(&tle_data.line1).map_err(|e| {
+                            pyo3::exceptions::PyValueError::new_err(format!(
+                                "Failed to extract TLE epoch: {}",
+                                e
+                            ))
+                        })?;
+                        (tle_data.line1, tle_data.line2, Some(epoch))
+                    }
+                }
+            } else {
+                // No Space-Track credentials, use Celestrak directly
+                let tle_data = tle_utils::fetch_tle_by_norad_id(nid).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "Failed to fetch TLE from Celestrak by NORAD ID: {}",
+                        e
+                    ))
+                })?;
+                let epoch = tle_utils::extract_tle_epoch(&tle_data.line1).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "Failed to extract TLE epoch: {}",
+                        e
+                    ))
+                })?;
+                (tle_data.line1, tle_data.line2, Some(epoch))
+            }
         } else if let Some(name) = norad_name {
             // Fetch from Celestrak by satellite name
             let tle_data = tle_utils::fetch_tle_by_name(&name).map_err(|e| {
@@ -155,7 +172,7 @@ impl TLEEphemeris {
             (tle_data.line1, tle_data.line2, Some(epoch))
         } else {
             return Err(pyo3::exceptions::PyValueError::new_err(
-                "Must provide either (tle1, tle2), tle, norad_id, norad_name, or spacetrack_id parameters",
+                "Must provide either (tle1, tle2), tle, norad_id, or norad_name parameters",
             ));
         };
 

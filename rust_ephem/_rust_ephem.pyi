@@ -460,7 +460,6 @@ class TLEEphemeris(Ephemeris):
         tle: str | None = None,
         norad_id: int | None = None,
         norad_name: str | None = None,
-        spacetrack_id: int | None = None,
         spacetrack_username: str | None = None,
         spacetrack_password: str | None = None,
         epoch_tolerance_days: float | None = None,
@@ -472,10 +471,11 @@ class TLEEphemeris(Ephemeris):
             tle1: First line of TLE (legacy method, use with tle2)
             tle2: Second line of TLE (legacy method, use with tle1)
             tle: Path to TLE file or URL to download TLE from
-            norad_id: NORAD catalog ID to fetch TLE from Celestrak
+            norad_id: NORAD catalog ID to fetch TLE. If Space-Track.org credentials
+                are available (via parameters, environment variables, or .env file),
+                Space-Track.org is tried first with automatic failover to Celestrak.
+                Otherwise, Celestrak is used directly.
             norad_name: Satellite name to fetch TLE from Celestrak
-            spacetrack_id: NORAD catalog ID to fetch TLE from Space-Track.org
-                Requires authentication via credentials or environment variables
             spacetrack_username: Space-Track.org username (or set SPACETRACK_USERNAME env var)
             spacetrack_password: Space-Track.org password (or set SPACETRACK_PASSWORD env var)
             epoch_tolerance_days: For Space-Track cache: how many days TLE epoch can differ
@@ -486,17 +486,16 @@ class TLEEphemeris(Ephemeris):
             polar_motion: Whether to apply polar motion correction (default: False)
 
         Note:
-            Must provide exactly one of: (tle1, tle2), tle, norad_id, norad_name, or spacetrack_id.
+            Must provide exactly one of: (tle1, tle2), tle, norad_id, or norad_name.
             begin and end parameters are required.
 
-            For Space-Track.org, credentials can be provided via:
-            1. spacetrack_username and spacetrack_password parameters
-            2. SPACETRACK_USERNAME and SPACETRACK_PASSWORD environment variables
-            3. .env file in current directory or home directory
-
-            Space-Track will fetch a TLE with epoch closest to the begin time,
-            and cache it. Subsequent requests use the cache if the cached TLE epoch
-            is within epoch_tolerance_days of the requested begin time.
+            When using norad_id with Space-Track.org credentials available:
+            - Credentials can be provided via parameters, environment variables
+              (SPACETRACK_USERNAME, SPACETRACK_PASSWORD), or a .env file
+            - Space-Track will fetch a TLE with epoch closest to the begin time
+            - If Space-Track fails, automatically falls back to Celestrak
+            - Results are cached; cache is used if TLE epoch is within
+              epoch_tolerance_days of the requested begin time
         """
         ...
 

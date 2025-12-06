@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 """
 Tests for TLE reading enhancements in TLEEphemeris.
 
@@ -296,9 +297,12 @@ class TestCelestrakIntegration:
 
 
 class TestSpaceTrackIntegration:
-    """Test Space-Track.org API integration.
+    """Test Space-Track.org API integration with automatic failover to Celestrak.
 
-    These tests require network access and Space-Track.org credentials.
+    When Space-Track.org credentials are available (via environment variables,
+    .env file, or explicit parameters), norad_id will first try Space-Track,
+    then failover to Celestrak on failure.
+
     Credentials can be set via environment variables:
     - SPACETRACK_USERNAME
     - SPACETRACK_PASSWORD
@@ -307,12 +311,12 @@ class TestSpaceTrackIntegration:
     """
 
     @pytest.mark.skip(reason="Requires network access and Space-Track.org credentials")
-    def test_fetch_by_spacetrack_id_with_env_credentials(self):
-        """Test fetching TLE from Space-Track.org by NORAD ID using env credentials."""
-        # Example: Fetch ISS TLE from Space-Track.org
+    def test_fetch_by_norad_id_with_spacetrack_credentials(self):
+        """Test fetching TLE via norad_id using Space-Track.org when credentials available."""
+        # Example: Fetch ISS TLE - will use Space-Track.org if credentials are set
         # Requires SPACETRACK_USERNAME and SPACETRACK_PASSWORD env vars
         ephem = rust_ephem.TLEEphemeris(
-            spacetrack_id=25544, begin=BEGIN, end=END, step_size=STEP_SIZE
+            norad_id=25544, begin=BEGIN, end=END, step_size=STEP_SIZE
         )
         assert ephem is not None
         assert ephem.tle_epoch is not None
@@ -322,12 +326,12 @@ class TestSpaceTrackIntegration:
         assert epoch_diff < 4 * 24 * 3600  # Within 4 days (default tolerance)
 
     @pytest.mark.skip(reason="Requires network access and Space-Track.org credentials")
-    def test_fetch_by_spacetrack_id_with_explicit_credentials(self):
-        """Test fetching TLE from Space-Track.org with explicit credentials."""
+    def test_fetch_by_norad_id_with_explicit_credentials(self):
+        """Test fetching TLE via norad_id with explicit Space-Track.org credentials."""
         # This test uses explicit credentials passed as parameters
         # You would replace these with actual test credentials
         ephem = rust_ephem.TLEEphemeris(
-            spacetrack_id=25544,
+            norad_id=25544,
             spacetrack_username="your_username",
             spacetrack_password="your_password",
             begin=BEGIN,
@@ -342,7 +346,7 @@ class TestSpaceTrackIntegration:
         """Test fetching TLE with custom epoch tolerance for caching."""
         # Test with 7 day tolerance instead of default 4 days
         ephem = rust_ephem.TLEEphemeris(
-            spacetrack_id=25544,
+            norad_id=25544,
             begin=BEGIN,
             end=END,
             step_size=STEP_SIZE,
@@ -359,7 +363,7 @@ class TestSpaceTrackIntegration:
         historical_end = datetime(2020, 1, 1, 1, 0, 0, tzinfo=timezone.utc)
 
         ephem = rust_ephem.TLEEphemeris(
-            spacetrack_id=25544,
+            norad_id=25544,
             begin=historical_begin,
             end=historical_end,
             step_size=STEP_SIZE,
@@ -369,8 +373,9 @@ class TestSpaceTrackIntegration:
         assert ephem.tle_epoch.year == 2020
         assert ephem.tle_epoch.month == 1
 
-    def test_spacetrack_missing_credentials_error(self):
-        """Test that missing credentials produce a helpful error message."""
+    @pytest.mark.skip(reason="Requires network access to Celestrak")
+    def test_norad_id_without_credentials_uses_celestrak(self):
+        """Test that norad_id without credentials falls back to Celestrak."""
         # Temporarily clear any env vars
         import os
 
@@ -378,13 +383,12 @@ class TestSpaceTrackIntegration:
         old_password = os.environ.pop("SPACETRACK_PASSWORD", None)
 
         try:
-            with pytest.raises(ValueError) as excinfo:
-                rust_ephem.TLEEphemeris(
-                    spacetrack_id=25544, begin=BEGIN, end=END, step_size=STEP_SIZE
-                )
-            assert "SPACETRACK_USERNAME" in str(excinfo.value) or "Space-Track" in str(
-                excinfo.value
+            # This should succeed using Celestrak (no credentials = no Space-Track attempt)
+            ephem = rust_ephem.TLEEphemeris(
+                norad_id=25544, begin=BEGIN, end=END, step_size=STEP_SIZE
             )
+            assert ephem is not None
+            assert ephem.tle_epoch is not None
         finally:
             # Restore env vars if they existed
             if old_username is not None:
@@ -396,7 +400,7 @@ class TestSpaceTrackIntegration:
         """Test that providing only username or password raises error."""
         with pytest.raises(ValueError) as excinfo:
             rust_ephem.TLEEphemeris(
-                spacetrack_id=25544,
+                norad_id=25544,
                 spacetrack_username="test_user",
                 # Missing password
                 begin=BEGIN,

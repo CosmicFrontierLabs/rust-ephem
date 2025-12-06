@@ -30,16 +30,17 @@ set and obtain positions in different frames.
     # Method 3: From URL (with caching)
     # sat = re.TLEEphemeris(tle="https://celestrak.org/NORAD/elements/gp.php?CATNR=25544", begin=begin, end=end, step_size=step_size)
     
-    # Method 4: From NORAD ID (fetches from Celestrak)
+    # Method 4: From NORAD ID (Celestrak, or Space-Track.org if credentials are set)
+    # If SPACETRACK_USERNAME and SPACETRACK_PASSWORD are set, Space-Track.org is
+    # tried first with automatic failover to Celestrak on failure.
     # sat = re.TLEEphemeris(norad_id=25544, begin=begin, end=end, step_size=step_size)
     
     # Method 5: From satellite name (fetches from Celestrak)
     # sat = re.TLEEphemeris(norad_name="ISS (ZARYA)", begin=begin, end=end, step_size=step_size)
     
-    # Method 6: From Space-Track.org (requires account)
-    # Set SPACETRACK_USERNAME and SPACETRACK_PASSWORD environment variables, or:
+    # Method 6: Explicit Space-Track.org credentials with norad_id
     # sat = re.TLEEphemeris(
-    #     spacetrack_id=25544,
+    #     norad_id=25544,
     #     spacetrack_username="your_username",
     #     spacetrack_password="your_password",
     #     begin=begin, end=end, step_size=step_size,
@@ -92,11 +93,18 @@ TLEEphemeris Notes
 Space-Track.org Integration
 ---------------------------
 
-Space-Track.org requires authentication. Credentials can be provided via:
+When Space-Track.org credentials are available, the ``norad_id`` parameter will:
+
+1. Try fetching from Space-Track.org first (with epoch-based queries)
+2. Fall back to Celestrak automatically if Space-Track.org fails
+
+Credentials can be provided via:
 
 1. Explicit parameters: ``spacetrack_username`` and ``spacetrack_password``
 2. Environment variables: ``SPACETRACK_USERNAME`` and ``SPACETRACK_PASSWORD``
 3. ``.env`` file in the current directory or home directory
+
+If no credentials are found, ``norad_id`` uses Celestrak directly.
 
 Space-Track.org provides historical TLE data with epoch-based queries. When you specify
 a ``begin`` time, the library fetches the TLE with an epoch closest to that time.
