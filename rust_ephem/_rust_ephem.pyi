@@ -460,6 +460,10 @@ class TLEEphemeris(Ephemeris):
         tle: str | None = None,
         norad_id: int | None = None,
         norad_name: str | None = None,
+        spacetrack_id: int | None = None,
+        spacetrack_username: str | None = None,
+        spacetrack_password: str | None = None,
+        epoch_tolerance_days: float | None = None,
     ) -> None:
         """
         Initialize TLE ephemeris from various TLE sources.
@@ -470,14 +474,29 @@ class TLEEphemeris(Ephemeris):
             tle: Path to TLE file or URL to download TLE from
             norad_id: NORAD catalog ID to fetch TLE from Celestrak
             norad_name: Satellite name to fetch TLE from Celestrak
+            spacetrack_id: NORAD catalog ID to fetch TLE from Space-Track.org
+                Requires authentication via credentials or environment variables
+            spacetrack_username: Space-Track.org username (or set SPACETRACK_USERNAME env var)
+            spacetrack_password: Space-Track.org password (or set SPACETRACK_PASSWORD env var)
+            epoch_tolerance_days: For Space-Track cache: how many days TLE epoch can differ
+                from target epoch (default: 4.0 days)
             begin: Start time (naive datetime treated as UTC, required)
             end: End time (naive datetime treated as UTC, required)
             step_size: Time step in seconds (default: 60)
             polar_motion: Whether to apply polar motion correction (default: False)
 
         Note:
-            Must provide exactly one of: (tle1, tle2), tle, norad_id, or norad_name.
+            Must provide exactly one of: (tle1, tle2), tle, norad_id, norad_name, or spacetrack_id.
             begin and end parameters are required.
+
+            For Space-Track.org, credentials can be provided via:
+            1. spacetrack_username and spacetrack_password parameters
+            2. SPACETRACK_USERNAME and SPACETRACK_PASSWORD environment variables
+            3. .env file in current directory or home directory
+
+            Space-Track will fetch a TLE with epoch closest to the begin time,
+            and cache it. Subsequent requests use the cache if the cached TLE epoch
+            is within epoch_tolerance_days of the requested begin time.
         """
         ...
 

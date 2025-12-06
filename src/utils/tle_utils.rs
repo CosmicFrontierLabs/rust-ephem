@@ -5,9 +5,13 @@
 //! - Reading TLEs from files
 //! - Downloading TLEs from URLs with caching
 //! - Fetching TLEs from Celestrak by NORAD ID or name
+//! - Fetching TLEs from Space-Track.org by NORAD ID with epoch support
 //! - Extracting TLE epoch information
 
-use crate::utils::config::{CACHE_DIR, CELESTRAK_API_BASE, TLE_CACHE_TTL};
+use crate::utils::config::{
+    CACHE_DIR, CELESTRAK_API_BASE, DEFAULT_EPOCH_TOLERANCE_DAYS, SPACETRACK_API_BASE,
+    SPACETRACK_LOGIN_URL, SPACETRACK_PASSWORD_ENV, SPACETRACK_USERNAME_ENV, TLE_CACHE_TTL,
+};
 #[allow(unused_imports)]
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use std::error::Error;
@@ -195,6 +199,296 @@ pub fn fetch_tle_by_name(name: &str) -> Result<TLEData, Box<dyn Error>> {
         .replace('#', "%23");
     let url = format!("{}?NAME={}&FORMAT=TLE", CELESTRAK_API_BASE, encoded_name);
     download_tle_with_cache(&url)
+}
+
+// ============================================================================
+// Space-Track.org API Support
+// ============================================================================
+
+/// Credentials for Space-Track.org authentication
+#[derive(Debug, Clone)]
+pub struct SpaceTrackCredentials {
+    pub username: String,
+    pub password: String,
+}
+
+impl SpaceTrackCredentials {
+    /// Create new credentials from explicit values
+    pub fn new(username: String, password: String) -> Self {
+        Self { username, password }
+    }
+
+    /// Load credentials from environment variables or .env file
+    ///
+    /// Checks in order:
+    /// 1. Environment variables SPACETRACK_USERNAME and SPACETRACK_PASSWORD
+    /// 2. .env file in the current directory
+    /// 3. .env file in the user's home directory
+    pub fn from_env() -> Result<Self, Box<dyn Error>> {
+        // Try to load .env file (silently ignore if not found)
+        let _ = dotenvy::dotenv();
+
+        // Also try home directory .env
+        if let Ok(home) = std::env::var("HOME") {
+            let home_env = PathBuf::from(home).join(".env");
+            let _ = dotenvy::from_path(home_env);
+        }
+
+        let username = std::env::var(SPACETRACK_USERNAME_ENV).map_err(|_| {
+            format!(
+                "Space-Track.org username not found. Set {} environment variable or pass credentials explicitly.",
+                SPACETRACK_USERNAME_ENV
+            )
+        })?;
+
+        let password = std::env::var(SPACETRACK_PASSWORD_ENV).map_err(|_| {
+            format!(
+                "Space-Track.org password not found. Set {} environment variable or pass credentials explicitly.",
+                SPACETRACK_PASSWORD_ENV
+            )
+        })?;
+
+        Ok(Self { username, password })
+    }
+}
+
+/// Extended TLE data with epoch information for Space-Track caching
+#[derive(Debug, Clone)]
+pub struct TLEDataWithEpoch {
+    pub tle: TLEData,
+    pub epoch: DateTime<Utc>,
+}
+
+/// Get cache path for Space-Track TLE with NORAD ID
+fn get_spacetrack_cache_path(norad_id: u32) -> PathBuf {
+    let mut path = CACHE_DIR.clone();
+    path.push("spacetrack_cache");
+    path.push(format!("{}.tle", norad_id));
+    path
+}
+
+/// Try to read Space-Track TLE from cache if epoch is within tolerance
+///
+/// # Arguments
+/// * `path` - Path to the cached TLE file
+/// * `target_epoch` - The target epoch we want the TLE for
+/// * `tolerance_days` - How many days off the TLE epoch can be from target
+///
+/// # Returns
+/// Some(TLEDataWithEpoch) if cache is valid, None otherwise
+fn try_read_spacetrack_cache(
+    path: &Path,
+    target_epoch: &DateTime<Utc>,
+    tolerance_days: f64,
+) -> Option<TLEDataWithEpoch> {
+    // Check if file exists and read content
+    let content = fs::read_to_string(path).ok()?;
+
+    // Parse the TLE
+    let tle = parse_tle_string(&content).ok()?;
+
+    // Extract the TLE epoch
+    let tle_epoch = extract_tle_epoch(&tle.line1).ok()?;
+
+    // Check if the TLE epoch is within tolerance of the target epoch
+    let diff_seconds = (*target_epoch - tle_epoch).num_seconds().abs() as f64;
+    let tolerance_seconds = tolerance_days * 86400.0;
+
+    if diff_seconds <= tolerance_seconds {
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "Space-Track TLE loaded from cache: {} (epoch diff: {:.2} days)",
+            path.display(),
+            diff_seconds / 86400.0
+        );
+        Some(TLEDataWithEpoch {
+            tle,
+            epoch: tle_epoch,
+        })
+    } else {
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "Space-Track cache TLE epoch ({}) too far from target ({}): {:.2} days > {:.2} days tolerance",
+            tle_epoch, target_epoch, diff_seconds / 86400.0, tolerance_days
+        );
+        None
+    }
+}
+
+/// Save TLE content to Space-Track cache
+fn save_to_spacetrack_cache(path: &Path, content: &str) {
+    if let Some(parent) = path.parent() {
+        if let Err(_e) = fs::create_dir_all(parent) {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Warning: Failed to create Space-Track cache directory: {}",
+                _e
+            );
+            return;
+        }
+    }
+    if let Err(_e) = fs::File::create(path).and_then(|mut f| f.write_all(content.as_bytes())) {
+        #[cfg(debug_assertions)]
+        eprintln!("Warning: Failed to write TLE to Space-Track cache: {}", _e);
+    }
+}
+
+/// Authenticate with Space-Track.org and create an authenticated agent
+///
+/// Space-Track uses cookie-based session authentication.
+fn create_spacetrack_agent(
+    credentials: &SpaceTrackCredentials,
+) -> Result<ureq::Agent, Box<dyn Error>> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(30))
+        .build();
+
+    // Login to Space-Track.org
+    let login_response = agent.post(SPACETRACK_LOGIN_URL).send_form(&[
+        ("identity", &credentials.username),
+        ("password", &credentials.password),
+    ])?;
+
+    if login_response.status() != 200 {
+        return Err(format!(
+            "Space-Track.org login failed with status: {}",
+            login_response.status()
+        )
+        .into());
+    }
+
+    // Check the response body for login errors
+    let body = login_response.into_string()?;
+    if body.contains("\"Login\":\"Failed\"") || body.contains("Login Failed") {
+        return Err("Space-Track.org login failed: Invalid credentials".into());
+    }
+
+    Ok(agent)
+}
+
+/// Fetch TLE from Space-Track.org by NORAD ID for a specific epoch
+///
+/// This function queries Space-Track.org's GP history data to find the TLE
+/// closest to the specified epoch.
+///
+/// # Arguments
+/// * `norad_id` - NORAD catalog ID of the satellite
+/// * `target_epoch` - The epoch for which to find the closest TLE
+/// * `credentials` - Optional credentials (will try env vars if None)
+/// * `epoch_tolerance_days` - How many days tolerance for cache matching (default: 4.0)
+///
+/// # Returns
+/// TLEDataWithEpoch containing the TLE lines and epoch
+pub fn fetch_tle_from_spacetrack(
+    norad_id: u32,
+    target_epoch: &DateTime<Utc>,
+    credentials: Option<SpaceTrackCredentials>,
+    epoch_tolerance_days: Option<f64>,
+) -> Result<TLEDataWithEpoch, Box<dyn Error>> {
+    let tolerance = epoch_tolerance_days.unwrap_or(DEFAULT_EPOCH_TOLERANCE_DAYS);
+    let cache_path = get_spacetrack_cache_path(norad_id);
+
+    // Try to use cached version if epoch is within tolerance
+    if let Some(cached) = try_read_spacetrack_cache(&cache_path, target_epoch, tolerance) {
+        return Ok(cached);
+    }
+
+    // Get credentials
+    let creds = credentials
+        .map(Ok)
+        .unwrap_or_else(SpaceTrackCredentials::from_env)?;
+
+    // Create authenticated agent
+    let agent = create_spacetrack_agent(&creds)?;
+
+    // Format the epoch range for the query
+    // We search for TLEs within the tolerance window around the target epoch
+    let start_epoch = *target_epoch - chrono::Duration::days(tolerance as i64);
+    let end_epoch = *target_epoch + chrono::Duration::days(tolerance as i64);
+
+    let start_str = start_epoch.format("%Y-%m-%d").to_string();
+    let end_str = end_epoch.format("%Y-%m-%d").to_string();
+
+    // Query the GP history class to find TLEs near the target epoch
+    // We order by epoch descending and get the one closest to our target
+    let query_url = format!(
+        "{}/basicspacedata/query/class/gp_history/NORAD_CAT_ID/{}/EPOCH/{}--{}/orderby/EPOCH%20desc/format/tle",
+        SPACETRACK_API_BASE, norad_id, start_str, end_str
+    );
+
+    #[cfg(debug_assertions)]
+    eprintln!("Space-Track query URL: {}", query_url);
+
+    let response = agent.get(&query_url).call()?;
+
+    if response.status() != 200 {
+        return Err(format!(
+            "Space-Track.org query failed with status: {}",
+            response.status()
+        )
+        .into());
+    }
+
+    let body = response.into_string()?;
+
+    if body.trim().is_empty() {
+        return Err(format!(
+            "No TLE found on Space-Track.org for NORAD ID {} near epoch {}",
+            norad_id, target_epoch
+        )
+        .into());
+    }
+
+    // The response may contain multiple TLEs, find the one closest to target epoch
+    let best_tle = find_closest_tle_to_epoch(&body, target_epoch)?;
+
+    // Save to cache
+    let cache_content = format!("{}\n{}", best_tle.tle.line1, best_tle.tle.line2);
+    save_to_spacetrack_cache(&cache_path, &cache_content);
+
+    Ok(best_tle)
+}
+
+/// Parse multiple TLEs from Space-Track response and find the one closest to target epoch
+fn find_closest_tle_to_epoch(
+    content: &str,
+    target_epoch: &DateTime<Utc>,
+) -> Result<TLEDataWithEpoch, Box<dyn Error>> {
+    let normalized = content.replace("\r\n", "\n");
+    let lines: Vec<&str> = normalized
+        .split('\n')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let mut best_tle: Option<TLEDataWithEpoch> = None;
+    let mut best_diff = i64::MAX;
+
+    // Process lines in pairs (TLE line 1 and line 2)
+    let mut i = 0;
+    while i + 1 < lines.len() {
+        let line1 = lines[i];
+        let line2 = lines[i + 1];
+
+        // Check if these are valid TLE lines
+        if line1.starts_with('1') && line2.starts_with('2') {
+            if let Ok(tle) = parse_tle_string(&format!("{}\n{}", line1, line2)) {
+                if let Ok(epoch) = extract_tle_epoch(&tle.line1) {
+                    let diff = (*target_epoch - epoch).num_seconds().abs();
+                    if diff < best_diff {
+                        best_diff = diff;
+                        best_tle = Some(TLEDataWithEpoch { tle, epoch });
+                    }
+                }
+            }
+            i += 2;
+        } else {
+            // Skip non-TLE lines (might be a 3-line format with name)
+            i += 1;
+        }
+    }
+
+    best_tle.ok_or_else(|| "No valid TLE found in Space-Track response".into())
 }
 
 /// Extract TLE epoch from TLE lines

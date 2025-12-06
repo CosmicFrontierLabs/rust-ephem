@@ -1,4 +1,4 @@
-from ._rust_ephem import (  # type: ignore[import-untyped]
+from ._rust_ephem import (
     Constraint,
     ConstraintResult,
     ConstraintViolation,
