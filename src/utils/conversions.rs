@@ -11,8 +11,8 @@ use ndarray::Array2;
 
 use crate::utils::config::*;
 use crate::utils::eop_provider::get_polar_motion_rad;
-use crate::utils::hifi_time::{datetime_to_jd_tt, datetime_to_jd_ut1};
 use crate::utils::math_utils::{polar_motion_matrix, transpose_matrix};
+use crate::utils::time_utils::{datetime_to_jd_tt, datetime_to_jd_ut1};
 
 /// Supported coordinate frames for conversion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

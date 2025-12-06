@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 use crate::ephemeris::ephemeris_common::{generate_timestamps, EphemerisBase, EphemerisData};
 use crate::ephemeris::position_velocity::PositionVelocityData;
 use crate::utils::conversions;
-use crate::utils::hifi_time::chrono_to_epoch;
+use crate::utils::time_utils::chrono_to_epoch;
 use crate::utils::to_skycoord::AstropyModules;
 
 #[pyclass]

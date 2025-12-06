@@ -7,7 +7,7 @@
 
 use crate::utils::config::ARCSEC_TO_RAD;
 use crate::utils::eop_cache::load_or_download_eop2_text;
-use crate::utils::hifi_time;
+use crate::utils::time_utils;
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
@@ -121,7 +121,7 @@ impl EopProvider {
     ///
     /// Returns (xp, yp) in arcseconds, or (0.0, 0.0) if data is unavailable
     pub fn get_polar_motion(&self, dt: &DateTime<Utc>) -> (f64, f64) {
-        let mjd = hifi_time::datetime_to_mjd(dt);
+        let mjd = time_utils::datetime_to_mjd(dt);
 
         if self.records.is_empty() {
             return (0.0, 0.0);

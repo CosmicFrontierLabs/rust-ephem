@@ -5,8 +5,8 @@ use erfa::vectors_and_matrices::mat_mul_pvec;
 use ndarray::Array2;
 use std::sync::Arc;
 
-use crate::utils::hifi_time::datetime_to_jd_tt;
 use crate::utils::math_utils::transpose_matrix;
+use crate::utils::time_utils::datetime_to_jd_tt;
 use crate::{is_planetary_ephemeris_initialized, utils::config::*};
 
 /// Calculate Sun positions for multiple timestamps

@@ -2,7 +2,7 @@
 //!
 //! Provides Hermite interpolation for state vectors (position and velocity)
 
-use crate::utils::hifi_time::chrono_to_epoch;
+use crate::utils::time_utils::chrono_to_epoch;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 

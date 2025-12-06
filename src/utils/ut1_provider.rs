@@ -4,7 +4,7 @@ use once_cell::sync::Lazy;
 use std::sync::Mutex;
 
 use crate::utils::eop_cache::load_or_download_eop2_text;
-use crate::utils::hifi_time::{chrono_to_epoch, get_tai_utc_offset};
+use crate::utils::time_utils::{chrono_to_epoch, get_tai_utc_offset};
 
 pub use hifitime::ut1::Ut1Provider;
 
