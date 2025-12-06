@@ -41,6 +41,9 @@ pub const SECS_PER_DAY: f64 = SECONDS_PER_DAY;
 pub const AU_PER_DAY_TO_KM_PER_SEC: f64 = AU_TO_KM / SECONDS_PER_DAY;
 pub const ARCSEC_TO_RAD: f64 = 4.848_136_811_095_36e-6;
 
+/// Standard epoch for two-part Julian Date (JD = JD_EPOCH + MJD)
+pub const JD_EPOCH: f64 = 2400000.5;
+
 // Earth / orbital constants
 pub const GM_EARTH: f64 = 398600.4418;
 pub const JD_J2000: f64 = 2451545.0;
