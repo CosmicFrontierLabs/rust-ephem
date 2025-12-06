@@ -1,33 +1,31 @@
-/// Leap second management for accurate UTC to TT conversions
+/// Leap second management using hifitime
 ///
-/// This module provides accurate TAI-UTC offsets for any date using embedded
-/// IERS leap second data. The TT-UTC offset is then:
+/// This module provides accurate TAI-UTC and TT-UTC offsets using hifitime's
+/// built-in leap second data. This eliminates the need to manually maintain
+/// leap second tables.
+///
 /// TT-UTC = TT-TAI + TAI-UTC = 32.184 + TAI-UTC
-///
-/// Data source: IERS/IETF leap seconds list
-/// Last update: 2017-01-01 (37 leap seconds)
-/// Next scheduled check: None announced as of November 2024
 use chrono::{DateTime, Utc};
+use hifitime::Epoch;
 
-use crate::utils::config::{LEAP_SECONDS_DATA, NTP_UNIX_OFFSET, TT_TAI_SECONDS};
+use crate::utils::config::TT_TAI_SECONDS;
+
+/// Convert chrono DateTime<Utc> to hifitime Epoch
+#[inline]
+fn chrono_to_epoch(dt: &DateTime<Utc>) -> Epoch {
+    let timestamp_secs = dt.timestamp();
+    let timestamp_nanos = dt.timestamp_subsec_nanos();
+    let total_nanos = (timestamp_secs as i128) * 1_000_000_000 + (timestamp_nanos as i128);
+    Epoch::from_unix_duration(hifitime::Duration::from_total_nanoseconds(total_nanos))
+}
 
 /// Get TAI-UTC offset in seconds for a given UTC time
 ///
-/// Returns None if the date is before the first leap second (1972-01-01)
+/// Returns None if the date is before 1960 (when UTC was defined)
 pub fn get_tai_utc_offset(dt: &DateTime<Utc>) -> Option<f64> {
-    // Convert DateTime to NTP timestamp
-    // NTP epoch: 1900-01-01, Unix epoch: 1970-01-01
-    // Difference: 2208988800 seconds
-    let ntp_timestamp = dt.timestamp() + NTP_UNIX_OFFSET;
-
-    // Find the appropriate entry using binary search
-    let idx = match LEAP_SECONDS_DATA.binary_search_by_key(&ntp_timestamp, |(ts, _)| *ts) {
-        Ok(i) => i,            // Exact match
-        Err(0) => return None, // Before first leap second
-        Err(i) => i - 1,       // Use previous entry
-    };
-
-    Some(LEAP_SECONDS_DATA[idx].1)
+    let epoch = chrono_to_epoch(dt);
+    // leap_seconds(true) returns IERS-only leap seconds (integer values since 1972)
+    epoch.leap_seconds(true)
 }
 
 /// Get TT-UTC offset in seconds for a given UTC time

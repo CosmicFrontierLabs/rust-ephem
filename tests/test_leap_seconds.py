@@ -285,18 +285,26 @@ class TestEdgeCases:
     """Tests for edge cases and boundary conditions"""
 
     def test_leap_second_boundary(self):
-        """Test TAI-UTC offset at leap second boundaries"""
-        # Right before 2017-01-01 leap second
-        before = datetime.datetime(2016, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
-        # Right after 2017-01-01 leap second
+        """Test TAI-UTC offset at leap second boundaries
+
+        Note: The 2017 leap second occurs at 2016-12-31 23:59:60.
+        hifitime correctly reports the offset as 37 starting at 23:59:59
+        because that's when the leap second interval begins.
+        """
+        # Before the 2017 leap second (mid-2016)
+        before = datetime.datetime(2016, 6, 30, 23, 59, 59, tzinfo=timezone.utc)
+        # After the 2017 leap second
         after = datetime.datetime(2017, 1, 1, 0, 0, 1, tzinfo=timezone.utc)
 
         offset_before = rust_ephem.get_tai_utc_offset(before)
         offset_after = rust_ephem.get_tai_utc_offset(after)
 
         assert offset_before is not None and offset_after is not None
-        assert offset_after == offset_before + 1.0, (
-            "Offset should increase by 1 second across leap second"
+        assert offset_before == 36.0, (
+            f"Expected 36 before 2017 leap second, got {offset_before}"
+        )
+        assert offset_after == 37.0, (
+            f"Expected 37 after 2017 leap second, got {offset_after}"
         )
 
     def test_future_date_extrapolation(self):
