@@ -56,25 +56,31 @@ Classes
   Propagate Two-Line Element (TLE) sets with SGP4 and convert to coordinate frames.
   
   **Constructor:**
-    ``TLEEphemeris(tle1=None, tle2=None, begin=None, end=None, step_size=60, *, polar_motion=False, tle=None, norad_id=None, norad_name=None)``
+    ``TLEEphemeris(tle1=None, tle2=None, begin=None, end=None, step_size=60, *, polar_motion=False, tle=None, norad_id=None, norad_name=None, spacetrack_username=None, spacetrack_password=None, epoch_tolerance_days=None, enforce_source=None)``
     
     **Parameters:**
       * ``tle1`` (str, optional) — First line of TLE (legacy method)
       * ``tle2`` (str, optional) — Second line of TLE (legacy method)  
-      * ``tle`` (str, optional) — Path to TLE file or URL to download TLE from
-      * ``norad_id`` (int, optional) — NORAD catalog ID to fetch TLE from Celestrak
+      * ``tle`` (str | TLERecord, optional) — Path to TLE file, URL to download TLE from, or a ``TLERecord`` object
+      * ``norad_id`` (int, optional) — NORAD catalog ID to fetch TLE. If Space-Track credentials are available, Space-Track is tried first with failover to Celestrak.
       * ``norad_name`` (str, optional) — Satellite name to fetch TLE from Celestrak
       * ``begin`` (datetime) — Start time for ephemeris (required)
       * ``end`` (datetime) — End time for ephemeris (required)
       * ``step_size`` (int) — Time step in seconds (default: 60)
       * ``polar_motion`` (bool) — Apply polar motion corrections (default: False)
+      * ``spacetrack_username`` (str, optional) — Space-Track.org username (or use ``SPACETRACK_USERNAME`` env var)
+      * ``spacetrack_password`` (str, optional) — Space-Track.org password (or use ``SPACETRACK_PASSWORD`` env var)
+      * ``epoch_tolerance_days`` (float, optional) — For Space-Track cache: how many days TLE epoch can differ from target epoch (default: 4.0 days)
+      * ``enforce_source`` (str, optional) — Enforce use of specific source without failover. Must be ``"celestrak"``, ``"spacetrack"``, or ``None``
     
     **Notes:**
       * Must provide exactly one of: (``tle1``, ``tle2``), ``tle``, ``norad_id``, or ``norad_name``
       * ``begin`` and ``end`` parameters are required
       * File paths and URLs are cached locally for performance
+      * Space-Track.org credentials can also be provided via ``.env`` file
   
   **Attributes (read-only):**
+    * ``tle_epoch`` — TLE epoch as Python datetime (extracted from line 1)
     * ``teme_pv`` — Position/velocity in TEME frame (PositionVelocityData)
     * ``itrs_pv`` — Position/velocity in ITRS frame (PositionVelocityData)
     * ``gcrs_pv`` — Position/velocity in GCRS frame (PositionVelocityData)
@@ -442,6 +448,128 @@ Functions
 **Cache Management**
 
 * ``get_cache_dir()`` — Get the path to the cache directory used by rust_ephem. Returns ``str``.
+
+**TLE Fetching**
+
+* ``fetch_tle(*, tle=None, norad_id=None, norad_name=None, epoch=None, spacetrack_username=None, spacetrack_password=None, epoch_tolerance_days=None, enforce_source=None)`` — Fetch a TLE from various sources.
+  
+  This function provides a unified interface for retrieving TLE data from local files,
+  URLs, Celestrak, or Space-Track.org. Returns a ``TLERecord`` object containing the
+  TLE data and metadata.
+  
+  **Parameters:**
+    * ``tle`` (str, optional) — Path to TLE file or URL to download TLE from
+    * ``norad_id`` (int, optional) — NORAD catalog ID to fetch TLE. If Space-Track credentials are available, Space-Track is tried first with failover to Celestrak.
+    * ``norad_name`` (str, optional) — Satellite name to fetch TLE from Celestrak
+    * ``epoch`` (datetime, optional) — Target epoch for Space-Track queries. If not specified, current time is used. Space-Track will fetch the TLE with epoch closest to this time.
+    * ``spacetrack_username`` (str, optional) — Space-Track.org username (or use ``SPACETRACK_USERNAME`` env var)
+    * ``spacetrack_password`` (str, optional) — Space-Track.org password (or use ``SPACETRACK_PASSWORD`` env var)
+    * ``epoch_tolerance_days`` (float, optional) — For Space-Track cache: how many days TLE epoch can differ from target epoch (default: 4.0 days)
+    * ``enforce_source`` (str, optional) — Enforce use of specific source without failover. Must be ``"celestrak"``, ``"spacetrack"``, or ``None`` (default behavior with failover)
+  
+  **Returns:**
+    ``TLERecord`` — A Pydantic model containing the TLE data and metadata
+  
+  **Raises:**
+    ``ValueError`` — If no valid TLE source is specified or fetching fails
+  
+  **Examples:**
+  
+  .. code-block:: python
+  
+      import rust_ephem
+      
+      # Fetch from Celestrak by NORAD ID
+      tle = rust_ephem.fetch_tle(norad_id=25544)  # ISS
+      print(tle.name)
+      print(tle.line1)
+      print(tle.line2)
+      
+      # Fetch from file
+      tle = rust_ephem.fetch_tle(tle="path/to/satellite.tle")
+      
+      # Fetch from URL
+      tle = rust_ephem.fetch_tle(tle="https://celestrak.org/NORAD/elements/gp.php?CATNR=25544")
+      
+      # Fetch from Space-Track with explicit credentials
+      from datetime import datetime, timezone
+      tle = rust_ephem.fetch_tle(
+          norad_id=25544,
+          spacetrack_username="your_username",
+          spacetrack_password="your_password",
+          epoch=datetime(2020, 1, 1, tzinfo=timezone.utc)
+      )
+      
+      # Use TLERecord with TLEEphemeris
+      ephem = rust_ephem.TLEEphemeris(
+          tle=tle,  # Pass TLERecord directly
+          begin=datetime(2024, 1, 1, tzinfo=timezone.utc),
+          end=datetime(2024, 1, 2, tzinfo=timezone.utc),
+          step_size=60
+      )
+  
+  **Notes:**
+    * Must provide exactly one of: ``tle``, ``norad_id``, or ``norad_name``
+    * File paths and URLs are cached locally for improved performance
+    * Space-Track.org requires free account registration at https://www.space-track.org
+    * Credentials can be provided via:
+      
+      1. Explicit parameters: ``spacetrack_username`` and ``spacetrack_password``
+      2. Environment variables: ``SPACETRACK_USERNAME`` and ``SPACETRACK_PASSWORD``
+      3. ``.env`` file in the current directory or home directory (``~/.env``)
+         containing the same environment variables
+
+Data Models
+^^^^^^^^^^^
+
+**TLERecord**
+  A Pydantic model representing a Two-Line Element (TLE) record with metadata.
+  Can be passed directly to ``TLEEphemeris`` via the ``tle`` parameter.
+  Supports JSON serialization for storage and transmission.
+  
+  **Attributes:**
+    * ``line1`` (str) — First line of the TLE (starts with '1')
+    * ``line2`` (str) — Second line of the TLE (starts with '2')
+    * ``name`` (str | None) — Optional satellite name (from 3-line TLE format)
+    * ``epoch`` (datetime) — TLE epoch timestamp (extracted from line1)
+    * ``source`` (str | None) — Source of the TLE data (e.g., 'celestrak', 'spacetrack', 'file', 'url')
+  
+  **Computed Properties:**
+    * ``norad_id`` (int) — NORAD catalog ID extracted from line1
+    * ``classification`` (str) — Classification from line1 (U=unclassified, C=classified, S=secret)
+    * ``international_designator`` (str) — International designator extracted from line1
+  
+  **Methods:**
+    * ``to_tle_string()`` — Convert to a 2-line or 3-line TLE string format
+    * ``model_dump()`` — Convert to dictionary (Pydantic)
+    * ``model_dump_json()`` — Convert to JSON string (Pydantic)
+  
+  **Example:**
+  
+  .. code-block:: python
+  
+      import rust_ephem
+      
+      tle = rust_ephem.fetch_tle(norad_id=25544)
+      
+      # Access TLE data
+      print(f"Satellite: {tle.name}")
+      print(f"NORAD ID: {tle.norad_id}")
+      print(f"Epoch: {tle.epoch}")
+      print(f"Source: {tle.source}")
+      
+      # Get TLE as string
+      print(tle.to_tle_string())
+      
+      # Serialize to JSON
+      json_str = tle.model_dump_json()
+      
+      # Pass directly to TLEEphemeris
+      ephem = rust_ephem.TLEEphemeris(
+          tle=tle,
+          begin=datetime(2024, 1, 1, tzinfo=timezone.utc),
+          end=datetime(2024, 1, 2, tzinfo=timezone.utc)
+      )
 
 Constraint Configuration Classes
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

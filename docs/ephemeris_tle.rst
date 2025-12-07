@@ -116,3 +116,62 @@ instead of making a new API request. Default tolerance is 4 days.
 
 **Note:** Please follow Space-Track.org's `usage guidelines <https://www.space-track.org/documentation#api>`_
 (max 1 TLE query per hour for automated scripts). TLEs are cached in ``~/.cache/rust_ephem/spacetrack_cache/``.
+
+Using fetch_tle for TLE Management
+----------------------------------
+
+For more control over TLE fetching and inspection, use the ``fetch_tle()`` function
+which returns a ``TLERecord`` object. This is useful when you need to:
+
+- Inspect TLE metadata before creating an ephemeris
+- Cache or store TLEs for later use
+- Access TLE fields like NORAD ID, epoch, or classification
+
+.. code-block:: python
+
+    import rust_ephem
+    from datetime import datetime, timezone
+
+    # Fetch TLE and inspect metadata
+    tle = rust_ephem.fetch_tle(norad_id=25544)
+    
+    print(f"Satellite: {tle.name}")
+    print(f"NORAD ID: {tle.norad_id}")
+    print(f"TLE Epoch: {tle.epoch}")
+    print(f"Source: {tle.source}")
+    print(f"Classification: {tle.classification}")
+    
+    # View the raw TLE lines
+    print(tle.to_tle_string())
+    
+    # Pass TLERecord directly to TLEEphemeris
+    begin = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    end = datetime(2024, 1, 2, tzinfo=timezone.utc)
+    
+    sat = rust_ephem.TLEEphemeris(
+        tle=tle,  # Pass TLERecord directly
+        begin=begin,
+        end=end,
+        step_size=60
+    )
+
+**Benefits of using fetch_tle:**
+
+- **Metadata access**: Inspect TLE epoch, source, and satellite name before propagation
+- **Serialization**: ``TLERecord`` is a Pydantic model supporting JSON serialization via ``model_dump_json()``
+- **Validation**: Verify the TLE was fetched from the expected source
+- **Reuse**: Fetch once, create multiple ephemeris objects with different time ranges
+
+.. code-block:: python
+
+    # Serialize TLE for storage
+    json_str = tle.model_dump_json()
+    
+    # Fetch from Space-Track with specific epoch
+    historical_tle = rust_ephem.fetch_tle(
+        norad_id=25544,
+        epoch=datetime(2020, 6, 15, tzinfo=timezone.utc),
+        enforce_source="spacetrack"  # Don't fall back to Celestrak
+    )
+
+See :doc:`api` for complete ``fetch_tle()`` and ``TLERecord`` documentation.
