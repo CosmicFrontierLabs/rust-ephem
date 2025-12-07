@@ -96,59 +96,29 @@ class RustConstraintMixin(BaseModel):
             indices,
         )
 
-    def evaluate_batch(
-        self,
-        ephemeris: Ephemeris,
-        target_ras: list[float],
-        target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
-        indices: int | list[int] | None = None,
-    ) -> npt.NDArray[np.bool_]:
-        """
-        Evaluate the constraint for multiple targets at once (vectorized).
-
-        .. deprecated::
-            Use :meth:`in_constraint_batch` instead. This method will be removed
-            in a future version.
-
-        This is an alias for :meth:`in_constraint_batch` maintained for backward compatibility.
-        """
-        import warnings
-
-        warnings.warn(
-            "evaluate_batch() is deprecated, use in_constraint_batch() instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.in_constraint_batch(
-            ephemeris,
-            target_ras,
-            target_decs,
-            times,
-            indices,
-        )
-
     def in_constraint(
         self,
-        time: datetime,
+        time: datetime | list[datetime] | np.ndarray,
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
-    ) -> bool:
+    ) -> bool | list[bool]:
         """
-        Check if target violates the constraint at a given time.
+        Check if target violates the constraint at given time(s).
 
         This method lazily creates the corresponding Rust constraint
         object and delegates to its in_constraint method.
 
         Args:
-            time: The time to check (must exist in ephemeris)
+            time: The time(s) to check (must exist in ephemeris). Can be a single datetime,
+                  list of datetimes, or numpy array of datetimes.
             ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
             target_ra: Target right ascension in degrees (ICRS/J2000)
             target_dec: Target declination in degrees (ICRS/J2000)
 
         Returns:
-            True if constraint is violated at the given time
+            True if constraint is violated at the given time(s). Returns a single bool
+            for a single time, or a list of bools for multiple times.
         """
         if not hasattr(self, "_rust_constraint"):
             from rust_ephem import Constraint

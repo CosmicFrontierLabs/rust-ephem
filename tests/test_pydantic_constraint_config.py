@@ -620,9 +620,8 @@ class TestLogicalOperators:
         nested = ~(sun & moon)
         assert isinstance(nested.constraint, AndConstraint)
 
-    def test_evaluate_batch_deprecated_method(self):
-        """Test deprecated evaluate_batch method still works."""
-        import warnings
+    def test_evaluate_batch_removed_method(self):
+        """Test that evaluate_batch method has been removed."""
         from datetime import datetime, timezone
 
         from rust_ephem import GroundEphemeris
@@ -634,13 +633,9 @@ class TestLogicalOperators:
 
         sun_constraint = SunConstraint(min_angle=45.0)
 
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            # This should work but emit a deprecation warning
-            _ = sun_constraint.evaluate_batch(ephem, [0.0], [0.0], times=[begin])
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "evaluate_batch() is deprecated" in str(w[0].message)
+        # This should raise AttributeError since the method was removed
+        with pytest.raises(AttributeError):
+            sun_constraint.evaluate_batch(ephem, [0.0], [0.0], times=[begin])
 
     def test_xor_operator_overload(self, sun_constraint, moon_constraint):
         """Test __xor__ operator creates XorConstraint."""
