@@ -174,13 +174,15 @@ print(f"TLE Epoch: {ephem.tle_epoch}")
 ```
 
 **2-line TLE file format:**
-```
+
+```text
 1 28485U 04047A   25287.56748435  .00035474  00000+0  70906-3 0  9995
 2 28485  20.5535 247.0048 0005179 187.1586 172.8782 15.44937919148530
 ```
 
 **3-line TLE file format (with satellite name):**
-```
+
+```text
 ISS (ZARYA)
 1 25544U 98067A   08264.51782528 -.00002182  00000-0 -11606-4 0  2927
 2 25544  51.6416 247.4627 0006703 130.5360 325.0288 15.72125391563537
@@ -801,7 +803,7 @@ print(f"Target 0 violations: {violations[0, :].sum()} / {violations.shape[1]} ti
 **Performance**: `in_constraint_batch()` is 3-50x faster than looping over targets:
 
 - Sun/Moon proximity: ~3-4x speedup
-- Earth limb: ~5x speedup  
+- Earth limb: ~5x speedup
 - Eclipse: ~48x speedup (target-independent)
 - Logical combinators: ~2-3x speedup
 

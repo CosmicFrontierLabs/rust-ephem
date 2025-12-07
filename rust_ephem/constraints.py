@@ -11,6 +11,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal, Union, cast
 
+import numpy as np
+import numpy.typing as npt
 from pydantic import BaseModel, Field, TypeAdapter
 
 from .ephemeris import Ephemeris
@@ -65,7 +67,7 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-    ):
+    ) -> npt.NDArray[np.bool_]:
         """
         Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
 
@@ -101,7 +103,7 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-    ):
+    ) -> npt.NDArray[np.bool_]:
         """
         Evaluate the constraint for multiple targets at once (vectorized).
 
