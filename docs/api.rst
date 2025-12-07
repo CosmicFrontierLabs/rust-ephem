@@ -56,25 +56,31 @@ Classes
   Propagate Two-Line Element (TLE) sets with SGP4 and convert to coordinate frames.
   
   **Constructor:**
-    ``TLEEphemeris(tle1=None, tle2=None, begin=None, end=None, step_size=60, *, polar_motion=False, tle=None, norad_id=None, norad_name=None)``
+    ``TLEEphemeris(tle1=None, tle2=None, begin=None, end=None, step_size=60, *, polar_motion=False, tle=None, norad_id=None, norad_name=None, spacetrack_username=None, spacetrack_password=None, epoch_tolerance_days=None, enforce_source=None)``
     
     **Parameters:**
       * ``tle1`` (str, optional) — First line of TLE (legacy method)
       * ``tle2`` (str, optional) — Second line of TLE (legacy method)  
-      * ``tle`` (str, optional) — Path to TLE file or URL to download TLE from
-      * ``norad_id`` (int, optional) — NORAD catalog ID to fetch TLE from Celestrak
+      * ``tle`` (str | TLERecord, optional) — Path to TLE file, URL to download TLE from, or a ``TLERecord`` object
+      * ``norad_id`` (int, optional) — NORAD catalog ID to fetch TLE. If Space-Track credentials are available, Space-Track is tried first with failover to Celestrak.
       * ``norad_name`` (str, optional) — Satellite name to fetch TLE from Celestrak
       * ``begin`` (datetime) — Start time for ephemeris (required)
       * ``end`` (datetime) — End time for ephemeris (required)
       * ``step_size`` (int) — Time step in seconds (default: 60)
       * ``polar_motion`` (bool) — Apply polar motion corrections (default: False)
+      * ``spacetrack_username`` (str, optional) — Space-Track.org username (or use ``SPACETRACK_USERNAME`` env var)
+      * ``spacetrack_password`` (str, optional) — Space-Track.org password (or use ``SPACETRACK_PASSWORD`` env var)
+      * ``epoch_tolerance_days`` (float, optional) — For Space-Track cache: how many days TLE epoch can differ from target epoch (default: 4.0 days)
+      * ``enforce_source`` (str, optional) — Enforce use of specific source without failover. Must be ``"celestrak"``, ``"spacetrack"``, or ``None``
     
     **Notes:**
       * Must provide exactly one of: (``tle1``, ``tle2``), ``tle``, ``norad_id``, or ``norad_name``
       * ``begin`` and ``end`` parameters are required
       * File paths and URLs are cached locally for performance
+      * Space-Track.org credentials can also be provided via ``.env`` file
   
   **Attributes (read-only):**
+    * ``tle_epoch`` — TLE epoch as Python datetime (extracted from line 1)
     * ``teme_pv`` — Position/velocity in TEME frame (PositionVelocityData)
     * ``itrs_pv`` — Position/velocity in ITRS frame (PositionVelocityData)
     * ``gcrs_pv`` — Position/velocity in GCRS frame (PositionVelocityData)
