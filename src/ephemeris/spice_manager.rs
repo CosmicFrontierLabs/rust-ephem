@@ -48,7 +48,7 @@ pub fn download_planetary_ephemeris(
     dest_path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Simple HTTP GET request for our SPK file
-    let resp = ureq::get(url).call()?;
+    let mut resp = ureq::get(url).call()?;
     if resp.status() != 200 {
         return Err(format!("Failed to download {}: HTTP {}", url, resp.status()).into());
     }
@@ -58,7 +58,7 @@ pub fn download_planetary_ephemeris(
         std::fs::create_dir_all(parent)?;
     }
     // Write response body to file
-    let mut reader = resp.into_reader();
+    let mut reader = resp.body_mut().as_reader();
     let mut file = std::fs::File::create(dest_path)?;
     std::io::copy(&mut reader, &mut file)?;
     Ok(())
