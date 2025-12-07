@@ -32,7 +32,7 @@ workflows. By default, it includes Sun and Moon positions in `SkyCoord` with obs
 location and velocity, correctly handling motion effects like Moon parallax in
 LEO spacecraft. It also supports ephemerides for other solar system bodies.
 
-`rust-ephem` also has a constraint system, that enables flexible evaluation of
+`rust-ephem` also has a constraint system that enables flexible evaluation of
 observational constraints for ephemeris planning, including Sun and Moon
 proximity, Earth limb avoidance, and generic body proximity. It supports
 logical operators (AND, OR, NOT, XOR) for combining constraints, with Python
