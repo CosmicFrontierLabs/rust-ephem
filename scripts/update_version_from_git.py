@@ -81,14 +81,14 @@ def update_cargo_toml(version: str, dry_run: bool = False) -> bool:
         return False
 
     if new_text == text:
-        print(f"Cargo.toml already at version {version}")
+        # No change needed - silent success for pre-commit
         return False
 
     if dry_run:
         print("Dry-run: would update Cargo.toml version to", version)
     else:
         CARGO_TOML.write_text(new_text, encoding="utf-8")
-        print("Updated Cargo.toml version to", version)
+        print(f"Updated Cargo.toml version to {version}")
     return True
 
 
@@ -103,11 +103,9 @@ if __name__ == "__main__":
 
     version = get_version_from_git()
     if not version:
-        print("No git tags found, not updating Cargo.toml")
+        # No tags - silent success for pre-commit
         sys.exit(0)
 
     updated = update_cargo_toml(version, dry_run=args.dry_run)
     if updated:
-        print("Success — Cargo.toml changed to", version)
-    else:
-        print("No change required")
+        print(f"Updated Cargo.toml version to {version}")

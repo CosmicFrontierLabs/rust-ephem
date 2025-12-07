@@ -60,9 +60,9 @@ repos:
           ]
   - repo: local
     hooks:
-      - id: check-cargo-version
-        name: Verify Cargo.toml version matches git tag
-        entry: python scripts/check_version.py
+      - id: update-cargo-version
+        name: Update Cargo.toml version from git tag
+        entry: python scripts/update_version_from_git.py
         language: system
         always_run: true
         pass_filenames: false
