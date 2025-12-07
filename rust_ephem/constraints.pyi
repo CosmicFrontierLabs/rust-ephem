@@ -41,7 +41,7 @@ class RustConstraintMixin(BaseModel):
     ) -> npt.NDArray[np.bool_]: ...
     def in_constraint(
         self,
-        time: datetime | list[datetime] | np.ndarray,
+        time: datetime | list[datetime] | npt.NDArray[np.datetime64],
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,

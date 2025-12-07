@@ -392,7 +392,7 @@ class Constraint:
             target_dec: Target declination in degrees (ICRS/J2000)
 
         Returns:
-            True if constraint is satisfied at the given time(s). Returns a single bool
+            True if constraint is violated at the given time(s). Returns a single bool
             for a single time, or a list of bools for multiple times.
 
         Raises:
