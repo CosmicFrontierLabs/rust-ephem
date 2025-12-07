@@ -106,6 +106,49 @@ impl GroundEphemeris {
         Ok(ephemeris)
     }
 
+    // ===== Type-specific getters =====
+
+    /// Get the input latitude in degrees (constructor argument)
+    #[getter]
+    fn input_latitude(&self) -> f64 {
+        self.latitude
+    }
+
+    /// Get the input longitude in degrees (constructor argument)
+    #[getter]
+    fn input_longitude(&self) -> f64 {
+        self.longitude
+    }
+
+    /// Get the input height in meters (constructor argument)
+    #[getter]
+    fn input_height(&self) -> f64 {
+        self.height
+    }
+
+    /// Get whether polar motion correction is applied
+    #[getter]
+    fn polar_motion(&self) -> bool {
+        self.polar_motion
+    }
+
+    // ===== Common ephemeris getters (delegating to EphemerisBase trait) =====
+
+    #[getter]
+    fn begin(&self, py: Python) -> PyResult<Py<PyAny>> {
+        crate::ephemeris::ephemeris_common::get_begin_time(&self.common_data.times, py)
+    }
+
+    #[getter]
+    fn end(&self, py: Python) -> PyResult<Py<PyAny>> {
+        crate::ephemeris::ephemeris_common::get_end_time(&self.common_data.times, py)
+    }
+
+    #[getter]
+    fn step_size(&self) -> PyResult<i64> {
+        crate::ephemeris::ephemeris_common::get_step_size(&self.common_data.times)
+    }
+
     #[getter]
     fn gcrs_pv(&self, py: Python) -> Option<Py<PositionVelocityData>> {
         self.get_gcrs_pv(py)
@@ -142,6 +185,11 @@ impl GroundEphemeris {
     }
 
     #[getter]
+    fn timestamp(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.get_timestamp(py)
+    }
+
+    #[getter]
     fn sun_pv(&self, py: Python) -> Option<Py<PositionVelocityData>> {
         self.get_sun_pv(py)
     }
@@ -149,11 +197,6 @@ impl GroundEphemeris {
     #[getter]
     fn moon_pv(&self, py: Python) -> Option<Py<PositionVelocityData>> {
         self.get_moon_pv(py)
-    }
-
-    #[getter]
-    fn timestamp(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        self.get_timestamp(py)
     }
 
     #[getter]
@@ -166,271 +209,49 @@ impl GroundEphemeris {
         self.get_obsgeovel(py)
     }
 
-    /// Get the input latitude in degrees (constructor argument)
-    #[getter]
-    fn input_latitude(&self) -> f64 {
-        self.latitude
-    }
-
-    /// Get the input longitude in degrees (constructor argument)
-    #[getter]
-    fn input_longitude(&self) -> f64 {
-        self.longitude
-    }
-
-    /// Get the input height in meters (constructor argument)
-    #[getter]
-    fn input_height(&self) -> f64 {
-        self.height
-    }
-
-    /// Get the start time of the ephemeris
-    #[getter]
-    fn begin(&self, py: Python) -> PyResult<Py<PyAny>> {
-        crate::ephemeris::ephemeris_common::get_begin_time(&self.common_data.times, py)
-    }
-
-    /// Get the end time of the ephemeris
-    #[getter]
-    fn end(&self, py: Python) -> PyResult<Py<PyAny>> {
-        crate::ephemeris::ephemeris_common::get_end_time(&self.common_data.times, py)
-    }
-
-    /// Get the time step size in seconds
-    #[getter]
-    fn step_size(&self) -> PyResult<i64> {
-        crate::ephemeris::ephemeris_common::get_step_size(&self.common_data.times)
-    }
-
-    /// Get whether polar motion correction is applied
-    #[getter]
-    fn polar_motion(&self) -> bool {
-        self.polar_motion
-    }
-
-    // GroundEphemeris pre-populates geodetic caches with constant arrays during construction (see lines 85-100),
-    // then uses the same EphemerisBase trait getters as other ephemeris types below. This approach avoids
-    // duplicate #[getter] definitions in the same impl block and clarifies why scalar getters were removed.
-
-    // NOTE: `height` getters are implemented explicitly below (returning per-timestamp arrays)
-
-    /// Get position and velocity for any solar system body
-    ///
-    /// Analogous to astropy's `get_body()` function. Returns position and velocity
-    /// of the specified body relative to the observer (ground station).
-    ///
-    /// # Arguments
-    /// * `body` - Body identifier: NAIF ID (as string) or name (e.g., "Jupiter", "mars", "301")
-    ///
-    /// # Returns
-    /// `PositionVelocityData` containing position and velocity in km and km/s
-    ///
-    /// # Example
-    /// ```python
-    /// eph = GroundEphemeris(...)
-    /// jupiter = eph.get_body_pv("Jupiter")  # By name
-    /// mars = eph.get_body_pv("499")  # By NAIF ID
-    /// print(jupiter.position)  # Position in km
-    /// ```
-    fn get_body_pv(&self, py: Python, body: String) -> PyResult<Py<PositionVelocityData>> {
-        <Self as EphemerisBase>::get_body_pv(self, py, &body)
-    }
-
-    /// Get SkyCoord for any solar system body with observer location set
-    ///
-    /// Analogous to astropy's `get_body()` function but returns a SkyCoord object.
-    /// The returned SkyCoord is in GCRS frame with obsgeoloc and obsgeovel set
-    /// to the observer's position.
-    ///
-    /// # Arguments
-    /// * `body` - Body identifier: NAIF ID (as string) or name (e.g., "Jupiter", "mars", "301")
-    ///
-    /// # Returns
-    /// Astropy SkyCoord object in GCRS frame
-    ///
-    /// # Example
-    /// ```python
-    /// eph = GroundEphemeris(...)
-    /// jupiter = eph.get_body("Jupiter")
-    /// # Can now compute separations, altaz coordinates, etc.
-    /// altaz = jupiter.transform_to(AltAz(obstime=..., location=...))
-    /// ```
-    fn get_body(&self, py: Python, body: String) -> PyResult<Py<PyAny>> {
-        let modules = AstropyModules::import(py)?;
-        <Self as EphemerisBase>::get_body(self, py, &modules, &body)
-    }
-
-    /// Get angular radius of the Sun with astropy units
-    ///
-    /// Returns an astropy Quantity array of angular radii for each timestamp (units: degrees).
-    /// Angular radius = arcsin(physical_radius / distance)
-    ///
-    /// # Returns
-    /// astropy Quantity array with units of degrees
-    #[getter]
-    fn sun_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.get_sun_radius(py)
-    }
-
-    /// Get angular radius of the Sun with astropy units
-    ///
-    /// Returns an astropy Quantity array of angular radii for each timestamp (units: degrees).
-    /// Angular radius = arcsin(physical_radius / distance)
-    ///
-    /// # Returns
-    /// astropy Quantity array with units of degrees
-    #[getter]
-    fn sun_radius_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.get_sun_radius_deg(py)
-    }
-
-    /// Get angular radius of the Moon with astropy units (degrees)
-    ///
-    /// Returns an astropy Quantity with units of degrees
-    ///
-    /// # Returns
-    /// astropy Quantity array with units of degrees
-    #[getter]
-    fn moon_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.get_moon_radius(py)
-    }
-
-    /// Get angular radius of the Moon as seen from the ground station (in degrees)
-    ///
-    /// Returns a NumPy array of angular radii for each timestamp.
-    /// Angular radius = arcsin(physical_radius / distance)
-    ///
-    /// # Returns
-    /// NumPy array of angular radii in degrees
-    #[getter]
-    fn moon_radius_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.get_moon_radius_deg(py)
-    }
-
-    /// Get angular radius of the Earth with astropy units (degrees)
-    ///
-    /// Returns an astropy Quantity with units of degrees
-    ///
-    /// # Returns
-    /// astropy Quantity array with units of degrees
-    #[getter]
-    fn earth_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.get_earth_radius(py)
-    }
-
-    /// Get angular radius of the Earth as seen from the ground station (in degrees)
-    ///
-    /// Returns a NumPy array of angular radii for each timestamp.
-    /// Angular radius = arcsin(physical_radius / distance)
-    ///
-    /// # Returns
-    /// NumPy array of angular radii in degrees
-    #[getter]
-    fn earth_radius_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.get_earth_radius_deg(py)
-    }
-
-    /// Get angular radius of the Sun as seen from the ground station (in radians)
-    ///
-    /// Returns a NumPy array of angular radii for each timestamp.
-    /// Angular radius = arcsin(physical_radius / distance)
-    ///
-    /// # Returns
-    /// NumPy array of angular radii in radians
-    #[getter]
-    fn sun_radius_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.get_sun_radius_rad(py)
-    }
-
-    /// Get angular radius of the Moon as seen from the ground station (in radians)
-    ///
-    /// Returns a NumPy array of angular radii for each timestamp.
-    /// Angular radius = arcsin(physical_radius / distance)
-    ///
-    /// # Returns
-    /// NumPy array of angular radii in radians
-    #[getter]
-    fn moon_radius_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.get_moon_radius_rad(py)
-    }
-
-    /// Get angular radius of the Earth as seen from the ground station (in radians)
-    ///
-    /// Returns a NumPy array of angular radii for each timestamp.
-    /// Angular radius = arcsin(physical_radius / distance)
-    ///
-    /// # Returns
-    /// NumPy array of angular radii in radians
-    #[getter]
-    fn earth_radius_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.get_earth_radius_rad(py)
-    }
-
-    /// Find the index of the closest timestamp to the given datetime
-    ///
-    /// Returns the index in the ephemeris timestamp array that is closest to the provided time.
-    /// This can be used to index into any of the ephemeris arrays (positions, velocities, etc.)
-    ///
-    /// # Arguments
-    /// * `time` - Python datetime object to find the closest match for
-    ///
-    /// # Returns
-    /// Index of the closest timestamp
-    ///
-    /// # Example
-    /// ```python
-    /// from datetime import datetime
-    /// eph = GroundEphemeris(...)
-    /// target_time = datetime(2024, 1, 15, 12, 0, 0)
-    /// idx = eph.index(target_time)
-    /// sun_position = eph.sun_pv.position[idx]
-    /// ```
-    fn index(&self, time: &Bound<'_, PyDateTime>) -> PyResult<usize> {
-        self.find_closest_index(time)
-    }
-
     #[getter]
     fn latitude(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        <Self as EphemerisBase>::get_latitude(self, py)
-    }
-
-    #[getter]
-    fn longitude(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        <Self as EphemerisBase>::get_longitude(self, py)
+        self.get_latitude(py)
     }
 
     #[getter]
     fn latitude_deg(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        <Self as EphemerisBase>::get_latitude_deg(self, py)
-    }
-
-    #[getter]
-    fn longitude_deg(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        <Self as EphemerisBase>::get_longitude_deg(self, py)
+        self.get_latitude_deg(py)
     }
 
     #[getter]
     fn latitude_rad(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        <Self as EphemerisBase>::get_latitude_rad(self, py)
+        self.get_latitude_rad(py)
+    }
+
+    #[getter]
+    fn longitude(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.get_longitude(py)
+    }
+
+    #[getter]
+    fn longitude_deg(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.get_longitude_deg(py)
     }
 
     #[getter]
     fn longitude_rad(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        <Self as EphemerisBase>::get_longitude_rad(self, py)
+        self.get_longitude_rad(py)
     }
 
     #[getter]
     fn height(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        <Self as EphemerisBase>::get_height(self, py)
+        self.get_height(py)
     }
 
     #[getter]
     fn height_m(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        <Self as EphemerisBase>::get_height_m(self, py)
+        self.get_height_m(py)
     }
 
     #[getter]
     fn height_km(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        // Override to use constant input height for ground stations
         let times = self.common_data.times.as_ref();
         if times.is_none() {
             return Ok(None);
@@ -438,6 +259,64 @@ impl GroundEphemeris {
         let n = times.unwrap().len();
         let arr = ndarray::Array1::from_elem(n, self.height / 1000.0);
         Ok(Some(arr.into_pyarray(py).to_owned().into()))
+    }
+
+    #[getter]
+    fn sun_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_sun_radius(py)
+    }
+
+    #[getter]
+    fn sun_radius_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_sun_radius_deg(py)
+    }
+
+    #[getter]
+    fn sun_radius_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_sun_radius_rad(py)
+    }
+
+    #[getter]
+    fn moon_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_moon_radius(py)
+    }
+
+    #[getter]
+    fn moon_radius_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_moon_radius_deg(py)
+    }
+
+    #[getter]
+    fn moon_radius_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_moon_radius_rad(py)
+    }
+
+    #[getter]
+    fn earth_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_earth_radius(py)
+    }
+
+    #[getter]
+    fn earth_radius_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_earth_radius_deg(py)
+    }
+
+    #[getter]
+    fn earth_radius_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_earth_radius_rad(py)
+    }
+
+    fn index(&self, time: &Bound<'_, PyDateTime>) -> PyResult<usize> {
+        self.find_closest_index(time)
+    }
+
+    fn get_body_pv(&self, py: Python, body: &str) -> PyResult<Py<PositionVelocityData>> {
+        <Self as EphemerisBase>::get_body_pv(self, py, body)
+    }
+
+    fn get_body(&self, py: Python, body: &str) -> PyResult<Py<PyAny>> {
+        let modules = AstropyModules::import(py)?;
+        <Self as EphemerisBase>::get_body(self, py, &modules, body)
     }
 }
 
