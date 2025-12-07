@@ -1,21 +1,31 @@
 #!/bin/bash
-# Build manylinux/musllinux wheels locally using Docker
+# Build manylinux/musllinux/native wheels locally using Docker (Linux builds) or native tools
 #
 # Usage:
-#   ./scripts/build_wheels.sh              # Build all platforms
-#   ./scripts/build_wheels.sh linux        # Build only manylinux wheels
-#   ./scripts/build_wheels.sh musllinux    # Build only musllinux wheels (Alpine)
-#   ./scripts/build_wheels.sh macos        # Build only macOS wheels (native only)
+#   ./scripts/build_wheels.sh              # Build all Linux wheels (via Docker) + native wheel
+#   ./scripts/build_wheels.sh linux        # Build only manylinux wheels (x86_64 + aarch64)
+#   ./scripts/build_wheels.sh musllinux    # Build only musllinux wheels (Alpine, x86_64 + aarch64)
+#   ./scripts/build_wheels.sh windows      # Build Windows wheels (cross-compile via Docker)
+#   ./scripts/build_wheels.sh native       # Build only native wheel for current platform
+#   ./scripts/build_wheels.sh macos        # Build macOS wheel (only works on macOS)
 #
 # Caching:
 #   Build artifacts are cached in .cache/cargo-* directories for faster rebuilds.
 #   To clear cache: rm -rf .cache/
+#
+# Requirements:
+#   - Docker (for Linux/Windows cross-compile builds, with QEMU for cross-arch builds)
+#   - Rust + maturin (for native builds)
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
+
+# Detect host OS and architecture
+HOST_OS="$(uname -s)"
+HOST_ARCH="$(uname -m)"
 
 # Setup cache directories for Cargo registry and build artifacts
 CACHE_DIR="$PROJECT_DIR/.cache"
@@ -25,6 +35,8 @@ mkdir -p "$CACHE_DIR/cargo-target-manylinux-x86_64"
 mkdir -p "$CACHE_DIR/cargo-target-manylinux-aarch64"
 mkdir -p "$CACHE_DIR/cargo-target-musllinux-x86_64"
 mkdir -p "$CACHE_DIR/cargo-target-musllinux-aarch64"
+mkdir -p "$CACHE_DIR/cargo-target-windows-x86_64"
+mkdir -p "$CACHE_DIR/xwin-cache"
 
 # Common cache volume mounts
 CACHE_MOUNTS="-v $CACHE_DIR/cargo-registry:/root/.cargo/registry -v $CACHE_DIR/cargo-git:/root/.cargo/git"
@@ -51,7 +63,14 @@ fi
 echo "Building version: Rust=$RUST_VERSION, Python=$PYTHON_VERSION (from git: $RAW_VERSION)"
 
 # Update Cargo.toml with the Rust-compatible version
-sed -i.bak "s/^version = .*/version = \"$RUST_VERSION\"/" Cargo.toml
+# Use portable sed syntax that works on both macOS and Linux
+if [[ "$HOST_OS" == "Darwin" ]]; then
+    sed -i '' "s/^version = .*/version = \"$RUST_VERSION\"/" Cargo.toml
+else
+    sed -i "s/^version = .*/version = \"$RUST_VERSION\"/" Cargo.toml
+fi
+# Keep a backup for restoration
+cp Cargo.toml Cargo.toml.build_backup
 
 # Create dist directory
 mkdir -p dist
@@ -70,8 +89,9 @@ build_linux_x86_64() {
 
 build_linux_aarch64() {
     echo "=== Building Linux aarch64 wheels ==="
-    # Requires Docker with QEMU configured for ARM emulation
-    # On macOS with Docker Desktop, this should work out of the box
+    # Requires Docker with QEMU configured for ARM emulation when running on x86_64
+    # On Docker Desktop (macOS/Windows), this should work out of the box
+    # On Linux, you may need: docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
     docker run --rm --platform linux/arm64 \
         --entrypoint /bin/bash \
         -v "$PROJECT_DIR":/io \
@@ -109,7 +129,37 @@ build_musllinux_aarch64() {
         /bin/sh -c "apk add --no-cache openssl-dev perl curl && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && source /root/.cargo/env && /opt/python/cp312-cp312/bin/pip install maturin && /opt/python/cp312-cp312/bin/maturin build --release --out dist --interpreter 3.10 3.11 3.12 3.13 3.14"
 }
 
+build_windows_x86_64() {
+    echo "=== Building Windows x86_64 wheels (cross-compile) ==="
+    # Cross-compile Windows wheels using cargo-xwin in a Linux container
+    # This downloads the Windows SDK and uses it to cross-compile
+    docker run --rm \
+        -v "$PROJECT_DIR":/io \
+        $CACHE_MOUNTS \
+        -v "$CACHE_DIR/cargo-target-windows-x86_64":/io/target \
+        -v "$CACHE_DIR/xwin-cache":/root/.cache/cargo-xwin \
+        -w /io \
+        -e XWIN_CACHE_DIR=/root/.cache/cargo-xwin \
+        ghcr.io/pyo3/maturin \
+        build --release --out dist --target x86_64-pc-windows-msvc --interpreter 3.10 3.11 3.12 3.13 3.14
+}
+
+build_native() {
+    echo "=== Building native wheel for $HOST_OS $HOST_ARCH ==="
+    # Requires maturin installed: pip install maturin
+    if command -v maturin &> /dev/null; then
+        maturin build --release --out dist --interpreter 3.10 3.11 3.12 3.13 3.14
+    else
+        echo "maturin not found. Install with: pip install maturin"
+        exit 1
+    fi
+}
+
 build_macos_native() {
+    if [[ "$HOST_OS" != "Darwin" ]]; then
+        echo "Error: macOS builds can only be run on macOS"
+        exit 1
+    fi
     echo "=== Building macOS wheels (native architecture) ==="
     # Requires maturin installed: pip install maturin
     if command -v maturin &> /dev/null; then
@@ -121,6 +171,10 @@ build_macos_native() {
 }
 
 build_macos_universal() {
+    if [[ "$HOST_OS" != "Darwin" ]]; then
+        echo "Error: macOS universal builds can only be run on macOS"
+        exit 1
+    fi
     echo "=== Building macOS universal2 wheels ==="
     # Builds fat binary supporting both Intel and Apple Silicon
     if command -v maturin &> /dev/null; then
@@ -153,6 +207,12 @@ case "${1:-all}" in
     musllinux-arm)
         build_musllinux_aarch64
         ;;
+    windows)
+        build_windows_x86_64
+        ;;
+    native)
+        build_native
+        ;;
     macos)
         build_macos_native
         ;;
@@ -164,18 +224,20 @@ case "${1:-all}" in
         build_linux_aarch64
         build_musllinux_x86_64
         build_musllinux_aarch64
-        build_macos_native
+        build_native
         ;;
     *)
-        echo "Usage: $0 [linux|linux-x86|linux-arm|musllinux|musllinux-x86|musllinux-arm|macos|macos-universal|all]"
+        echo "Usage: $0 [linux|linux-x86|linux-arm|musllinux|musllinux-x86|musllinux-arm|windows|native|macos|macos-universal|all]"
         # Restore original Cargo.toml
-        mv Cargo.toml.bak Cargo.toml 2>/dev/null || true
+        git checkout Cargo.toml 2>/dev/null || true
+        rm -f Cargo.toml.build_backup
         exit 1
         ;;
 esac
 
 # Restore original Cargo.toml
-mv Cargo.toml.bak Cargo.toml 2>/dev/null || true
+git checkout Cargo.toml 2>/dev/null || true
+rm -f Cargo.toml.build_backup
 
 echo ""
 echo "=== Built wheels (version $PYTHON_VERSION) ==="
