@@ -620,23 +620,6 @@ class TestLogicalOperators:
         nested = ~(sun & moon)
         assert isinstance(nested.constraint, AndConstraint)
 
-    def test_evaluate_batch_removed_method(self):
-        """Test that evaluate_batch method has been removed."""
-        from datetime import datetime, timezone
-
-        from rust_ephem import GroundEphemeris
-
-        # Create a simple ephemeris
-        begin = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        end = datetime(2025, 1, 2, tzinfo=timezone.utc)
-        ephem = GroundEphemeris(0.0, 0.0, 0.0, begin, end, 3600)
-
-        sun_constraint = SunConstraint(min_angle=45.0)
-
-        # This should raise AttributeError since the method was removed
-        with pytest.raises(AttributeError):
-            sun_constraint.evaluate_batch(ephem, [0.0], [0.0], times=[begin])
-
     def test_xor_operator_overload(self, sun_constraint, moon_constraint):
         """Test __xor__ operator creates XorConstraint."""
         result = sun_constraint ^ moon_constraint

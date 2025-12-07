@@ -708,13 +708,15 @@ impl PyConstraint {
     /// For multiple times, it efficiently uses the batch evaluation internally.
     ///
     /// Args:
-    ///     time (datetime or list[datetime]): Time(s) to check (must exist in ephemeris)
+    ///     time (datetime or list[datetime] or numpy.ndarray): Time(s) to check (must exist in ephemeris).
+    ///           Can be a single datetime, list of datetimes, or numpy array of datetimes.
     ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
     ///     target_ra (float): Target right ascension in degrees (ICRS/J2000)
     ///     target_dec (float): Target declination in degrees (ICRS/J2000)
     ///
     /// Returns:
-    ///     bool or list[bool]: True if constraint is violated at the given time(s)
+    ///     bool or list[bool]: True if constraint is violated at the given time(s).
+    ///     Returns a single bool for a single time, or a list of bools for multiple times.
     /// Helper to parse times parameter and convert to indices
     fn parse_times_to_indices(
         &self,

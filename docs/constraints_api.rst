@@ -370,26 +370,44 @@ Evaluation Methods
 
 .. py:method:: Constraint.in_constraint(time, ephemeris, target_ra, target_dec)
 
-   Check if the target satisfies the constraint at a single time.
+   Check if the target satisfies the constraint at given time(s).
 
-   This is optimized for single-time evaluation.
+   This method accepts single times, lists of times, or numpy arrays of times.
+   For multiple times, it efficiently uses batch evaluation internally.
 
-   :param datetime time: The time to check (must exist in ephemeris timestamps)
+   :param time: The time(s) to check (must exist in ephemeris timestamps).
+                Can be a single datetime, list of datetimes, or numpy array of datetimes.
+   :type time: datetime or list[datetime] or numpy.ndarray
    :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
    :param float target_ra: Target right ascension in degrees (ICRS/J2000)
    :param float target_dec: Target declination in degrees (ICRS/J2000)
-   :returns: True if constraint is satisfied, False if violated
-   :rtype: bool
+   :returns: True if constraint is satisfied at the given time(s).
+             Returns a single bool for a single time, or a list of bools for multiple times.
+   :rtype: bool or list[bool]
    :raises ValueError: If time is not found in ephemeris timestamps
 
-   **Example:**
+   **Examples:**
 
    .. code-block:: python
 
+      import numpy as np
       from datetime import datetime, timezone
 
       time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+      # Single time
       is_visible = constraint.in_constraint(time, ephem, 83.63, 22.01)
+      # Returns: bool
+
+      # Multiple times as list
+      times = [time, time]
+      results = constraint.in_constraint(times, ephem, 83.63, 22.01)
+      # Returns: [bool, bool]
+
+      # Multiple times as numpy array
+      times_array = np.array([time, time, time])
+      results = constraint.in_constraint(times_array, ephem, 83.63, 22.01)
+      # Returns: [bool, bool, bool]
 
 Serialization Methods
 ^^^^^^^^^^^^^^^^^^^^^
@@ -773,14 +791,17 @@ All Pydantic constraint models inherit these methods:
 
 .. py:method:: in_constraint(time, ephemeris, target_ra, target_dec)
 
-   Check if target violates the constraint at a given time.
+   Check if target violates the constraint at given time(s).
 
-   :param datetime time: The time to check (must exist in ephemeris)
+   :param time: The time(s) to check (must exist in ephemeris). Can be a single datetime,
+                list of datetimes, or numpy array of datetimes.
+   :type time: datetime or list[datetime] or numpy.ndarray
    :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
    :param float target_ra: Target right ascension in degrees
    :param float target_dec: Target declination in degrees
-   :returns: True if constraint is satisfied at the given time
-   :rtype: bool
+   :returns: True if constraint is satisfied at the given time(s). Returns a single bool
+             for a single time, or a list of bools for multiple times.
+   :rtype: bool or list[bool]
 
 .. py:method:: and_(other)
 
@@ -1028,6 +1049,15 @@ For checking a single time:
 
    # Use in_constraint() for single-time checks
    is_visible = constraint.in_constraint(time, ephem, ra, dec)
+
+For checking multiple times efficiently:
+
+.. code-block:: python
+
+   # Use in_constraint() with arrays for multiple times
+   times_array = ephem.timestamp[10:20]  # numpy array
+   results = constraint.in_constraint(times_array, ephem, ra, dec)
+   # Returns list of booleans
 
 Anti-Patterns (Avoid)
 ^^^^^^^^^^^^^^^^^^^^^
