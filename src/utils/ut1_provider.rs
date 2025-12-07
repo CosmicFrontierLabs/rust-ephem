@@ -1,6 +1,7 @@
 /// UT1-UTC offset provider using hifitime
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
+#[cfg(feature = "ut1")]
 use std::sync::Mutex;
 
 use crate::utils::eop_cache::load_or_download_eop2_text;

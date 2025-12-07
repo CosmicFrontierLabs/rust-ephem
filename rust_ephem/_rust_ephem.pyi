@@ -1,12 +1,31 @@
 """Type stubs for the Rust extension module _rust_ephem"""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 import numpy.typing as npt
 
 from .ephemeris import Ephemeris
+
+@runtime_checkable
+class TLELike(Protocol):
+    """Protocol for objects that can be used as TLE data (e.g., TLERecord)."""
+
+    @property
+    def line1(self) -> str:
+        """First line of TLE."""
+        ...
+
+    @property
+    def line2(self) -> str:
+        """Second line of TLE."""
+        ...
+
+    @property
+    def epoch(self) -> datetime:
+        """TLE epoch."""
+        ...
 
 class PositionVelocityData:
     """Position and velocity data container"""
@@ -457,9 +476,12 @@ class TLEEphemeris(Ephemeris):
         step_size: int = 60,
         *,
         polar_motion: bool = False,
-        tle: str | None = None,
+        tle: str | TLELike | None = None,
         norad_id: int | None = None,
         norad_name: str | None = None,
+        spacetrack_username: str | None = None,
+        spacetrack_password: str | None = None,
+        epoch_tolerance_days: float | None = None,
     ) -> None:
         """
         Initialize TLE ephemeris from various TLE sources.
@@ -467,9 +489,18 @@ class TLEEphemeris(Ephemeris):
         Args:
             tle1: First line of TLE (legacy method, use with tle2)
             tle2: Second line of TLE (legacy method, use with tle1)
-            tle: Path to TLE file or URL to download TLE from
-            norad_id: NORAD catalog ID to fetch TLE from Celestrak
+            tle: Path to TLE file, URL to download TLE from, or a TLERecord object.
+                When passing a TLERecord (or any object with line1, line2, and epoch
+                attributes), it will be used directly without fetching.
+            norad_id: NORAD catalog ID to fetch TLE. If Space-Track.org credentials
+                are available (via parameters, environment variables, or .env file),
+                Space-Track.org is tried first with automatic failover to Celestrak.
+                Otherwise, Celestrak is used directly.
             norad_name: Satellite name to fetch TLE from Celestrak
+            spacetrack_username: Space-Track.org username (or set SPACETRACK_USERNAME env var)
+            spacetrack_password: Space-Track.org password (or set SPACETRACK_PASSWORD env var)
+            epoch_tolerance_days: For Space-Track cache: how many days TLE epoch can differ
+                from target epoch (default: 4.0 days)
             begin: Start time (naive datetime treated as UTC, required)
             end: End time (naive datetime treated as UTC, required)
             step_size: Time step in seconds (default: 60)
@@ -478,6 +509,20 @@ class TLEEphemeris(Ephemeris):
         Note:
             Must provide exactly one of: (tle1, tle2), tle, norad_id, or norad_name.
             begin and end parameters are required.
+
+            When using norad_id with Space-Track.org credentials available:
+            - Credentials can be provided via parameters, environment variables
+              (SPACETRACK_USERNAME, SPACETRACK_PASSWORD), or a .env file
+            - Space-Track will fetch a TLE with epoch closest to the begin time
+            - If Space-Track fails, automatically falls back to Celestrak
+            - Results are cached; cache is used if TLE epoch is within
+              epoch_tolerance_days of the requested begin time
+
+        Example:
+            >>> # Using fetch_tle to get TLE, then pass to TLEEphemeris
+            >>> from rust_ephem import fetch_tle, TLEEphemeris
+            >>> tle_record = fetch_tle(norad_id=25544)
+            >>> ephem = TLEEphemeris(tle=tle_record, begin=begin, end=end, step_size=60)
         """
         ...
 
@@ -1874,5 +1919,42 @@ def get_cache_dir() -> str:
 
     Returns:
         String path to the cache directory
+    """
+    ...
+
+def fetch_tle(
+    *,
+    tle: str | None = None,
+    norad_id: int | None = None,
+    norad_name: str | None = None,
+    epoch: datetime | None = None,
+    spacetrack_username: str | None = None,
+    spacetrack_password: str | None = None,
+    epoch_tolerance_days: float | None = None,
+) -> dict[str, Any]:
+    """
+    Fetch a TLE from various sources (file, URL, Celestrak, Space-Track.org).
+
+    This is the low-level Rust function. For a higher-level API with Pydantic
+    models, use `rust_ephem.fetch_tle()` which returns a `TLERecord` object.
+
+    Args:
+        tle: Path to TLE file or URL to download TLE from
+        norad_id: NORAD catalog ID to fetch TLE. If Space-Track credentials
+            are available, Space-Track is tried first with failover to Celestrak.
+        norad_name: Satellite name to fetch TLE from Celestrak
+        epoch: Target epoch for Space-Track queries. If not specified,
+            current time is used. Space-Track will fetch the TLE with epoch
+            closest to this time.
+        spacetrack_username: Space-Track.org username (or use SPACETRACK_USERNAME env var)
+        spacetrack_password: Space-Track.org password (or use SPACETRACK_PASSWORD env var)
+        epoch_tolerance_days: For Space-Track cache: how many days TLE epoch can
+            differ from target epoch (default: 4.0 days)
+
+    Returns:
+        Dict with keys: line1, line2, name (optional), epoch (datetime), source
+
+    Raises:
+        ValueError: If no valid TLE source is specified or fetching fails
     """
     ...
