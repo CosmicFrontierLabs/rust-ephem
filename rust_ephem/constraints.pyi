@@ -39,17 +39,13 @@ class RustConstraintMixin(BaseModel):
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
     ) -> npt.NDArray[np.bool_]: ...
-    def evaluate_batch(
-        self,
-        ephemeris: Ephemeris,
-        target_ras: list[float],
-        target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
-        indices: int | list[int] | None = None,
-    ) -> npt.NDArray[np.bool_]: ...
     def in_constraint(
-        self, time: datetime, ephemeris: Ephemeris, target_ra: float, target_dec: float
-    ) -> bool: ...
+        self,
+        time: datetime | list[datetime] | npt.NDArray[np.datetime64],
+        ephemeris: Ephemeris,
+        target_ra: float,
+        target_dec: float,
+    ) -> bool | list[bool]: ...
     def and_(self, other: ConstraintConfig) -> AndConstraint: ...
     def or_(self, other: ConstraintConfig) -> OrConstraint: ...
     def xor_(self, other: ConstraintConfig) -> XorConstraint: ...

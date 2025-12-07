@@ -364,12 +364,6 @@ Classes
       - **Optimized**: Uses vectorized operations for batch RA/Dec conversion and constraint evaluation
       - **All constraint types supported**: Sun/Moon proximity, Earth limb, Eclipse, Body proximity, and logical combinators (AND, OR, NOT, XOR)
     
-    * ``evaluate_batch(ephemeris, target_ras, target_decs, times=None, indices=None)`` — **[Deprecated]** Use ``in_constraint_batch()`` instead
-      
-      - This method is maintained for backward compatibility but will be removed in a future version
-      - Emits a ``DeprecationWarning`` when called
-      - Internally calls ``in_constraint_batch()``
-    
     * ``in_constraint(time, ephemeris, target_ra, target_dec)`` — Check if target is in-constraint at a single time
       
       - ``time`` — Python datetime object (must exist in ephemeris timestamps)
@@ -684,12 +678,6 @@ All constraint configuration classes (SunConstraint, MoonConstraint, etc.) inher
   - Returns: ``ConstraintResult`` object
   - See ``Constraint.evaluate()`` above for parameter details
 
-* ``evaluate_batch(ephemeris, target_ras, target_decs, times=None, indices=None)`` — Evaluate constraint for multiple targets
-  
-  - Returns: 2D NumPy boolean array of shape (n_targets, n_times)
-  - Much faster than calling ``evaluate()`` in a loop
-  - See ``Constraint.evaluate_batch()`` above for parameter details
-
 * ``in_constraint(time, ephemeris, target_ra, target_dec)`` — Check if target satisfies constraint at a single time
   
   - Returns: ``bool``
@@ -732,7 +720,7 @@ The constraint system includes several performance optimizations for efficient e
 
 * **Single Time Checks**: For checking a single time, use ``Constraint.in_constraint()`` which is optimized for single-point evaluation
 
-* **Vectorized Batch Evaluation**: For checking multiple targets, use ``evaluate_batch()`` which evaluates all targets in a single call, eliminating Python call overhead
+* **Vectorized Batch Evaluation**: For checking multiple targets, use ``in_constraint_batch()`` which evaluates all targets in a single call, eliminating Python call overhead
 
 * **Optimal Usage Patterns**:
 
@@ -740,7 +728,7 @@ The constraint system includes several performance optimizations for efficient e
   
       target_ras = [0.0, 90.0, 180.0, 270.0]
       target_decs = [0.0, 30.0, -30.0, 60.0]
-      violations = constraint.evaluate_batch(eph, target_ras, target_decs)
+      violations = constraint.in_constraint_batch(eph, target_ras, target_decs)
       # violations is (n_targets, n_times) array
       # violations[i, j] = True if target i violates constraint at time j
 

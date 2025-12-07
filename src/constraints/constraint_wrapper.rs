@@ -15,6 +15,7 @@ use crate::ephemeris::SPICEEphemeris;
 use crate::ephemeris::TLEEphemeris;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
+use numpy::{PyArray2, PyArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
 
@@ -701,32 +702,21 @@ impl PyConstraint {
     ///
     /// **DEPRECATED:** Use `in_constraint_batch()` instead. This method will be removed
     /// in a future version.
+    /// Check if target is in-constraint at given time(s)
     ///
-    /// This is an alias for `in_constraint_batch()` maintained for backward compatibility.
-    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None))]
-    fn evaluate_batch(
-        &self,
-        py: Python,
-        ephemeris: Py<PyAny>,
-        target_ras: Vec<f64>,
-        target_decs: Vec<f64>,
-        times: Option<&Bound<PyAny>>,
-        indices: Option<&Bound<PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        // Emit deprecation warning
-        let warnings = py.import("warnings")?;
-        warnings.call_method1(
-            "warn",
-            (
-                "evaluate_batch() is deprecated, use in_constraint_batch() instead",
-                py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
-            ),
-        )?;
-
-        // Delegate to in_constraint_batch
-        self.in_constraint_batch(py, ephemeris, target_ras, target_decs, times, indices)
-    }
-
+    /// This method evaluates the constraint for a single target position at one or more times.
+    /// For multiple times, it efficiently uses the batch evaluation internally.
+    ///
+    /// Args:
+    ///     time (datetime or list[datetime] or numpy.ndarray): Time(s) to check (must exist in ephemeris).
+    ///           Can be a single datetime, list of datetimes, or numpy array of datetimes.
+    ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+    ///     target_ra (float): Target right ascension in degrees (ICRS/J2000)
+    ///     target_dec (float): Target declination in degrees (ICRS/J2000)
+    ///
+    /// Returns:
+    ///     bool or list[bool]: True if constraint is violated at the given time(s).
+    ///     Returns a single bool for a single time, or a list of bools for multiple times.
     /// Helper to parse times parameter and convert to indices
     fn parse_times_to_indices(
         &self,
@@ -750,11 +740,12 @@ impl PyConstraint {
             }
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times in ephemeris"))?;
 
-        // Parse input times (single datetime or list)
-        let input_times: Vec<DateTime<Utc>> = if times_arg.is_instance_of::<pyo3::types::PyList>() {
-            let list = times_arg.downcast::<pyo3::types::PyList>()?;
-            list.iter()
-                .map(|item| {
+        // Parse input times (single datetime or iterable of datetimes)
+        let input_times: Vec<DateTime<Utc>> =
+            if let Ok(iter) = pyo3::types::PyIterator::from_object(times_arg) {
+                // Handle any iterable (list, numpy array, etc.)
+                iter.map(|item| {
+                    let item = item?;
                     let year: i32 = item.getattr("year")?.extract()?;
                     let month: u32 = item.getattr("month")?.extract()?;
                     let day: u32 = item.getattr("day")?.extract()?;
@@ -769,23 +760,23 @@ impl PyConstraint {
                         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid datetime"))
                 })
                 .collect::<PyResult<_>>()?
-        } else {
-            // Single datetime
-            let year: i32 = times_arg.getattr("year")?.extract()?;
-            let month: u32 = times_arg.getattr("month")?.extract()?;
-            let day: u32 = times_arg.getattr("day")?.extract()?;
-            let hour: u32 = times_arg.getattr("hour")?.extract()?;
-            let minute: u32 = times_arg.getattr("minute")?.extract()?;
-            let second: u32 = times_arg.getattr("second")?.extract()?;
-            let microsecond: u32 = times_arg.getattr("microsecond")?.extract()?;
+            } else {
+                // Single datetime
+                let year: i32 = times_arg.getattr("year")?.extract()?;
+                let month: u32 = times_arg.getattr("month")?.extract()?;
+                let day: u32 = times_arg.getattr("day")?.extract()?;
+                let hour: u32 = times_arg.getattr("hour")?.extract()?;
+                let minute: u32 = times_arg.getattr("minute")?.extract()?;
+                let second: u32 = times_arg.getattr("second")?.extract()?;
+                let microsecond: u32 = times_arg.getattr("microsecond")?.extract()?;
 
-            let dt = chrono::NaiveDate::from_ymd_opt(year, month, day)
-                .and_then(|d| d.and_hms_micro_opt(hour, minute, second, microsecond))
-                .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
-                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid datetime"))?;
+                let dt = chrono::NaiveDate::from_ymd_opt(year, month, day)
+                    .and_then(|d| d.and_hms_micro_opt(hour, minute, second, microsecond))
+                    .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
+                    .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid datetime"))?;
 
-            vec![dt]
-        };
+                vec![dt]
+            };
 
         // Build HashMap for O(1) lookup when multiple times are requested
         let mut indices = Vec::with_capacity(input_times.len());
@@ -849,20 +840,66 @@ impl PyConstraint {
     ///
     /// Returns:
     ///     bool: True if constraint is violated at the given time, False otherwise
+    /// Check if the constraint is satisfied for the given times and target.
+    ///
+    /// This method wraps `in_constraint_batch` for efficiency when evaluating multiple times
+    /// for a single target. If a single time is provided, it returns a boolean. If multiple
+    /// times are provided, it returns a list of booleans.
+    ///
+    /// # Arguments
+    /// * `time` - A single time or list of times to evaluate
+    /// * `ephemeris` - The ephemeris to use for evaluation
+    /// * `target_ra` - Right ascension of the target in degrees
+    /// * `target_dec` - Declination of the target in degrees
+    ///
+    /// # Returns
+    /// A boolean if a single time is provided, or a list of booleans if multiple times are provided
+    #[pyo3(signature = (time, ephemeris, target_ra, target_dec))]
     fn in_constraint(
         &self,
         py: Python,
-        time: &Bound<PyAny>,
+        time: Py<PyAny>,
         ephemeris: Py<PyAny>,
         target_ra: f64,
         target_dec: f64,
-    ) -> PyResult<bool> {
-        // Evaluate constraint for just this single time
-        let result = self.evaluate(py, ephemeris, target_ra, target_dec, Some(time), None)?;
+    ) -> PyResult<Py<PyAny>> {
+        // Check if time is a single value or a sequence
+        let bound_time = time.bind(py);
 
-        // Check if there are any violations
-        // If violations exist, the constraint is violated (in-constraint)
-        Ok(!result.all_satisfied)
+        // Try to get the length - if it succeeds, it's a sequence
+        let len_result = bound_time.len();
+        let is_sequence = len_result.is_ok();
+        let num_times = len_result.unwrap_or(1);
+
+        // Repeat target_ra and target_dec for each time
+        let target_ras = vec![target_ra; num_times];
+        let target_decs = vec![target_dec; num_times];
+
+        // Call the batch method with the time parameter as is
+        let result_array = self.in_constraint_batch(
+            py,
+            ephemeris,
+            target_ras,
+            target_decs,
+            Some(bound_time),
+            None,
+        )?;
+
+        // Extract the results for the single target (first row)
+        let array = result_array.downcast_bound::<PyArray2<bool>>(py)?;
+        let readonly_array = array.readonly();
+        let array_data = readonly_array.as_array();
+        let mut results: Vec<bool> = Vec::with_capacity(num_times);
+        for i in 0..num_times {
+            results.push(array_data[[0, i]]);
+        }
+
+        // Return single bool if single time, else list of bools
+        if is_sequence {
+            Ok(PyList::new(py, &results)?.as_any().clone().unbind())
+        } else {
+            Ok(PyBool::new(py, results[0]).as_any().clone().unbind())
+        }
     }
 
     /// Get constraint configuration as JSON string

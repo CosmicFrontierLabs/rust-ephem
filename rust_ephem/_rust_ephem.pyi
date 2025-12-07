@@ -341,7 +341,7 @@ class Constraint:
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-    ) -> np.ndarray:
+    ) -> npt.NDArray[np.bool_]:
         """
         Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
 
@@ -374,69 +374,26 @@ class Constraint:
         """
         ...
 
-    def evaluate_batch(
-        self,
-        ephemeris: Ephemeris,
-        target_ras: list[float],
-        target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
-        indices: int | list[int] | None = None,
-    ) -> np.ndarray:
-        """
-        Evaluate constraint for multiple targets at once (vectorized).
-
-        .. deprecated::
-            Use :meth:`in_constraint_batch` instead. This method will be removed
-            in a future version.
-
-        This is an alias for :meth:`in_constraint_batch` maintained for backward compatibility.
-
-        Args:
-            ephemeris: One of TLEEphemeris, SPICEEphemeris, OEMEphemeris, or GroundEphemeris
-            target_ras: List of target right ascensions in degrees (ICRS/J2000)
-            target_decs: List of target declinations in degrees (ICRS/J2000)
-            times: Optional specific time(s) to evaluate. Can be a single datetime
-                   or list of datetimes. If provided, only these times will be
-                   evaluated (must exist in the ephemeris).
-            indices: Optional specific time index/indices to evaluate. Can be a
-                     single index or list of indices into the ephemeris timestamp array.
-
-        Returns:
-            2D numpy boolean array of shape (n_targets, n_times) where True indicates
-            constraint violation at that target/time combination.
-
-        Raises:
-            ValueError: If target_ras and target_decs have different lengths,
-                       or if both times and indices are provided, or if times/indices
-                       are not found in the ephemeris
-            TypeError: If ephemeris type is not supported
-
-        Note:
-            Only one of `times` or `indices` should be provided. If neither is
-            provided, all ephemeris times are evaluated.
-        """
-        ...
-
     def in_constraint(
         self,
-        time: datetime,
+        time: datetime | list[datetime] | npt.NDArray[np.datetime64],
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
-    ) -> bool:
+    ) -> bool | list[bool]:
         """
-        Check if the target is in-constraint at a single time.
-
-        This is optimized for single-time evaluation.
+        Check if the target is in-constraint at given time(s).
 
         Args:
-            time: The time to check (must exist in ephemeris timestamps)
+            time: The time(s) to check (must exist in ephemeris timestamps).
+                  Can be a single datetime, list of datetimes, or numpy array of datetimes.
             ephemeris: One of TLEEphemeris, SPICEEphemeris, or GroundEphemeris
             target_ra: Target right ascension in degrees (ICRS/J2000)
             target_dec: Target declination in degrees (ICRS/J2000)
 
         Returns:
-            True if constraint is satisfied at the given time, False otherwise
+            True if constraint is violated at the given time(s). Returns a single bool
+            for a single time, or a list of bools for multiple times.
 
         Raises:
             ValueError: If time is not found in ephemeris timestamps
