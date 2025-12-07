@@ -121,24 +121,64 @@ impl OEMEphemeris {
         Ok(ephemeris)
     }
 
+    // ===== Type-specific getters =====
+
+    /// Get the OEM file path
+    #[getter]
+    fn oem_path(&self) -> &str {
+        &self.oem_path
+    }
+
+    /// Get whether polar motion correction is applied
+    #[getter]
+    fn polar_motion(&self) -> bool {
+        self.polar_motion
+    }
+
+    /// Get OEM raw data position and velocity
+    ///
+    /// Returns the raw state vectors from the OEM file without interpolation
+    #[getter]
+    fn oem_pv(&self, py: Python) -> Py<PositionVelocityData> {
+        Py::new(py, split_pos_vel(&self.oem_states)).unwrap()
+    }
+
+    /// Get OEM raw data timestamps
+    ///
+    /// Returns the raw timestamps from the OEM file as Python datetime objects
+    #[getter]
+    fn oem_timestamp(&self, py: Python) -> PyResult<Vec<Py<PyAny>>> {
+        use pyo3::types::PyTzInfo;
+        let utc_tz = PyTzInfo::utc(py)?;
+        self.oem_times
+            .iter()
+            .map(|dt| {
+                let pydt = PyDateTime::from_timestamp(py, dt.timestamp() as f64, Some(&utc_tz))?;
+                Ok(pydt.into_any().unbind())
+            })
+            .collect()
+    }
+
+    // ===== Common ephemeris getters (delegating to EphemerisBase trait) =====
+
+    #[getter]
+    fn begin(&self, py: Python) -> PyResult<Py<PyAny>> {
+        crate::ephemeris::ephemeris_common::get_begin_time(&self.common_data.times, py)
+    }
+
+    #[getter]
+    fn end(&self, py: Python) -> PyResult<Py<PyAny>> {
+        crate::ephemeris::ephemeris_common::get_end_time(&self.common_data.times, py)
+    }
+
+    #[getter]
+    fn step_size(&self) -> PyResult<i64> {
+        crate::ephemeris::ephemeris_common::get_step_size(&self.common_data.times)
+    }
+
     #[getter]
     fn gcrs_pv(&self, py: Python) -> Option<Py<PositionVelocityData>> {
         self.get_gcrs_pv(py)
-    }
-
-    #[getter]
-    fn height(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        <Self as EphemerisBase>::get_height(self, py)
-    }
-
-    #[getter]
-    fn height_m(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        <Self as EphemerisBase>::get_height_m(self, py)
-    }
-
-    #[getter]
-    fn height_km(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        <Self as EphemerisBase>::get_height_km(self, py)
     }
 
     #[getter]
@@ -176,117 +216,71 @@ impl OEMEphemeris {
         self.get_timestamp(py)
     }
 
-    /// Get OEM raw data position and velocity
-    ///
-    /// Returns the raw state vectors from the OEM file without interpolation
-    #[getter]
-    fn oem_pv(&self, py: Python) -> Py<PositionVelocityData> {
-        Py::new(py, split_pos_vel(&self.oem_states)).unwrap()
-    }
-
-    /// Get OEM raw data timestamps
-    ///
-    /// Returns the raw timestamps from the OEM file as Python datetime objects
-    #[getter]
-    fn oem_timestamp(&self, py: Python) -> PyResult<Vec<Py<PyAny>>> {
-        use pyo3::types::PyTzInfo;
-        let utc_tz = PyTzInfo::utc(py)?;
-        self.oem_times
-            .iter()
-            .map(|dt| {
-                let pydt = PyDateTime::from_timestamp(py, dt.timestamp() as f64, Some(&utc_tz))?;
-                Ok(pydt.into_any().unbind())
-            })
-            .collect()
-    }
-
-    /// Get Sun position and velocity in GCRS frame
     #[getter]
     fn sun_pv(&self, py: Python) -> Option<Py<PositionVelocityData>> {
         self.get_sun_pv(py)
     }
 
-    /// Get Moon position and velocity in GCRS frame
     #[getter]
     fn moon_pv(&self, py: Python) -> Option<Py<PositionVelocityData>> {
         self.get_moon_pv(py)
     }
 
-    /// Get observer geocentric location (obsgeoloc) - alias for GCRS position
-    /// This is compatible with astropy's GCRS frame obsgeoloc parameter
     #[getter]
     fn obsgeoloc(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         self.get_obsgeoloc(py)
     }
 
-    /// Get observer geocentric velocity (obsgeovel) - alias for GCRS velocity
-    /// This is compatible with astropy's GCRS frame obsgeovel parameter
     #[getter]
     fn obsgeovel(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         self.get_obsgeovel(py)
     }
 
-    /// Get the OEM file path
-    #[getter]
-    fn oem_path(&self) -> &str {
-        &self.oem_path
-    }
-
-    /// Get the start time of the ephemeris
-    #[getter]
-    fn begin(&self, py: Python) -> PyResult<Py<PyAny>> {
-        crate::ephemeris::ephemeris_common::get_begin_time(&self.common_data.times, py)
-    }
-
-    /// Get the end time of the ephemeris
-    #[getter]
-    fn end(&self, py: Python) -> PyResult<Py<PyAny>> {
-        crate::ephemeris::ephemeris_common::get_end_time(&self.common_data.times, py)
-    }
-
-    /// Get the time step size in seconds
-    #[getter]
-    fn step_size(&self) -> PyResult<i64> {
-        crate::ephemeris::ephemeris_common::get_step_size(&self.common_data.times)
-    }
-
-    /// Get whether polar motion correction is applied
-    #[getter]
-    fn polar_motion(&self) -> bool {
-        self.polar_motion
-    }
-
     #[getter]
     fn latitude(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        <Self as EphemerisBase>::get_latitude(self, py)
+        self.get_latitude(py)
     }
 
     #[getter]
     fn latitude_deg(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        <Self as EphemerisBase>::get_latitude_deg(self, py)
+        self.get_latitude_deg(py)
     }
 
     #[getter]
     fn latitude_rad(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        <Self as EphemerisBase>::get_latitude_rad(self, py)
+        self.get_latitude_rad(py)
     }
 
     #[getter]
     fn longitude(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        <Self as EphemerisBase>::get_longitude(self, py)
+        self.get_longitude(py)
     }
 
     #[getter]
     fn longitude_deg(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        <Self as EphemerisBase>::get_longitude_deg(self, py)
+        self.get_longitude_deg(py)
     }
 
     #[getter]
     fn longitude_rad(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        <Self as EphemerisBase>::get_longitude_rad(self, py)
+        self.get_longitude_rad(py)
     }
 
-    /// Get angular radius of the Sun with astropy units (degrees)
+    #[getter]
+    fn height(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.get_height(py)
+    }
+
+    #[getter]
+    fn height_m(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.get_height_m(py)
+    }
+
+    #[getter]
+    fn height_km(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.get_height_km(py)
+    }
+
     #[getter]
     fn sun_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
         self.get_sun_radius(py)
@@ -295,6 +289,11 @@ impl OEMEphemeris {
     #[getter]
     fn sun_radius_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
         self.get_sun_radius_deg(py)
+    }
+
+    #[getter]
+    fn sun_radius_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_sun_radius_rad(py)
     }
 
     #[getter]
@@ -308,6 +307,11 @@ impl OEMEphemeris {
     }
 
     #[getter]
+    fn moon_radius_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_moon_radius_rad(py)
+    }
+
+    #[getter]
     fn earth_radius(&self, py: Python) -> PyResult<Py<PyAny>> {
         self.get_earth_radius(py)
     }
@@ -318,23 +322,21 @@ impl OEMEphemeris {
     }
 
     #[getter]
-    fn sun_radius_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.get_sun_radius_rad(py)
-    }
-
-    #[getter]
-    fn moon_radius_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
-        self.get_moon_radius_rad(py)
-    }
-
-    #[getter]
     fn earth_radius_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
         self.get_earth_radius_rad(py)
     }
 
-    /// Find the index of the closest timestamp to the given datetime
     fn index(&self, time: &Bound<'_, PyDateTime>) -> PyResult<usize> {
         self.find_closest_index(time)
+    }
+
+    fn get_body_pv(&self, py: Python, body: &str) -> PyResult<Py<PositionVelocityData>> {
+        <Self as EphemerisBase>::get_body_pv(self, py, body)
+    }
+
+    fn get_body(&self, py: Python, body: &str) -> PyResult<Py<PyAny>> {
+        let modules = crate::utils::to_skycoord::AstropyModules::import(py)?;
+        <Self as EphemerisBase>::get_body(self, py, &modules, body)
     }
 }
 
