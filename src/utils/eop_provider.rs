@@ -5,8 +5,9 @@
 //!
 //! Data is downloaded from JPL's EOP2 service and cached for reuse.
 
-use crate::utils::config::{ARCSEC_TO_RAD, MJD_UNIX_EPOCH, SECONDS_PER_DAY};
+use crate::utils::config::ARCSEC_TO_RAD;
 use crate::utils::eop_cache::load_or_download_eop2_text;
+use crate::utils::time_utils;
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
@@ -116,25 +117,11 @@ impl EopProvider {
         Ok(EopProvider { records })
     }
 
-    /// Convert DateTime<Utc> to Modified Julian Date
-    /// Made public so integration tests can validate conversion.
-    pub fn datetime_to_mjd(dt: &DateTime<Utc>) -> f64 {
-        // MJD = JD - 2400000.5
-        // JD for Unix epoch (1970-01-01 00:00:00) = 2440587.5
-        // MJD for Unix epoch = 40587.0
-
-        let unix_seconds = dt.timestamp() as f64;
-        let unix_nanos = dt.timestamp_subsec_nanos() as f64;
-        let total_seconds = unix_seconds + unix_nanos / 1e9;
-
-        MJD_UNIX_EPOCH + total_seconds / SECONDS_PER_DAY
-    }
-
     /// Get polar motion (xp, yp) for a given datetime
     ///
     /// Returns (xp, yp) in arcseconds, or (0.0, 0.0) if data is unavailable
     pub fn get_polar_motion(&self, dt: &DateTime<Utc>) -> (f64, f64) {
-        let mjd = Self::datetime_to_mjd(dt);
+        let mjd = time_utils::datetime_to_mjd(dt);
 
         if self.records.is_empty() {
             return (0.0, 0.0);

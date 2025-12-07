@@ -38,22 +38,11 @@ pub const EOP2_URL: &str = "https://eop2-external.jpl.nasa.gov/eop2/latest_eop2.
 pub const AU_TO_KM: f64 = 149597870.7;
 pub const SECONDS_PER_DAY: f64 = 86400.0;
 pub const SECS_PER_DAY: f64 = SECONDS_PER_DAY;
-pub const SECONDS_PER_DAY_RECIP: f64 = 1.0 / SECONDS_PER_DAY;
-pub const NANOS_TO_DAYS: f64 = 1.0 / (1_000_000_000.0 * SECONDS_PER_DAY);
 pub const AU_PER_DAY_TO_KM_PER_SEC: f64 = AU_TO_KM / SECONDS_PER_DAY;
 pub const ARCSEC_TO_RAD: f64 = 4.848_136_811_095_36e-6;
-pub const MJD_UNIX_EPOCH: f64 = 40587.0;
-pub const NTP_UNIX_OFFSET: i64 = 2208988800;
 
-// Time offsets
-// TT-TAI is exactly 32.184 seconds by definition
-pub const TT_TAI_SECONDS: f64 = 32.184;
-// TT_OFFSET_DAYS is now deprecated, use leap_seconds module for accurate conversions
-// This remains as a fallback approximation (assumes TAI-UTC = 37, valid since 2017)
-#[allow(dead_code)]
-pub const TT_OFFSET_DAYS: f64 = 69.184 / SECONDS_PER_DAY;
-pub const JD_UNIX_EPOCH: f64 = 2440587.5;
-pub const JD1: f64 = 2400000.5;
+/// Standard epoch for two-part Julian Date (JD = JD_EPOCH + MJD)
+pub const JD_EPOCH: f64 = 2400000.5;
 
 // Earth / orbital constants
 pub const GM_EARTH: f64 = 398600.4418;
@@ -97,37 +86,3 @@ pub const DEFAULT_EPOCH_TOLERANCE_DAYS: f64 = 4.0;
 
 /// TTL for cached TLE downloads (24 hours)
 pub const TLE_CACHE_TTL: u64 = 86_400;
-
-/// Embedded leap second data: (NTP timestamp, TAI-UTC offset in seconds)
-/// NTP timestamps are seconds since 1900-01-01 00:00:00
-/// Data from: https://hpiers.obspm.fr/iers/bul/bulc/ntp/leap-seconds.list
-pub const LEAP_SECONDS_DATA: &[(i64, f64)] = &[
-    (2272060800, 10.0), // 1 Jan 1972
-    (2287785600, 11.0), // 1 Jul 1972
-    (2303683200, 12.0), // 1 Jan 1973
-    (2335219200, 13.0), // 1 Jan 1974
-    (2366755200, 14.0), // 1 Jan 1975
-    (2398291200, 15.0), // 1 Jan 1976
-    (2429913600, 16.0), // 1 Jan 1977
-    (2461449600, 17.0), // 1 Jan 1978
-    (2492985600, 18.0), // 1 Jan 1979
-    (2524521600, 19.0), // 1 Jan 1980
-    (2571782400, 20.0), // 1 Jul 1981
-    (2603318400, 21.0), // 1 Jul 1982
-    (2634854400, 22.0), // 1 Jul 1983
-    (2698012800, 23.0), // 1 Jul 1985
-    (2776982400, 24.0), // 1 Jan 1988
-    (2840140800, 25.0), // 1 Jan 1990
-    (2871676800, 26.0), // 1 Jan 1991
-    (2918937600, 27.0), // 1 Jul 1992
-    (2950473600, 28.0), // 1 Jul 1993
-    (2982009600, 29.0), // 1 Jul 1994
-    (3029443200, 30.0), // 1 Jan 1996
-    (3076704000, 31.0), // 1 Jul 1997
-    (3124137600, 32.0), // 1 Jan 1999
-    (3345062400, 33.0), // 1 Jan 2006
-    (3439756800, 34.0), // 1 Jan 2009
-    (3550089600, 35.0), // 1 Jul 2012
-    (3644697600, 36.0), // 1 Jul 2015
-    (3692217600, 37.0), // 1 Jan 2017
-];

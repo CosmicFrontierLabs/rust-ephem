@@ -1,6 +1,4 @@
 use anise::prelude::*;
-use chrono::{Datelike, Timelike};
-use hifitime::Epoch as HifiEpoch;
 use ndarray::Array2;
 use pyo3::{prelude::*, types::PyDateTime};
 use std::sync::OnceLock;
@@ -8,6 +6,7 @@ use std::sync::OnceLock;
 use crate::ephemeris::ephemeris_common::{generate_timestamps, EphemerisBase, EphemerisData};
 use crate::ephemeris::position_velocity::PositionVelocityData;
 use crate::utils::conversions;
+use crate::utils::time_utils::chrono_to_epoch;
 use crate::utils::to_skycoord::AstropyModules;
 
 #[pyclass]
@@ -297,17 +296,7 @@ impl SPICEEphemeris {
         let mut out = Array2::<f64>::zeros((n, 6));
 
         for (i, dt) in times.iter().enumerate() {
-            // Convert DateTime<Utc> to hifitime Epoch
-            // hifitime expects UTC time
-            let epoch = HifiEpoch::from_gregorian_utc(
-                dt.year(),
-                dt.month() as u8,
-                dt.day() as u8,
-                dt.hour() as u8,
-                dt.minute() as u8,
-                dt.second() as u8,
-                dt.timestamp_subsec_nanos(),
-            );
+            let epoch = chrono_to_epoch(dt);
 
             // Query the almanac for the state (position and velocity)
             // Create Frame objects from NAIF IDs

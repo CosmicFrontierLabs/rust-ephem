@@ -1,79 +1,106 @@
-use crate::utils::config::*;
-use crate::utils::leap_seconds;
-use crate::utils::ut1_provider;
+//! Time utilities for astronomical calculations
+//!
+//! Provides conversions between chrono DateTime<Utc> and hifitime Epoch,
+//! Julian Date calculations in various time scales, and Python datetime interop.
+
 use chrono::{DateTime, Datelike, Timelike, Utc};
+use hifitime::{Duration, Epoch};
 use pyo3::prelude::*;
 
-/// Convert a DateTime<Utc> to a two-part Julian Date (JD1, JD2) for ERFA functions.
-/// This splits the JD into an integer part (JD1) and fractional part (JD2) for precision.
+use crate::utils::config::{JD_EPOCH, SECONDS_PER_DAY};
+use crate::utils::ut1_provider;
+
+// ============================================================================
+// Chrono <-> hifitime conversions
+// ============================================================================
+
+/// Convert chrono `DateTime<Utc>` to hifitime `Epoch`
 #[inline]
-pub fn datetime_to_jd(dt: &DateTime<Utc>) -> (f64, f64) {
-    // Use shared time constants from config
-
-    let timestamp_secs = dt.timestamp() as f64;
-    let timestamp_nanos = dt.timestamp_subsec_nanos() as f64;
-
-    // Use fused multiply-add for better precision and performance
-    let days_since_epoch =
-        timestamp_secs.mul_add(SECONDS_PER_DAY_RECIP, timestamp_nanos * NANOS_TO_DAYS);
-
-    // Split into integer and fractional parts for better precision
-    // Standard practice is to use JD1 = 2400000.5 + integer days, JD2 = fractional part
-    let jd2 = JD_UNIX_EPOCH - JD1 + days_since_epoch;
-
-    (JD1, jd2)
+pub fn chrono_to_epoch(dt: &DateTime<Utc>) -> Epoch {
+    let nanos = (dt.timestamp() as i128) * 1_000_000_000 + (dt.timestamp_subsec_nanos() as i128);
+    Epoch::from_unix_duration(Duration::from_total_nanoseconds(nanos))
 }
 
-/// Get TT-UTC offset in days for a given UTC time.
-/// Uses leap second data if available, otherwise falls back to approximation.
+/// Get TAI-UTC offset in seconds (leap seconds) for a DateTime
 #[inline]
-pub fn get_tt_offset_days(dt: &DateTime<Utc>) -> f64 {
-    leap_seconds::get_tt_utc_offset_days(dt)
+pub fn get_tai_utc_offset(dt: &DateTime<Utc>) -> Option<f64> {
+    chrono_to_epoch(dt).leap_seconds(true)
 }
 
-/// Convert a DateTime<Utc> to a two-part Julian Date in UT1 time scale.
-/// This applies the UT1-UTC offset from IERS data via hifitime.
+// ============================================================================
+// Julian Date conversions for ERFA
+// ============================================================================
+
+/// Convert DateTime to two-part Julian Date in UTC for ERFA
+#[inline]
+pub fn datetime_to_jd_utc(dt: &DateTime<Utc>) -> (f64, f64) {
+    (JD_EPOCH, chrono_to_epoch(dt).to_mjd_utc_days())
+}
+
+/// Convert DateTime to two-part Julian Date in TT for ERFA precession/nutation
+#[inline]
+pub fn datetime_to_jd_tt(dt: &DateTime<Utc>) -> (f64, f64) {
+    (JD_EPOCH, chrono_to_epoch(dt).to_jde_tt_days() - JD_EPOCH)
+}
+
+/// Convert DateTime to two-part Julian Date in UT1 time scale
 #[inline]
 pub fn datetime_to_jd_ut1(dt: &DateTime<Utc>) -> (f64, f64) {
-    let (jd1, jd2) = datetime_to_jd(dt);
-    let ut1_utc_days = ut1_provider::get_ut1_utc_offset_days(dt);
-    (jd1, jd2 + ut1_utc_days)
+    let (jd1, jd2) = datetime_to_jd_utc(dt);
+    (
+        jd1,
+        jd2 + ut1_provider::get_ut1_utc_offset(dt) / SECONDS_PER_DAY,
+    )
 }
 
-/// Helper function to convert Python datetime to Rust DateTime<Utc>
-/// Accepts both naive and timezone-aware datetimes (naive datetimes are treated as UTC)
+/// Convert DateTime to MJD in UTC
+#[inline]
+pub fn datetime_to_mjd(dt: &DateTime<Utc>) -> f64 {
+    chrono_to_epoch(dt).to_mjd_utc_days()
+}
+
+// ============================================================================
+// Python datetime interop
+// ============================================================================
+
+/// Convert Python datetime to chrono DateTime<Utc>
 pub fn python_datetime_to_utc(py_dt: &Bound<PyAny>) -> PyResult<DateTime<Utc>> {
-    let year = py_dt.getattr("year")?.extract::<i32>()?;
-    let month = py_dt.getattr("month")?.extract::<u32>()?;
-    let day = py_dt.getattr("day")?.extract::<u32>()?;
-    let hour = py_dt.getattr("hour")?.extract::<u32>()?;
-    let minute = py_dt.getattr("minute")?.extract::<u32>()?;
-    let second = py_dt.getattr("second")?.extract::<u32>()?;
-    let micro = py_dt.getattr("microsecond")?.extract::<u32>()?;
+    let date = chrono::NaiveDate::from_ymd_opt(
+        py_dt.getattr("year")?.extract()?,
+        py_dt.getattr("month")?.extract()?,
+        py_dt.getattr("day")?.extract()?,
+    )
+    .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid date"))?;
 
-    let date = chrono::NaiveDate::from_ymd_opt(year, month, day)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid date"))?;
-    let time = chrono::NaiveTime::from_hms_micro_opt(hour, minute, second, micro)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid time"))?;
-    let naive = chrono::NaiveDateTime::new(date, time);
-    Ok(DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
+    let time = chrono::NaiveTime::from_hms_micro_opt(
+        py_dt.getattr("hour")?.extract()?,
+        py_dt.getattr("minute")?.extract()?,
+        py_dt.getattr("second")?.extract()?,
+        py_dt.getattr("microsecond")?.extract()?,
+    )
+    .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid time"))?;
+
+    Ok(DateTime::from_naive_utc_and_offset(
+        chrono::NaiveDateTime::new(date, time),
+        Utc,
+    ))
 }
 
-/// Helper function to convert Rust DateTime<Utc> to Python datetime (UTC timezone-aware)
+/// Convert chrono DateTime<Utc> to Python datetime (UTC timezone-aware)
 pub fn utc_to_python_datetime(py: Python, dt: &DateTime<Utc>) -> PyResult<Py<PyAny>> {
     let datetime_mod = py.import("datetime")?;
-    let timezone_class = datetime_mod.getattr("timezone")?;
-    let timezone_utc = timezone_class.getattr("utc")?;
-
-    let py_dt = datetime_mod.getattr("datetime")?.call1((
-        dt.year(),
-        dt.month(),
-        dt.day(),
-        dt.hour(),
-        dt.minute(),
-        dt.second(),
-        dt.timestamp_subsec_micros(),
-        timezone_utc,
-    ))?;
-    Ok(py_dt.into())
+    let tz_utc = datetime_mod.getattr("timezone")?.getattr("utc")?;
+    Ok(datetime_mod
+        .getattr("datetime")?
+        .call1((
+            dt.year(),
+            dt.month(),
+            dt.day(),
+            dt.hour(),
+            dt.minute(),
+            dt.second(),
+            dt.timestamp_subsec_micros(),
+            tz_utc,
+        ))?
+        .into())
 }
