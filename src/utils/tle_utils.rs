@@ -20,7 +20,6 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
-
 /// Result of parsing a TLE - contains the two lines and optional satellite name
 #[derive(Debug, Clone)]
 pub struct TLEData {
@@ -238,8 +237,8 @@ impl SpaceTrackCredentials {
         let _ = dotenvy::dotenv();
 
         // Also try home directory .env
-        if let Ok(home) = std::env::var("HOME") {
-            let home_env = PathBuf::from(home).join(".env");
+        if let Some(home_dir) = dirs::home_dir() {
+            let home_env = home_dir.join(".env");
             let _ = dotenvy::from_path(home_env);
         }
 
