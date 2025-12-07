@@ -58,14 +58,6 @@ repos:
             "-D", # Flag to override settings in conf.py
             "exclude_patterns=notebooks/*", # Exclude our notebooks from pre-commit
           ]
-  - repo: local
-    hooks:
-      - id: update-cargo-version
-        name: Update Cargo.toml version from git tag
-        entry: python scripts/update_version_from_git.py
-        language: system
-        always_run: true
-        pass_filenames: false
   - repo: https://github.com/python-jsonschema/check-jsonschema
     rev: 0.29.4
     hooks:
