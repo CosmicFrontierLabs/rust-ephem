@@ -1,6 +1,6 @@
 [package]
 name = "rust_ephem"
-version = "0.1.13-dev.2"
+version = "0.1.13-dev.7"
 edition = "2021"
 license = "Apache-2.0"
 
@@ -23,7 +23,8 @@ anise = { version = "0.7.0", default-features = false }
 hifitime = { version = "4.2", features = ["std", "ut1"], optional = true }  # high-precision time with UT1 support
 # If you prefer SOFA direct bindings instead, you can use sofa-sys / rsofa etc.
 once_cell = "1"
-ureq = { version = "2.12", features = ["json", "cookies", "tls"], default-features = false }
+# Use rustls for TLS (pure Rust, no OpenSSL needed for cross-compilation)
+ureq = { version = "3", features = ["json", "cookies", "rustls"], default-features = false }
 md5 = "0.7"
 dotenvy = "0.15"  # .env file support for credentials
 # Serialization for constraint configuration

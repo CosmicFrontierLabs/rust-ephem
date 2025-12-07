@@ -113,8 +113,8 @@ pub fn read_tle_file(path: &str) -> Result<TLEData, Box<dyn Error>> {
 
 /// Download TLE from a URL
 fn download_tle(url: &str) -> Result<String, Box<dyn Error>> {
-    let response = ureq::get(url).call()?;
-    Ok(response.into_string()?)
+    let mut response = ureq::get(url).call()?;
+    Ok(response.body_mut().read_to_string()?)
 }
 
 /// Get cache path for a URL
@@ -347,15 +347,17 @@ fn save_to_spacetrack_cache(path: &Path, content: &str) {
 fn create_spacetrack_agent(
     credentials: &SpaceTrackCredentials,
 ) -> Result<ureq::Agent, Box<dyn Error>> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(30))
-        .build();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(30)))
+        .build()
+        .into();
 
     // Login to Space-Track.org
-    let login_response = agent.post(SPACETRACK_LOGIN_URL).send_form(&[
-        ("identity", &credentials.username),
-        ("password", &credentials.password),
-    ])?;
+    let form_data = [
+        ("identity", credentials.username.as_str()),
+        ("password", credentials.password.as_str()),
+    ];
+    let mut login_response = agent.post(SPACETRACK_LOGIN_URL).send_form(form_data)?;
 
     if login_response.status() != 200 {
         return Err(format!(
@@ -366,7 +368,7 @@ fn create_spacetrack_agent(
     }
 
     // Check the response body for login errors
-    let body = login_response.into_string()?;
+    let body = login_response.body_mut().read_to_string()?;
     if body.contains("\"Login\":\"Failed\"") || body.contains("Login Failed") {
         return Err("Space-Track.org login failed: Invalid credentials".into());
     }
@@ -427,7 +429,7 @@ pub fn fetch_tle_from_spacetrack(
     #[cfg(debug_assertions)]
     eprintln!("Space-Track query URL: {}", query_url);
 
-    let response = agent.get(&query_url).call()?;
+    let mut response = agent.get(&query_url).call()?;
 
     if response.status() != 200 {
         return Err(format!(
@@ -437,7 +439,7 @@ pub fn fetch_tle_from_spacetrack(
         .into());
     }
 
-    let body = response.into_string()?;
+    let body = response.body_mut().read_to_string()?;
 
     if body.trim().is_empty() {
         return Err(format!(

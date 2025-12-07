@@ -5,7 +5,6 @@
 #   ./scripts/build_wheels.sh              # Build all Linux wheels (via Docker) + native wheel
 #   ./scripts/build_wheels.sh linux        # Build only manylinux wheels (x86_64 + aarch64)
 #   ./scripts/build_wheels.sh musllinux    # Build only musllinux wheels (Alpine, x86_64 + aarch64)
-#   ./scripts/build_wheels.sh windows      # Build Windows wheels (cross-compile via Docker)
 #   ./scripts/build_wheels.sh native       # Build only native wheel for current platform
 #   ./scripts/build_wheels.sh macos        # Build macOS wheel (only works on macOS)
 #
@@ -35,7 +34,6 @@ mkdir -p "$CACHE_DIR/cargo-target-manylinux-x86_64"
 mkdir -p "$CACHE_DIR/cargo-target-manylinux-aarch64"
 mkdir -p "$CACHE_DIR/cargo-target-musllinux-x86_64"
 mkdir -p "$CACHE_DIR/cargo-target-musllinux-aarch64"
-mkdir -p "$CACHE_DIR/cargo-target-windows-x86_64"
 mkdir -p "$CACHE_DIR/xwin-cache"
 
 # Common cache volume mounts
@@ -129,21 +127,6 @@ build_musllinux_aarch64() {
         /bin/sh -c "apk add --no-cache openssl-dev perl curl && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && source /root/.cargo/env && /opt/python/cp312-cp312/bin/pip install maturin && /opt/python/cp312-cp312/bin/maturin build --release --out dist --interpreter 3.10 3.11 3.12 3.13 3.14"
 }
 
-build_windows_x86_64() {
-    echo "=== Building Windows x86_64 wheels (cross-compile) ==="
-    # Cross-compile Windows wheels using cargo-xwin in a Linux container
-    # This downloads the Windows SDK and uses it to cross-compile
-    docker run --rm \
-        -v "$PROJECT_DIR":/io \
-        $CACHE_MOUNTS \
-        -v "$CACHE_DIR/cargo-target-windows-x86_64":/io/target \
-        -v "$CACHE_DIR/xwin-cache":/root/.cache/cargo-xwin \
-        -w /io \
-        -e XWIN_CACHE_DIR=/root/.cache/cargo-xwin \
-        ghcr.io/pyo3/maturin \
-        build --release --out dist --target x86_64-pc-windows-msvc --interpreter 3.10 3.11 3.12 3.13 3.14
-}
-
 build_native() {
     echo "=== Building native wheel for $HOST_OS $HOST_ARCH ==="
     # Requires maturin installed: pip install maturin
@@ -207,8 +190,6 @@ case "${1:-all}" in
     musllinux-arm)
         build_musllinux_aarch64
         ;;
-    windows)
-        build_windows_x86_64
         ;;
     native)
         build_native
@@ -227,7 +208,7 @@ case "${1:-all}" in
         build_native
         ;;
     *)
-        echo "Usage: $0 [linux|linux-x86|linux-arm|musllinux|musllinux-x86|musllinux-arm|windows|native|macos|macos-universal|all]"
+        echo "Usage: $0 [linux|linux-x86|linux-arm|musllinux|musllinux-x86|musllinux-arm|native|macos|macos-universal|all]"
         # Restore original Cargo.toml
         git checkout Cargo.toml 2>/dev/null || true
         rm -f Cargo.toml.build_backup
