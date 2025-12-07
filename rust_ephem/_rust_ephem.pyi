@@ -1931,6 +1931,7 @@ def fetch_tle(
     spacetrack_username: str | None = None,
     spacetrack_password: str | None = None,
     epoch_tolerance_days: float | None = None,
+    enforce_source: str | None = None,
 ) -> dict[str, Any]:
     """
     Fetch a TLE from various sources (file, URL, Celestrak, Space-Track.org).
@@ -1950,6 +1951,8 @@ def fetch_tle(
         spacetrack_password: Space-Track.org password (or use SPACETRACK_PASSWORD env var)
         epoch_tolerance_days: For Space-Track cache: how many days TLE epoch can
             differ from target epoch (default: 4.0 days)
+        enforce_source: Enforce use of specific source without failover.
+            Must be "celestrak", "spacetrack", or None (default behavior with failover)
 
     Returns:
         Dict with keys: line1, line2, name (optional), epoch (datetime), source
