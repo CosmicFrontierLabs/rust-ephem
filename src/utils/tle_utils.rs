@@ -207,12 +207,20 @@ pub fn fetch_tle_by_name(name: &str) -> Result<TLEData, Box<dyn Error>> {
 // ============================================================================
 
 /// Credentials for Space-Track.org authentication
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SpaceTrackCredentials {
     pub username: String,
     pub password: String,
 }
 
+impl std::fmt::Debug for SpaceTrackCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SpaceTrackCredentials")
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .finish()
+    }
+}
 impl SpaceTrackCredentials {
     /// Create new credentials from explicit values
     pub fn new(username: String, password: String) -> Self {

@@ -92,7 +92,7 @@ pub const SPACETRACK_LOGIN_URL: &str = "https://www.space-track.org/ajaxauth/log
 pub const SPACETRACK_USERNAME_ENV: &str = "SPACETRACK_USERNAME";
 pub const SPACETRACK_PASSWORD_ENV: &str = "SPACETRACK_PASSWORD";
 
-/// Default TLE epoch tolerance for Space-Track.org caching (4 days in seconds)
+/// Default TLE epoch tolerance for Space-Track.org caching (4 days)
 pub const DEFAULT_EPOCH_TOLERANCE_DAYS: f64 = 4.0;
 
 /// TTL for cached TLE downloads (24 hours)

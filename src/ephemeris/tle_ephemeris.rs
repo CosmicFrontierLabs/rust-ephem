@@ -93,7 +93,7 @@ impl TLEEphemeris {
             let target_epoch = if norad_id.is_some() && credentials.is_some() {
                 Some(begin_for_epoch.ok_or_else(|| {
                     pyo3::exceptions::PyValueError::new_err(
-                        "begin parameter is required when using norad_id to determine target epoch for Space-Track"
+                        "begin parameter is required (used as target epoch for Space-Track.org TLE selection)"
                     )
                 })?)
             } else {
