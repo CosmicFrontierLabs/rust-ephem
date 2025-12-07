@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Update Cargo.toml version to the current git tag if one exists.
+Update Cargo.toml version based on git tags.
 
 This script is intended for local builds and mirrors what the CI does in
 .github/workflows/build-wheels.yml (where tags are used to update the Cargo.toml
@@ -9,8 +9,8 @@ version before the build). It does not commit changes; it's a local convenience.
 Usage:
     scripts/update_version_from_git.py [--dry-run]
 
-It will try to discover a git tag that points to HEAD. If none is present, the
-script prints a message and does nothing.
+If HEAD is exactly on a tag, uses that version (e.g., v0.1.13 -> 0.1.13).
+If HEAD is past a tag, generates a dev version (e.g., v0.1.13-5-gabcdef -> 0.1.13-dev.5).
 """
 
 from __future__ import annotations
@@ -24,27 +24,43 @@ from pathlib import Path
 CARGO_TOML = Path(__file__).resolve().parents[1] / "Cargo.toml"
 
 
-def get_tag() -> str | None:
-    """Return the tag pointing at HEAD, or None if not tagged."""
+def get_version_from_git() -> str | None:
+    """Return a version string based on git describe.
+
+    Returns:
+        - "X.Y.Z" if exactly on a tag vX.Y.Z
+        - "X.Y.Z-dev.N" if N commits past tag vX.Y.Z
+        - None if no tags found or git not available
+    """
     try:
         out = subprocess.check_output(
-            ["git", "describe", "--tags", "--exact-match"], stderr=subprocess.DEVNULL
+            ["git", "describe", "--tags"], stderr=subprocess.DEVNULL
         )
-        tag = out.decode("utf-8").strip()
-        return tag
+        desc = out.decode("utf-8").strip()
+
+        # Strip leading 'v' if present
+        if desc.startswith("v"):
+            desc = desc[1:]
+
+        # Check if it's exactly a tag (no commits past) or has dev commits
+        # Format: X.Y.Z or X.Y.Z-N-gHASH
+        match = re.match(r"^(\d+\.\d+\.\d+)(?:-(\d+)-g[a-f0-9]+)?$", desc)
+        if match:
+            base_version = match.group(1)
+            commits_past = match.group(2)
+            if commits_past:
+                # Dev version: X.Y.Z-dev.N (Rust semver compatible)
+                return f"{base_version}-dev.{commits_past}"
+            else:
+                # Exact tag
+                return base_version
+
+        # Fallback: return as-is if pattern doesn't match
+        return desc
+
     except subprocess.CalledProcessError:
-        # Not on a tag or git not available
+        # No tags or git not available
         return None
-
-
-def transform_tag_to_version(tag: str) -> str:
-    """Transform a tag string into a semver-ish version if possible.
-
-    Common pattern is vX.Y.Z or X.Y.Z; strip leading 'v' if present.
-    """
-    if tag.startswith("v"):
-        return tag[1:]
-    return tag
 
 
 def update_cargo_toml(version: str, dry_run: bool = False) -> bool:
@@ -85,12 +101,11 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    tag = get_tag()
-    if not tag:
-        print("No git tag pointing at HEAD found, not updating Cargo.toml")
+    version = get_version_from_git()
+    if not version:
+        print("No git tags found, not updating Cargo.toml")
         sys.exit(0)
 
-    version = transform_tag_to_version(tag)
     updated = update_cargo_toml(version, dry_run=args.dry_run)
     if updated:
         print("Success — Cargo.toml changed to", version)

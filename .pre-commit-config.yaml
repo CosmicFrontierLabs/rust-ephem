@@ -58,6 +58,14 @@ repos:
             "-D", # Flag to override settings in conf.py
             "exclude_patterns=notebooks/*", # Exclude our notebooks from pre-commit
           ]
+  - repo: local
+    hooks:
+      - id: check-cargo-version
+        name: Verify Cargo.toml version matches git tag
+        entry: python scripts/check_version.py
+        language: system
+        always_run: true
+        pass_filenames: false
   - repo: https://github.com/python-jsonschema/check-jsonschema
     rev: 0.29.4
     hooks:
