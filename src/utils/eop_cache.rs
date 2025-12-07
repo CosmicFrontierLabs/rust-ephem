@@ -15,8 +15,8 @@ use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 fn fetch_eop2_text() -> Result<String, Box<dyn Error>> {
-    let response = ureq::get(EOP2_URL).call()?;
-    Ok(response.into_string()?)
+    let mut response = ureq::get(EOP2_URL).call()?;
+    Ok(response.body_mut().read_to_string()?)
 }
 
 fn try_read_fresh_cache(path: &Path, ttl: Duration) -> Option<String> {
