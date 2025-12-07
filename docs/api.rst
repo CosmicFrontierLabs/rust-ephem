@@ -506,7 +506,12 @@ Functions
     * Must provide exactly one of: ``tle``, ``norad_id``, or ``norad_name``
     * File paths and URLs are cached locally for improved performance
     * Space-Track.org requires free account registration at https://www.space-track.org
-    * Credentials can be set via environment variables or a ``.env`` file
+    * Credentials can be provided via:
+      
+      1. Explicit parameters: ``spacetrack_username`` and ``spacetrack_password``
+      2. Environment variables: ``SPACETRACK_USERNAME`` and ``SPACETRACK_PASSWORD``
+      3. ``.env`` file in the current directory or home directory (``~/.env``)
+         containing the same environment variables
 
 Data Models
 ^^^^^^^^^^^
