@@ -7,8 +7,8 @@ use std::path::PathBuf;
 
 /// Cache directory for rust_ephem data files
 pub static CACHE_DIR: Lazy<PathBuf> = Lazy::new(|| {
-    if let Ok(home) = env::var("HOME") {
-        let mut p = PathBuf::from(home);
+    if let Some(home) = dirs::home_dir() {
+        let mut p = home;
         p.push(".cache");
         p.push("rust_ephem");
         if !p.exists() {
@@ -16,7 +16,7 @@ pub static CACHE_DIR: Lazy<PathBuf> = Lazy::new(|| {
         }
         p
     } else {
-        // Fallback to current directory if HOME not available
+        // Fallback to current directory if home dir not available
         env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     }
 });
