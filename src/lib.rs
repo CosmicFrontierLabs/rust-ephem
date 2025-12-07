@@ -233,7 +233,7 @@ fn get_cache_dir() -> String {
 ///
 /// Returns a dict with keys: line1, line2, name (optional), epoch, source
 #[pyfunction]
-#[pyo3(signature = (*, tle=None, norad_id=None, norad_name=None, epoch=None, spacetrack_username=None, spacetrack_password=None, epoch_tolerance_days=None))]
+#[pyo3(signature = (*, tle=None, norad_id=None, norad_name=None, epoch=None, spacetrack_username=None, spacetrack_password=None, epoch_tolerance_days=None, enforce_source=None))]
 #[allow(clippy::too_many_arguments)]
 fn fetch_tle(
     py: Python,
@@ -244,6 +244,7 @@ fn fetch_tle(
     spacetrack_username: Option<String>,
     spacetrack_password: Option<String>,
     epoch_tolerance_days: Option<f64>,
+    enforce_source: Option<String>,
 ) -> PyResult<pyo3::Py<pyo3::types::PyDict>> {
     use crate::utils::tle_utils;
 
@@ -266,6 +267,7 @@ fn fetch_tle(
         epoch_chrono.as_ref(),
         credentials,
         epoch_tolerance_days,
+        enforce_source.as_deref(),
     )
     .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 

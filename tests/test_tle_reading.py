@@ -469,6 +469,24 @@ class TestFetchTLE:
         finally:
             os.unlink(filepath)
 
+    def test_tle_record_to_string_2line(self):
+        """Test TLERecord to_tle_string method for 2-line TLE."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
+            f.write(TLE_2LINE)
+            f.flush()
+            filepath = f.name
+
+        try:
+            tle_record = rust_ephem.fetch_tle(tle=filepath)
+            tle_string = tle_record.to_tle_string()
+            # Should have 2 lines (line1 + line2, no name)
+            lines = tle_string.strip().split("\n")
+            assert len(lines) == 2
+            assert lines[0].startswith("1 ")
+            assert lines[1].startswith("2 ")
+        finally:
+            os.unlink(filepath)
+
     def test_tle_record_json_serialization(self):
         """Test TLERecord can be serialized to JSON."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:

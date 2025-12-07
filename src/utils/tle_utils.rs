@@ -585,6 +585,7 @@ pub fn build_credentials(
 /// * `target_epoch` - Optional target epoch for Space-Track lookups
 /// * `credentials` - Optional Space-Track.org credentials
 /// * `epoch_tolerance_days` - Optional tolerance for Space-Track cache matching
+/// * `enforce_source` - Optional source enforcement: "celestrak", "spacetrack", or None for default behavior
 ///
 /// # Returns
 /// `FetchedTLE` containing the TLE data, epoch, and source information
@@ -595,6 +596,7 @@ pub fn fetch_tle_unified(
     target_epoch: Option<&DateTime<Utc>>,
     credentials: Option<SpaceTrackCredentials>,
     epoch_tolerance_days: Option<f64>,
+    enforce_source: Option<&str>,
 ) -> Result<FetchedTLE, Box<dyn Error>> {
     if let Some(tle_param) = tle_path {
         // tle parameter: file path or URL
@@ -615,26 +617,75 @@ pub fn fetch_tle_unified(
             source: src,
         })
     } else if let Some(nid) = norad_id {
-        // Try Space-Track.org first if credentials are available
-        if let Some(creds) = credentials {
-            // Use provided target_epoch or current time
-            let target = target_epoch.cloned().unwrap_or_else(chrono::Utc::now);
-
-            match fetch_tle_from_spacetrack(nid, &target, Some(creds), epoch_tolerance_days) {
-                Ok(tle_with_epoch) => Ok(FetchedTLE {
+        match enforce_source {
+            Some("celestrak") => {
+                // Enforce Celestrak only
+                let tle_data = fetch_tle_by_norad_id(nid)?;
+                let epoch = extract_tle_epoch(&tle_data.line1)?;
+                Ok(FetchedTLE {
+                    line1: tle_data.line1,
+                    line2: tle_data.line2,
+                    name: tle_data.name,
+                    epoch,
+                    source: "celestrak",
+                })
+            }
+            Some("spacetrack") => {
+                // Enforce Space-Track only
+                let creds = credentials.ok_or(
+                    "Space-Track.org credentials required when enforce_source='spacetrack'",
+                )?;
+                let target = target_epoch.cloned().unwrap_or_else(chrono::Utc::now);
+                let tle_with_epoch =
+                    fetch_tle_from_spacetrack(nid, &target, Some(creds), epoch_tolerance_days)?;
+                Ok(FetchedTLE {
                     line1: tle_with_epoch.tle.line1,
                     line2: tle_with_epoch.tle.line2,
                     name: tle_with_epoch.tle.name,
                     epoch: tle_with_epoch.epoch,
                     source: "spacetrack",
-                }),
-                Err(_spacetrack_err) => {
-                    // Failover to Celestrak
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "Space-Track.org fetch failed, falling back to Celestrak: {}",
-                        _spacetrack_err
-                    );
+                })
+            }
+            Some(other) => Err(format!(
+                "Invalid enforce_source value: {}. Must be 'celestrak', 'spacetrack', or None",
+                other
+            )
+            .into()),
+            None => {
+                // Default behavior: try Space-Track first, failover to Celestrak
+                if let Some(creds) = credentials {
+                    // Use provided target_epoch or current time
+                    let target = target_epoch.cloned().unwrap_or_else(chrono::Utc::now);
+
+                    match fetch_tle_from_spacetrack(nid, &target, Some(creds), epoch_tolerance_days)
+                    {
+                        Ok(tle_with_epoch) => Ok(FetchedTLE {
+                            line1: tle_with_epoch.tle.line1,
+                            line2: tle_with_epoch.tle.line2,
+                            name: tle_with_epoch.tle.name,
+                            epoch: tle_with_epoch.epoch,
+                            source: "spacetrack",
+                        }),
+                        Err(_spacetrack_err) => {
+                            // Failover to Celestrak
+                            #[cfg(debug_assertions)]
+                            eprintln!(
+                                "Space-Track.org fetch failed, falling back to Celestrak: {}",
+                                _spacetrack_err
+                            );
+                            let tle_data = fetch_tle_by_norad_id(nid)?;
+                            let epoch = extract_tle_epoch(&tle_data.line1)?;
+                            Ok(FetchedTLE {
+                                line1: tle_data.line1,
+                                line2: tle_data.line2,
+                                name: tle_data.name,
+                                epoch,
+                                source: "celestrak",
+                            })
+                        }
+                    }
+                } else {
+                    // No Space-Track credentials, use Celestrak directly
                     let tle_data = fetch_tle_by_norad_id(nid)?;
                     let epoch = extract_tle_epoch(&tle_data.line1)?;
                     Ok(FetchedTLE {
@@ -646,17 +697,6 @@ pub fn fetch_tle_unified(
                     })
                 }
             }
-        } else {
-            // No Space-Track credentials, use Celestrak directly
-            let tle_data = fetch_tle_by_norad_id(nid)?;
-            let epoch = extract_tle_epoch(&tle_data.line1)?;
-            Ok(FetchedTLE {
-                line1: tle_data.line1,
-                line2: tle_data.line2,
-                name: tle_data.name,
-                epoch,
-                source: "celestrak",
-            })
         }
     } else if let Some(name_query) = norad_name {
         // Fetch from Celestrak by satellite name

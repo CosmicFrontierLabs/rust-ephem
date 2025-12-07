@@ -76,6 +76,7 @@ def fetch_tle(
     spacetrack_username: str | None = None,
     spacetrack_password: str | None = None,
     epoch_tolerance_days: float | None = None,
+    enforce_source: str | None = None,
 ) -> TLERecord:
     """
     Fetch a TLE from various sources.
@@ -102,6 +103,8 @@ def fetch_tle(
         spacetrack_password: Space-Track.org password (or use SPACETRACK_PASSWORD env var)
         epoch_tolerance_days: For Space-Track cache: how many days TLE epoch can
             differ from target epoch (default: 4.0 days)
+        enforce_source: Enforce use of specific source without failover.
+            Must be "celestrak", "spacetrack", or None (default behavior with failover)
 
     Returns:
         TLERecord containing the TLE data and metadata
@@ -134,6 +137,7 @@ def fetch_tle(
         spacetrack_username=spacetrack_username,
         spacetrack_password=spacetrack_password,
         epoch_tolerance_days=epoch_tolerance_days,
+        enforce_source=enforce_source,
     )
 
     # Convert the result dict to TLERecord

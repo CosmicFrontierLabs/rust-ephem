@@ -28,7 +28,7 @@ pub struct TLEEphemeris {
 #[pymethods]
 impl TLEEphemeris {
     #[new]
-    #[pyo3(signature = (tle1=None, tle2=None, begin=None, end=None, step_size=60, *, polar_motion=false, tle=None, norad_id=None, norad_name=None, spacetrack_username=None, spacetrack_password=None, epoch_tolerance_days=None))]
+    #[pyo3(signature = (tle1=None, tle2=None, begin=None, end=None, step_size=60, *, polar_motion=false, tle=None, norad_id=None, norad_name=None, spacetrack_username=None, spacetrack_password=None, epoch_tolerance_days=None, enforce_source=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         _py: Python,
@@ -44,6 +44,7 @@ impl TLEEphemeris {
         spacetrack_username: Option<String>,
         spacetrack_password: Option<String>,
         epoch_tolerance_days: Option<f64>,
+        enforce_source: Option<String>,
     ) -> PyResult<Self> {
         // For Space-Track, we need begin time first to calculate target epoch
         let begin_for_epoch =
@@ -58,7 +59,7 @@ impl TLEEphemeris {
             // tle parameter: can be a string (file path/URL) or a TLERecord object
             if let Ok(tle_string) = tle_obj.extract::<String>() {
                 // String: file path or URL - use unified function
-                tle_utils::fetch_tle_unified(Some(&tle_string), None, None, None, None, None)
+                tle_utils::fetch_tle_unified(Some(&tle_string), None, None, None, None, None, None)
                     .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?
             } else if tle_obj.hasattr("line1")? && tle_obj.hasattr("line2")? {
                 // Object with line1/line2 attributes (TLERecord or similar)
@@ -107,6 +108,7 @@ impl TLEEphemeris {
                 target_epoch.as_ref(),
                 credentials,
                 epoch_tolerance_days,
+                enforce_source.as_deref(),
             )
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?
         } else {
