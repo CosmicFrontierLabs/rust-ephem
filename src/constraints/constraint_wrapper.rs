@@ -865,7 +865,11 @@ impl PyConstraint {
     ) -> PyResult<Py<PyAny>> {
         // Check if time is a single value or a sequence
         let bound_time = time.bind(py);
-        let num_times = bound_time.len().unwrap_or(1);
+
+        // Try to get the length - if it succeeds, it's a sequence
+        let len_result = bound_time.len();
+        let is_sequence = len_result.is_ok();
+        let num_times = len_result.unwrap_or(1);
 
         // Repeat target_ra and target_dec for each time
         let target_ras = vec![target_ra; num_times];
@@ -891,10 +895,10 @@ impl PyConstraint {
         }
 
         // Return single bool if single time, else list of bools
-        if num_times == 1 {
-            Ok(PyBool::new(py, results[0]).as_any().clone().unbind())
-        } else {
+        if is_sequence {
             Ok(PyList::new(py, &results)?.as_any().clone().unbind())
+        } else {
+            Ok(PyBool::new(py, results[0]).as_any().clone().unbind())
         }
     }
 
