@@ -16,6 +16,7 @@ from rust_ephem.constraints import (
     NotConstraint,
     OrConstraint,
     SunConstraint,
+    XorConstraint,
 )
 
 
@@ -618,3 +619,31 @@ class TestLogicalOperators:
         moon = moon_constraint
         nested = ~(sun & moon)
         assert isinstance(nested.constraint, AndConstraint)
+
+    def test_evaluate_batch_deprecated_method(self):
+        """Test deprecated evaluate_batch method still works."""
+        import warnings
+        from datetime import datetime, timezone
+
+        from rust_ephem import GroundEphemeris
+
+        # Create a simple ephemeris
+        begin = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2025, 1, 2, tzinfo=timezone.utc)
+        ephem = GroundEphemeris(0.0, 0.0, 0.0, begin, end, 3600)
+
+        sun_constraint = SunConstraint(min_angle=45.0)
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            # This should work but emit a deprecation warning
+            _ = sun_constraint.evaluate_batch(ephem, [0.0], [0.0], times=[begin])
+            assert len(w) == 1
+            assert issubclass(w[0].category, DeprecationWarning)
+            assert "evaluate_batch() is deprecated" in str(w[0].message)
+
+    def test_xor_operator_overload(self, sun_constraint, moon_constraint):
+        """Test __xor__ operator creates XorConstraint."""
+        result = sun_constraint ^ moon_constraint
+        assert isinstance(result, XorConstraint)
+        assert len(result.constraints) == 2

@@ -3,18 +3,25 @@
 /// This module provides UT1-UTC offsets using the hifitime library's built-in
 /// IERS data support. Hifitime can download and parse IERS EOP2 data from JPL.
 use chrono::{DateTime, Utc};
+#[cfg(feature = "ut1")]
 use hifitime::Epoch;
+#[cfg(feature = "ut1")]
 use once_cell::sync::Lazy;
+#[cfg(feature = "ut1")]
 use std::sync::Mutex;
 
 // Shared EOP2 caching
+#[cfg(feature = "ut1")]
 use crate::utils::eop_cache::load_or_download_eop2_text;
+#[cfg(feature = "ut1")]
 use crate::utils::leap_seconds;
 
 // Re-export Ut1Provider for external use if needed
+#[cfg(feature = "ut1")]
 pub use hifitime::ut1::Ut1Provider;
 
 /// Cached UT1 provider from hifitime
+#[cfg(feature = "ut1")]
 static UT1_PROVIDER: Lazy<Mutex<Option<Ut1Provider>>> = Lazy::new(|| {
     match load_or_download_ut1() {
         Ok(provider) => {
@@ -32,6 +39,7 @@ static UT1_PROVIDER: Lazy<Mutex<Option<Ut1Provider>>> = Lazy::new(|| {
 });
 
 /// Load Ut1Provider using shared EOP2 cache logic
+#[cfg(feature = "ut1")]
 fn load_or_download_ut1() -> Result<Ut1Provider, Box<dyn std::error::Error>> {
     let text = load_or_download_eop2_text()?;
     Ok(Ut1Provider::from_eop_data(text)?)
@@ -47,6 +55,7 @@ fn load_or_download_ut1() -> Result<Ut1Provider, Box<dyn std::error::Error>> {
 /// UT1 = UTC + (TAI-UTC) - (TAI-UT1) = UTC + offset
 ///
 /// However, hifitime's ut1_offset returns TAI-UT1 directly.
+#[cfg(feature = "ut1")]
 pub fn get_ut1_utc_offset(dt: &DateTime<Utc>) -> f64 {
     let provider_lock = UT1_PROVIDER.lock().unwrap();
 

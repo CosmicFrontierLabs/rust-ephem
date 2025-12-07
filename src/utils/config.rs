@@ -7,8 +7,8 @@ use std::path::PathBuf;
 
 /// Cache directory for rust_ephem data files
 pub static CACHE_DIR: Lazy<PathBuf> = Lazy::new(|| {
-    if let Ok(home) = env::var("HOME") {
-        let mut p = PathBuf::from(home);
+    if let Some(home) = dirs::home_dir() {
+        let mut p = home;
         p.push(".cache");
         p.push("rust_ephem");
         if !p.exists() {
@@ -16,7 +16,7 @@ pub static CACHE_DIR: Lazy<PathBuf> = Lazy::new(|| {
         }
         p
     } else {
-        // Fallback to current directory if HOME not available
+        // Fallback to current directory if home dir not available
         env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     }
 });
@@ -83,6 +83,17 @@ pub const GMST_COEFF_3: f64 = -6.2e-6;
 
 /// Celestrak GP TLE API endpoint
 pub const CELESTRAK_API_BASE: &str = "https://celestrak.org/NORAD/elements/gp.php";
+
+/// Space-Track.org API endpoints
+pub const SPACETRACK_API_BASE: &str = "https://www.space-track.org";
+pub const SPACETRACK_LOGIN_URL: &str = "https://www.space-track.org/ajaxauth/login";
+
+/// Environment variable names for Space-Track.org credentials
+pub const SPACETRACK_USERNAME_ENV: &str = "SPACETRACK_USERNAME";
+pub const SPACETRACK_PASSWORD_ENV: &str = "SPACETRACK_PASSWORD";
+
+/// Default TLE epoch tolerance for Space-Track.org caching (4 days)
+pub const DEFAULT_EPOCH_TOLERANCE_DAYS: f64 = 4.0;
 
 /// TTL for cached TLE downloads (24 hours)
 pub const TLE_CACHE_TTL: u64 = 86_400;

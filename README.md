@@ -174,13 +174,15 @@ print(f"TLE Epoch: {ephem.tle_epoch}")
 ```
 
 **2-line TLE file format:**
-```
+
+```text
 1 28485U 04047A   25287.56748435  .00035474  00000+0  70906-3 0  9995
 2 28485  20.5535 247.0048 0005179 187.1586 172.8782 15.44937919148530
 ```
 
 **3-line TLE file format (with satellite name):**
-```
+
+```text
 ISS (ZARYA)
 1 25544U 98067A   08264.51782528 -.00002182  00000-0 -11606-4 0  2927
 2 25544  51.6416 247.4627 0006703 130.5360 325.0288 15.72125391563537
@@ -240,6 +242,96 @@ print(f"TLE Epoch: {ephem.tle_epoch}")
 ```
 
 **Note:** Celestrak fetches are also cached for 24 hours to be respectful of the service.
+
+#### Using Space-Track.org with Automatic Failover
+
+When Space-Track.org credentials are available, the `norad_id` parameter will automatically:
+
+1. Try fetching from Space-Track.org first (with epoch-based queries)
+2. Fall back to Celestrak if Space-Track.org fails
+
+This is particularly useful for:
+
+- Historical TLE data with epoch-based queries
+- Access to classified or restricted TLE data
+- More reliable access to specific TLE epochs
+- Automatic failover when Space-Track.org is unavailable
+
+```python
+import rust_ephem
+from datetime import datetime, timezone
+
+begin = datetime(2025, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
+end = datetime(2025, 10, 14, 1, 0, 0, tzinfo=timezone.utc)
+
+# Method 1: Using environment variables (recommended)
+# Set SPACETRACK_USERNAME and SPACETRACK_PASSWORD in your environment
+# or create a .env file with these variables
+# If credentials exist, Space-Track is tried first with failover to Celestrak
+ephem = rust_ephem.TLEEphemeris(
+    norad_id=25544,  # ISS NORAD ID
+    begin=begin,
+    end=end,
+    step_size=60
+)
+
+# Method 2: Passing credentials explicitly
+ephem = rust_ephem.TLEEphemeris(
+    norad_id=25544,
+    spacetrack_username="your_username",
+    spacetrack_password="your_password",
+    begin=begin,
+    end=end,
+    step_size=60
+)
+
+# Access TLE epoch
+print(f"TLE Epoch: {ephem.tle_epoch}")
+```
+
+**Credential Configuration:**
+
+Credentials can be provided in three ways (checked in order):
+
+1. Explicit parameters: `spacetrack_username` and `spacetrack_password`
+2. Environment variables: `SPACETRACK_USERNAME` and `SPACETRACK_PASSWORD`
+3. `.env` file in current directory or home directory
+
+If no credentials are found, `norad_id` uses Celestrak directly.
+
+**Example .env file:**
+
+```bash
+SPACETRACK_USERNAME=your_username
+SPACETRACK_PASSWORD=your_password
+```
+
+**Epoch-Based Fetching:**
+
+Space-Track.org queries fetch the TLE with epoch closest to your `begin` time. This ensures you get the most accurate TLE for your time range. The fetched TLE is cached, and the cache is used if:
+
+- The cached TLE epoch is within ±4 days of the requested begin time (configurable)
+
+```python
+# Fetch a historical TLE (TLE epoch will be close to Jan 1, 2020)
+historical_ephem = rust_ephem.TLEEphemeris(
+    norad_id=25544,
+    begin=datetime(2020, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+    end=datetime(2020, 1, 1, 1, 0, 0, tzinfo=timezone.utc),
+    step_size=60
+)
+
+# Customize epoch tolerance for caching (default: 4 days)
+ephem = rust_ephem.TLEEphemeris(
+    norad_id=25544,
+    begin=begin,
+    end=end,
+    step_size=60,
+    epoch_tolerance_days=7.0  # Use cache if TLE epoch within 7 days
+)
+```
+
+**Note:** Space-Track.org has rate limits. Please follow their [usage guidelines](https://www.space-track.org/documentation#api) (max 1 TLE query per hour for automated scripts). TLEs are cached in `~/.cache/rust_ephem/spacetrack_cache/`.
 
 ### SPICE Kernel-Based Ephemeris (SPICEEphemeris)
 
@@ -711,7 +803,7 @@ print(f"Target 0 violations: {violations[0, :].sum()} / {violations.shape[1]} ti
 **Performance**: `in_constraint_batch()` is 3-50x faster than looping over targets:
 
 - Sun/Moon proximity: ~3-4x speedup
-- Earth limb: ~5x speedup  
+- Earth limb: ~5x speedup
 - Eclipse: ~48x speedup (target-independent)
 - Logical combinators: ~2-3x speedup
 

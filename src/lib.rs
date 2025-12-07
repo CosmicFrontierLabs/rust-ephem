@@ -229,6 +229,81 @@ fn get_cache_dir() -> String {
     utils::config::CACHE_DIR.to_string_lossy().to_string()
 }
 
+/// Fetch a TLE from various sources (file, URL, Celestrak, Space-Track.org)
+///
+/// Returns a dict with keys: line1, line2, name (optional), epoch, source
+#[pyfunction]
+#[pyo3(signature = (*, tle=None, norad_id=None, norad_name=None, epoch=None, spacetrack_username=None, spacetrack_password=None, epoch_tolerance_days=None, enforce_source=None))]
+#[allow(clippy::too_many_arguments)]
+fn fetch_tle(
+    py: Python,
+    tle: Option<String>,
+    norad_id: Option<u32>,
+    norad_name: Option<String>,
+    epoch: Option<&Bound<'_, pyo3::types::PyDateTime>>,
+    spacetrack_username: Option<String>,
+    spacetrack_password: Option<String>,
+    epoch_tolerance_days: Option<f64>,
+    enforce_source: Option<String>,
+) -> PyResult<pyo3::Py<pyo3::types::PyDict>> {
+    use crate::utils::tle_utils;
+
+    // Convert epoch if provided
+    let epoch_chrono =
+        epoch.and_then(|te| crate::utils::time_utils::python_datetime_to_utc(te).ok());
+
+    // Build credentials using helper function
+    let credentials = tle_utils::build_credentials(
+        spacetrack_username.as_deref(),
+        spacetrack_password.as_deref(),
+    )
+    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+
+    // Use the unified fetch function
+    let fetched = tle_utils::fetch_tle_unified(
+        tle.as_deref(),
+        norad_id,
+        norad_name.as_deref(),
+        epoch_chrono.as_ref(),
+        credentials,
+        epoch_tolerance_days,
+        enforce_source.as_deref(),
+    )
+    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+
+    // Build the result dictionary
+    let dict = pyo3::types::PyDict::new(py);
+    dict.set_item("line1", fetched.line1)?;
+    dict.set_item("line2", fetched.line2)?;
+    dict.set_item("name", fetched.name)?;
+
+    // Convert epoch to Python datetime with UTC timezone
+    use chrono::{Datelike, Timelike};
+    let py_epoch = pyo3::types::PyDateTime::new(
+        py,
+        fetched.epoch.year(),
+        fetched.epoch.month() as u8,
+        fetched.epoch.day() as u8,
+        fetched.epoch.hour() as u8,
+        fetched.epoch.minute() as u8,
+        fetched.epoch.second() as u8,
+        fetched.epoch.timestamp_subsec_micros(),
+        None,
+    )?;
+
+    // Add UTC timezone
+    let datetime_mod = py.import("datetime")?;
+    let utc_tz = datetime_mod.getattr("timezone")?.getattr("utc")?;
+    let kwargs = pyo3::types::PyDict::new(py);
+    kwargs.set_item("tzinfo", utc_tz)?;
+    let dt_with_tz = py_epoch.call_method("replace", (), Some(&kwargs))?;
+
+    dict.set_item("epoch", dt_with_tz)?;
+    dict.set_item("source", fetched.source)?;
+
+    Ok(dict.into())
+}
+
 #[pymodule]
 fn _rust_ephem(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TLEEphemeris>()?;
@@ -252,5 +327,6 @@ fn _rust_ephem(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(is_eop_available, m)?)?;
     m.add_function(wrap_pyfunction!(init_eop_provider, m)?)?;
     m.add_function(wrap_pyfunction!(get_cache_dir, m)?)?;
+    m.add_function(wrap_pyfunction!(fetch_tle, m)?)?;
     Ok(())
 }
