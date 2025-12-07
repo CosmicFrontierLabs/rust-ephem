@@ -11,7 +11,7 @@
 [![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg)](https://rust-ephem.readthedocs.io/en/latest/)
 
 
-**High-performance satellite and planetary ephemeris calculations for Python, powered by Rust.**
+**Fast ephemeris generation and target visibility calculations for space and ground-based telescopes.**
 
 `rust-ephem` is a Rust library with Python bindings for high-performance
 satellite and planetary ephemeris calculations. It propagates Two-Line Element
