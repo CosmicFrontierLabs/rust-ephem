@@ -10,6 +10,7 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg)](https://rust-ephem.readthedocs.io/en/latest/)
 
+
 **High-performance satellite and planetary ephemeris calculations for Python, powered by Rust.**
 
 `rust-ephem` is a Rust library with Python bindings for high-performance
@@ -38,8 +39,6 @@ logical operators (AND, OR, NOT, XOR) for combining constraints, with Python
 operator overloading (`&`, `|`, `~`, `^`) for intuitive composition. Built on
 Pydantic models, it allows JSON serialization and direct evaluation against
 ephemeris objects for efficient visibility and planning calculations.
-
-📚 **[Full Documentation](https://rust-ephem.readthedocs.io/en/latest/)** · 📦 **[PyPI](https://pypi.org/project/rust-ephem/)** · 🐙 **[GitHub](https://github.com/CosmicFrontierLabs/rust-ephem)**
 
 ## Features
 
