@@ -1,6 +1,6 @@
 /// Airmass constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
-use crate::utils::vector_math::radec_to_unit_vectors_batch;
+use crate::utils::celestial::radec_to_altaz;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
@@ -70,21 +70,16 @@ impl ConstraintEvaluator for AirmassEvaluator {
         target_dec: f64,
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
-        // Extract and filter ephemeris data
-        let (times_filtered, obs_filtered) =
-            extract_observer_ephemeris_data!(ephemeris, time_indices);
-        // Convert target to unit vector
-        let target_vec = radec_to_unit_vectors_batch(&[target_ra], &[target_dec]);
-        let target_unit = target_vec.row(0);
+        // Get alt/az using the proper calculation
+        let altaz = radec_to_altaz(target_ra, target_dec, ephemeris, time_indices);
+
+        // Extract and filter ephemeris data for times
+        let (times_filtered, _) = extract_observer_ephemeris_data!(ephemeris, time_indices);
 
         let violations = track_violations(
             &times_filtered,
             |i| {
-                let observer_pos = obs_filtered.row(i);
-
-                // Calculate target altitude from observer position
-                let altitude_deg =
-                    self.calculate_target_altitude(&target_unit, &observer_pos, &times_filtered[i]);
+                let altitude_deg = altaz[[i, 0]];
                 let airmass = Self::altitude_to_airmass(altitude_deg);
 
                 let mut violated = false;
@@ -105,9 +100,7 @@ impl ConstraintEvaluator for AirmassEvaluator {
                 (violated, severity)
             },
             |i, _violated| {
-                let observer_pos = obs_filtered.row(i);
-                let altitude_deg =
-                    self.calculate_target_altitude(&target_unit, &observer_pos, &times_filtered[i]);
+                let altitude_deg = altaz[[i, 0]];
                 let airmass = Self::altitude_to_airmass(altitude_deg);
 
                 if airmass > self.max_airmass {
@@ -147,24 +140,19 @@ impl ConstraintEvaluator for AirmassEvaluator {
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
         // Extract and filter ephemeris data
-        let (times_filtered, obs_filtered) =
-            extract_observer_ephemeris_data!(ephemeris, time_indices);
+        let (times_filtered, _) = extract_observer_ephemeris_data!(ephemeris, time_indices);
 
         let n_targets = target_ras.len();
         let n_times = times_filtered.len();
 
-        // Convert all targets to unit vectors
-        let target_vecs = radec_to_unit_vectors_batch(target_ras, target_decs);
-
         let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
 
-        for i in 0..n_times {
-            let observer_pos = obs_filtered.row(i);
+        for j in 0..n_targets {
+            // Get alt/az for this target
+            let altaz = radec_to_altaz(target_ras[j], target_decs[j], ephemeris, time_indices);
 
-            for j in 0..n_targets {
-                let target_unit = target_vecs.row(j);
-                let altitude_deg =
-                    self.calculate_target_altitude(&target_unit, &observer_pos, &times_filtered[i]);
+            for i in 0..n_times {
+                let altitude_deg = altaz[[i, 0]];
                 let airmass = Self::altitude_to_airmass(altitude_deg);
 
                 let mut violated = false;
@@ -190,24 +178,5 @@ impl ConstraintEvaluator for AirmassEvaluator {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
-    }
-}
-
-impl AirmassEvaluator {
-    /// Calculate target's altitude angle from observer position
-    /// This is a simplified calculation - in practice you'd need proper
-    /// astronomical coordinate transformations from ICRS to topocentric
-    fn calculate_target_altitude(
-        &self,
-        target_unit: &ndarray::ArrayView1<f64>,
-        _observer_pos: &ndarray::ArrayView1<f64>,
-        _time: &DateTime<Utc>,
-    ) -> f64 {
-        // Simple approximation: altitude = 90 - |lat - dec|
-        // Assuming lat = 34.0 degrees (from test fixture)
-        let z = target_unit[2];
-        let dec = z.asin().to_degrees();
-        let lat = 34.0;
-        90.0 - (lat - dec).abs()
     }
 }
