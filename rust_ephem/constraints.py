@@ -448,12 +448,16 @@ class AirmassConstraint(RustConstraintMixin):
 class MoonPhaseConstraint(RustConstraintMixin):
     """Moon phase constraint
 
-    Limits observations based on Moon illumination fraction.
+    Limits observations based on Moon illumination fraction and distance.
 
     Attributes:
         type: Always "moon_phase"
         min_illumination: Minimum allowed illumination fraction (0.0-1.0), optional
         max_illumination: Maximum allowed illumination fraction (0.0-1.0)
+        min_distance: Minimum allowed Moon distance in degrees from target, optional
+        max_distance: Maximum allowed Moon distance in degrees from target, optional
+        enforce_when_below_horizon: Whether to enforce constraint when Moon is below horizon
+        moon_visibility: Moon visibility requirement ("full" or "partial")
     """
 
     type: Literal["moon_phase"] = "moon_phase"
@@ -465,6 +469,24 @@ class MoonPhaseConstraint(RustConstraintMixin):
     )
     max_illumination: float = Field(
         ..., ge=0.0, le=1.0, description="Maximum allowed illumination fraction"
+    )
+    min_distance: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="Minimum allowed Moon distance in degrees from target",
+    )
+    max_distance: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="Maximum allowed Moon distance in degrees from target",
+    )
+    enforce_when_below_horizon: bool = Field(
+        default=False,
+        description="Whether to enforce constraint when Moon is below horizon",
+    )
+    moon_visibility: Literal["full", "partial"] = Field(
+        default="full",
+        description="Moon visibility requirement: 'full' (only when fully above horizon) or 'partial' (when any part visible)",
     )
 
 

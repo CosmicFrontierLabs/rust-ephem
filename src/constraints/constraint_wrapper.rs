@@ -411,6 +411,10 @@ impl PyConstraint {
     /// Args:
     ///     max_illumination (float): Maximum allowed Moon illumination fraction (0.0 = new moon, 1.0 = full moon)
     ///     min_illumination (float, optional): Minimum allowed Moon illumination fraction
+    ///     min_distance (float, optional): Minimum allowed Moon distance in degrees from target
+    ///     max_distance (float, optional): Maximum allowed Moon distance in degrees from target
+    ///     enforce_when_below_horizon (bool, optional): Whether to enforce constraint when Moon is below horizon (default: false)
+    ///     moon_visibility (str, optional): Moon visibility requirement - "full" or "partial" (default: "full")
     ///
     /// Returns:
     ///     Constraint: A new constraint object
@@ -419,9 +423,20 @@ impl PyConstraint {
     /// - 0.0: New moon (dark, best for deep observations)
     /// - 0.5: Quarter moon
     /// - 1.0: Full moon (bright, worst for deep observations)
-    #[pyo3(signature=(max_illumination, min_illumination=None))]
+    ///
+    /// Moon visibility options:
+    /// - "full": Only enforce when Moon is fully above horizon
+    /// - "partial": Enforce when any part of Moon is visible above horizon
+    #[pyo3(signature=(max_illumination, min_illumination=None, min_distance=None, max_distance=None, enforce_when_below_horizon=false, moon_visibility="full"))]
     #[staticmethod]
-    fn moon_phase(max_illumination: f64, min_illumination: Option<f64>) -> PyResult<Self> {
+    fn moon_phase(
+        max_illumination: f64,
+        min_illumination: Option<f64>,
+        min_distance: Option<f64>,
+        max_distance: Option<f64>,
+        enforce_when_below_horizon: bool,
+        moon_visibility: &str,
+    ) -> PyResult<Self> {
         if !(0.0..=1.0).contains(&max_illumination) {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "max_illumination must be between 0.0 and 1.0",
@@ -441,17 +456,58 @@ impl PyConstraint {
             }
         }
 
+        if let Some(min_dist) = min_distance {
+            if min_dist < 0.0 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "min_distance must be non-negative",
+                ));
+            }
+        }
+
+        if let Some(max_dist) = max_distance {
+            if max_dist < 0.0 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_distance must be non-negative",
+                ));
+            }
+            if let Some(min_dist) = min_distance {
+                if min_dist >= max_dist {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "min_distance must be less than max_distance",
+                    ));
+                }
+            }
+        }
+
+        if moon_visibility != "full" && moon_visibility != "partial" {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "moon_visibility must be 'full' or 'partial'",
+            ));
+        }
+
         let config = MoonPhaseConfig {
             max_illumination,
             min_illumination,
+            min_distance,
+            max_distance,
+            enforce_when_below_horizon,
+            moon_visibility: moon_visibility.to_string(),
         };
 
         let mut json_obj = serde_json::json!({
             "type": "moon_phase",
-            "max_illumination": max_illumination
+            "max_illumination": max_illumination,
+            "enforce_when_below_horizon": enforce_when_below_horizon,
+            "moon_visibility": moon_visibility
         });
         if let Some(min) = min_illumination {
             json_obj["min_illumination"] = serde_json::json!(min);
+        }
+        if let Some(min_dist) = min_distance {
+            json_obj["min_distance"] = serde_json::json!(min_dist);
+        }
+        if let Some(max_dist) = max_distance {
+            json_obj["max_distance"] = serde_json::json!(max_dist);
         }
         let config_json = json_obj.to_string();
 
@@ -1304,9 +1360,24 @@ fn parse_constraint_json(value: &serde_json::Value) -> PyResult<Box<dyn Constrai
                     pyo3::exceptions::PyValueError::new_err("Missing 'max_illumination' field")
                 })?;
             let min_illumination = value.get("min_illumination").and_then(|v| v.as_f64());
+            let min_distance = value.get("min_distance").and_then(|v| v.as_f64());
+            let max_distance = value.get("max_distance").and_then(|v| v.as_f64());
+            let enforce_when_below_horizon = value
+                .get("enforce_when_below_horizon")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let moon_visibility = value
+                .get("moon_visibility")
+                .and_then(|v| v.as_str())
+                .unwrap_or("full")
+                .to_string();
             let config = MoonPhaseConfig {
                 min_illumination,
                 max_illumination,
+                min_distance,
+                max_distance,
+                enforce_when_below_horizon,
+                moon_visibility,
             };
             Ok(config.to_evaluator())
         }

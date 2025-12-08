@@ -95,6 +95,10 @@ class MoonPhaseConstraint(RustConstraintMixin):
     type: Literal["moon_phase"] = "moon_phase"
     min_illumination: float | None = None
     max_illumination: float
+    min_distance: float | None = None
+    max_distance: float | None = None
+    enforce_when_below_horizon: bool = False
+    moon_visibility: Literal["full", "partial"] = "full"
 
 class AltAzConstraint(RustConstraintMixin):
     type: Literal["alt_az"] = "alt_az"
