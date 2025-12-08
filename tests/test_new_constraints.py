@@ -70,7 +70,9 @@ class TestAirmassConstraint:
         target_ras = [0.0, 90.0, 180.0]
         target_decs = [35.0, 35.0, -50.0]  # First two near zenith, last near horizon
 
-        result = constraint.in_constraint_batch(ground_ephemeris, target_ras, target_decs)
+        result = constraint.in_constraint_batch(
+            ground_ephemeris, target_ras, target_decs
+        )
 
         # Check shape
         assert result.shape == (3, len(ground_ephemeris.timestamp))
@@ -130,7 +132,9 @@ class TestDaytimeConstraint:
         target_ras = [0.0, 120.0, 240.0]
         target_decs = [0.0, 0.0, 0.0]
 
-        result = constraint.in_constraint_batch(ground_ephemeris, target_ras, target_decs)
+        result = constraint.in_constraint_batch(
+            ground_ephemeris, target_ras, target_decs
+        )
 
         # Check shape
         assert result.shape == (3, len(ground_ephemeris.timestamp))

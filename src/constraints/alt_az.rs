@@ -162,10 +162,7 @@ impl ConstraintEvaluator for AltAzEvaluator {
             .map(|(&ra, &dec)| ephemeris.radec_to_altaz(ra, dec, time_indices))
             .collect();
 
-        let n_times = altaz_list
-            .first()
-            .map(|a| a.nrows())
-            .unwrap_or(0);
+        let n_times = altaz_list.first().map(|a| a.nrows()).unwrap_or(0);
 
         let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
 

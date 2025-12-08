@@ -2,7 +2,7 @@ use chrono::{DateTime, Datelike, Timelike, Utc};
 use erfa::earth::position_velocity_00;
 use erfa::prenut::precession_matrix_06;
 use erfa::vectors_and_matrices::mat_mul_pvec;
-use ndarray::{Array2, s};
+use ndarray::{s, Array2};
 use std::sync::Arc;
 
 use crate::ephemeris::ephemeris_common::EphemerisBase;
@@ -437,7 +437,6 @@ pub fn calculate_body_positions_spice_result(
 ///
 /// # Panics
 /// Panics if the ephemeris has no GCRS position data
-
 pub fn radec_to_altaz(
     ra_deg: f64,
     dec_deg: f64,
@@ -446,8 +445,12 @@ pub fn radec_to_altaz(
 ) -> Array2<f64> {
     // Get ephemeris data
     let times = ephemeris.get_times().expect("Ephemeris must have times");
-    let gcrs_data = ephemeris.data().gcrs.as_ref().expect("Ephemeris must have GCRS data");
-    
+    let gcrs_data = ephemeris
+        .data()
+        .gcrs
+        .as_ref()
+        .expect("Ephemeris must have GCRS data");
+
     // Filter times and GCRS data if indices provided
     let (times_filtered, gcrs_filtered) = if let Some(indices) = time_indices {
         let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
@@ -456,12 +459,18 @@ pub fn radec_to_altaz(
     } else {
         (times.to_vec(), gcrs_data.clone())
     };
-    
+
     let n_times = times_filtered.len();
     let mut result = Array2::<f64>::zeros((n_times, 2));
 
     // Convert observer positions from GCRS to ITRS (convert_frames expects 6 columns: pos + vel)
-    let itrs_data = convert_frames(&gcrs_filtered, &times_filtered, Frame::GCRS, Frame::ITRS, true);
+    let itrs_data = convert_frames(
+        &gcrs_filtered,
+        &times_filtered,
+        Frame::GCRS,
+        Frame::ITRS,
+        true,
+    );
 
     // Convert ITRS positions to geodetic coordinates (extract position columns only)
     let positions_slice = itrs_data.slice(s![.., 0..3]);
@@ -492,29 +501,8 @@ pub fn radec_to_altaz(
 
         let status = unsafe {
             erfa_sys::eraAtco13(
-                ra_rad,
-                dec_rad,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                utc1,
-                utc2,
-                dut1,
-                lon_rad,
-                lat_rad,
-                height_m,
-                xp,
-                yp,
-                0.0,
-                0.0,
-                0.0,
-                0.55,
-                &mut aob,
-                &mut zob,
-                &mut hob,
-                &mut dob,
-                &mut rob,
+                ra_rad, dec_rad, 0.0, 0.0, 0.0, 0.0, utc1, utc2, dut1, lon_rad, lat_rad, height_m,
+                xp, yp, 0.0, 0.0, 0.0, 0.55, &mut aob, &mut zob, &mut hob, &mut dob, &mut rob,
                 &mut eo,
             )
         };

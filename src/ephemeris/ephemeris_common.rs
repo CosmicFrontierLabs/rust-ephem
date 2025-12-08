@@ -233,7 +233,12 @@ pub trait EphemerisBase {
     /// # Returns
     /// Array2 with shape (N, 2) containing [altitude_deg, azimuth_deg] for each time
     /// where N is the number of selected times
-    fn radec_to_altaz(&self, ra_deg: f64, dec_deg: f64, time_indices: Option<&[usize]>) -> Array2<f64>;
+    fn radec_to_altaz(
+        &self,
+        ra_deg: f64,
+        dec_deg: f64,
+        time_indices: Option<&[usize]>,
+    ) -> Array2<f64>;
 
     /// Get ITRS position and velocity in PositionVelocityData format
     fn get_itrs_pv(&self, py: Python) -> Option<Py<PositionVelocityData>> {

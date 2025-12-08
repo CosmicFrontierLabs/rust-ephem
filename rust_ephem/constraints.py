@@ -445,7 +445,7 @@ class AirmassConstraint(RustConstraintMixin):
     max_airmass: float = Field(..., ge=1.0, description="Maximum allowed airmass")
 
     @model_validator(mode="after")
-    def validate_airmass_values(self) -> Self:
+    def validate_airmass_values(self) -> AirmassConstraint:
         if self.min_airmass is not None and self.max_airmass < self.min_airmass:
             raise ValueError("max_airmass must be >= min_airmass")
         return self
@@ -496,7 +496,7 @@ class MoonPhaseConstraint(RustConstraintMixin):
     )
 
     @model_validator(mode="after")
-    def validate_moon_phase_values(self) -> Self:
+    def validate_moon_phase_values(self) -> MoonPhaseConstraint:
         if (
             self.min_illumination is not None
             and self.max_illumination < self.min_illumination
