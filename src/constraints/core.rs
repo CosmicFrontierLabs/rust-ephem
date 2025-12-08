@@ -358,6 +358,7 @@ pub trait ConstraintEvaluator: Send + Sync {
     fn name(&self) -> String;
 
     /// Downcast support for special handling
+    #[allow(dead_code)]
     fn as_any(&self) -> &dyn std::any::Any;
 }
 

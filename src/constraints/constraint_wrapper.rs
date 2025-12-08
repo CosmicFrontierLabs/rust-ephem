@@ -4,7 +4,7 @@
 /// including JSON-based configuration and convenient factory methods.
 use crate::constraints::airmass::AirmassConfig;
 use crate::constraints::alt_az::AltAzConfig;
-use crate::constraints::body_proximity::{BodyProximityConfig, BodyProximityEvaluator};
+use crate::constraints::body_proximity::BodyProximityConfig;
 use crate::constraints::core::*;
 use crate::constraints::daytime::{DaytimeConfig, TwilightType};
 use crate::constraints::earth_limb::EarthLimbConfig;

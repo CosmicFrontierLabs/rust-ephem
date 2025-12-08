@@ -128,26 +128,25 @@ impl ConstraintEvaluator for SAAEvaluator {
         use pyo3::Python;
 
         // Extract lat/lon data from ephemeris
-        let (lats_vec, lons_vec) =
-            Python::with_gil(|py| -> pyo3::PyResult<(Vec<f64>, Vec<f64>)> {
-                let lat_opt = ephemeris.get_latitude_deg(py)?;
-                let lon_opt = ephemeris.get_longitude_deg(py)?;
+        let (lats_vec, lons_vec) = Python::attach(|py| -> pyo3::PyResult<(Vec<f64>, Vec<f64>)> {
+            let lat_opt = ephemeris.get_latitude_deg(py)?;
+            let lon_opt = ephemeris.get_longitude_deg(py)?;
 
-                let lat_array = lat_opt.ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err("Latitude data not available")
-                })?;
-                let lon_array = lon_opt.ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err("Longitude data not available")
-                })?;
-
-                let lat_bound = lat_array.downcast_bound::<PyArray1<f64>>(py)?;
-                let lon_bound = lon_array.downcast_bound::<PyArray1<f64>>(py)?;
-
-                let lats = lat_bound.readonly().as_slice()?.to_vec();
-                let lons = lon_bound.readonly().as_slice()?.to_vec();
-
-                Ok((lats, lons))
+            let lat_array = lat_opt.ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err("Latitude data not available")
             })?;
+            let lon_array = lon_opt.ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err("Longitude data not available")
+            })?;
+
+            let lat_bound = lat_array.downcast_bound::<PyArray1<f64>>(py)?;
+            let lon_bound = lon_array.downcast_bound::<PyArray1<f64>>(py)?;
+
+            let lats = lat_bound.readonly().as_slice()?.to_vec();
+            let lons = lon_bound.readonly().as_slice()?.to_vec();
+
+            Ok((lats, lons))
+        })?;
 
         let times = ephemeris.get_times()?;
 
@@ -175,26 +174,25 @@ impl ConstraintEvaluator for SAAEvaluator {
         use pyo3::Python;
 
         // Extract lat/lon data from ephemeris
-        let (lats_vec, lons_vec) =
-            Python::with_gil(|py| -> pyo3::PyResult<(Vec<f64>, Vec<f64>)> {
-                let lat_opt = ephemeris.get_latitude_deg(py)?;
-                let lon_opt = ephemeris.get_longitude_deg(py)?;
+        let (lats_vec, lons_vec) = Python::attach(|py| -> pyo3::PyResult<(Vec<f64>, Vec<f64>)> {
+            let lat_opt = ephemeris.get_latitude_deg(py)?;
+            let lon_opt = ephemeris.get_longitude_deg(py)?;
 
-                let lat_array = lat_opt.ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err("Latitude data not available")
-                })?;
-                let lon_array = lon_opt.ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err("Longitude data not available")
-                })?;
-
-                let lat_bound = lat_array.downcast_bound::<PyArray1<f64>>(py)?;
-                let lon_bound = lon_array.downcast_bound::<PyArray1<f64>>(py)?;
-
-                let lats = lat_bound.readonly().as_slice()?.to_vec();
-                let lons = lon_bound.readonly().as_slice()?.to_vec();
-
-                Ok((lats, lons))
+            let lat_array = lat_opt.ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err("Latitude data not available")
             })?;
+            let lon_array = lon_opt.ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err("Longitude data not available")
+            })?;
+
+            let lat_bound = lat_array.downcast_bound::<PyArray1<f64>>(py)?;
+            let lon_bound = lon_array.downcast_bound::<PyArray1<f64>>(py)?;
+
+            let lats = lat_bound.readonly().as_slice()?.to_vec();
+            let lons = lon_bound.readonly().as_slice()?.to_vec();
+
+            Ok((lats, lons))
+        })?;
 
         let (lats_slice, lons_slice, ras_slice) = if let Some(indices) = time_indices {
             let filtered_lats: Vec<f64> = indices.iter().map(|&i| lats_vec[i]).collect();
