@@ -20,7 +20,7 @@ from rust_ephem.constraints import (
 class TestAirmassConstraint:
     """Test AirmassConstraint functionality."""
 
-    def test_airmass_constraint_creation(self):
+    def test_airmass_constraint_creation(self) -> None:
         """Test creating airmass constraints."""
         # Test with max_airmass only
         constraint = AirmassConstraint(max_airmass=2.0)
@@ -32,7 +32,7 @@ class TestAirmassConstraint:
         assert constraint.max_airmass == 3.0
         assert constraint.min_airmass == 1.2
 
-    def test_airmass_constraint_validation(self):
+    def test_airmass_constraint_validation(self) -> None:
         """Test airmass constraint parameter validation."""
         # Valid parameters
         AirmassConstraint(max_airmass=1.5)
@@ -50,7 +50,9 @@ class TestAirmassConstraint:
         with pytest.raises(ValidationError):
             AirmassConstraint(max_airmass=1.5, min_airmass=2.0)
 
-    def test_airmass_constraint_evaluation(self, ground_ephemeris):
+    def test_airmass_constraint_evaluation(
+        self, ground_ephemeris: rust_ephem.GroundEphemeris
+    ) -> None:
         """Test airmass constraint evaluation."""
         constraint = AirmassConstraint(max_airmass=1.5)
 
@@ -62,7 +64,9 @@ class TestAirmassConstraint:
         result = constraint.evaluate(ground_ephemeris, target_ra=0.0, target_dec=-27.0)
         assert not result.all_satisfied
 
-    def test_airmass_constraint_batch(self, ground_ephemeris):
+    def test_airmass_constraint_batch(
+        self, ground_ephemeris: rust_ephem.GroundEphemeris
+    ) -> None:
         """Test batch airmass constraint evaluation."""
         constraint = AirmassConstraint(max_airmass=1.5)
 
@@ -86,7 +90,7 @@ class TestAirmassConstraint:
 class TestDaytimeConstraint:
     """Test DaytimeConstraint functionality."""
 
-    def test_daytime_constraint_creation(self):
+    def test_daytime_constraint_creation(self) -> None:
         """Test creating daytime constraints."""
         # Default civil twilight
         constraint = DaytimeConstraint()
@@ -102,7 +106,7 @@ class TestDaytimeConstraint:
         constraint = DaytimeConstraint(twilight="none")
         assert constraint.twilight == "none"
 
-    def test_daytime_constraint_validation(self):
+    def test_daytime_constraint_validation(self) -> None:
         """Test daytime constraint parameter validation."""
         # Valid twilight types
         DaytimeConstraint(twilight="civil")
@@ -112,9 +116,11 @@ class TestDaytimeConstraint:
 
         # Invalid twilight type
         with pytest.raises(ValueError):
-            DaytimeConstraint(twilight="invalid")
+            DaytimeConstraint(twilight="invalid")  # type: ignore[arg-type]
 
-    def test_daytime_constraint_evaluation(self, ground_ephemeris):
+    def test_daytime_constraint_evaluation(
+        self, ground_ephemeris: rust_ephem.GroundEphemeris
+    ) -> None:
         """Test daytime constraint evaluation."""
         constraint = DaytimeConstraint()
 
@@ -125,7 +131,9 @@ class TestDaytimeConstraint:
         # Note: This test depends on actual sun position, so we just check it runs
         assert isinstance(daytime_result.all_satisfied, bool)
 
-    def test_daytime_constraint_batch(self, ground_ephemeris):
+    def test_daytime_constraint_batch(
+        self, ground_ephemeris: rust_ephem.GroundEphemeris
+    ) -> None:
         """Test batch daytime constraint evaluation."""
         constraint = DaytimeConstraint()
 
@@ -146,7 +154,7 @@ class TestDaytimeConstraint:
 class TestMoonPhaseConstraint:
     """Test MoonPhaseConstraint functionality."""
 
-    def test_moon_phase_constraint_creation(self):
+    def test_moon_phase_constraint_creation(self) -> None:
         """Test creating moon phase constraints."""
         # Basic constraint
         constraint = MoonPhaseConstraint(max_illumination=0.3)
@@ -169,7 +177,7 @@ class TestMoonPhaseConstraint:
         assert constraint.enforce_when_below_horizon is True
         assert constraint.moon_visibility == "full"
 
-    def test_moon_phase_constraint_validation(self):
+    def test_moon_phase_constraint_validation(self) -> None:
         """Test moon phase constraint parameter validation."""
         # Valid parameters
         MoonPhaseConstraint(max_illumination=0.5)
@@ -192,9 +200,11 @@ class TestMoonPhaseConstraint:
 
         # Invalid moon visibility
         with pytest.raises(ValidationError):
-            MoonPhaseConstraint(max_illumination=0.5, moon_visibility="invalid")
+            MoonPhaseConstraint(max_illumination=0.5, moon_visibility="invalid")  # type: ignore[arg-type]
 
-    def test_moon_phase_constraint_evaluation(self, tle_ephemeris):
+    def test_moon_phase_constraint_evaluation(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
         """Test moon phase constraint evaluation."""
         constraint = MoonPhaseConstraint(max_illumination=0.5)
 
@@ -202,7 +212,9 @@ class TestMoonPhaseConstraint:
         result = constraint.evaluate(tle_ephemeris, target_ra=0.0, target_dec=0.0)
         assert isinstance(result.all_satisfied, bool)
 
-    def test_moon_phase_constraint_batch(self, tle_ephemeris):
+    def test_moon_phase_constraint_batch(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
         """Test batch moon phase constraint evaluation."""
         constraint = MoonPhaseConstraint(max_illumination=0.5)
 
@@ -220,7 +232,7 @@ class TestSAAConstraint:
     """Test SAAConstraint functionality."""
 
     @pytest.fixture
-    def saa_polygon(self):
+    def saa_polygon(self) -> list[tuple[float, float]]:
         """Simple rectangular SAA polygon for testing."""
         return [
             (-90.0, -50.0),  # Southwest
@@ -229,12 +241,14 @@ class TestSAAConstraint:
             (-90.0, 0.0),  # Northwest
         ]
 
-    def test_saa_constraint_creation(self, saa_polygon):
+    def test_saa_constraint_creation(
+        self, saa_polygon: list[tuple[float, float]]
+    ) -> None:
         """Test creating SAA constraints."""
         constraint = SAAConstraint(polygon=saa_polygon)
         assert constraint.polygon == saa_polygon
 
-    def test_saa_constraint_validation(self):
+    def test_saa_constraint_validation(self) -> None:
         """Test SAA constraint parameter validation."""
         # Valid polygon (triangle)
         SAAConstraint(polygon=[(0.0, 0.0), (10.0, 0.0), (5.0, 10.0)])
@@ -243,7 +257,11 @@ class TestSAAConstraint:
         with pytest.raises(ValueError):
             SAAConstraint(polygon=[(0.0, 0.0), (10.0, 0.0)])
 
-    def test_saa_constraint_evaluation(self, tle_ephemeris, saa_polygon):
+    def test_saa_constraint_evaluation(
+        self,
+        tle_ephemeris: rust_ephem.TLEEphemeris,
+        saa_polygon: list[tuple[float, float]],
+    ) -> None:
         """Test SAA constraint evaluation."""
         constraint = SAAConstraint(polygon=saa_polygon)
 
@@ -254,7 +272,11 @@ class TestSAAConstraint:
         # Since SAA depends on spacecraft position, we can't easily predict
         # the result, but we can check that evaluation completes
 
-    def test_saa_constraint_batch(self, tle_ephemeris, saa_polygon):
+    def test_saa_constraint_batch(
+        self,
+        tle_ephemeris: rust_ephem.TLEEphemeris,
+        saa_polygon: list[tuple[float, float]],
+    ) -> None:
         """Test batch SAA constraint evaluation."""
         constraint = SAAConstraint(polygon=saa_polygon)
 
@@ -267,7 +289,9 @@ class TestSAAConstraint:
         assert result.shape == (3, len(tle_ephemeris.timestamp))
         assert result.dtype == bool
 
-    def test_saa_point_in_polygon_logic(self, saa_polygon):
+    def test_saa_point_in_polygon_logic(
+        self, saa_polygon: list[tuple[float, float]]
+    ) -> None:
         """Test the point-in-polygon logic with known points."""
         constraint = SAAConstraint(polygon=saa_polygon)
 
@@ -283,7 +307,9 @@ class TestSAAConstraint:
         # Just verify basic functionality
         assert len(constraint.polygon) == 4
 
-    def test_saa_constraint_serialization(self, saa_polygon):
+    def test_saa_constraint_serialization(
+        self, saa_polygon: list[tuple[float, float]]
+    ) -> None:
         """Test SAA constraint JSON serialization."""
         constraint = SAAConstraint(polygon=saa_polygon)
 
@@ -296,25 +322,29 @@ class TestSAAConstraint:
         constraint2 = SAAConstraint(**json_data)
         assert constraint2.polygon == constraint.polygon
 
-    def test_saa_factory_method(self, saa_polygon):
+    def test_saa_factory_method(self, saa_polygon: list[tuple[float, float]]) -> None:
         """Test the SAA factory method."""
-        rust_constraint = rust_ephem.Constraint.saa(saa_polygon)
+        rust_constraint = rust_ephem.SAAConstraint(polygon=saa_polygon)
 
         # Test serialization
-        json_str = rust_constraint.to_json()
+        json_str = rust_constraint.model_dump_json()
         assert '"type":"saa"' in json_str
         assert '"polygon"' in json_str
 
         # Test deserialization
-        rust_constraint2 = rust_ephem.Constraint.from_json(json_str)
-        json_str2 = rust_constraint2.to_json()
+        rust_constraint2 = rust_ephem.SAAConstraint.model_validate_json(json_str)
+        json_str2 = rust_constraint2.model_dump_json()
         assert json_str == json_str2
 
 
 class TestConstraintIntegration:
     """Test integration of new constraints with existing functionality."""
 
-    def test_combined_constraints(self, tle_ephemeris, ground_ephemeris):
+    def test_combined_constraints(
+        self,
+        tle_ephemeris: rust_ephem.TLEEphemeris,
+        ground_ephemeris: rust_ephem.GroundEphemeris,
+    ) -> None:
         """Test combining new constraints with existing ones."""
         from rust_ephem.constraints import AndConstraint, SunConstraint
 
@@ -330,7 +360,9 @@ class TestConstraintIntegration:
         result = combined.evaluate(tle_ephemeris, target_ra=0.0, target_dec=0.0)
         assert isinstance(result.all_satisfied, bool)
 
-    def test_constraint_not_operation(self, tle_ephemeris):
+    def test_constraint_not_operation(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
         """Test NOT operation with new constraints."""
         from rust_ephem.constraints import NotConstraint
 
@@ -345,7 +377,9 @@ class TestConstraintIntegration:
         # NOT should invert the result
         assert result1.all_satisfied != result2.all_satisfied
 
-    def test_constraint_operator_overloads(self, tle_ephemeris):
+    def test_constraint_operator_overloads(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
         """Test operator overloads with new constraints."""
         sun = rust_ephem.SunConstraint(min_angle=45.0)
         airmass = AirmassConstraint(max_airmass=2.0)

@@ -214,6 +214,106 @@ class Constraint:
         ...
 
     @staticmethod
+    def daytime(twilight: str = "civil") -> Constraint:
+        """
+        Create a daytime visibility constraint.
+
+        Args:
+            twilight: Twilight definition ("civil", "nautical", "astronomical", "none")
+
+        Returns:
+            A new Constraint instance
+        """
+        ...
+
+    @staticmethod
+    def airmass(
+        min_airmass: float | None = None, max_airmass: float | None = None
+    ) -> Constraint:
+        """
+        Create an airmass constraint.
+
+        Args:
+            min_airmass: Minimum allowed airmass (≥1.0), optional
+            max_airmass: Maximum allowed airmass (>0.0)
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If airmass values are invalid
+        """
+        ...
+
+    @staticmethod
+    def moon_phase(
+        min_illumination: float | None = None,
+        max_illumination: float | None = None,
+        min_distance: float | None = None,
+        max_distance: float | None = None,
+        enforce_when_below_horizon: bool = False,
+        moon_visibility: str = "full",
+    ) -> Constraint:
+        """
+        Create a Moon phase constraint.
+
+        Args:
+            min_illumination: Minimum allowed illumination fraction (0.0-1.0), optional
+            max_illumination: Maximum allowed illumination fraction (0.0-1.0)
+            min_distance: Minimum allowed Moon distance in degrees from target, optional
+            max_distance: Maximum allowed Moon distance in degrees from target, optional
+            enforce_when_below_horizon: Whether to enforce constraint when Moon is below horizon
+            moon_visibility: Moon visibility requirement ("full" or "partial")
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If illumination or distance values are invalid
+        """
+        ...
+
+    @staticmethod
+    def saa(polygon: list[tuple[float, float]]) -> Constraint:
+        """
+        Create a South Atlantic Anomaly (SAA) constraint.
+
+        Args:
+            polygon: List of (longitude, latitude) pairs defining the region boundary in degrees
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If polygon has fewer than 3 vertices
+        """
+        ...
+
+    @staticmethod
+    def altaz(
+        min_altitude: float,
+        max_altitude: float | None = None,
+        min_azimuth: float | None = None,
+        max_azimuth: float | None = None,
+    ) -> Constraint:
+        """
+        Create an altitude/azimuth constraint.
+
+        Args:
+            min_altitude: Minimum allowed altitude in degrees (0-90)
+            max_altitude: Maximum allowed altitude in degrees (0-90), optional
+            min_azimuth: Minimum allowed azimuth in degrees (0-360), optional
+            max_azimuth: Maximum allowed azimuth in degrees (0-360), optional
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If angles are out of valid range
+        """
+        ...
+
+    @staticmethod
     def and_(*constraints: Constraint) -> Constraint:
         """
         Combine constraints with logical AND.
@@ -292,6 +392,13 @@ class Constraint:
             {"type": "sun", "min_angle": 45.0}
             {"type": "moon", "min_angle": 10.0}
             {"type": "eclipse", "umbra_only": true}
+            {"type": "earth_limb", "min_angle": 10.0}
+            {"type": "body", "body": "Mars", "min_angle": 45.0}
+            {"type": "daytime", "twilight": "civil"}
+            {"type": "airmass", "max_airmass": 2.0}
+            {"type": "moon_phase", "max_illumination": 0.5}
+            {"type": "saa", "polygon": [[-60, -20], [-30, -60], [0, -60], [0, -20]]}
+            {"type": "alt_az", "min_altitude": 10.0}
             {"type": "and", "constraints": [ ... ]}
             {"type": "or", "constraints": [ ... ]}
             {"type": "xor", "constraints": [ ... ]}
