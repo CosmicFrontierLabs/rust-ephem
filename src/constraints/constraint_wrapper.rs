@@ -299,8 +299,9 @@ impl PyConstraint {
 
     /// Create a Daytime constraint
     ///
+    /// This constraint prevents observations during daytime hours.
+    ///
     /// Args:
-    ///     allow_daytime (bool): Whether to allow daytime observations (true) or require nighttime (false)
     ///     twilight (str, optional): Twilight definition - "civil", "nautical", "astronomical", or "none" (default: "civil")
     ///
     /// Returns:
@@ -311,9 +312,9 @@ impl PyConstraint {
     ///     - "nautical": Nautical twilight (-12° below horizon)
     ///     - "astronomical": Astronomical twilight (-18° below horizon)
     ///     - "none": Strict daytime only (Sun above horizon)
-    #[pyo3(signature=(allow_daytime, twilight="civil"))]
+    #[pyo3(signature=(twilight="civil"))]
     #[staticmethod]
-    fn daytime(allow_daytime: bool, twilight: &str) -> PyResult<Self> {
+    fn daytime(twilight: &str) -> PyResult<Self> {
         let twilight_type = match twilight.to_lowercase().as_str() {
             "civil" => TwilightType::Civil,
             "nautical" => TwilightType::Nautical,
@@ -327,7 +328,6 @@ impl PyConstraint {
         };
 
         let config = DaytimeConfig {
-            allow_daytime,
             twilight: twilight_type,
         };
 
@@ -340,7 +340,6 @@ impl PyConstraint {
 
         let config_json = serde_json::json!({
             "type": "daytime",
-            "allow_daytime": allow_daytime,
             "twilight": twilight_str
         })
         .to_string();
@@ -1263,12 +1262,6 @@ fn parse_constraint_json(value: &serde_json::Value) -> PyResult<Box<dyn Constrai
             Ok(config.to_evaluator())
         }
         "daytime" => {
-            let allow_daytime = value
-                .get("allow_daytime")
-                .and_then(|v| v.as_bool())
-                .ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err("Missing 'allow_daytime' field")
-                })?;
             let twilight = value
                 .get("twilight")
                 .and_then(|v| v.as_str())
@@ -1285,7 +1278,6 @@ fn parse_constraint_json(value: &serde_json::Value) -> PyResult<Box<dyn Constrai
                 }
             };
             let config = DaytimeConfig {
-                allow_daytime,
                 twilight: twilight_type,
             };
             Ok(config.to_evaluator())

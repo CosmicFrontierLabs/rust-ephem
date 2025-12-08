@@ -21,8 +21,6 @@ pub enum TwilightType {
 /// Configuration for Daytime constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaytimeConfig {
-    /// Whether to allow daytime observations (true) or nighttime only (false)
-    pub allow_daytime: bool,
     /// Twilight definition to use
     pub twilight: TwilightType,
 }
@@ -30,7 +28,6 @@ pub struct DaytimeConfig {
 impl ConstraintConfig for DaytimeConfig {
     fn to_evaluator(&self) -> Box<dyn ConstraintEvaluator> {
         Box::new(DaytimeEvaluator {
-            allow_daytime: self.allow_daytime,
             twilight: self.twilight.clone(),
         })
     }
@@ -38,7 +35,6 @@ impl ConstraintConfig for DaytimeConfig {
 
 /// Evaluator for Daytime constraint
 struct DaytimeEvaluator {
-    allow_daytime: bool,
     twilight: TwilightType,
 }
 
@@ -60,17 +56,7 @@ impl DaytimeEvaluator {
             TwilightType::Astronomical => "astronomical",
             TwilightType::None => "none",
         };
-        if self.allow_daytime {
-            format!(
-                "DaytimeConstraint(allow_daytime=true, twilight={})",
-                twilight_str
-            )
-        } else {
-            format!(
-                "DaytimeConstraint(allow_daytime=false, twilight={})",
-                twilight_str
-            )
-        }
+        format!("DaytimeConstraint(twilight={})", twilight_str)
     }
 }
 
@@ -94,21 +80,11 @@ impl ConstraintEvaluator for DaytimeEvaluator {
                 let sun_alt = self.calculate_sun_altitude(&sun_pos, &observer_pos);
 
                 let is_daytime = sun_alt > self.twilight_angle();
-                let violated = if self.allow_daytime {
-                    !is_daytime // If we allow daytime, violation occurs at night
-                } else {
-                    is_daytime // If we don't allow daytime, violation occurs during day
-                };
+                let violated = is_daytime; // Daytime observations are not allowed
 
                 (violated, 1.0)
             },
-            |_, _| {
-                if self.allow_daytime {
-                    "Nighttime - target not visible during allowed daytime hours".to_string()
-                } else {
-                    "Daytime - target not visible during required nighttime hours".to_string()
-                }
-            },
+            |_, _| "Daytime - target not visible during required nighttime hours".to_string(),
         );
 
         let all_satisfied = violations.is_empty();
@@ -143,11 +119,7 @@ impl ConstraintEvaluator for DaytimeEvaluator {
             let is_daytime = sun_alt > twilight_angle_rad;
 
             for j in 0..n_targets {
-                let violated = if self.allow_daytime {
-                    !is_daytime
-                } else {
-                    is_daytime
-                };
+                let violated = is_daytime; // Daytime observations are not allowed
                 result[[j, i]] = violated;
             }
         }

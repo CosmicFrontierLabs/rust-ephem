@@ -84,7 +84,6 @@ class EclipseConstraint(RustConstraintMixin):
 
 class DaytimeConstraint(RustConstraintMixin):
     type: Literal["daytime"] = "daytime"
-    allow_daytime: bool
     twilight: Literal["civil", "nautical", "astronomical", "none"] = "civil"
 
 class AirmassConstraint(RustConstraintMixin):

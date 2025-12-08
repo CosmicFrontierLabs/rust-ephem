@@ -412,19 +412,15 @@ class NotConstraint(RustConstraintMixin):
 class DaytimeConstraint(RustConstraintMixin):
     """Daytime visibility constraint
 
-    Controls whether observations are allowed during daytime hours,
+    Prevents observations during daytime hours,
     with configurable twilight definitions.
 
     Attributes:
         type: Always "daytime"
-        allow_daytime: Whether daytime observations are allowed
         twilight: Twilight definition ("civil", "nautical", "astronomical", "none")
     """
 
     type: Literal["daytime"] = "daytime"
-    allow_daytime: bool = Field(
-        ..., description="Whether daytime observations are allowed"
-    )
     twilight: Literal["civil", "nautical", "astronomical", "none"] = Field(
         default="civil", description="Twilight definition for daytime boundary"
     )
