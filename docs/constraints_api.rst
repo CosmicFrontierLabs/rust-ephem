@@ -168,6 +168,85 @@ Factory Methods
       # Constraint violated in both umbra and penumbra
       constraint = Constraint.eclipse(umbra_only=False)
 
+.. py:staticmethod:: Constraint.airmass(max_airmass, min_airmass=None)
+
+   Create an airmass constraint that limits observations based on atmospheric path length.
+
+   :param float max_airmass: Maximum allowed airmass (> 1.0)
+   :param float min_airmass: Minimum allowed airmass (≥ 1.0, optional)
+   :returns: A new Constraint instance
+   :rtype: Constraint
+   :raises ValueError: If airmass values are out of valid range
+
+   Airmass represents the optical path length through Earth's atmosphere:
+
+   * Airmass = 1.0 at zenith (best observing conditions)
+   * Airmass = 2.0 at ~30° altitude
+   * Airmass = 3.0 at ~19° altitude
+   * Higher airmass values indicate worse observing conditions
+
+   **Example:**
+
+   .. code-block:: python
+
+      # Target must be at airmass ≤ 2.0 (altitude ≥ ~30°)
+      constraint = Constraint.airmass(2.0)
+
+      # Target must be between airmass 1.2 and 2.5
+      constraint = Constraint.airmass(2.5, min_airmass=1.2)
+
+.. py:staticmethod:: Constraint.daytime(twilight="civil")
+
+   Create a daytime constraint that prevents observations during daylight hours.
+
+   :param str twilight: Twilight definition ("civil", "nautical", "astronomical", or "none")
+   :returns: A new Constraint instance
+   :rtype: Constraint
+   :raises ValueError: If twilight type is invalid
+
+   Twilight definitions:
+
+   * ``"civil"``: Civil twilight (-6° below horizon, default)
+   * ``"nautical"``: Nautical twilight (-12° below horizon)
+   * ``"astronomical"``: Astronomical twilight (-18° below horizon)
+   * ``"none"``: Strict daytime only (Sun above horizon)
+
+   **Example:**
+
+   .. code-block:: python
+
+      # Prevent observations during civil twilight or daylight
+      constraint = Constraint.daytime()
+
+      # Use nautical twilight definition
+      constraint = Constraint.daytime(twilight="nautical")
+
+.. py:staticmethod:: Constraint.moon_phase(max_illumination, min_illumination=None, min_distance=None, max_distance=None, enforce_when_below_horizon=False, moon_visibility="full")
+
+   Create a Moon phase constraint with optional distance filtering.
+
+   :param float max_illumination: Maximum allowed Moon illumination fraction (0.0-1.0)
+   :param float min_illumination: Minimum allowed Moon illumination fraction (0.0-1.0, optional)
+   :param float min_distance: Minimum allowed Moon distance in degrees from target (optional)
+   :param float max_distance: Maximum allowed Moon distance in degrees from target (optional)
+   :param bool enforce_when_below_horizon: Whether to enforce constraint when Moon is below horizon
+   :param str moon_visibility: Moon visibility requirement ("full" or "partial")
+   :returns: A new Constraint instance
+   :rtype: Constraint
+   :raises ValueError: If parameters are out of valid range
+
+   Moon illumination ranges from 0.0 (new moon) to 1.0 (full moon).
+
+   **Example:**
+
+   .. code-block:: python
+
+      # Moon illumination must be ≤ 30%
+      constraint = Constraint.moon_phase(0.3)
+
+      # Moon illumination between 10% and 50%, keep Moon ≥ 30° away
+      constraint = Constraint.moon_phase(0.5, min_illumination=0.1, min_distance=30.0)
+
 Logical Combinators
 ^^^^^^^^^^^^^^^^^^^
 
@@ -448,6 +527,9 @@ Import all constraint models:
        EarthLimbConstraint,
        BodyConstraint,
        EclipseConstraint,
+       AirmassConstraint,
+       DaytimeConstraint,
+       MoonPhaseConstraint,
        AndConstraint,
        OrConstraint,
        XorConstraint,
@@ -598,6 +680,115 @@ Eclipse constraint detecting when observer is in Earth's shadow.
 
       # Detect both umbra and penumbra
       eclipse = EclipseConstraint(umbra_only=False)
+
+AirmassConstraint
+^^^^^^^^^^^^^^^^^
+
+Airmass constraint limiting observations based on atmospheric path length.
+
+.. py:class:: AirmassConstraint(max_airmass, min_airmass=None)
+
+   :param float max_airmass: Maximum allowed airmass (> 1.0, required)
+   :param float min_airmass: Minimum allowed airmass (≥ 1.0, optional)
+
+   **Attributes:**
+
+   - ``type`` — Always ``"airmass"`` (Literal)
+   - ``max_airmass`` — Maximum allowed airmass
+   - ``min_airmass`` — Minimum allowed airmass (or None)
+
+   Airmass represents the optical path length through Earth's atmosphere:
+
+   * Airmass = 1.0 at zenith (best observing conditions)
+   * Airmass = 2.0 at ~30° altitude
+   * Airmass = 3.0 at ~19° altitude
+
+   **Example:**
+
+   .. code-block:: python
+
+      from rust_ephem.constraints import AirmassConstraint
+
+      # Target must be at airmass ≤ 2.0 (altitude ≥ ~30°)
+      airmass = AirmassConstraint(max_airmass=2.0)
+
+      # Target must be between airmass 1.2 and 2.5
+      airmass = AirmassConstraint(max_airmass=2.5, min_airmass=1.2)
+
+DaytimeConstraint
+^^^^^^^^^^^^^^^^^
+
+Daytime constraint preventing observations during daylight hours.
+
+.. py:class:: DaytimeConstraint(twilight="civil")
+
+   :param str twilight: Twilight definition ("civil", "nautical", "astronomical", or "none", default: "civil")
+
+   **Attributes:**
+
+   - ``type`` — Always ``"daytime"`` (Literal)
+   - ``twilight`` — Twilight definition
+
+   Twilight definitions:
+
+   * ``"civil"``: Civil twilight (-6° below horizon)
+   * ``"nautical"``: Nautical twilight (-12° below horizon)
+   * ``"astronomical"``: Astronomical twilight (-18° below horizon)
+   * ``"none"``: Strict daytime only (Sun above horizon)
+
+   **Example:**
+
+   .. code-block:: python
+
+      from rust_ephem.constraints import DaytimeConstraint
+
+      # Prevent observations during civil twilight or daylight
+      daytime = DaytimeConstraint()
+
+      # Use nautical twilight definition
+      daytime = DaytimeConstraint(twilight="nautical")
+
+MoonPhaseConstraint
+^^^^^^^^^^^^^^^^^^^
+
+Moon phase constraint with optional distance filtering.
+
+.. py:class:: MoonPhaseConstraint(max_illumination, min_illumination=None, min_distance=None, max_distance=None, enforce_when_below_horizon=False, moon_visibility="full")
+
+   :param float max_illumination: Maximum allowed Moon illumination fraction (0.0-1.0, required)
+   :param float min_illumination: Minimum allowed Moon illumination fraction (0.0-1.0, optional)
+   :param float min_distance: Minimum allowed Moon distance in degrees from target (optional)
+   :param float max_distance: Maximum allowed Moon distance in degrees from target (optional)
+   :param bool enforce_when_below_horizon: Whether to enforce constraint when Moon is below horizon (default: False)
+   :param str moon_visibility: Moon visibility requirement ("full" or "partial", default: "full")
+
+   **Attributes:**
+
+   - ``type`` — Always ``"moon_phase"`` (Literal)
+   - ``max_illumination`` — Maximum allowed Moon illumination
+   - ``min_illumination`` — Minimum allowed Moon illumination (or None)
+   - ``min_distance`` — Minimum Moon distance from target (or None)
+   - ``max_distance`` — Maximum Moon distance from target (or None)
+   - ``enforce_when_below_horizon`` — Whether to enforce when Moon is below horizon
+   - ``moon_visibility`` — Moon visibility requirement
+
+   Moon illumination ranges from 0.0 (new moon) to 1.0 (full moon).
+
+   **Example:**
+
+   .. code-block:: python
+
+      from rust_ephem.constraints import MoonPhaseConstraint
+
+      # Moon illumination must be ≤ 30%
+      moon_phase = MoonPhaseConstraint(max_illumination=0.3)
+
+      # Moon illumination between 10% and 50%, keep Moon ≥ 30° away
+      moon_phase = MoonPhaseConstraint(
+          max_illumination=0.5,
+          min_illumination=0.1,
+          min_distance=30.0
+      )
 
 AndConstraint
 ^^^^^^^^^^^^^
