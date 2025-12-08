@@ -63,18 +63,40 @@ impl DaytimeEvaluator {
 impl ConstraintEvaluator for DaytimeEvaluator {
     fn evaluate(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         _target_ra: f64,
         _target_dec: f64,
-        sun_positions: &Array2<f64>,
-        _moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> ConstraintResult {
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<ConstraintResult> {
+        // Extract data from ephemeris
+        let times = ephemeris.get_times()?;
+        let sun_positions = ephemeris.get_sun_positions()?;
+        let observer_positions = ephemeris.get_gcrs_positions()?;
+
+        // Handle time filtering if indices provided
+        let (times_filtered, sun_filtered, obs_filtered) = if let Some(indices) = time_indices {
+            let times_vec: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+            let mut sun_filtered = Array2::zeros((indices.len(), 3));
+            let mut obs_filtered = Array2::zeros((indices.len(), 3));
+            for (idx, &i) in indices.iter().enumerate() {
+                for j in 0..3 {
+                    sun_filtered[[idx, j]] = sun_positions[[i, j]];
+                    obs_filtered[[idx, j]] = observer_positions[[i, j]];
+                }
+            }
+            (times_vec, sun_filtered, obs_filtered)
+        } else {
+            (
+                times.to_vec(),
+                sun_positions.clone(),
+                observer_positions.clone(),
+            )
+        };
         let violations = track_violations(
-            times,
+            &times_filtered,
             |i| {
-                let sun_pos = sun_positions.row(i);
-                let observer_pos = observer_positions.row(i);
+                let sun_pos = sun_filtered.row(i);
+                let observer_pos = obs_filtered.row(i);
 
                 // Calculate Sun's altitude from observer's perspective
                 let sun_alt = self.calculate_sun_altitude(&sun_pos, &observer_pos);
@@ -88,32 +110,55 @@ impl ConstraintEvaluator for DaytimeEvaluator {
         );
 
         let all_satisfied = violations.is_empty();
-        ConstraintResult::new(
+        Ok(ConstraintResult::new(
             violations,
             all_satisfied,
             self.format_name(),
-            times.to_vec(),
-        )
+            times_filtered.to_vec(),
+        ))
     }
 
     fn in_constraint_batch(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         _target_ras: &[f64],
         _target_decs: &[f64],
-        sun_positions: &Array2<f64>,
-        _moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
+        time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
+        // Extract data from ephemeris
+        let times = ephemeris.get_times()?;
+        let sun_positions = ephemeris.get_sun_positions()?;
+        let observer_positions = ephemeris.get_gcrs_positions()?;
+
+        // Handle time filtering if indices provided
+        let (times_filtered, sun_filtered, obs_filtered) = if let Some(indices) = time_indices {
+            let times_vec: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+            let mut sun_filtered = Array2::zeros((indices.len(), 3));
+            let mut obs_filtered = Array2::zeros((indices.len(), 3));
+            for (idx, &i) in indices.iter().enumerate() {
+                for j in 0..3 {
+                    sun_filtered[[idx, j]] = sun_positions[[i, j]];
+                    obs_filtered[[idx, j]] = observer_positions[[i, j]];
+                }
+            }
+            (times_vec, sun_filtered, obs_filtered)
+        } else {
+            (
+                times.to_vec(),
+                sun_positions.clone(),
+                observer_positions.clone(),
+            )
+        };
+
         let n_targets = _target_ras.len();
-        let n_times = times.len();
+        let n_times = times_filtered.len();
         let mut result = Array2::from_elem((n_targets, n_times), false);
 
         let twilight_angle_rad = self.twilight_angle();
 
         for i in 0..n_times {
-            let sun_pos = sun_positions.row(i);
-            let observer_pos = observer_positions.row(i);
+            let sun_pos = sun_filtered.row(i);
+            let observer_pos = obs_filtered.row(i);
 
             let sun_alt = self.calculate_sun_altitude(&sun_pos, &observer_pos);
             let is_daytime = sun_alt > twilight_angle_rad;

@@ -442,7 +442,7 @@ class AirmassConstraint(RustConstraintMixin):
     min_airmass: float | None = Field(
         default=None, ge=1.0, description="Minimum allowed airmass"
     )
-    max_airmass: float = Field(..., gt=0.0, description="Maximum allowed airmass")
+    max_airmass: float = Field(..., ge=1.0, description="Maximum allowed airmass")
 
 
 class MoonPhaseConstraint(RustConstraintMixin):

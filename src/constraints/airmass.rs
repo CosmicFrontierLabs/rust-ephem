@@ -65,25 +65,40 @@ impl AirmassEvaluator {
 impl ConstraintEvaluator for AirmassEvaluator {
     fn evaluate(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ra: f64,
         target_dec: f64,
-        _sun_positions: &Array2<f64>,
-        _moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> ConstraintResult {
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<ConstraintResult> {
+        // Extract data from ephemeris
+        let times = ephemeris.get_times()?;
+        let observer_positions = ephemeris.get_gcrs_positions()?;
+
+        // Handle time filtering if indices provided
+        let (times_filtered, obs_filtered) = if let Some(indices) = time_indices {
+            let times_vec: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+            let mut obs_filtered = Array2::zeros((indices.len(), 3));
+            for (idx, &i) in indices.iter().enumerate() {
+                for j in 0..3 {
+                    obs_filtered[[idx, j]] = observer_positions[[i, j]];
+                }
+            }
+            (times_vec, obs_filtered)
+        } else {
+            (times.to_vec(), observer_positions.clone())
+        };
         // Convert target to unit vector
         let target_vec = radec_to_unit_vectors_batch(&[target_ra], &[target_dec]);
         let target_unit = target_vec.row(0);
 
         let violations = track_violations(
-            times,
+            &times_filtered,
             |i| {
-                let observer_pos = observer_positions.row(i);
+                let observer_pos = obs_filtered.row(i);
 
                 // Calculate target altitude from observer position
                 let altitude_deg =
-                    self.calculate_target_altitude(&target_unit, &observer_pos, &times[i]);
+                    self.calculate_target_altitude(&target_unit, &observer_pos, &times_filtered[i]);
                 let airmass = Self::altitude_to_airmass(altitude_deg);
 
                 let mut violated = false;
@@ -104,9 +119,9 @@ impl ConstraintEvaluator for AirmassEvaluator {
                 (violated, severity)
             },
             |i, _violated| {
-                let observer_pos = observer_positions.row(i);
+                let observer_pos = obs_filtered.row(i);
                 let altitude_deg =
-                    self.calculate_target_altitude(&target_unit, &observer_pos, &times[i]);
+                    self.calculate_target_altitude(&target_unit, &observer_pos, &times_filtered[i]);
                 let airmass = Self::altitude_to_airmass(altitude_deg);
 
                 if airmass > self.max_airmass {
@@ -130,25 +145,41 @@ impl ConstraintEvaluator for AirmassEvaluator {
         );
 
         let all_satisfied = violations.is_empty();
-        ConstraintResult::new(
+        Ok(ConstraintResult::new(
             violations,
             all_satisfied,
             self.format_name(),
-            times.to_vec(),
-        )
+            times_filtered.to_vec(),
+        ))
     }
 
     fn in_constraint_batch(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-        _sun_positions: &Array2<f64>,
-        _moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
+        time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
+        // Extract data from ephemeris
+        let times = ephemeris.get_times()?;
+        let observer_positions = ephemeris.get_gcrs_positions()?;
+
+        // Handle time filtering if indices provided
+        let (times_filtered, obs_filtered) = if let Some(indices) = time_indices {
+            let times_vec: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+            let mut obs_filtered = Array2::zeros((indices.len(), 3));
+            for (idx, &i) in indices.iter().enumerate() {
+                for j in 0..3 {
+                    obs_filtered[[idx, j]] = observer_positions[[i, j]];
+                }
+            }
+            (times_vec, obs_filtered)
+        } else {
+            (times.to_vec(), observer_positions.clone())
+        };
+
         let n_targets = target_ras.len();
-        let n_times = times.len();
+        let n_times = times_filtered.len();
 
         // Convert all targets to unit vectors
         let target_vecs = radec_to_unit_vectors_batch(target_ras, target_decs);
@@ -156,12 +187,12 @@ impl ConstraintEvaluator for AirmassEvaluator {
         let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
 
         for i in 0..n_times {
-            let observer_pos = observer_positions.row(i);
+            let observer_pos = obs_filtered.row(i);
 
             for j in 0..n_targets {
                 let target_unit = target_vecs.row(j);
                 let altitude_deg =
-                    self.calculate_target_altitude(&target_unit, &observer_pos, &times[i]);
+                    self.calculate_target_altitude(&target_unit, &observer_pos, &times_filtered[i]);
                 let airmass = Self::altitude_to_airmass(altitude_deg);
 
                 let mut violated = false;

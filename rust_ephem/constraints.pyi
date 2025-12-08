@@ -100,6 +100,10 @@ class MoonPhaseConstraint(RustConstraintMixin):
     enforce_when_below_horizon: bool = False
     moon_visibility: Literal["full", "partial"] = "full"
 
+class SAAConstraint(RustConstraintMixin):
+    type: Literal["saa"] = "saa"
+    polygon: list[tuple[float, float]]
+
 class AltAzConstraint(RustConstraintMixin):
     type: Literal["alt_az"] = "alt_az"
     min_altitude: float

@@ -133,17 +133,24 @@ impl MoonPhaseEvaluator {
 impl ConstraintEvaluator for MoonPhaseEvaluator {
     fn evaluate(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ra: f64,
         target_dec: f64,
-        _sun_positions: &Array2<f64>,
-        _moon_positions: &Array2<f64>,
-        _observer_positions: &Array2<f64>,
-    ) -> ConstraintResult {
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<ConstraintResult> {
+        // Extract data from ephemeris
+        let times = ephemeris.get_times()?;
+
+        // Handle time filtering if indices provided
+        let times_filtered = if let Some(indices) = time_indices {
+            indices.iter().map(|&i| times[i]).collect()
+        } else {
+            times.to_vec()
+        };
         let violations = track_violations(
-            times,
+            &times_filtered,
             |i| {
-                let time = &times[i];
+                let time = &times_filtered[i];
                 let illumination = self.calculate_moon_illumination(time);
                 let moon_altitude = self.calculate_moon_altitude(time);
                 let moon_distance = self.calculate_moon_distance(time, target_ra, target_dec);
@@ -191,7 +198,7 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
                     return "".to_string();
                 }
 
-                let time = &times[i];
+                let time = &times_filtered[i];
                 let illumination = self.calculate_moon_illumination(time);
                 let moon_altitude = self.calculate_moon_altitude(time);
                 let moon_distance = self.calculate_moon_distance(time, target_ra, target_dec);
@@ -247,29 +254,37 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
         );
 
         let all_satisfied = violations.is_empty();
-        ConstraintResult::new(
+        Ok(ConstraintResult::new(
             violations,
             all_satisfied,
             self.format_name(),
-            times.to_vec(),
-        )
+            times_filtered.to_vec(),
+        ))
     }
 
     fn in_constraint_batch(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-        _sun_positions: &Array2<f64>,
-        _moon_positions: &Array2<f64>,
-        _observer_positions: &Array2<f64>,
+        time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
+        // Extract data from ephemeris
+        let times = ephemeris.get_times()?;
+
+        // Handle time filtering if indices provided
+        let times_filtered = if let Some(indices) = time_indices {
+            indices.iter().map(|&i| times[i]).collect()
+        } else {
+            times.to_vec()
+        };
+
         let n_targets = target_ras.len();
-        let n_times = times.len();
+        let n_times = times_filtered.len();
         let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
 
         for i in 0..n_times {
-            let time = &times[i];
+            let time = &times_filtered[i];
             let illumination = self.calculate_moon_illumination(time);
             let moon_altitude = self.calculate_moon_altitude(time);
 

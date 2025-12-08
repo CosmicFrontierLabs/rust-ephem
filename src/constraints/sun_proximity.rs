@@ -62,33 +62,78 @@ impl SunProximityEvaluator {
 impl ConstraintEvaluator for SunProximityEvaluator {
     fn evaluate(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ra: f64,
         target_dec: f64,
-        sun_positions: &Array2<f64>,
-        _moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> ConstraintResult {
-        self.evaluate_common(
-            times,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<ConstraintResult> {
+        // Extract data from ephemeris
+        let times = ephemeris.get_times()?;
+        let sun_positions = ephemeris.get_sun_positions()?;
+        let observer_positions = ephemeris.get_gcrs_positions()?;
+
+        // Handle time filtering if indices provided
+        let (times_filtered, sun_filtered, obs_filtered) = if let Some(indices) = time_indices {
+            let times_vec: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+            let mut sun_filtered = Array2::zeros((indices.len(), 3));
+            let mut obs_filtered = Array2::zeros((indices.len(), 3));
+            for (idx, &i) in indices.iter().enumerate() {
+                for j in 0..3 {
+                    sun_filtered[[idx, j]] = sun_positions[[i, j]];
+                    obs_filtered[[idx, j]] = observer_positions[[i, j]];
+                }
+            }
+            (times_vec, sun_filtered, obs_filtered)
+        } else {
+            (
+                times.to_vec(),
+                sun_positions.clone(),
+                observer_positions.clone(),
+            )
+        };
+
+        Ok(self.evaluate_common(
+            &times_filtered,
             (target_ra, target_dec),
-            sun_positions,
-            observer_positions,
+            &sun_filtered,
+            &obs_filtered,
             || self.default_final_violation_description(),
             || self.default_intermediate_violation_description(),
-        )
+        ))
     }
 
     /// Vectorized batch evaluation - MUCH faster than calling evaluate() in a loop
     fn in_constraint_batch(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-        sun_positions: &Array2<f64>,
-        _moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
+        time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
+        // Extract data from ephemeris
+        let times = ephemeris.get_times()?;
+        let sun_positions = ephemeris.get_sun_positions()?;
+        let observer_positions = ephemeris.get_gcrs_positions()?;
+
+        // Handle time filtering if indices provided
+        let (times_filtered, sun_filtered, obs_filtered) = if let Some(indices) = time_indices {
+            let times_vec: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+            let mut sun_filtered = Array2::zeros((indices.len(), 3));
+            let mut obs_filtered = Array2::zeros((indices.len(), 3));
+            for (idx, &i) in indices.iter().enumerate() {
+                for j in 0..3 {
+                    sun_filtered[[idx, j]] = sun_positions[[i, j]];
+                    obs_filtered[[idx, j]] = observer_positions[[i, j]];
+                }
+            }
+            (times_vec, sun_filtered, obs_filtered)
+        } else {
+            (
+                times.to_vec(),
+                sun_positions.clone(),
+                observer_positions.clone(),
+            )
+        };
         // Validate inputs
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -97,7 +142,7 @@ impl ConstraintEvaluator for SunProximityEvaluator {
         }
 
         let n_targets = target_ras.len();
-        let n_times = times.len();
+        let n_times = times_filtered.len();
 
         // Convert all target RA/Dec to unit vectors at once
         let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
@@ -108,14 +153,14 @@ impl ConstraintEvaluator for SunProximityEvaluator {
         // For each time, check all targets
         for t in 0..n_times {
             let sun_pos = [
-                sun_positions[[t, 0]],
-                sun_positions[[t, 1]],
-                sun_positions[[t, 2]],
+                sun_filtered[[t, 0]],
+                sun_filtered[[t, 1]],
+                sun_filtered[[t, 2]],
             ];
             let obs_pos = [
-                observer_positions[[t, 0]],
-                observer_positions[[t, 1]],
-                observer_positions[[t, 2]],
+                obs_filtered[[t, 0]],
+                obs_filtered[[t, 1]],
+                obs_filtered[[t, 2]],
             ];
 
             // Compute relative sun position from observer

@@ -57,36 +57,66 @@ impl BodyProximityEvaluator {
 impl ConstraintEvaluator for BodyProximityEvaluator {
     fn evaluate(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ra: f64,
         target_dec: f64,
-        sun_positions: &Array2<f64>,
-        _moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> ConstraintResult {
-        self.evaluate_common(
-            times,
+        time_indices: Option<&[usize]>,
+    ) -> pyo3::PyResult<ConstraintResult> {
+        let times = ephemeris.get_times()?;
+        let sun_positions = ephemeris.get_sun_positions()?;
+        let observer_positions = ephemeris.get_gcrs_positions()?;
+
+        let (times_slice, sun_positions_slice, observer_positions_slice) = if let Some(indices) =
+            time_indices
+        {
+            let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+            let sun_filtered = sun_positions.select(ndarray::Axis(0), indices);
+            let obs_filtered = observer_positions.select(ndarray::Axis(0), indices);
+            (filtered_times, sun_filtered, obs_filtered)
+        } else {
+            (
+                times.to_vec(),
+                sun_positions.clone(),
+                observer_positions.clone(),
+            )
+        };
+
+        let result = self.evaluate_common(
+            &times_slice,
             (target_ra, target_dec),
-            sun_positions,
-            observer_positions,
+            &sun_positions_slice,
+            &observer_positions_slice,
             || self.final_violation_description(),
             || self.intermediate_violation_description(),
-        )
+        );
+        Ok(result)
     }
 
     fn in_constraint_batch(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-        sun_positions: &Array2<f64>,
-        _moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
+        time_indices: Option<&[usize]>,
     ) -> pyo3::PyResult<Array2<bool>> {
-        // Body proximity uses sun_positions slot for body positions (passed from wrapper)
-        // This is vectorized like sun_proximity
         use crate::utils::vector_math::radec_to_unit_vectors_batch;
 
+        let times = ephemeris.get_times()?;
+        let sun_positions = ephemeris.get_sun_positions()?;
+        let observer_positions = ephemeris.get_gcrs_positions()?;
+
+        let (sun_positions_slice, observer_positions_slice, n_times) =
+            if let Some(indices) = time_indices {
+                let sun_filtered = sun_positions.select(ndarray::Axis(0), indices);
+                let obs_filtered = observer_positions.select(ndarray::Axis(0), indices);
+                (sun_filtered, obs_filtered, indices.len())
+            } else {
+                (
+                    sun_positions.clone(),
+                    observer_positions.clone(),
+                    times.len(),
+                )
+            };
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "target_ras and target_decs must have the same length",
@@ -94,7 +124,6 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
         }
 
         let n_targets = target_ras.len();
-        let n_times = times.len();
 
         // Convert all target RA/Dec to unit vectors at once
         let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
@@ -114,14 +143,14 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
             // Check all times for this target
             for j in 0..n_times {
                 let body_pos = [
-                    sun_positions[[j, 0]],
-                    sun_positions[[j, 1]],
-                    sun_positions[[j, 2]],
+                    sun_positions_slice[[j, 0]],
+                    sun_positions_slice[[j, 1]],
+                    sun_positions_slice[[j, 2]],
                 ];
                 let obs_pos = [
-                    observer_positions[[j, 0]],
-                    observer_positions[[j, 1]],
-                    observer_positions[[j, 2]],
+                    observer_positions_slice[[j, 0]],
+                    observer_positions_slice[[j, 1]],
+                    observer_positions_slice[[j, 2]],
                 ];
 
                 // Compute relative body position from observer

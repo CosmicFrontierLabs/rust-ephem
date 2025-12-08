@@ -35,7 +35,7 @@ pub struct PyConstraint {
 
 impl PyConstraint {
     /// Internal helper to evaluate against any Ephemeris implementing EphemerisBase
-    #[allow(deprecated)] // Python::with_gil is appropriate in this non-pyo3 context
+    #[allow(deprecated)]
     fn eval_with_ephemeris<E: EphemerisBase>(
         &self,
         ephemeris: &E,
@@ -43,75 +43,9 @@ impl PyConstraint {
         target_dec: f64,
         time_indices: Option<Vec<usize>>,
     ) -> PyResult<ConstraintResult> {
-        let mut times = ephemeris.get_times()?;
-        let mut sun_positions = ephemeris.get_sun_positions()?;
-        let mut moon_positions = ephemeris.get_moon_positions()?;
-        let mut observer_positions = ephemeris.get_gcrs_positions()?;
-
-        // Filter by time indices if provided
-        if let Some(ref indices) = time_indices {
-            // Validate indices
-            let n_times = times.len();
-            for &idx in indices {
-                if idx >= n_times {
-                    return Err(pyo3::exceptions::PyIndexError::new_err(format!(
-                        "Index {idx} out of range for ephemeris with {n_times} timestamps"
-                    )));
-                }
-            }
-
-            // Filter times and positions
-            times = indices.iter().map(|&i| times[i]).collect();
-            sun_positions =
-                Array2::from_shape_fn((indices.len(), 3), |(i, j)| sun_positions[[indices[i], j]]);
-            moon_positions =
-                Array2::from_shape_fn((indices.len(), 3), |(i, j)| moon_positions[[indices[i], j]]);
-            observer_positions = Array2::from_shape_fn((indices.len(), 3), |(i, j)| {
-                observer_positions[[indices[i], j]]
-            });
-        }
-
-        // Special handling for body proximity - need to compute body positions
-        if let Some(body_eval) = self
-            .evaluator
-            .as_any()
-            .downcast_ref::<BodyProximityEvaluator>()
-        {
-            // Get body positions via get_body_pv
-            use pyo3::Python;
-            let result = Python::with_gil(|py| {
-                let body_pv = ephemeris.get_body_pv(py, &body_eval.body)?;
-                let body_pv_ref = body_pv.bind(py).borrow();
-                let mut body_positions = body_pv_ref.position.clone();
-
-                // Filter body positions if time_indices was provided
-                if let Some(ref indices) = time_indices {
-                    body_positions = Array2::from_shape_fn((indices.len(), 3), |(i, j)| {
-                        body_positions[[indices[i], j]]
-                    });
-                }
-
-                // Pass body positions via sun_positions slot (a bit hacky but avoids API changes)
-                Ok::<_, PyErr>(self.evaluator.evaluate(
-                    &times,
-                    target_ra,
-                    target_dec,
-                    &body_positions,
-                    &moon_positions,
-                    &observer_positions,
-                ))
-            })?;
-            return Ok(result);
-        }
-
-        Ok(self.evaluator.evaluate(
-            &times,
-            target_ra,
-            target_dec,
-            &sun_positions,
-            &moon_positions,
-            &observer_positions,
-        ))
+        // Delegate to evaluator with new interface
+        self.evaluator
+            .evaluate(ephemeris, target_ra, target_dec, time_indices.as_deref())
     }
 }
 
@@ -970,74 +904,40 @@ impl PyConstraint {
             None
         };
 
-        // Get ephemeris data based on type
-        let (mut times_vec, mut sun_positions, mut moon_positions, mut observer_positions) =
-            if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
-                (
-                    ephem.get_times()?,
-                    ephem.get_sun_positions()?,
-                    ephem.get_moon_positions()?,
-                    ephem.get_gcrs_positions()?,
-                )
-            } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
-                (
-                    ephem.get_times()?,
-                    ephem.get_sun_positions()?,
-                    ephem.get_moon_positions()?,
-                    ephem.get_gcrs_positions()?,
-                )
-            } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
-                (
-                    ephem.get_times()?,
-                    ephem.get_sun_positions()?,
-                    ephem.get_moon_positions()?,
-                    ephem.get_gcrs_positions()?,
-                )
-            } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
-                (
-                    ephem.get_times()?,
-                    ephem.get_sun_positions()?,
-                    ephem.get_moon_positions()?,
-                    ephem.get_gcrs_positions()?,
-                )
-            } else {
-                return Err(pyo3::exceptions::PyTypeError::new_err(
-                    "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
-                ));
-            };
-
-        // Filter by time indices if provided
-        if let Some(ref indices) = time_indices {
-            // Validate indices
-            let n_times = times_vec.len();
-            for &idx in indices {
-                if idx >= n_times {
-                    return Err(pyo3::exceptions::PyIndexError::new_err(format!(
-                        "Index {idx} out of range for ephemeris with {n_times} timestamps"
-                    )));
-                }
-            }
-
-            // Filter times and positions
-            times_vec = indices.iter().map(|&i| times_vec[i]).collect();
-            sun_positions =
-                Array2::from_shape_fn((indices.len(), 3), |(i, j)| sun_positions[[indices[i], j]]);
-            moon_positions =
-                Array2::from_shape_fn((indices.len(), 3), |(i, j)| moon_positions[[indices[i], j]]);
-            observer_positions = Array2::from_shape_fn((indices.len(), 3), |(i, j)| {
-                observer_positions[[indices[i], j]]
-            });
-        }
-
-        // Call batch evaluation
-        let result_array = self.evaluator.in_constraint_batch(
-            &times_vec,
-            &target_ras,
-            &target_decs,
-            &sun_positions,
-            &moon_positions,
-            &observer_positions,
-        )?;
+        // Call batch evaluation with ephemeris based on type
+        let result_array = if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
+            self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &target_ras,
+                &target_decs,
+                time_indices.as_deref(),
+            )?
+        } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
+            self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &target_ras,
+                &target_decs,
+                time_indices.as_deref(),
+            )?
+        } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
+            self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &target_ras,
+                &target_decs,
+                time_indices.as_deref(),
+            )?
+        } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+            self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &target_ras,
+                &target_decs,
+                time_indices.as_deref(),
+            )?
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
+            ));
+        };
 
         // Convert to numpy array
         use numpy::IntoPyArray;
@@ -1528,28 +1428,19 @@ struct AndEvaluator {
 impl ConstraintEvaluator for AndEvaluator {
     fn evaluate(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ra: f64,
         target_dec: f64,
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> ConstraintResult {
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<ConstraintResult> {
+        let times = ephemeris.get_times()?;
+
         // Evaluate all constraints
         let results: Vec<_> = self
             .constraints
             .iter()
-            .map(|c| {
-                c.evaluate(
-                    times,
-                    target_ra,
-                    target_dec,
-                    sun_positions,
-                    moon_positions,
-                    observer_positions,
-                )
-            })
-            .collect();
+            .map(|c| c.evaluate(ephemeris, target_ra, target_dec, time_indices))
+            .collect::<PyResult<Vec<_>>>()?;
 
         // Merge violations - a violation exists if ALL constraints are violated at that time
         let mut merged_violations = Vec::new();
@@ -1618,22 +1509,20 @@ impl ConstraintEvaluator for AndEvaluator {
         }
 
         let all_satisfied = merged_violations.is_empty();
-        ConstraintResult::new(
+        Ok(ConstraintResult::new(
             merged_violations,
             all_satisfied,
             self.name(),
             times.to_vec(),
-        )
+        ))
     }
 
     fn in_constraint_batch(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
+        time_indices: Option<&[usize]>,
     ) -> pyo3::PyResult<Array2<bool>> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1641,25 +1530,18 @@ impl ConstraintEvaluator for AndEvaluator {
             ));
         }
 
+        let times = ephemeris.get_times()?;
+        let n_times = times.len();
+
         // Evaluate all sub-constraints in batch
         let results: Result<Vec<_>, _> = self
             .constraints
             .iter()
-            .map(|c| {
-                c.in_constraint_batch(
-                    times,
-                    target_ras,
-                    target_decs,
-                    sun_positions,
-                    moon_positions,
-                    observer_positions,
-                )
-            })
+            .map(|c| c.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices))
             .collect();
         let results = results?;
 
         let n_targets = target_ras.len();
-        let n_times = times.len();
         let mut result = Array2::from_elem((n_targets, n_times), false);
 
         // AND logic: violated only if ALL sub-constraints are violated
@@ -1696,28 +1578,19 @@ struct OrEvaluator {
 impl ConstraintEvaluator for OrEvaluator {
     fn evaluate(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ra: f64,
         target_dec: f64,
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> ConstraintResult {
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<ConstraintResult> {
+        let times = ephemeris.get_times()?;
+
         // Evaluate all constraints
         let results: Vec<_> = self
             .constraints
             .iter()
-            .map(|c| {
-                c.evaluate(
-                    times,
-                    target_ra,
-                    target_dec,
-                    sun_positions,
-                    moon_positions,
-                    observer_positions,
-                )
-            })
-            .collect();
+            .map(|c| c.evaluate(ephemeris, target_ra, target_dec, time_indices))
+            .collect::<PyResult<Vec<_>>>()?;
 
         // For OR, we violate when ANY constraint is violated
         let mut merged_violations = Vec::new();
@@ -1782,22 +1655,20 @@ impl ConstraintEvaluator for OrEvaluator {
         }
 
         let all_satisfied = merged_violations.is_empty();
-        ConstraintResult::new(
+        Ok(ConstraintResult::new(
             merged_violations,
             all_satisfied,
             self.name(),
             times.to_vec(),
-        )
+        ))
     }
 
     fn in_constraint_batch(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
+        time_indices: Option<&[usize]>,
     ) -> pyo3::PyResult<Array2<bool>> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1805,25 +1676,18 @@ impl ConstraintEvaluator for OrEvaluator {
             ));
         }
 
+        let times = ephemeris.get_times()?;
+        let n_times = times.len();
+
         // Evaluate all sub-constraints in batch
         let results: Result<Vec<_>, _> = self
             .constraints
             .iter()
-            .map(|c| {
-                c.in_constraint_batch(
-                    times,
-                    target_ras,
-                    target_decs,
-                    sun_positions,
-                    moon_positions,
-                    observer_positions,
-                )
-            })
+            .map(|c| c.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices))
             .collect();
         let results = results?;
 
         let n_targets = target_ras.len();
-        let n_times = times.len();
         let mut result = Array2::from_elem((n_targets, n_times), false);
 
         // OR logic: violated if ANY sub-constraint is violated
@@ -1860,21 +1724,15 @@ struct NotEvaluator {
 impl ConstraintEvaluator for NotEvaluator {
     fn evaluate(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ra: f64,
         target_dec: f64,
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> ConstraintResult {
-        let result = self.constraint.evaluate(
-            times,
-            target_ra,
-            target_dec,
-            sun_positions,
-            moon_positions,
-            observer_positions,
-        );
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<ConstraintResult> {
+        let times = ephemeris.get_times()?;
+        let result = self
+            .constraint
+            .evaluate(ephemeris, target_ra, target_dec, time_indices)?;
 
         // Invert violations - find time periods NOT in violation
         let mut inverted_violations = Vec::new();
@@ -1927,31 +1785,28 @@ impl ConstraintEvaluator for NotEvaluator {
         }
 
         let all_satisfied = inverted_violations.is_empty();
-        ConstraintResult::new(
+        Ok(ConstraintResult::new(
             inverted_violations,
             all_satisfied,
             self.name(),
             times.to_vec(),
-        )
+        ))
     }
 
     fn in_constraint_batch(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
+        time_indices: Option<&[usize]>,
     ) -> pyo3::PyResult<Array2<bool>> {
+        let times = ephemeris.get_times()?;
         // Evaluate sub-constraint in batch
         let sub_result = self.constraint.in_constraint_batch(
-            times,
+            ephemeris,
             target_ras,
             target_decs,
-            sun_positions,
-            moon_positions,
-            observer_positions,
+            time_indices,
         )?;
 
         let n_targets = target_ras.len();
@@ -1984,28 +1839,18 @@ struct XorEvaluator {
 impl ConstraintEvaluator for XorEvaluator {
     fn evaluate(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ra: f64,
         target_dec: f64,
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> ConstraintResult {
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<ConstraintResult> {
+        let times = ephemeris.get_times()?;
         // Evaluate all constraints
         let results: Vec<_> = self
             .constraints
             .iter()
-            .map(|c| {
-                c.evaluate(
-                    times,
-                    target_ra,
-                    target_dec,
-                    sun_positions,
-                    moon_positions,
-                    observer_positions,
-                )
-            })
-            .collect();
+            .map(|c| c.evaluate(ephemeris, target_ra, target_dec, time_indices))
+            .collect::<PyResult<Vec<_>>>()?;
 
         // Violate when EXACTLY ONE sub-constraint is violated
         let mut merged_violations = Vec::new();
@@ -2061,22 +1906,20 @@ impl ConstraintEvaluator for XorEvaluator {
         }
 
         let all_satisfied = merged_violations.is_empty();
-        ConstraintResult::new(
+        Ok(ConstraintResult::new(
             merged_violations,
             all_satisfied,
             self.name(),
             times.to_vec(),
-        )
+        ))
     }
 
     fn in_constraint_batch(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
+        time_indices: Option<&[usize]>,
     ) -> pyo3::PyResult<Array2<bool>> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -2084,25 +1927,18 @@ impl ConstraintEvaluator for XorEvaluator {
             ));
         }
 
+        let times = ephemeris.get_times()?;
+        let n_times = times.len();
+
         // Evaluate all sub-constraints in batch
         let results: Result<Vec<_>, _> = self
             .constraints
             .iter()
-            .map(|c| {
-                c.in_constraint_batch(
-                    times,
-                    target_ras,
-                    target_decs,
-                    sun_positions,
-                    moon_positions,
-                    observer_positions,
-                )
-            })
+            .map(|c| c.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices))
             .collect();
         let results = results?;
 
         let n_targets = target_ras.len();
-        let n_times = times.len();
         let mut result = Array2::from_elem((n_targets, n_times), false);
 
         // XOR logic: violated when EXACTLY ONE sub-constraint is violated

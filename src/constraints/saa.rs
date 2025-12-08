@@ -1,6 +1,5 @@
 /// South Atlantic Anomaly constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
-use crate::utils::geo::ecef_to_geodetic_deg;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
@@ -22,7 +21,7 @@ impl ConstraintConfig for SAAConfig {
 }
 
 /// Evaluator for South Atlantic Anomaly constraint
-struct SAAEvaluator {
+pub struct SAAEvaluator {
     polygon: Vec<(f64, f64)>,
 }
 
@@ -31,10 +30,10 @@ impl SAAEvaluator {
         format!("SAAConstraint(vertices={})", self.polygon.len())
     }
 
-    /// Check if a point is inside the polygon using ray casting algorithm
-    /// Returns true if point is inside polygon
+    /// Check if a point is inside the polygon using the winding number algorithm
+    /// This is more robust than ray casting for complex polygons
     fn point_in_polygon(&self, lon: f64, lat: f64) -> bool {
-        let mut inside = false;
+        let mut winding_number = 0.0;
         let n = self.polygon.len();
 
         for i in 0..n {
@@ -42,29 +41,27 @@ impl SAAEvaluator {
             let (x1, y1) = self.polygon[i];
             let (x2, y2) = self.polygon[j];
 
-            // Check if ray from point intersects edge
-            if ((y1 > lat) != (y2 > lat)) && (lon < x1 + (x2 - x1) * (lat - y1) / (y2 - y1)) {
-                inside = !inside;
+            if y1 <= lat {
+                if y2 > lat && (x2 - x1) * (lat - y1) - (lon - x1) * (y2 - y1) > 0.0 {
+                    winding_number += 1.0;
+                }
+            } else if y2 <= lat && (x2 - x1) * (lat - y1) - (lon - x1) * (y2 - y1) < 0.0 {
+                winding_number -= 1.0;
             }
         }
 
-        inside
+        winding_number != 0.0
     }
 }
 
-impl ConstraintEvaluator for SAAEvaluator {
-    fn evaluate(
+impl SAAEvaluator {
+    /// Evaluate the constraint with pre-computed lat/lon arrays
+    pub fn evaluate_with_latlon(
         &self,
         times: &[DateTime<Utc>],
-        _target_ra: f64,
-        _target_dec: f64,
-        _sun_positions: &Array2<f64>,
-        _moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
+        lats: &[f64],
+        lons: &[f64],
     ) -> ConstraintResult {
-        // Convert observer positions to lat/lon
-        let (lats, lons, _heights) = ecef_to_geodetic_deg(observer_positions);
-
         let violations = track_violations(
             times,
             |i| {
@@ -75,14 +72,11 @@ impl ConstraintEvaluator for SAAEvaluator {
                 let severity = if violated { 1.0 } else { 0.0 };
                 (violated, severity)
             },
-            |i, violated| {
+            |i, _still_violated| {
+                // Description should always describe the violation (being in SAA)
                 let lat = lats[i];
                 let lon = lons[i];
-                if violated {
-                    format!("In SAA region (lat: {:.2}°, lon: {:.2}°)", lat, lon)
-                } else {
-                    format!("Outside SAA (lat: {:.2}°, lon: {:.2}°)", lat, lon)
-                }
+                format!("In SAA region (lat: {:.2}°, lon: {:.2}°)", lat, lon)
             },
         );
 
@@ -95,20 +89,15 @@ impl ConstraintEvaluator for SAAEvaluator {
         )
     }
 
-    fn in_constraint_batch(
+    /// Batch evaluation with pre-computed lat/lon arrays
+    pub fn in_constraint_batch_with_latlon(
         &self,
-        times: &[DateTime<Utc>],
-        _target_ras: &[f64],
-        _target_decs: &[f64],
-        _sun_positions: &Array2<f64>,
-        _moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> PyResult<Array2<bool>> {
-        let n_times = times.len();
-        let n_targets = 1; // SAA is target-independent, but we need to match the interface
-
-        // Convert observer positions to lat/lon
-        let (lats, lons, _heights) = ecef_to_geodetic_deg(observer_positions);
+        target_ras: &[f64],
+        lats: &[f64],
+        lons: &[f64],
+    ) -> Array2<bool> {
+        let n_times = lats.len();
+        let n_targets = target_ras.len();
 
         let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
 
@@ -117,9 +106,105 @@ impl ConstraintEvaluator for SAAEvaluator {
             let lon = lons[i];
             let in_saa = self.point_in_polygon(lon, lat);
             let satisfied = !in_saa;
-            result[[0, i]] = satisfied;
+
+            for target_idx in 0..n_targets {
+                result[[target_idx, i]] = satisfied;
+            }
         }
 
+        result
+    }
+}
+
+impl ConstraintEvaluator for SAAEvaluator {
+    fn evaluate(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        _target_ra: f64,
+        _target_dec: f64,
+        time_indices: Option<&[usize]>,
+    ) -> pyo3::PyResult<ConstraintResult> {
+        use numpy::{PyArray1, PyArrayMethods};
+        use pyo3::Python;
+
+        // Extract lat/lon data from ephemeris
+        let (lats_vec, lons_vec) =
+            Python::with_gil(|py| -> pyo3::PyResult<(Vec<f64>, Vec<f64>)> {
+                let lat_opt = ephemeris.get_latitude_deg(py)?;
+                let lon_opt = ephemeris.get_longitude_deg(py)?;
+
+                let lat_array = lat_opt.ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("Latitude data not available")
+                })?;
+                let lon_array = lon_opt.ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("Longitude data not available")
+                })?;
+
+                let lat_bound = lat_array.downcast_bound::<PyArray1<f64>>(py)?;
+                let lon_bound = lon_array.downcast_bound::<PyArray1<f64>>(py)?;
+
+                let lats = lat_bound.readonly().as_slice()?.to_vec();
+                let lons = lon_bound.readonly().as_slice()?.to_vec();
+
+                Ok((lats, lons))
+            })?;
+
+        let times = ephemeris.get_times()?;
+
+        let (times_slice, lats_slice, lons_slice) = if let Some(indices) = time_indices {
+            let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+            let filtered_lats: Vec<f64> = indices.iter().map(|&i| lats_vec[i]).collect();
+            let filtered_lons: Vec<f64> = indices.iter().map(|&i| lons_vec[i]).collect();
+            (filtered_times, filtered_lats, filtered_lons)
+        } else {
+            (times.to_vec(), lats_vec, lons_vec)
+        };
+
+        let result = self.evaluate_with_latlon(&times_slice, &lats_slice, &lons_slice);
+        Ok(result)
+    }
+
+    fn in_constraint_batch(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        _target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Array2<bool>> {
+        use numpy::{PyArray1, PyArrayMethods};
+        use pyo3::Python;
+
+        // Extract lat/lon data from ephemeris
+        let (lats_vec, lons_vec) =
+            Python::with_gil(|py| -> pyo3::PyResult<(Vec<f64>, Vec<f64>)> {
+                let lat_opt = ephemeris.get_latitude_deg(py)?;
+                let lon_opt = ephemeris.get_longitude_deg(py)?;
+
+                let lat_array = lat_opt.ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("Latitude data not available")
+                })?;
+                let lon_array = lon_opt.ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("Longitude data not available")
+                })?;
+
+                let lat_bound = lat_array.downcast_bound::<PyArray1<f64>>(py)?;
+                let lon_bound = lon_array.downcast_bound::<PyArray1<f64>>(py)?;
+
+                let lats = lat_bound.readonly().as_slice()?.to_vec();
+                let lons = lon_bound.readonly().as_slice()?.to_vec();
+
+                Ok((lats, lons))
+            })?;
+
+        let (lats_slice, lons_slice, ras_slice) = if let Some(indices) = time_indices {
+            let filtered_lats: Vec<f64> = indices.iter().map(|&i| lats_vec[i]).collect();
+            let filtered_lons: Vec<f64> = indices.iter().map(|&i| lons_vec[i]).collect();
+            (filtered_lats, filtered_lons, target_ras)
+        } else {
+            (lats_vec, lons_vec, target_ras)
+        };
+
+        let result = self.in_constraint_batch_with_latlon(ras_slice, &lats_slice, &lons_slice);
         Ok(result)
     }
 

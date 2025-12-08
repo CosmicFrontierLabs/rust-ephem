@@ -35,6 +35,7 @@ from .constraints import (
     MoonPhaseConstraint,
     NotConstraint,
     OrConstraint,
+    SAAConstraint,
     SunConstraint,
     XorConstraint,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "DaytimeConstraint",
     "AirmassConstraint",
     "MoonPhaseConstraint",
+    "SAAConstraint",
     "AltAzConstraint",
     "CombinedConstraintConfig",
     "AndConstraint",

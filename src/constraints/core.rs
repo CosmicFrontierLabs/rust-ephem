@@ -318,54 +318,40 @@ pub trait ConstraintConfig: fmt::Debug + Send + Sync {
 ///
 /// Implementations of this trait perform the actual constraint checking logic.
 pub trait ConstraintEvaluator: Send + Sync {
-    /// Evaluate the constraint over a time range
+    /// Evaluate the constraint with full ephemeris access
     ///
     /// # Arguments
-    /// * `times` - Vector of timestamps to evaluate
+    /// * `ephemeris` - Ephemeris object providing all positional data
     /// * `target_ra` - Right ascension of target in degrees (ICRS/J2000)
     /// * `target_dec` - Declination of target in degrees (ICRS/J2000)
-    /// * `sun_positions` - Sun positions in GCRS (N x 3 array, km)
-    /// * `moon_positions` - Moon positions in GCRS (N x 3 array, km)
-    /// * `observer_positions` - Observer positions in GCRS (N x 3 array, km)
+    /// * `time_indices` - Optional subset of time indices to evaluate
     ///
     /// # Returns
     /// Result containing violation windows
     fn evaluate(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ra: f64,
         target_dec: f64,
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> ConstraintResult;
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<ConstraintResult>;
 
     /// Check if targets are in-constraint for multiple RA/Dec positions (vectorized)
     ///
-    /// This method provides vectorized evaluation for multiple targets,
-    /// returning a 2D array of constraint satisfaction where:
-    /// - Rows correspond to different RA/Dec positions
-    /// - Columns correspond to time indices
-    ///
     /// # Arguments
-    /// * `times` - Vector of timestamps to evaluate (length N)
+    /// * `ephemeris` - Ephemeris object providing all positional data
     /// * `target_ras` - Array of right ascensions in degrees (length M)
     /// * `target_decs` - Array of declinations in degrees (length M)
-    /// * `sun_positions` - Sun positions in GCRS (N x 3 array, km)
-    /// * `moon_positions` - Moon positions in GCRS (N x 3 array, km)
-    /// * `observer_positions` - Observer positions in GCRS (N x 3 array, km)
+    /// * `time_indices` - Optional subset of time indices to evaluate
     ///
     /// # Returns
     /// 2D boolean array (M x N) where True indicates constraint violation
-    /// at that (target, time) combination
     fn in_constraint_batch(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
+        time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>>;
 
     /// Get constraint name
