@@ -62,24 +62,8 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
         target_dec: f64,
         time_indices: Option<&[usize]>,
     ) -> pyo3::PyResult<ConstraintResult> {
-        let times = ephemeris.get_times()?;
-        let sun_positions = ephemeris.get_sun_positions()?;
-        let observer_positions = ephemeris.get_gcrs_positions()?;
-
-        let (times_slice, sun_positions_slice, observer_positions_slice) = if let Some(indices) =
-            time_indices
-        {
-            let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
-            let sun_filtered = sun_positions.select(ndarray::Axis(0), indices);
-            let obs_filtered = observer_positions.select(ndarray::Axis(0), indices);
-            (filtered_times, sun_filtered, obs_filtered)
-        } else {
-            (
-                times.to_vec(),
-                sun_positions.clone(),
-                observer_positions.clone(),
-            )
-        };
+        let (times_slice, sun_positions_slice, observer_positions_slice) =
+            extract_standard_ephemeris_data!(ephemeris, time_indices);
 
         let result = self.evaluate_common(
             &times_slice,
@@ -102,15 +86,18 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
         use crate::utils::vector_math::radec_to_unit_vectors_batch;
 
         let times = ephemeris.get_times()?;
-        let sun_positions = ephemeris.get_sun_positions()?;
-        let observer_positions = ephemeris.get_gcrs_positions()?;
-
         let (sun_positions_slice, observer_positions_slice, n_times) =
             if let Some(indices) = time_indices {
-                let sun_filtered = sun_positions.select(ndarray::Axis(0), indices);
-                let obs_filtered = observer_positions.select(ndarray::Axis(0), indices);
+                let sun_filtered = ephemeris
+                    .get_sun_positions()?
+                    .select(ndarray::Axis(0), indices);
+                let obs_filtered = ephemeris
+                    .get_gcrs_positions()?
+                    .select(ndarray::Axis(0), indices);
                 (sun_filtered, obs_filtered, indices.len())
             } else {
+                let sun_positions = ephemeris.get_sun_positions()?;
+                let observer_positions = ephemeris.get_gcrs_positions()?;
                 (
                     sun_positions.clone(),
                     observer_positions.clone(),

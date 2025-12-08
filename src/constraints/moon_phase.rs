@@ -138,15 +138,8 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
         target_dec: f64,
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
-        // Extract data from ephemeris
-        let times = ephemeris.get_times()?;
-
-        // Handle time filtering if indices provided
-        let times_filtered = if let Some(indices) = time_indices {
-            indices.iter().map(|&i| times[i]).collect()
-        } else {
-            times.to_vec()
-        };
+        // Extract and filter time data
+        let (times_filtered,) = extract_time_data!(ephemeris, time_indices);
         let violations = track_violations(
             &times_filtered,
             |i| {
@@ -269,15 +262,8 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
-        // Extract data from ephemeris
-        let times = ephemeris.get_times()?;
-
-        // Handle time filtering if indices provided
-        let times_filtered = if let Some(indices) = time_indices {
-            indices.iter().map(|&i| times[i]).collect()
-        } else {
-            times.to_vec()
-        };
+        // Extract and filter time data
+        let (times_filtered,) = extract_time_data!(ephemeris, time_indices);
 
         let n_targets = target_ras.len();
         let n_times = times_filtered.len();

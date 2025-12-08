@@ -124,40 +124,8 @@ impl ConstraintEvaluator for SAAEvaluator {
         _target_dec: f64,
         time_indices: Option<&[usize]>,
     ) -> pyo3::PyResult<ConstraintResult> {
-        use numpy::{PyArray1, PyArrayMethods};
-        use pyo3::Python;
-
-        // Extract lat/lon data from ephemeris
-        let (lats_vec, lons_vec) = Python::attach(|py| -> pyo3::PyResult<(Vec<f64>, Vec<f64>)> {
-            let lat_opt = ephemeris.get_latitude_deg(py)?;
-            let lon_opt = ephemeris.get_longitude_deg(py)?;
-
-            let lat_array = lat_opt.ok_or_else(|| {
-                pyo3::exceptions::PyRuntimeError::new_err("Latitude data not available")
-            })?;
-            let lon_array = lon_opt.ok_or_else(|| {
-                pyo3::exceptions::PyRuntimeError::new_err("Longitude data not available")
-            })?;
-
-            let lat_bound = lat_array.downcast_bound::<PyArray1<f64>>(py)?;
-            let lon_bound = lon_array.downcast_bound::<PyArray1<f64>>(py)?;
-
-            let lats = lat_bound.readonly().as_slice()?.to_vec();
-            let lons = lon_bound.readonly().as_slice()?.to_vec();
-
-            Ok((lats, lons))
-        })?;
-
-        let times = ephemeris.get_times()?;
-
-        let (times_slice, lats_slice, lons_slice) = if let Some(indices) = time_indices {
-            let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
-            let filtered_lats: Vec<f64> = indices.iter().map(|&i| lats_vec[i]).collect();
-            let filtered_lons: Vec<f64> = indices.iter().map(|&i| lons_vec[i]).collect();
-            (filtered_times, filtered_lats, filtered_lons)
-        } else {
-            (times.to_vec(), lats_vec, lons_vec)
-        };
+        // Extract and filter lat/lon data
+        let (times_slice, lats_slice, lons_slice) = extract_latlon_data!(ephemeris, time_indices);
 
         let result = self.evaluate_with_latlon(&times_slice, &lats_slice, &lons_slice);
         Ok(result)
@@ -170,39 +138,10 @@ impl ConstraintEvaluator for SAAEvaluator {
         _target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
-        use numpy::{PyArray1, PyArrayMethods};
-        use pyo3::Python;
+        // Extract and filter lat/lon data (discard times since we don't need them)
+        let (_times_slice, lats_slice, lons_slice) = extract_latlon_data!(ephemeris, time_indices);
 
-        // Extract lat/lon data from ephemeris
-        let (lats_vec, lons_vec) = Python::attach(|py| -> pyo3::PyResult<(Vec<f64>, Vec<f64>)> {
-            let lat_opt = ephemeris.get_latitude_deg(py)?;
-            let lon_opt = ephemeris.get_longitude_deg(py)?;
-
-            let lat_array = lat_opt.ok_or_else(|| {
-                pyo3::exceptions::PyRuntimeError::new_err("Latitude data not available")
-            })?;
-            let lon_array = lon_opt.ok_or_else(|| {
-                pyo3::exceptions::PyRuntimeError::new_err("Longitude data not available")
-            })?;
-
-            let lat_bound = lat_array.downcast_bound::<PyArray1<f64>>(py)?;
-            let lon_bound = lon_array.downcast_bound::<PyArray1<f64>>(py)?;
-
-            let lats = lat_bound.readonly().as_slice()?.to_vec();
-            let lons = lon_bound.readonly().as_slice()?.to_vec();
-
-            Ok((lats, lons))
-        })?;
-
-        let (lats_slice, lons_slice, ras_slice) = if let Some(indices) = time_indices {
-            let filtered_lats: Vec<f64> = indices.iter().map(|&i| lats_vec[i]).collect();
-            let filtered_lons: Vec<f64> = indices.iter().map(|&i| lons_vec[i]).collect();
-            (filtered_lats, filtered_lons, target_ras)
-        } else {
-            (lats_vec, lons_vec, target_ras)
-        };
-
-        let result = self.in_constraint_batch_with_latlon(ras_slice, &lats_slice, &lons_slice);
+        let result = self.in_constraint_batch_with_latlon(target_ras, &lats_slice, &lons_slice);
         Ok(result)
     }
 

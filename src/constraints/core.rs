@@ -474,3 +474,135 @@ where
 
     violations
 }
+
+/// Macro to extract and filter common ephemeris data (times, sun_positions, observer_positions)
+/// Usage: extract_standard_ephemeris_data!(ephemeris, time_indices)
+/// Returns: (times_filtered, sun_positions_filtered, observer_positions_filtered)
+macro_rules! extract_standard_ephemeris_data {
+    ($ephemeris:expr, $time_indices:expr) => {{
+        let times = $ephemeris.get_times()?;
+        let sun_positions = $ephemeris.get_sun_positions()?;
+        let observer_positions = $ephemeris.get_gcrs_positions()?;
+
+        if let Some(indices) = $time_indices {
+            let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+            let sun_filtered = sun_positions.select(ndarray::Axis(0), indices);
+            let obs_filtered = observer_positions.select(ndarray::Axis(0), indices);
+            (filtered_times, sun_filtered, obs_filtered)
+        } else {
+            (
+                times.to_vec(),
+                sun_positions.clone(),
+                observer_positions.clone(),
+            )
+        }
+    }};
+}
+
+/// Returns: (times_filtered, moon_positions_filtered, observer_positions_filtered)
+macro_rules! extract_moon_ephemeris_data {
+    ($ephemeris:expr, $time_indices:expr) => {{
+        let times = $ephemeris.get_times()?;
+        let moon_positions = $ephemeris.get_moon_positions()?;
+        let observer_positions = $ephemeris.get_gcrs_positions()?;
+
+        if let Some(indices) = $time_indices {
+            let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+            let moon_filtered = moon_positions.select(ndarray::Axis(0), indices);
+            let obs_filtered = observer_positions.select(ndarray::Axis(0), indices);
+            (filtered_times, moon_filtered, obs_filtered)
+        } else {
+            (
+                times.to_vec(),
+                moon_positions.clone(),
+                observer_positions.clone(),
+            )
+        }
+    }};
+}
+
+/// Returns: (times_filtered, observer_positions_filtered)
+macro_rules! extract_observer_ephemeris_data {
+    ($ephemeris:expr, $time_indices:expr) => {{
+        let times = $ephemeris.get_times()?;
+        let observer_positions = $ephemeris.get_gcrs_positions()?;
+
+        if let Some(indices) = $time_indices {
+            let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+            let mut obs_filtered = Array2::zeros((indices.len(), 3));
+            for (idx, &i) in indices.iter().enumerate() {
+                for j in 0..3 {
+                    obs_filtered[[idx, j]] = observer_positions[[i, j]];
+                }
+            }
+            (filtered_times, obs_filtered)
+        } else {
+            (times.to_vec(), observer_positions.clone())
+        }
+    }};
+}
+
+/// Macro to extract and filter time data
+/// Usage: extract_time_data!(ephemeris, time_indices)
+/// Returns: (times_filtered,)
+macro_rules! extract_time_data {
+    ($ephemeris:expr, $time_indices:expr) => {{
+        let times = $ephemeris.get_times()?;
+
+        let times_filtered = if let Some(indices) = $time_indices {
+            indices.iter().map(|&i| times[i]).collect()
+        } else {
+            times.to_vec()
+        };
+
+        (times_filtered,)
+    }};
+}
+
+/// Helper macro to extract latitude and longitude vectors from ephemeris
+macro_rules! extract_lat_lon_vectors {
+    ($ephemeris:expr) => {{
+        use numpy::{PyArray1, PyArrayMethods};
+        use pyo3::Python;
+
+        Python::attach(|py| -> pyo3::PyResult<(Vec<f64>, Vec<f64>)> {
+            let lat_opt = $ephemeris.get_latitude_deg(py)?;
+            let lon_opt = $ephemeris.get_longitude_deg(py)?;
+
+            let lat_array = lat_opt.ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err("Latitude data not available")
+            })?;
+            let lon_array = lon_opt.ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err("Longitude data not available")
+            })?;
+
+            let lat_bound = lat_array.downcast_bound::<PyArray1<f64>>(py)?;
+            let lon_bound = lon_array.downcast_bound::<PyArray1<f64>>(py)?;
+
+            let lats = lat_bound.readonly().as_slice()?.to_vec();
+            let lons = lon_bound.readonly().as_slice()?.to_vec();
+
+            Ok((lats, lons))
+        })?
+    }};
+}
+
+/// Returns: (times_filtered, lats_filtered, lons_filtered)
+/// Usage: extract_latlon_data!(ephemeris, time_indices)
+macro_rules! extract_latlon_data {
+    ($ephemeris:expr, $time_indices:expr) => {{
+        let (lats_vec, lons_vec) = extract_lat_lon_vectors!($ephemeris);
+        let times = $ephemeris.get_times()?;
+
+        let (times_slice, lats_slice, lons_slice) = if let Some(indices) = $time_indices {
+            let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+            let filtered_lats: Vec<f64> = indices.iter().map(|&i| lats_vec[i]).collect();
+            let filtered_lons: Vec<f64> = indices.iter().map(|&i| lons_vec[i]).collect();
+            (filtered_times, filtered_lats, filtered_lons)
+        } else {
+            (times.to_vec(), lats_vec, lons_vec)
+        };
+
+        (times_slice, lats_slice, lons_slice)
+    }};
+}

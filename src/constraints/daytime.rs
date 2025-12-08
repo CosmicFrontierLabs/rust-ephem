@@ -68,30 +68,9 @@ impl ConstraintEvaluator for DaytimeEvaluator {
         _target_dec: f64,
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
-        // Extract data from ephemeris
-        let times = ephemeris.get_times()?;
-        let sun_positions = ephemeris.get_sun_positions()?;
-        let observer_positions = ephemeris.get_gcrs_positions()?;
-
-        // Handle time filtering if indices provided
-        let (times_filtered, sun_filtered, obs_filtered) = if let Some(indices) = time_indices {
-            let times_vec: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
-            let mut sun_filtered = Array2::zeros((indices.len(), 3));
-            let mut obs_filtered = Array2::zeros((indices.len(), 3));
-            for (idx, &i) in indices.iter().enumerate() {
-                for j in 0..3 {
-                    sun_filtered[[idx, j]] = sun_positions[[i, j]];
-                    obs_filtered[[idx, j]] = observer_positions[[i, j]];
-                }
-            }
-            (times_vec, sun_filtered, obs_filtered)
-        } else {
-            (
-                times.to_vec(),
-                sun_positions.clone(),
-                observer_positions.clone(),
-            )
-        };
+        // Extract and filter ephemeris data
+        let (times_filtered, sun_filtered, obs_filtered) =
+            extract_standard_ephemeris_data!(ephemeris, time_indices);
         let violations = track_violations(
             &times_filtered,
             |i| {
@@ -125,30 +104,9 @@ impl ConstraintEvaluator for DaytimeEvaluator {
         _target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
-        // Extract data from ephemeris
-        let times = ephemeris.get_times()?;
-        let sun_positions = ephemeris.get_sun_positions()?;
-        let observer_positions = ephemeris.get_gcrs_positions()?;
-
-        // Handle time filtering if indices provided
-        let (times_filtered, sun_filtered, obs_filtered) = if let Some(indices) = time_indices {
-            let times_vec: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
-            let mut sun_filtered = Array2::zeros((indices.len(), 3));
-            let mut obs_filtered = Array2::zeros((indices.len(), 3));
-            for (idx, &i) in indices.iter().enumerate() {
-                for j in 0..3 {
-                    sun_filtered[[idx, j]] = sun_positions[[i, j]];
-                    obs_filtered[[idx, j]] = observer_positions[[i, j]];
-                }
-            }
-            (times_vec, sun_filtered, obs_filtered)
-        } else {
-            (
-                times.to_vec(),
-                sun_positions.clone(),
-                observer_positions.clone(),
-            )
-        };
+        // Extract and filter ephemeris data
+        let (times_filtered, sun_filtered, obs_filtered) =
+            extract_standard_ephemeris_data!(ephemeris, time_indices);
 
         let n_targets = _target_ras.len();
         let n_times = times_filtered.len();

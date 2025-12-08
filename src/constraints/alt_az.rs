@@ -70,23 +70,9 @@ impl ConstraintEvaluator for AltAzEvaluator {
         target_dec: f64,
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
-        // Extract data from ephemeris
-        let times = ephemeris.get_times()?;
-        let observer_positions = ephemeris.get_gcrs_positions()?;
-
-        // Handle time filtering if indices provided
-        let (times_filtered, obs_filtered) = if let Some(indices) = time_indices {
-            let times_vec: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
-            let mut obs_filtered = Array2::zeros((indices.len(), 3));
-            for (idx, &i) in indices.iter().enumerate() {
-                for j in 0..3 {
-                    obs_filtered[[idx, j]] = observer_positions[[i, j]];
-                }
-            }
-            (times_vec, obs_filtered)
-        } else {
-            (times.to_vec(), observer_positions.clone())
-        };
+        // Extract and filter ephemeris data
+        let (times_filtered, obs_filtered) =
+            extract_observer_ephemeris_data!(ephemeris, time_indices);
         // Convert target to unit vector
         let target_vec = radec_to_unit_vectors_batch(&[target_ra], &[target_dec]);
         let target_unit = target_vec.row(0);
@@ -175,23 +161,9 @@ impl ConstraintEvaluator for AltAzEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
-        // Extract data from ephemeris
-        let times = ephemeris.get_times()?;
-        let observer_positions = ephemeris.get_gcrs_positions()?;
-
-        // Handle time filtering if indices provided
-        let (_times_filtered, obs_filtered) = if let Some(indices) = time_indices {
-            let times_vec: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
-            let mut obs_filtered = Array2::zeros((indices.len(), 3));
-            for (idx, &i) in indices.iter().enumerate() {
-                for j in 0..3 {
-                    obs_filtered[[idx, j]] = observer_positions[[i, j]];
-                }
-            }
-            (times_vec, obs_filtered)
-        } else {
-            (times.to_vec(), observer_positions.clone())
-        };
+        // Extract and filter ephemeris data
+        let (_times_filtered, obs_filtered) =
+            extract_observer_ephemeris_data!(ephemeris, time_indices);
 
         let n_targets = target_ras.len();
         let n_times = obs_filtered.nrows();
