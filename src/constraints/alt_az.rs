@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Configuration for Altitude/Azimuth constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,12 +76,17 @@ impl ConstraintEvaluator for AltAzEvaluator {
 
         // Compute alt/az for this target at selected times
         let altaz = ephemeris.radec_to_altaz(target_ra, target_dec, time_indices);
+        let altitude_vals: Vec<f64> = altaz.column(0).iter().copied().collect();
+        let azimuth_vals: Vec<f64> = altaz.column(1).iter().copied().collect();
+        let mut computed = HashMap::new();
+        computed.insert("altitude_deg".to_string(), altitude_vals.clone());
+        computed.insert("azimuth_deg".to_string(), azimuth_vals.clone());
 
         let violations = track_violations(
             &times_filtered,
             |i| {
-                let altitude_deg = altaz[[i, 0]];
-                let azimuth_deg = altaz[[i, 1]];
+                let altitude_deg = altitude_vals[i];
+                let azimuth_deg = azimuth_vals[i];
 
                 // Check altitude constraints
                 let mut violated = false;
@@ -133,18 +139,19 @@ impl ConstraintEvaluator for AltAzEvaluator {
             },
             |_, _violated| {
                 // Use the first timestamp alt/az for the description
-                let altitude_deg = altaz[[0, 0]];
-                let azimuth_deg = altaz[[0, 1]];
+                let altitude_deg = altitude_vals[0];
+                let azimuth_deg = azimuth_vals[0];
                 self.format_violation_description(altitude_deg, azimuth_deg)
             },
         );
 
         let all_satisfied = violations.is_empty();
-        Ok(ConstraintResult::new(
+        Ok(ConstraintResult::new_with_computed_values(
             violations,
             all_satisfied,
             self.format_name(),
             times_filtered.to_vec(),
+            computed,
         ))
     }
 

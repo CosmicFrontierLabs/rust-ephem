@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Configuration for Earth limb avoidance constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +67,8 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
             extract_observer_ephemeris_data!(ephemeris, time_indices);
         let mut violations = Vec::new();
         let mut current_violation: Option<(usize, f64)> = None;
+        let mut computed_angles = Vec::with_capacity(times_filtered.len());
+        let mut computed_thresholds = Vec::with_capacity(times_filtered.len());
 
         // Earth radius in km
         const EARTH_RADIUS: f64 = 6378.137;
@@ -99,10 +102,12 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
             };
 
             let threshold_deg = earth_ang_radius_deg + self.min_angle_deg + horizon_dip_correction;
+            computed_thresholds.push(threshold_deg);
 
             let center_unit = normalize_vector(&[-obs_pos[0], -obs_pos[1], -obs_pos[2]]);
             let cos_angle = dot_product(&target_vec, &center_unit);
             let angle_deg = cos_angle.clamp(-1.0, 1.0).acos().to_degrees();
+            computed_angles.push(angle_deg);
 
             let is_violation = if let Some(max_angle) = self.max_angle_deg {
                 angle_deg < threshold_deg || angle_deg > max_angle
@@ -146,29 +151,10 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         }
 
         if let Some((start_idx, max_severity)) = current_violation {
-            // Compute threshold at final time for description consistency
-            let obs_pos = [
-                obs_filtered[[times_filtered.len() - 1, 0]],
-                obs_filtered[[times_filtered.len() - 1, 1]],
-                obs_filtered[[times_filtered.len() - 1, 2]],
-            ];
-            let r = vector_magnitude(&obs_pos);
-            let ratio = (EARTH_RADIUS / r).clamp(-1.0, 1.0);
-            let earth_ang_radius_deg = ratio.asin().to_degrees();
-
-            let horizon_dip_correction = if (r - EARTH_RADIUS).abs() < 100.0 {
-                if self.horizon_dip {
-                    let dip_angle_deg = (EARTH_RADIUS / r).clamp(-1.0, 1.0).acos().to_degrees();
-                    let refraction = if self.include_refraction { 0.57 } else { 0.0 };
-                    dip_angle_deg + refraction
-                } else {
-                    0.0
-                }
-            } else {
-                0.0
-            };
-
-            let threshold_deg = earth_ang_radius_deg + self.min_angle_deg + horizon_dip_correction;
+            let threshold_deg = computed_thresholds
+                .last()
+                .copied()
+                .unwrap_or(computed_thresholds[start_idx]);
 
             violations.push(ConstraintViolation {
                 start_time: times_filtered[start_idx].to_rfc3339(),
@@ -186,11 +172,18 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         }
 
         let all_satisfied = violations.is_empty();
-        Ok(ConstraintResult::new(
+        let mut computed = HashMap::new();
+        computed.insert("earth_angle_deg".to_string(), computed_angles.clone());
+        computed.insert(
+            "earth_threshold_deg".to_string(),
+            computed_thresholds.clone(),
+        );
+        Ok(ConstraintResult::new_with_computed_values(
             violations,
             all_satisfied,
             self.name(),
             times_filtered.to_vec(),
+            computed,
         ))
     }
 

@@ -3,6 +3,7 @@ use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, Const
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Configuration for generic solar system body proximity constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]

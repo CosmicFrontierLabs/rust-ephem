@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Configuration for Airmass constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,6 +82,7 @@ impl ConstraintEvaluator for AirmassEvaluator {
     ) -> PyResult<ConstraintResult> {
         // Get alt/az using the proper calculation
         let altaz = radec_to_altaz(target_ra, target_dec, ephemeris, time_indices);
+        let altitude_vals: Vec<f64> = altaz.column(0).iter().copied().collect();
 
         // Extract and filter ephemeris data for times
         let (times_filtered, _) = extract_observer_ephemeris_data!(ephemeris, time_indices);
@@ -99,12 +101,21 @@ impl ConstraintEvaluator for AirmassEvaluator {
             heights_km.to_vec()
         };
 
+        let airmass_values: Vec<f64> = altitude_vals
+            .iter()
+            .zip(heights_filtered.iter())
+            .map(|(&alt, &height)| Self::altitude_to_airmass(alt, height))
+            .collect();
+
+        let mut computed = HashMap::new();
+        computed.insert("altitude_deg".to_string(), altitude_vals.clone());
+        computed.insert("airmass".to_string(), airmass_values.clone());
+        computed.insert("height_km".to_string(), heights_filtered.clone());
+
         let violations = track_violations(
             &times_filtered,
             |i| {
-                let altitude_deg = altaz[[i, 0]];
-                let height_km = heights_filtered[i];
-                let airmass = Self::altitude_to_airmass(altitude_deg, height_km);
+                let airmass = airmass_values[i];
 
                 let mut violated = false;
                 let mut severity = 1.0;
@@ -124,9 +135,9 @@ impl ConstraintEvaluator for AirmassEvaluator {
                 (violated, severity)
             },
             |i, _violated| {
-                let altitude_deg = altaz[[i, 0]];
+                let altitude_deg = altitude_vals[i];
                 let height_km = heights_filtered[i];
-                let airmass = Self::altitude_to_airmass(altitude_deg, height_km);
+                let airmass = airmass_values[i];
 
                 if airmass > self.max_airmass {
                     format!(
@@ -149,11 +160,12 @@ impl ConstraintEvaluator for AirmassEvaluator {
         );
 
         let all_satisfied = violations.is_empty();
-        Ok(ConstraintResult::new(
+        Ok(ConstraintResult::new_with_computed_values(
             violations,
             all_satisfied,
             self.format_name(),
             times_filtered.to_vec(),
+            computed,
         ))
     }
 

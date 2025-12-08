@@ -13,6 +13,7 @@ use crate::utils::time_utils::{python_datetime_to_utc, utc_to_python_datetime};
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::prelude::*;
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::OnceLock;
 
@@ -95,6 +96,10 @@ pub struct ConstraintResult {
     timestamp_cache: OnceLock<Py<PyAny>>,
     /// Cached constraint array (not directly exposed, use getter)
     constraint_array_cache: OnceLock<Py<PyAny>>,
+    /// Cached computed values dictionary
+    computed_values_cache: OnceLock<Py<PyAny>>,
+    /// Computed values exposed to Python (metric name -> per-time values)
+    computed_values: Option<HashMap<String, Vec<f64>>>,
 }
 
 impl ConstraintResult {
@@ -112,6 +117,28 @@ impl ConstraintResult {
             times,
             timestamp_cache: OnceLock::new(),
             constraint_array_cache: OnceLock::new(),
+            computed_values_cache: OnceLock::new(),
+            computed_values: None,
+        }
+    }
+
+    /// Create a new ConstraintResult with explicit computed values
+    pub fn new_with_computed_values(
+        violations: Vec<ConstraintViolation>,
+        all_satisfied: bool,
+        constraint_name: String,
+        times: Vec<DateTime<Utc>>,
+        computed_values: HashMap<String, Vec<f64>>,
+    ) -> Self {
+        Self {
+            violations,
+            all_satisfied,
+            constraint_name,
+            times,
+            timestamp_cache: OnceLock::new(),
+            constraint_array_cache: OnceLock::new(),
+            computed_values_cache: OnceLock::new(),
+            computed_values: Some(computed_values),
         }
     }
 }
@@ -235,6 +262,28 @@ impl ConstraintResult {
         // Cache the result (ignore if already set by another thread)
         let _ = self.timestamp_cache.set(py_obj.clone_ref(py));
 
+        Ok(py_obj)
+    }
+
+    /// Property: dict of computed values that were evaluated for this constraint
+    #[getter]
+    fn computed_values(&self, py: Python) -> PyResult<Py<PyAny>> {
+        if let Some(cached) = self.computed_values_cache.get() {
+            return Ok(cached.clone_ref(py));
+        }
+
+        let dict = pyo3::types::PyDict::new(py);
+        if let Some(values) = &self.computed_values {
+            let np = pyo3::types::PyModule::import(py, "numpy")
+                .map_err(|_| pyo3::exceptions::PyImportError::new_err("numpy is required"))?;
+            for (name, data) in values {
+                let array = np.getattr("array")?.call1((data.clone(),))?;
+                dict.set_item(name, array)?;
+            }
+        }
+
+        let py_obj: Py<PyAny> = dict.into();
+        let _ = self.computed_values_cache.set(py_obj.clone_ref(py));
         Ok(py_obj)
     }
 
@@ -382,20 +431,27 @@ macro_rules! impl_proximity_evaluator {
                     target_ra_dec.1,
                 );
 
+                // Pre-compute angles for all times so we can expose them later
+                let mut angles_deg = Vec::with_capacity(times.len());
+                for i in 0..times.len() {
+                    let body_pos = [$positions[[i, 0]], $positions[[i, 1]], $positions[[i, 2]]];
+                    let obs_pos = [
+                        observer_positions[[i, 0]],
+                        observer_positions[[i, 1]],
+                        observer_positions[[i, 2]],
+                    ];
+                    let angle_deg = crate::utils::vector_math::calculate_angular_separation(
+                        &target_vec,
+                        &body_pos,
+                        &obs_pos,
+                    );
+                    angles_deg.push(angle_deg);
+                }
+
                 let violations = track_violations(
                     times,
                     |i| {
-                        let body_pos = [$positions[[i, 0]], $positions[[i, 1]], $positions[[i, 2]]];
-                        let obs_pos = [
-                            observer_positions[[i, 0]],
-                            observer_positions[[i, 1]],
-                            observer_positions[[i, 2]],
-                        ];
-                        let angle_deg = crate::utils::vector_math::calculate_angular_separation(
-                            &target_vec,
-                            &body_pos,
-                            &obs_pos,
-                        );
+                        let angle_deg = angles_deg[i];
 
                         let is_violated = angle_deg < self.min_angle_deg
                             || self.max_angle_deg.is_some_and(|max| angle_deg > max);
@@ -420,7 +476,18 @@ macro_rules! impl_proximity_evaluator {
                 );
 
                 let all_satisfied = violations.is_empty();
-                ConstraintResult::new(violations, all_satisfied, self.name(), times.to_vec())
+                let mut computed = HashMap::new();
+                computed.insert(
+                    format!("{}_angle_deg", $body_name.to_lowercase()),
+                    angles_deg.clone(),
+                );
+                ConstraintResult::new_with_computed_values(
+                    violations,
+                    all_satisfied,
+                    self.name(),
+                    times.to_vec(),
+                    computed,
+                )
             }
         }
     };

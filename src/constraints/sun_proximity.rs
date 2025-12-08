@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Configuration for Sun proximity constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
