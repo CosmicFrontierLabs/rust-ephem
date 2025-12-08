@@ -1,6 +1,7 @@
 /// Airmass constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
-use chrono::{DateTime, Utc};
+use crate::utils::vector_math::radec_to_unit_vectors_batch;
+use chrono::{DateTime, Timelike, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
@@ -65,19 +66,24 @@ impl ConstraintEvaluator for AirmassEvaluator {
     fn evaluate(
         &self,
         times: &[DateTime<Utc>],
-        _target_ra: f64,
-        _target_dec: f64,
+        target_ra: f64,
+        target_dec: f64,
         _sun_positions: &Array2<f64>,
         _moon_positions: &Array2<f64>,
-        _observer_positions: &Array2<f64>,
+        observer_positions: &Array2<f64>,
     ) -> ConstraintResult {
+        // Convert target to unit vector
+        let target_vec = radec_to_unit_vectors_batch(&[target_ra], &[target_dec]);
+        let target_unit = target_vec.row(0);
+
         let violations = track_violations(
             times,
-            |_i| {
+            |i| {
+                let observer_pos = observer_positions.row(i);
+
                 // Calculate target altitude from observer position
-                // This requires proper coordinate transformation from ICRS to topocentric
-                // For now, we'll use a simplified calculation
-                let altitude_deg = self.calculate_target_altitude_placeholder();
+                let altitude_deg =
+                    self.calculate_target_altitude(&target_unit, &observer_pos, &times[i]);
                 let airmass = Self::altitude_to_airmass(altitude_deg);
 
                 let mut violated = false;
@@ -97,9 +103,29 @@ impl ConstraintEvaluator for AirmassEvaluator {
 
                 (violated, severity)
             },
-            |_, _| {
-                // For now, use a generic description
-                "Airmass constraint violated".to_string()
+            |i, _violated| {
+                let observer_pos = observer_positions.row(i);
+                let altitude_deg =
+                    self.calculate_target_altitude(&target_unit, &observer_pos, &times[i]);
+                let airmass = Self::altitude_to_airmass(altitude_deg);
+
+                if airmass > self.max_airmass {
+                    format!(
+                        "Airmass {:.2} > max {:.2} (altitude: {:.1}°)",
+                        airmass, self.max_airmass, altitude_deg
+                    )
+                } else if let Some(min_airmass) = self.min_airmass {
+                    if airmass < min_airmass {
+                        format!(
+                            "Airmass {:.2} < min {:.2} (altitude: {:.1}°)",
+                            airmass, min_airmass, altitude_deg
+                        )
+                    } else {
+                        "Airmass constraint satisfied".to_string()
+                    }
+                } else {
+                    format!("Airmass: {:.2} (altitude: {:.1}°)", airmass, altitude_deg)
+                }
             },
         );
 
@@ -115,22 +141,29 @@ impl ConstraintEvaluator for AirmassEvaluator {
     fn in_constraint_batch(
         &self,
         times: &[DateTime<Utc>],
-        _target_ras: &[f64],
-        _target_decs: &[f64],
+        target_ras: &[f64],
+        target_decs: &[f64],
         _sun_positions: &Array2<f64>,
         _moon_positions: &Array2<f64>,
-        _observer_positions: &Array2<f64>,
+        observer_positions: &Array2<f64>,
     ) -> PyResult<Array2<bool>> {
-        let n_targets = _target_ras.len();
+        let n_targets = target_ras.len();
         let n_times = times.len();
-        let mut result = Array2::from_elem((n_targets, n_times), false);
+
+        // Convert all targets to unit vectors
+        let target_vecs = radec_to_unit_vectors_batch(target_ras, target_decs);
+
+        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
 
         for i in 0..n_times {
-            // Calculate target altitude from observer position
-            let altitude_deg = self.calculate_target_altitude_placeholder();
-            let airmass = Self::altitude_to_airmass(altitude_deg);
+            let observer_pos = observer_positions.row(i);
 
             for j in 0..n_targets {
+                let target_unit = target_vecs.row(j);
+                let altitude_deg =
+                    self.calculate_target_altitude(&target_unit, &observer_pos, &times[i]);
+                let airmass = Self::altitude_to_airmass(altitude_deg);
+
                 let mut violated = false;
                 if airmass > self.max_airmass {
                     violated = true;
@@ -141,7 +174,7 @@ impl ConstraintEvaluator for AirmassEvaluator {
                     }
                 }
 
-                result[[j, i]] = violated;
+                result[[j, i]] = !violated;
             }
         }
 
@@ -173,11 +206,16 @@ impl AirmassEvaluator {
         &self,
         _target_unit: &ndarray::ArrayView1<f64>,
         _observer_pos: &ndarray::ArrayView1<f64>,
+        _time: &DateTime<Utc>,
     ) -> f64 {
-        // Simplified: assume target position is given in topocentric coordinates
-        // In practice, you'd need to convert from ICRS to topocentric alt/az
-        // For now, return a dummy value that allows testing
-        // TODO: Implement proper alt/az calculation
-        45.0 // 45 degrees altitude for testing
+        // TODO: Implement proper ICRS to topocentric alt/az transformation
+        // For now, return a dummy value that varies with time for testing
+        // In practice, this would involve:
+        // 1. Converting ICRS coordinates to topocentric coordinates
+        // 2. Computing altitude angle from the local horizon
+
+        // Simple time-based variation for testing (45° ± 15°)
+        let hour_of_day = (_time.hour() as f64 + _time.minute() as f64 / 60.0) / 24.0;
+        45.0 + 15.0 * (hour_of_day * 2.0 * std::f64::consts::PI).sin()
     }
 }
