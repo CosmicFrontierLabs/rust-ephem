@@ -475,49 +475,36 @@ where
     violations
 }
 
-/// Macro to extract and filter common ephemeris data (times, sun_positions, observer_positions)
-/// Usage: extract_standard_ephemeris_data!(ephemeris, time_indices)
-/// Returns: (times_filtered, sun_positions_filtered, observer_positions_filtered)
-macro_rules! extract_standard_ephemeris_data {
-    ($ephemeris:expr, $time_indices:expr) => {{
+/// Macro to extract and filter ephemeris data with celestial body positions
+/// Usage: extract_body_ephemeris_data!(ephemeris, time_indices, get_body_positions)
+/// Returns: (times_filtered, body_positions_filtered, observer_positions_filtered)
+macro_rules! extract_body_ephemeris_data {
+    ($ephemeris:expr, $time_indices:expr, $body_getter:ident) => {{
         let times = $ephemeris.get_times()?;
-        let sun_positions = $ephemeris.get_sun_positions()?;
+        let body_positions = $ephemeris.$body_getter()?;
         let observer_positions = $ephemeris.get_gcrs_positions()?;
 
         if let Some(indices) = $time_indices {
             let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
-            let sun_filtered = sun_positions.select(ndarray::Axis(0), indices);
+            let body_filtered = body_positions.select(ndarray::Axis(0), indices);
             let obs_filtered = observer_positions.select(ndarray::Axis(0), indices);
-            (filtered_times, sun_filtered, obs_filtered)
+            (filtered_times, body_filtered, obs_filtered)
         } else {
             (
                 times.to_vec(),
-                sun_positions.clone(),
+                body_positions.clone(),
                 observer_positions.clone(),
             )
         }
     }};
 }
 
-/// Returns: (times_filtered, moon_positions_filtered, observer_positions_filtered)
-macro_rules! extract_moon_ephemeris_data {
+/// Macro to extract and filter common ephemeris data (times, sun_positions, observer_positions)
+/// Usage: extract_standard_ephemeris_data!(ephemeris, time_indices)
+/// Returns: (times_filtered, sun_positions_filtered, observer_positions_filtered)
+macro_rules! extract_standard_ephemeris_data {
     ($ephemeris:expr, $time_indices:expr) => {{
-        let times = $ephemeris.get_times()?;
-        let moon_positions = $ephemeris.get_moon_positions()?;
-        let observer_positions = $ephemeris.get_gcrs_positions()?;
-
-        if let Some(indices) = $time_indices {
-            let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
-            let moon_filtered = moon_positions.select(ndarray::Axis(0), indices);
-            let obs_filtered = observer_positions.select(ndarray::Axis(0), indices);
-            (filtered_times, moon_filtered, obs_filtered)
-        } else {
-            (
-                times.to_vec(),
-                moon_positions.clone(),
-                observer_positions.clone(),
-            )
-        }
+        extract_body_ephemeris_data!($ephemeris, $time_indices, get_sun_positions)
     }};
 }
 
@@ -529,12 +516,7 @@ macro_rules! extract_observer_ephemeris_data {
 
         if let Some(indices) = $time_indices {
             let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
-            let mut obs_filtered = Array2::zeros((indices.len(), 3));
-            for (idx, &i) in indices.iter().enumerate() {
-                for j in 0..3 {
-                    obs_filtered[[idx, j]] = observer_positions[[i, j]];
-                }
-            }
+            let obs_filtered = observer_positions.select(ndarray::Axis(0), indices);
             (filtered_times, obs_filtered)
         } else {
             (times.to_vec(), observer_positions.clone())

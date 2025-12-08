@@ -69,7 +69,7 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
     ) -> PyResult<ConstraintResult> {
         // Extract data from ephemeris
         let (times_slice, moon_positions_slice, observer_positions_slice) =
-            extract_moon_ephemeris_data!(ephemeris, time_indices);
+            extract_body_ephemeris_data!(ephemeris, time_indices, get_moon_positions);
 
         Ok(self.evaluate_common(
             &times_slice,
