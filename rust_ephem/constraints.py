@@ -490,6 +490,25 @@ class MoonPhaseConstraint(RustConstraintMixin):
     )
 
 
+class SAAConstraint(RustConstraintMixin):
+    """South Atlantic Anomaly constraint
+
+    Limits observations based on whether the spacecraft is within a defined
+    geographic region (typically the South Atlantic Anomaly).
+
+    Attributes:
+        type: Always "saa"
+        polygon: List of (longitude, latitude) pairs defining the region boundary
+    """
+
+    type: Literal["saa"] = "saa"
+    polygon: list[tuple[float, float]] = Field(
+        ...,
+        min_length=3,
+        description="List of (longitude, latitude) pairs defining the region boundary in degrees",
+    )
+
+
 class AltAzConstraint(RustConstraintMixin):
     """Altitude/Azimuth constraint
 
@@ -529,6 +548,7 @@ ConstraintConfig = Union[
     DaytimeConstraint,
     AirmassConstraint,
     MoonPhaseConstraint,
+    SAAConstraint,
     AltAzConstraint,
     AndConstraint,
     OrConstraint,

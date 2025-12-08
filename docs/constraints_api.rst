@@ -247,6 +247,40 @@ Factory Methods
       # Moon illumination between 10% and 50%, keep Moon ≥ 30° away
       constraint = Constraint.moon_phase(0.5, min_illumination=0.1, min_distance=30.0)
 
+.. py:staticmethod:: Constraint.saa(polygon)
+
+   Create a South Atlantic Anomaly constraint.
+
+   The South Atlantic Anomaly is a region of reduced magnetic field strength
+   that increases radiation exposure for satellites.
+
+   :param list polygon: List of (longitude, latitude) pairs defining the SAA region boundary
+   :returns: A new Constraint instance
+   :rtype: Constraint
+   :raises ValueError: If polygon has fewer than 3 vertices
+
+   The polygon should be defined as a list of (longitude, latitude) coordinate pairs
+   in degrees, defining the boundary of the region. The polygon is assumed to be
+   closed (first and last points are connected).
+
+   **Example:**
+
+   .. code-block:: python
+
+      # Define SAA region as a polygon
+      saa_polygon = [
+          (-90.0, -50.0),   # Southwest corner
+          (-40.0, -50.0),   # Southeast corner
+          (-40.0, 0.0),     # Northeast corner
+          (-90.0, 0.0),     # Northwest corner
+      ]
+
+      # Avoid SAA region
+      constraint = Constraint.saa(saa_polygon)
+
+      # To require being in SAA region, use NOT
+      require_saa = ~Constraint.saa(saa_polygon)
+
 Logical Combinators
 ^^^^^^^^^^^^^^^^^^^
 
@@ -353,6 +387,10 @@ Logical Combinators
    .. code-block:: json
 
       {"type": "body", "body": "Mars", "min_angle": 15.0}
+
+   .. code-block:: json
+
+      {"type": "saa", "polygon": [[-90.0, -50.0], [-40.0, -50.0], [-40.0, 0.0], [-90.0, 0.0]]}
 
    Logical combinators:
 
@@ -530,6 +568,7 @@ Import all constraint models:
        AirmassConstraint,
        DaytimeConstraint,
        MoonPhaseConstraint,
+       SAAConstraint,
        AndConstraint,
        OrConstraint,
        XorConstraint,
@@ -789,6 +828,45 @@ Moon phase constraint with optional distance filtering.
           min_illumination=0.1,
           min_distance=30.0
       )
+
+SAAConstraint
+^^^^^^^^^^^^^
+
+South Atlantic Anomaly constraint with polygon-defined region.
+
+.. py:class:: SAAConstraint(polygon)
+
+   :param list polygon: List of (longitude, latitude) pairs defining the region boundary (minimum 3 vertices)
+
+   **Attributes:**
+
+   - ``type`` — Always ``"saa"`` (Literal)
+   - ``polygon`` — List of (longitude, latitude) pairs defining the region boundary
+
+   The polygon should be defined as a list of (longitude, latitude) coordinate pairs
+   in degrees, defining the boundary of the region. The polygon is assumed to be
+   closed (first and last points are connected). Uses ray casting algorithm to
+   determine if a point is inside the polygon.
+
+   **Example:**
+
+   .. code-block:: python
+
+      from rust_ephem.constraints import SAAConstraint
+
+      # Define SAA region as a polygon
+      saa_polygon = [
+          (-90.0, -50.0),   # Southwest corner
+          (-40.0, -50.0),   # Southeast corner
+          (-40.0, 0.0),     # Northeast corner
+          (-90.0, 0.0),     # Northwest corner
+      ]
+
+      # Avoid SAA region
+      saa_constraint = SAAConstraint(polygon=saa_polygon)
+
+      # To require being in SAA region, use NOT
+      require_saa = ~SAAConstraint(polygon=saa_polygon)
 
 AndConstraint
 ^^^^^^^^^^^^^

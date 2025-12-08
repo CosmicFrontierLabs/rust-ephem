@@ -11,6 +11,7 @@ use crate::constraints::earth_limb::EarthLimbConfig;
 use crate::constraints::eclipse::EclipseConfig;
 use crate::constraints::moon_phase::MoonPhaseConfig;
 use crate::constraints::moon_proximity::MoonProximityConfig;
+use crate::constraints::saa::SAAConfig;
 use crate::constraints::sun_proximity::SunProximityConfig;
 use crate::ephemeris::ephemeris_common::EphemerisBase;
 use crate::ephemeris::GroundEphemeris;
@@ -510,6 +511,40 @@ impl PyConstraint {
             json_obj["max_distance"] = serde_json::json!(max_dist);
         }
         let config_json = json_obj.to_string();
+
+        Ok(PyConstraint {
+            evaluator: config.to_evaluator(),
+            config_json,
+        })
+    }
+
+    /// Create a South Atlantic Anomaly constraint
+    ///
+    /// The South Atlantic Anomaly is a region of reduced magnetic field strength
+    /// that increases radiation exposure for satellites.
+    ///
+    /// Args:
+    ///     polygon (list of tuples): List of (longitude, latitude) pairs defining the SAA region boundary
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint object
+    #[pyo3(signature=(polygon))]
+    #[staticmethod]
+    fn saa(polygon: Vec<(f64, f64)>) -> PyResult<Self> {
+        if polygon.len() < 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Polygon must have at least 3 vertices",
+            ));
+        }
+
+        let config = SAAConfig {
+            polygon: polygon.clone(),
+        };
+        let config_json = serde_json::json!({
+            "type": "saa",
+            "polygon": polygon
+        })
+        .to_string();
 
         Ok(PyConstraint {
             evaluator: config.to_evaluator(),
@@ -1379,6 +1414,33 @@ fn parse_constraint_json(value: &serde_json::Value) -> PyResult<Box<dyn Constrai
                 enforce_when_below_horizon,
                 moon_visibility,
             };
+            Ok(config.to_evaluator())
+        }
+        "saa" => {
+            let polygon = value
+                .get("polygon")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Missing 'polygon' field"))?
+                .iter()
+                .map(|point| {
+                    let arr = point.as_array().ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err("Polygon points must be arrays")
+                    })?;
+                    if arr.len() != 2 {
+                        return Err(pyo3::exceptions::PyValueError::new_err(
+                            "Polygon points must be [lon, lat] pairs",
+                        ));
+                    }
+                    let lon = arr[0].as_f64().ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err("Longitude must be a number")
+                    })?;
+                    let lat = arr[1].as_f64().ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err("Latitude must be a number")
+                    })?;
+                    Ok((lon, lat))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let config = SAAConfig { polygon };
             Ok(config.to_evaluator())
         }
         "alt_az" => {
