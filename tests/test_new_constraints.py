@@ -320,6 +320,13 @@ class TestMoonPhaseConstraint:
         with pytest.raises(ValidationError):
             MoonPhaseConstraint(max_illumination=0.5, min_distance=-10.0)
 
+    def test_moon_phase_constraint_validation_max_distance_less_than_min(self) -> None:
+        """Test moon phase constraint parameter validation with max_distance < min_distance."""
+        with pytest.raises(ValidationError):
+            MoonPhaseConstraint(
+                max_illumination=0.5, min_distance=50.0, max_distance=20.0
+            )
+
     def test_moon_phase_constraint_validation_invalid_moon_visibility(self) -> None:
         """Test moon phase constraint parameter validation with invalid moon_visibility."""
         with pytest.raises(ValidationError):
