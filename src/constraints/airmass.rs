@@ -42,13 +42,14 @@ impl AirmassEvaluator {
         }
     }
 
-    /// Calculate airmass from altitude angle
-    /// Airmass = 1 / sin(altitude) for altitude > 0
+    /// Calculate airmass from altitude angle and observer height
+    /// Airmass = 1 / sin(altitude) for altitude > 0, corrected for height above sea level
     /// For low altitudes, use more accurate approximations
-    fn altitude_to_airmass(altitude_deg: f64) -> f64 {
+    fn altitude_to_airmass(altitude_deg: f64, height_km: f64) -> f64 {
         let alt_rad = altitude_deg.to_radians();
+        let scale_height_km = 8.5; // Atmospheric scale height in km
 
-        if alt_rad <= 0.0 {
+        let airmass_sea_level = if alt_rad <= 0.0 {
             // Target below horizon - infinite airmass
             f64::INFINITY
         } else if alt_rad < 0.174533 {
@@ -58,6 +59,14 @@ impl AirmassEvaluator {
         } else {
             // Simple secant approximation: airmass ≈ 1 / sin(altitude)
             1.0 / alt_rad.sin()
+        };
+
+        // Correct for observer height above sea level
+        // At higher altitudes, there's less atmosphere above, so airmass is reduced
+        if airmass_sea_level.is_finite() {
+            airmass_sea_level * (-height_km / scale_height_km).exp()
+        } else {
+            airmass_sea_level
         }
     }
 }
@@ -76,11 +85,26 @@ impl ConstraintEvaluator for AirmassEvaluator {
         // Extract and filter ephemeris data for times
         let (times_filtered, _) = extract_observer_ephemeris_data!(ephemeris, time_indices);
 
+        // Get observer heights (ensure caches are computed)
+        ephemeris.compute_latlon_caches()?;
+        let heights_km =
+            ephemeris.data().height_km_cache.get().ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("Height data not available")
+            })?;
+
+        // Filter heights by time indices
+        let heights_filtered: Vec<f64> = if let Some(indices) = time_indices {
+            indices.iter().map(|&i| heights_km[i]).collect()
+        } else {
+            heights_km.to_vec()
+        };
+
         let violations = track_violations(
             &times_filtered,
             |i| {
                 let altitude_deg = altaz[[i, 0]];
-                let airmass = Self::altitude_to_airmass(altitude_deg);
+                let height_km = heights_filtered[i];
+                let airmass = Self::altitude_to_airmass(altitude_deg, height_km);
 
                 let mut violated = false;
                 let mut severity = 1.0;
@@ -101,18 +125,19 @@ impl ConstraintEvaluator for AirmassEvaluator {
             },
             |i, _violated| {
                 let altitude_deg = altaz[[i, 0]];
-                let airmass = Self::altitude_to_airmass(altitude_deg);
+                let height_km = heights_filtered[i];
+                let airmass = Self::altitude_to_airmass(altitude_deg, height_km);
 
                 if airmass > self.max_airmass {
                     format!(
-                        "Airmass {:.2} > max {:.2} (altitude: {:.1}°)",
-                        airmass, self.max_airmass, altitude_deg
+                        "Airmass {:.2} > max {:.2} (altitude: {:.1}°, height: {:.1} km)",
+                        airmass, self.max_airmass, altitude_deg, height_km
                     )
                 } else if let Some(min_airmass) = self.min_airmass {
                     if airmass < min_airmass {
                         format!(
-                            "Airmass {:.2} < min {:.2} (altitude: {:.1}°)",
-                            airmass, min_airmass, altitude_deg
+                            "Airmass {:.2} < min {:.2} (altitude: {:.1}°, height: {:.1} km)",
+                            airmass, min_airmass, altitude_deg, height_km
                         )
                     } else {
                         "Airmass constraint satisfied".to_string()
@@ -142,6 +167,20 @@ impl ConstraintEvaluator for AirmassEvaluator {
         // Extract and filter ephemeris data
         let (times_filtered, _) = extract_observer_ephemeris_data!(ephemeris, time_indices);
 
+        // Get observer heights (ensure caches are computed)
+        ephemeris.compute_latlon_caches()?;
+        let heights_km =
+            ephemeris.data().height_km_cache.get().ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("Height data not available")
+            })?;
+
+        // Filter heights by time indices
+        let heights_filtered: Vec<f64> = if let Some(indices) = time_indices {
+            indices.iter().map(|&i| heights_km[i]).collect()
+        } else {
+            heights_km.to_vec()
+        };
+
         let n_targets = target_ras.len();
         let n_times = times_filtered.len();
 
@@ -153,7 +192,8 @@ impl ConstraintEvaluator for AirmassEvaluator {
 
             for i in 0..n_times {
                 let altitude_deg = altaz[[i, 0]];
-                let airmass = Self::altitude_to_airmass(altitude_deg);
+                let height_km = heights_filtered[i];
+                let airmass = Self::altitude_to_airmass(altitude_deg, height_km);
 
                 let mut violated = false;
                 if airmass > self.max_airmass {
