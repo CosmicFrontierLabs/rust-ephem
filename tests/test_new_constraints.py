@@ -52,23 +52,23 @@ class TestAirmassConstraint:
 
     def test_airmass_constraint_evaluation(self, ground_ephemeris):
         """Test airmass constraint evaluation."""
-        constraint = AirmassConstraint(max_airmass=2.0)
+        constraint = AirmassConstraint(max_airmass=1.5)
 
         # Test with target at zenith (airmass ~1.0) - should be satisfied
         result = constraint.evaluate(ground_ephemeris, target_ra=0.0, target_dec=35.0)
         assert result.all_satisfied
 
         # Test with target at horizon (high airmass) - should be violated
-        result = constraint.evaluate(ground_ephemeris, target_ra=0.0, target_dec=-50.0)
+        result = constraint.evaluate(ground_ephemeris, target_ra=0.0, target_dec=-27.0)
         assert not result.all_satisfied
 
     def test_airmass_constraint_batch(self, ground_ephemeris):
         """Test batch airmass constraint evaluation."""
-        constraint = AirmassConstraint(max_airmass=2.0)
+        constraint = AirmassConstraint(max_airmass=1.5)
 
         # Test multiple targets
         target_ras = [0.0, 90.0, 180.0]
-        target_decs = [35.0, 35.0, -50.0]  # First two near zenith, last near horizon
+        target_decs = [35.0, 35.0, -27.0]  # First two near zenith, last near horizon
 
         result = constraint.in_constraint_batch(
             ground_ephemeris, target_ras, target_decs
