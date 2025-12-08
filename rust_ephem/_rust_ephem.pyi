@@ -900,6 +900,19 @@ class TLEEphemeris(Ephemeris):
         """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
         ...
 
+    def calculate_airmass(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> list[float]:
+        """Calculate airmass for given RA/Dec (deg) at selected times.
+
+        Returns airmass values (1.0 at zenith, ~2.0 at 30° altitude, infinity below horizon).
+        Accounts for observer height using atmospheric scale height correction.
+        """
+        ...
+
 class SPICEEphemeris(Ephemeris):
     """Ephemeris calculator using SPICE kernels"""
 
@@ -1090,6 +1103,19 @@ class SPICEEphemeris(Ephemeris):
         time_indices: list[int] | None = None,
     ) -> npt.NDArray[np.float64]:
         """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
+        ...
+
+    def calculate_airmass(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> list[float]:
+        """Calculate airmass for given RA/Dec (deg) at selected times.
+
+        Returns airmass values (1.0 at zenith, ~2.0 at 30° altitude, infinity below horizon).
+        Accounts for observer height using atmospheric scale height correction.
+        """
         ...
 
     @property
@@ -1424,6 +1450,19 @@ class OEMEphemeris(Ephemeris):
         """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
         ...
 
+    def calculate_airmass(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> list[float]:
+        """Calculate airmass for given RA/Dec (deg) at selected times.
+
+        Returns airmass values (1.0 at zenith, ~2.0 at 30° altitude, infinity below horizon).
+        Accounts for observer height using atmospheric scale height correction.
+        """
+        ...
+
     @property
     def sun_radius(self) -> Any:  # Returns astropy.units.Quantity
         """
@@ -1635,6 +1674,19 @@ class GroundEphemeris(Ephemeris):
         time_indices: list[int] | None = None,
     ) -> npt.NDArray[np.float64]:
         """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
+        ...
+
+    def calculate_airmass(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> list[float]:
+        """Calculate airmass for given RA/Dec (deg) at selected times.
+
+        Returns airmass values (1.0 at zenith, ~2.0 at 30° altitude, infinity below horizon).
+        Accounts for observer height using atmospheric scale height correction.
+        """
         ...
 
     @property

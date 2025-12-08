@@ -16,6 +16,7 @@
 
 use chrono::{DateTime, TimeZone, Utc};
 use ndarray::Array2;
+use numpy::IntoPyArray;
 use pyo3::{prelude::*, types::PyDateTime};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -337,6 +338,56 @@ impl OEMEphemeris {
     fn get_body(&self, py: Python, body: &str) -> PyResult<Py<PyAny>> {
         let modules = crate::utils::to_skycoord::AstropyModules::import(py)?;
         <Self as EphemerisBase>::get_body(self, py, &modules, body)
+    }
+
+    /// Convert RA/Dec to Altitude/Azimuth for this OEM ephemeris
+    /// Returns NumPy array (N,2): [altitude_deg, azimuth_deg]
+    #[pyo3(signature = (ra_deg, dec_deg, time_indices=None))]
+    fn radec_to_altaz(
+        &self,
+        py: Python,
+        ra_deg: f64,
+        dec_deg: f64,
+        time_indices: Option<Vec<usize>>,
+    ) -> PyResult<Py<PyAny>> {
+        let arr = <Self as crate::ephemeris::ephemeris_common::EphemerisBase>::radec_to_altaz(
+            self,
+            ra_deg,
+            dec_deg,
+            time_indices.as_deref(),
+        );
+        Ok(arr.into_pyarray(py).into())
+    }
+
+    /// Calculate airmass for a target at given RA/Dec
+    ///
+    /// Airmass represents the relative path length through Earth's atmosphere compared to
+    /// zenith observation. Lower values indicate better observing conditions.
+    ///
+    /// # Arguments
+    /// * `ra_deg` - Right ascension in degrees (ICRS/J2000)
+    /// * `dec_deg` - Declination in degrees (ICRS/J2000)
+    /// * `time_indices` - Optional indices into ephemeris times (default: all times)
+    ///
+    /// # Returns
+    /// List of airmass values:
+    /// - 1.0 at zenith (directly overhead)
+    /// - ~2.0 at 30° altitude
+    /// - ~5.8 at 10° altitude
+    /// - Infinity for targets below horizon
+    #[pyo3(signature = (ra_deg, dec_deg, time_indices=None))]
+    fn calculate_airmass(
+        &self,
+        ra_deg: f64,
+        dec_deg: f64,
+        time_indices: Option<Vec<usize>>,
+    ) -> PyResult<Vec<f64>> {
+        <Self as crate::ephemeris::ephemeris_common::EphemerisBase>::calculate_airmass(
+            self,
+            ra_deg,
+            dec_deg,
+            time_indices.as_deref(),
+        )
     }
 }
 

@@ -278,6 +278,32 @@ impl TLEEphemeris {
         Ok(result.into_pyarray(py).into())
     }
 
+    /// Calculate airmass for a target at given RA/Dec
+    ///
+    /// Airmass represents the relative path length through Earth's atmosphere compared to
+    /// zenith observation. Lower values indicate better observing conditions.
+    ///
+    /// # Arguments
+    /// * `ra_deg` - Right ascension in degrees (ICRS/J2000)
+    /// * `dec_deg` - Declination in degrees (ICRS/J2000)
+    /// * `time_indices` - Optional indices into ephemeris times (default: all times)
+    ///
+    /// # Returns
+    /// List of airmass values:
+    /// - 1.0 at zenith (directly overhead)
+    /// - ~2.0 at 30° altitude
+    /// - ~5.8 at 10° altitude
+    /// - Infinity for targets below horizon
+    #[pyo3(signature = (ra_deg, dec_deg, time_indices=None))]
+    fn calculate_airmass(
+        &self,
+        ra_deg: f64,
+        dec_deg: f64,
+        time_indices: Option<Vec<usize>>,
+    ) -> PyResult<Vec<f64>> {
+        EphemerisBase::calculate_airmass(self, ra_deg, dec_deg, time_indices.as_deref())
+    }
+
     #[getter]
     fn gcrs_pv(&self, py: Python) -> Option<Py<PositionVelocityData>> {
         self.get_gcrs_pv(py)

@@ -1,6 +1,6 @@
 /// Airmass constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
-use crate::utils::celestial::radec_to_altaz;
+use crate::utils::celestial::{altitude_to_airmass, radec_to_altaz};
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
@@ -41,34 +41,6 @@ impl AirmassEvaluator {
             None => format!("AirmassConstraint(max={:.2})", self.max_airmass),
         }
     }
-
-    /// Calculate airmass from altitude angle and observer height
-    /// Airmass = 1 / sin(altitude) for altitude > 0, corrected for height above sea level
-    /// For low altitudes, use more accurate approximations
-    fn altitude_to_airmass(altitude_deg: f64, height_km: f64) -> f64 {
-        let alt_rad = altitude_deg.to_radians();
-        let scale_height_km = 8.5; // Atmospheric scale height in km
-
-        let airmass_sea_level = if alt_rad <= 0.0 {
-            // Target below horizon - infinite airmass
-            f64::INFINITY
-        } else if alt_rad < 0.174533 {
-            // 10 degrees
-            // Use Rozenberg approximation for low elevations
-            1.0 / (alt_rad.sin() + 0.025 * (alt_rad + 0.15 * alt_rad.powi(2)).exp().ln())
-        } else {
-            // Simple secant approximation: airmass ≈ 1 / sin(altitude)
-            1.0 / alt_rad.sin()
-        };
-
-        // Correct for observer height above sea level
-        // At higher altitudes, there's less atmosphere above, so airmass is reduced
-        if airmass_sea_level.is_finite() {
-            airmass_sea_level * (-height_km / scale_height_km).exp()
-        } else {
-            airmass_sea_level
-        }
-    }
 }
 
 impl ConstraintEvaluator for AirmassEvaluator {
@@ -104,7 +76,7 @@ impl ConstraintEvaluator for AirmassEvaluator {
             |i| {
                 let altitude_deg = altaz[[i, 0]];
                 let height_km = heights_filtered[i];
-                let airmass = Self::altitude_to_airmass(altitude_deg, height_km);
+                let airmass = altitude_to_airmass(altitude_deg, height_km);
 
                 let mut violated = false;
                 let mut severity = 1.0;
@@ -126,7 +98,7 @@ impl ConstraintEvaluator for AirmassEvaluator {
             |i, _violated| {
                 let altitude_deg = altaz[[i, 0]];
                 let height_km = heights_filtered[i];
-                let airmass = Self::altitude_to_airmass(altitude_deg, height_km);
+                let airmass = altitude_to_airmass(altitude_deg, height_km);
 
                 if airmass > self.max_airmass {
                     format!(
@@ -193,7 +165,7 @@ impl ConstraintEvaluator for AirmassEvaluator {
             for i in 0..n_times {
                 let altitude_deg = altaz[[i, 0]];
                 let height_km = heights_filtered[i];
-                let airmass = Self::altitude_to_airmass(altitude_deg, height_km);
+                let airmass = altitude_to_airmass(altitude_deg, height_km);
 
                 let mut violated = false;
                 if airmass > self.max_airmass {
