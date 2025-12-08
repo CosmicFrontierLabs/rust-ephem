@@ -559,39 +559,34 @@ macro_rules! extract_time_data {
     }};
 }
 
-/// Helper macro to extract latitude and longitude vectors from ephemeris
-macro_rules! extract_lat_lon_vectors {
-    ($ephemeris:expr) => {{
-        use numpy::{PyArray1, PyArrayMethods};
-        use pyo3::Python;
-
-        Python::attach(|py| -> pyo3::PyResult<(Vec<f64>, Vec<f64>)> {
-            let lat_opt = $ephemeris.get_latitude_deg(py)?;
-            let lon_opt = $ephemeris.get_longitude_deg(py)?;
-
-            let lat_array = lat_opt.ok_or_else(|| {
-                pyo3::exceptions::PyRuntimeError::new_err("Latitude data not available")
-            })?;
-            let lon_array = lon_opt.ok_or_else(|| {
-                pyo3::exceptions::PyRuntimeError::new_err("Longitude data not available")
-            })?;
-
-            let lat_bound = lat_array.downcast_bound::<PyArray1<f64>>(py)?;
-            let lon_bound = lon_array.downcast_bound::<PyArray1<f64>>(py)?;
-
-            let lats = lat_bound.readonly().as_slice()?.to_vec();
-            let lons = lon_bound.readonly().as_slice()?.to_vec();
-
-            Ok((lats, lons))
-        })?
-    }};
-}
-
 /// Returns: (times_filtered, lats_filtered, lons_filtered)
 /// Usage: extract_latlon_data!(ephemeris, time_indices)
 macro_rules! extract_latlon_data {
     ($ephemeris:expr, $time_indices:expr) => {{
-        let (lats_vec, lons_vec) = extract_lat_lon_vectors!($ephemeris);
+        let (lats_vec, lons_vec) = {
+            use numpy::{PyArray1, PyArrayMethods};
+            use pyo3::Python;
+
+            Python::attach(|py| -> pyo3::PyResult<(Vec<f64>, Vec<f64>)> {
+                let lat_opt = $ephemeris.get_latitude_deg(py)?;
+                let lon_opt = $ephemeris.get_longitude_deg(py)?;
+
+                let lat_array = lat_opt.ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("Latitude data not available")
+                })?;
+                let lon_array = lon_opt.ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("Longitude data not available")
+                })?;
+
+                let lat_bound = lat_array.downcast_bound::<PyArray1<f64>>(py)?;
+                let lon_bound = lon_array.downcast_bound::<PyArray1<f64>>(py)?;
+
+                let lats = lat_bound.readonly().as_slice()?.to_vec();
+                let lons = lon_bound.readonly().as_slice()?.to_vec();
+
+                Ok((lats, lons))
+            })?
+        };
         let times = $ephemeris.get_times()?;
 
         let (times_slice, lats_slice, lons_slice) = if let Some(indices) = $time_indices {
