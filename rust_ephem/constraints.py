@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Literal, Union, cast
 
 import numpy as np
 import numpy.typing as npt
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter, model_validator
 
 from .ephemeris import Ephemeris
 
@@ -444,6 +444,12 @@ class AirmassConstraint(RustConstraintMixin):
     )
     max_airmass: float = Field(..., ge=1.0, description="Maximum allowed airmass")
 
+    @model_validator(mode="after")
+    def validate_airmass_values(self) -> Self:
+        if self.min_airmass is not None and self.max_airmass < self.min_airmass:
+            raise ValueError("max_airmass must be >= min_airmass")
+        return self
+
 
 class MoonPhaseConstraint(RustConstraintMixin):
     """Moon phase constraint
@@ -488,6 +494,21 @@ class MoonPhaseConstraint(RustConstraintMixin):
         default="full",
         description="Moon visibility requirement: 'full' (only when fully above horizon) or 'partial' (when any part visible)",
     )
+
+    @model_validator(mode="after")
+    def validate_moon_phase_values(self) -> Self:
+        if (
+            self.min_illumination is not None
+            and self.max_illumination < self.min_illumination
+        ):
+            raise ValueError("max_illumination must be >= min_illumination")
+        if (
+            self.min_distance is not None
+            and self.max_distance is not None
+            and self.max_distance < self.min_distance
+        ):
+            raise ValueError("max_distance must be >= min_distance")
+        return self
 
 
 class SAAConstraint(RustConstraintMixin):

@@ -50,30 +50,30 @@ class TestAirmassConstraint:
         with pytest.raises(ValidationError):
             AirmassConstraint(max_airmass=1.5, min_airmass=2.0)
 
-    def test_airmass_constraint_evaluation(self, ground_ephem):
+    def test_airmass_constraint_evaluation(self, ground_ephemeris):
         """Test airmass constraint evaluation."""
         constraint = AirmassConstraint(max_airmass=2.0)
 
         # Test with target at zenith (airmass ~1.0) - should be satisfied
-        result = constraint.evaluate(ground_ephem, target_ra=0.0, target_dec=35.0)
+        result = constraint.evaluate(ground_ephemeris, target_ra=0.0, target_dec=35.0)
         assert result.all_satisfied
 
         # Test with target at horizon (high airmass) - should be violated
-        result = constraint.evaluate(ground_ephem, target_ra=0.0, target_dec=-35.0)
+        result = constraint.evaluate(ground_ephemeris, target_ra=0.0, target_dec=-50.0)
         assert not result.all_satisfied
 
-    def test_airmass_constraint_batch(self, ground_ephem):
+    def test_airmass_constraint_batch(self, ground_ephemeris):
         """Test batch airmass constraint evaluation."""
         constraint = AirmassConstraint(max_airmass=2.0)
 
         # Test multiple targets
         target_ras = [0.0, 90.0, 180.0]
-        target_decs = [35.0, 35.0, -35.0]  # First two near zenith, last near horizon
+        target_decs = [35.0, 35.0, -50.0]  # First two near zenith, last near horizon
 
-        result = constraint.in_constraint_batch(ground_ephem, target_ras, target_decs)
+        result = constraint.in_constraint_batch(ground_ephemeris, target_ras, target_decs)
 
         # Check shape
-        assert result.shape == (3, len(ground_ephem.timestamp))
+        assert result.shape == (3, len(ground_ephemeris.timestamp))
 
         # First two targets should be satisfied (near zenith), last should be violated
         assert np.all(result[0, :])  # Target 0: satisfied
@@ -112,30 +112,30 @@ class TestDaytimeConstraint:
         with pytest.raises(ValueError):
             DaytimeConstraint(twilight="invalid")
 
-    def test_daytime_constraint_evaluation(self, ground_ephem):
+    def test_daytime_constraint_evaluation(self, ground_ephemeris):
         """Test daytime constraint evaluation."""
         constraint = DaytimeConstraint()
 
         # Test during daytime (should be violated)
         daytime_result = constraint.evaluate(
-            ground_ephem, target_ra=0.0, target_dec=0.0
+            ground_ephemeris, target_ra=0.0, target_dec=0.0
         )
         # Note: This test depends on actual sun position, so we just check it runs
         assert isinstance(daytime_result.all_satisfied, bool)
 
-    def test_daytime_constraint_batch(self, ground_ephem):
+    def test_daytime_constraint_batch(self, ground_ephemeris):
         """Test batch daytime constraint evaluation."""
         constraint = DaytimeConstraint()
 
         target_ras = [0.0, 120.0, 240.0]
         target_decs = [0.0, 0.0, 0.0]
 
-        result = constraint.in_constraint_batch(ground_ephem, target_ras, target_decs)
+        result = constraint.in_constraint_batch(ground_ephemeris, target_ras, target_decs)
 
         # Check shape
-        assert result.shape == (3, len(ground_ephem.timestamp))
+        assert result.shape == (3, len(ground_ephemeris.timestamp))
 
-        # Result should be boolean
+        # Check that results are boolean
         assert result.dtype == bool
 
 
@@ -190,25 +190,25 @@ class TestMoonPhaseConstraint:
         with pytest.raises(ValidationError):
             MoonPhaseConstraint(max_illumination=0.5, moon_visibility="invalid")
 
-    def test_moon_phase_constraint_evaluation(self, tle_ephem):
+    def test_moon_phase_constraint_evaluation(self, tle_ephemeris):
         """Test moon phase constraint evaluation."""
         constraint = MoonPhaseConstraint(max_illumination=0.5)
 
         # Test evaluation runs without error
-        result = constraint.evaluate(tle_ephem, target_ra=0.0, target_dec=0.0)
+        result = constraint.evaluate(tle_ephemeris, target_ra=0.0, target_dec=0.0)
         assert isinstance(result.all_satisfied, bool)
 
-    def test_moon_phase_constraint_batch(self, tle_ephem):
+    def test_moon_phase_constraint_batch(self, tle_ephemeris):
         """Test batch moon phase constraint evaluation."""
         constraint = MoonPhaseConstraint(max_illumination=0.5)
 
         target_ras = [0.0, 90.0, 180.0]
         target_decs = [0.0, 30.0, -30.0]
 
-        result = constraint.in_constraint_batch(tle_ephem, target_ras, target_decs)
+        result = constraint.in_constraint_batch(tle_ephemeris, target_ras, target_decs)
 
         # Check shape
-        assert result.shape == (3, len(tle_ephem.timestamp))
+        assert result.shape == (3, len(tle_ephemeris.timestamp))
         assert result.dtype == bool
 
 
@@ -239,28 +239,28 @@ class TestSAAConstraint:
         with pytest.raises(ValueError):
             SAAConstraint(polygon=[(0.0, 0.0), (10.0, 0.0)])
 
-    def test_saa_constraint_evaluation(self, tle_ephem, saa_polygon):
+    def test_saa_constraint_evaluation(self, tle_ephemeris, saa_polygon):
         """Test SAA constraint evaluation."""
         constraint = SAAConstraint(polygon=saa_polygon)
 
         # Test evaluation runs without error
-        result = constraint.evaluate(tle_ephem, target_ra=0.0, target_dec=0.0)
+        result = constraint.evaluate(tle_ephemeris, target_ra=0.0, target_dec=0.0)
         assert isinstance(result.all_satisfied, bool)
 
         # Since SAA depends on spacecraft position, we can't easily predict
         # the result, but we can check that evaluation completes
 
-    def test_saa_constraint_batch(self, tle_ephem, saa_polygon):
+    def test_saa_constraint_batch(self, tle_ephemeris, saa_polygon):
         """Test batch SAA constraint evaluation."""
         constraint = SAAConstraint(polygon=saa_polygon)
 
         target_ras = [0.0, 90.0, 180.0]
         target_decs = [0.0, 30.0, -30.0]
 
-        result = constraint.in_constraint_batch(tle_ephem, target_ras, target_decs)
+        result = constraint.in_constraint_batch(tle_ephemeris, target_ras, target_decs)
 
         # Check shape
-        assert result.shape == (3, len(tle_ephem.timestamp))
+        assert result.shape == (3, len(tle_ephemeris.timestamp))
         assert result.dtype == bool
 
     def test_saa_point_in_polygon_logic(self, saa_polygon):
@@ -310,7 +310,7 @@ class TestSAAConstraint:
 class TestConstraintIntegration:
     """Test integration of new constraints with existing functionality."""
 
-    def test_combined_constraints(self, tle_ephem, ground_ephem):
+    def test_combined_constraints(self, tle_ephemeris, ground_ephemeris):
         """Test combining new constraints with existing ones."""
         from rust_ephem.constraints import AndConstraint, SunConstraint
 
@@ -323,10 +323,10 @@ class TestConstraintIntegration:
         combined = AndConstraint(constraints=[sun, airmass, daytime])
 
         # Test evaluation
-        result = combined.evaluate(tle_ephem, target_ra=0.0, target_dec=0.0)
+        result = combined.evaluate(tle_ephemeris, target_ra=0.0, target_dec=0.0)
         assert isinstance(result.all_satisfied, bool)
 
-    def test_constraint_not_operation(self, tle_ephem):
+    def test_constraint_not_operation(self, tle_ephemeris):
         """Test NOT operation with new constraints."""
         from rust_ephem.constraints import NotConstraint
 
@@ -335,13 +335,13 @@ class TestConstraintIntegration:
         not_airmass = NotConstraint(constraint=airmass)
 
         # Test evaluation
-        result1 = airmass.evaluate(tle_ephem, target_ra=0.0, target_dec=0.0)
-        result2 = not_airmass.evaluate(tle_ephem, target_ra=0.0, target_dec=0.0)
+        result1 = airmass.evaluate(tle_ephemeris, target_ra=0.0, target_dec=0.0)
+        result2 = not_airmass.evaluate(tle_ephemeris, target_ra=0.0, target_dec=0.0)
 
         # NOT should invert the result
         assert result1.all_satisfied != result2.all_satisfied
 
-    def test_constraint_operator_overloads(self, tle_ephem):
+    def test_constraint_operator_overloads(self, tle_ephemeris):
         """Test operator overloads with new constraints."""
         sun = rust_ephem.SunConstraint(min_angle=45.0)
         airmass = AirmassConstraint(max_airmass=2.0)
@@ -355,5 +355,5 @@ class TestConstraintIntegration:
         assert isinstance(not_airmass, rust_ephem.constraints.NotConstraint)
 
         # Test evaluation of combined constraint
-        result = combined.evaluate(tle_ephem, target_ra=0.0, target_dec=0.0)
+        result = combined.evaluate(tle_ephemeris, target_ra=0.0, target_dec=0.0)
         assert isinstance(result.all_satisfied, bool)

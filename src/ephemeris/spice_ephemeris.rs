@@ -1,5 +1,6 @@
 use anise::prelude::*;
 use ndarray::Array2;
+use numpy::IntoPyArray;
 use pyo3::{prelude::*, types::PyDateTime};
 use std::sync::OnceLock;
 
@@ -198,6 +199,25 @@ impl SPICEEphemeris {
         self.get_longitude_rad(py)
     }
 
+    /// Convert RA/Dec to Altitude/Azimuth for this SPICE ephemeris
+    /// Returns NumPy array (N,2): [altitude_deg, azimuth_deg]
+    #[pyo3(signature = (ra_deg, dec_deg, time_indices=None))]
+    fn radec_to_altaz(
+        &self,
+        py: Python,
+        ra_deg: f64,
+        dec_deg: f64,
+        time_indices: Option<Vec<usize>>,
+    ) -> PyResult<Py<PyAny>> {
+        let arr = <Self as crate::ephemeris::ephemeris_common::EphemerisBase>::radec_to_altaz(
+            self,
+            ra_deg,
+            dec_deg,
+            time_indices.as_deref(),
+        );
+        Ok(arr.into_pyarray(py).into())
+    }
+
     #[getter]
     fn height(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         self.get_height(py)
@@ -388,5 +408,14 @@ impl EphemerisBase for SPICEEphemeris {
 
     fn set_itrs_skycoord_cache(&self, skycoord: Py<PyAny>) -> Result<(), Py<PyAny>> {
         self.itrs_skycoord.set(skycoord)
+    }
+
+    fn radec_to_altaz(
+        &self,
+        ra_deg: f64,
+        dec_deg: f64,
+        time_indices: Option<&[usize]>,
+    ) -> Array2<f64> {
+        crate::utils::celestial::radec_to_altaz(ra_deg, dec_deg, self, time_indices)
     }
 }

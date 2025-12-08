@@ -301,6 +301,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "erfa-sys"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3328d3ae80520ed9b844e5b5994315c6876fee8b707594c008fac4418be85389"
+dependencies = [
+ "pkg-config",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1162,13 +1171,14 @@ dependencies = [
 
 [[package]]
 name = "rust_ephem"
-version = "0.1.13-dev.9"
+version = "0.1.14-dev.11"
 dependencies = [
  "anise",
  "chrono",
  "dirs",
  "dotenvy",
  "erfa",
+ "erfa-sys",
  "hifitime",
  "md5",
  "ndarray",

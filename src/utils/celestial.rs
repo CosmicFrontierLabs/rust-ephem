@@ -2,11 +2,15 @@ use chrono::{DateTime, Datelike, Timelike, Utc};
 use erfa::earth::position_velocity_00;
 use erfa::prenut::precession_matrix_06;
 use erfa::vectors_and_matrices::mat_mul_pvec;
-use ndarray::Array2;
+use ndarray::{Array2, s};
 use std::sync::Arc;
 
+use crate::ephemeris::ephemeris_common::EphemerisBase;
+use crate::utils::conversions::{convert_frames, Frame};
+use crate::utils::geo::ecef_to_geodetic_deg;
 use crate::utils::math_utils::transpose_matrix;
-use crate::utils::time_utils::datetime_to_jd_tt;
+use crate::utils::time_utils::{datetime_to_jd_tt, datetime_to_jd_utc};
+use crate::utils::{eop_provider, ut1_provider};
 use crate::{is_planetary_ephemeris_initialized, utils::config::*};
 
 /// Calculate Sun positions for multiple timestamps
@@ -256,20 +260,7 @@ pub fn calculate_moon_positions_meeus(times: &[DateTime<Utc>]) -> Array2<f64> {
 /// * `target_id` - NAIF ID of the target body (e.g., 301 for Moon, 10 for Sun)
 /// * `center_id` - NAIF ID of the center body (e.g., 399 for Earth, 0 for Solar System Barycenter)
 ///
-/// # Returns
-/// Array2 with shape (N, 6) containing [x, y, z, vx, vy, vz] in J2000/GCRS frame for each timestamp
-/// Positions are in km, velocities in km/s
-///
-/// # Panics
-/// Panics if:
-/// - The SPK file cannot be loaded
-/// - The SPK file doesn't contain the requested body data
-/// - Time conversion fails
-///
-/// # Example
-/// ```rust,ignore
-/// use chrono::{DateTime, Utc};
-/// let times = vec![DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z").unwrap().into()];
+/// Panics if the ephemeris has no GCRS position data
 /// // Moon relative to Earth
 /// let moon_positions = calculate_body_positions_spice(&times, 301, 399);
 /// // Sun relative to Earth
@@ -429,6 +420,132 @@ pub fn calculate_body_positions_spice_result(
     Ok(out)
 }
 
+/// Convert RA/Dec to Altitude/Azimuth for given ephemeris times
+///
+/// This function calculates the topocentric altitude and azimuth of a celestial target
+/// as seen from the observer locations defined in the ephemeris.
+///
+/// # Arguments
+/// * `ra_deg` - Right ascension in degrees
+/// * `dec_deg` - Declination in degrees  
+/// * `ephemeris` - Ephemeris containing observer positions and times
+/// * `time_indices` - Optional indices into ephemeris times to evaluate (default: all times)
+///
+/// # Returns
+/// Array2 with shape (N, 2) containing [altitude_deg, azimuth_deg] for each time
+/// where N is the number of selected times
+///
+/// # Panics
+/// Panics if the ephemeris has no GCRS position data
+
+pub fn radec_to_altaz(
+    ra_deg: f64,
+    dec_deg: f64,
+    ephemeris: &dyn EphemerisBase,
+    time_indices: Option<&[usize]>,
+) -> Array2<f64> {
+    // Get ephemeris data
+    let times = ephemeris.get_times().expect("Ephemeris must have times");
+    let gcrs_data = ephemeris.data().gcrs.as_ref().expect("Ephemeris must have GCRS data");
+    
+    // Filter times and GCRS data if indices provided
+    let (times_filtered, gcrs_filtered) = if let Some(indices) = time_indices {
+        let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+        let obs_filtered = gcrs_data.select(ndarray::Axis(0), indices);
+        (filtered_times, obs_filtered)
+    } else {
+        (times.to_vec(), gcrs_data.clone())
+    };
+    
+    let n_times = times_filtered.len();
+    let mut result = Array2::<f64>::zeros((n_times, 2));
+
+    // Convert observer positions from GCRS to ITRS (convert_frames expects 6 columns: pos + vel)
+    let itrs_data = convert_frames(&gcrs_filtered, &times_filtered, Frame::GCRS, Frame::ITRS, true);
+
+    // Convert ITRS positions to geodetic coordinates (extract position columns only)
+    let positions_slice = itrs_data.slice(s![.., 0..3]);
+    let positions_array = positions_slice.to_owned();
+    let (lats_deg, lons_deg, heights_km) = ecef_to_geodetic_deg(&positions_array);
+
+    // Precompute target coordinates in radians
+    let ra_rad = ra_deg.to_radians();
+    let dec_rad = dec_deg.to_radians();
+
+    for i in 0..n_times {
+        let lat_rad = lats_deg[i].to_radians();
+        let lon_rad = lons_deg[i].to_radians();
+        let height_m = heights_km[i] * 1000.0;
+        let time = &times_filtered[i];
+
+        let (utc1, utc2) = datetime_to_jd_utc(time);
+        let dut1 = ut1_provider::get_ut1_utc_offset(time);
+        let (xp, yp) = eop_provider::get_polar_motion_rad(time);
+
+        // Use ERFA apparent-place routine for full topocentric alt/az (pressure=0: no refraction)
+        let mut aob = 0.0;
+        let mut zob = 0.0;
+        let mut hob = 0.0;
+        let mut dob = 0.0;
+        let mut rob = 0.0;
+        let mut eo = 0.0;
+
+        let status = unsafe {
+            erfa_sys::eraAtco13(
+                ra_rad,
+                dec_rad,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                utc1,
+                utc2,
+                dut1,
+                lon_rad,
+                lat_rad,
+                height_m,
+                xp,
+                yp,
+                0.0,
+                0.0,
+                0.0,
+                0.55,
+                &mut aob,
+                &mut zob,
+                &mut hob,
+                &mut dob,
+                &mut rob,
+                &mut eo,
+            )
+        };
+
+        if status < 0 {
+            panic!("ERFA eraAtco13 failed with status {status}");
+        }
+
+        let alt_deg = (std::f64::consts::FRAC_PI_2 - zob).to_degrees();
+        let mut az_deg = aob.to_degrees();
+        if az_deg < 0.0 {
+            az_deg += 360.0;
+        }
+
+        result[[i, 0]] = alt_deg;
+        result[[i, 1]] = az_deg;
+    }
+
+    result
+}
+
+/// Convert CIRS RA/Dec to horizontal coordinates (altitude/azimuth)
+///
+/// # Arguments
+/// * `lat_deg` - Observer latitude in degrees
+/// * `lst_deg` - Local Sidereal Time in degrees
+/// * `ra_deg` - Right ascension in CIRS frame (degrees)
+/// * `dec_deg` - Declination in CIRS frame (degrees)
+///
+/// # Returns
+/// (altitude_deg, azimuth_deg)
 /// Compatibility stub for old calculate_moon_positions_spice function
 ///
 /// This function maintains backward compatibility with code that used the old

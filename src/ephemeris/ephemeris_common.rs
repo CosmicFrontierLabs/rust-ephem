@@ -220,6 +220,21 @@ pub trait EphemerisBase {
     /// This must be implemented by each ephemeris type to store in its OnceLock
     fn set_itrs_skycoord_cache(&self, skycoord: Py<PyAny>) -> Result<(), Py<PyAny>>;
 
+    /// Convert RA/Dec to Altitude/Azimuth for this ephemeris
+    ///
+    /// This function calculates the topocentric altitude and azimuth of a celestial target
+    /// as seen from the observer locations defined in this ephemeris.
+    ///
+    /// # Arguments
+    /// * `ra_deg` - Right ascension in degrees
+    /// * `dec_deg` - Declination in degrees
+    /// * `time_indices` - Optional indices into ephemeris times to evaluate (default: all times)
+    ///
+    /// # Returns
+    /// Array2 with shape (N, 2) containing [altitude_deg, azimuth_deg] for each time
+    /// where N is the number of selected times
+    fn radec_to_altaz(&self, ra_deg: f64, dec_deg: f64, time_indices: Option<&[usize]>) -> Array2<f64>;
+
     /// Get ITRS position and velocity in PositionVelocityData format
     fn get_itrs_pv(&self, py: Python) -> Option<Py<PositionVelocityData>> {
         self.get_itrs_data()

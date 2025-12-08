@@ -784,6 +784,15 @@ class TLEEphemeris(Ephemeris):
         """Observer geocentric velocity (alias for GCRS velocity)"""
         ...
 
+    def radec_to_altaz(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> npt.NDArray[np.float64]:
+        """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
+        ...
+
 class SPICEEphemeris(Ephemeris):
     """Ephemeris calculator using SPICE kernels"""
 
@@ -965,6 +974,15 @@ class SPICEEphemeris(Ephemeris):
         Returns velocity in km/s, compatible with astropy's GCRS frame obsgeovel parameter.
         Shape: (N, 3) where N is the number of timestamps.
         """
+        ...
+
+    def radec_to_altaz(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> npt.NDArray[np.float64]:
+        """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
         ...
 
     @property
@@ -1290,6 +1308,15 @@ class OEMEphemeris(Ephemeris):
         """
         ...
 
+    def radec_to_altaz(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> npt.NDArray[np.float64]:
+        """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
+        ...
+
     @property
     def sun_radius(self) -> Any:  # Returns astropy.units.Quantity
         """
@@ -1492,6 +1519,15 @@ class GroundEphemeris(Ephemeris):
     @property
     def gcrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object in GCRS frame for ground location"""
+        ...
+
+    def radec_to_altaz(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> npt.NDArray[np.float64]:
+        """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
         ...
 
     @property

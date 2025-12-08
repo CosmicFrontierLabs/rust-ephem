@@ -658,4 +658,13 @@ impl EphemerisBase for OEMEphemeris {
     fn set_itrs_skycoord_cache(&self, skycoord: Py<PyAny>) -> Result<(), Py<PyAny>> {
         self.itrs_skycoord.set(skycoord)
     }
+
+    fn radec_to_altaz(
+        &self,
+        ra_deg: f64,
+        dec_deg: f64,
+        time_indices: Option<&[usize]>,
+    ) -> Array2<f64> {
+        crate::utils::celestial::radec_to_altaz(ra_deg, dec_deg, self, time_indices)
+    }
 }

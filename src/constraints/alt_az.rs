@@ -1,6 +1,5 @@
 /// Altitude/Azimuth constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
-use crate::utils::vector_math::radec_to_unit_vectors_batch;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
@@ -71,21 +70,17 @@ impl ConstraintEvaluator for AltAzEvaluator {
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
         // Extract and filter ephemeris data
-        let (times_filtered, obs_filtered) =
+        let (times_filtered, _obs_filtered) =
             extract_observer_ephemeris_data!(ephemeris, time_indices);
-        // Convert target to unit vector
-        let target_vec = radec_to_unit_vectors_batch(&[target_ra], &[target_dec]);
-        let target_unit = target_vec.row(0);
+
+        // Compute alt/az for this target at selected times
+        let altaz = ephemeris.radec_to_altaz(target_ra, target_dec, time_indices);
 
         let violations = track_violations(
             &times_filtered,
             |i| {
-                let observer_pos = obs_filtered.row(i);
-
-                // Calculate target altitude and azimuth from observer position
-                // This requires proper coordinate transformation from ICRS to topocentric
-                let (altitude_deg, azimuth_deg) =
-                    self.calculate_alt_az(&target_unit, &observer_pos);
+                let altitude_deg = altaz[[i, 0]];
+                let azimuth_deg = altaz[[i, 1]];
 
                 // Check altitude constraints
                 let mut violated = false;
@@ -137,10 +132,9 @@ impl ConstraintEvaluator for AltAzEvaluator {
                 (violated, severity)
             },
             |_, _violated| {
-                // For description, we need to recalculate - this is a limitation of the closure pattern
-                // In practice, you'd want to cache these calculations
-                let (altitude_deg, azimuth_deg) =
-                    self.calculate_alt_az(&target_unit, &obs_filtered.row(0));
+                // Use the first timestamp alt/az for the description
+                let altitude_deg = altaz[[0, 0]];
+                let azimuth_deg = altaz[[0, 1]];
                 self.format_violation_description(altitude_deg, azimuth_deg)
             },
         );
@@ -161,24 +155,24 @@ impl ConstraintEvaluator for AltAzEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
-        // Extract and filter ephemeris data
-        let (_times_filtered, obs_filtered) =
-            extract_observer_ephemeris_data!(ephemeris, time_indices);
-
         let n_targets = target_ras.len();
-        let n_times = obs_filtered.nrows();
+        let altaz_list: Vec<_> = target_ras
+            .iter()
+            .zip(target_decs.iter())
+            .map(|(&ra, &dec)| ephemeris.radec_to_altaz(ra, dec, time_indices))
+            .collect();
+
+        let n_times = altaz_list
+            .first()
+            .map(|a| a.nrows())
+            .unwrap_or(0);
+
         let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
 
-        // Convert all targets to unit vectors
-        let target_vecs = radec_to_unit_vectors_batch(target_ras, target_decs);
-
         for i in 0..n_times {
-            let observer_pos = obs_filtered.row(i);
-
-            for j in 0..n_targets {
-                let target_unit = target_vecs.row(j);
-                let (altitude_deg, azimuth_deg) =
-                    self.calculate_alt_az(&target_unit, &observer_pos);
+            for (j, altaz) in altaz_list.iter().enumerate() {
+                let altitude_deg = altaz[[i, 0]];
+                let azimuth_deg = altaz[[i, 1]];
 
                 let mut violated = false;
 
@@ -231,21 +225,7 @@ impl ConstraintEvaluator for AltAzEvaluator {
 }
 
 impl AltAzEvaluator {
-    /// Calculate target's altitude and azimuth from observer position
-    /// This is a simplified calculation - in practice you'd need proper
-    /// astronomical coordinate transformations from ICRS to topocentric
-    fn calculate_alt_az(
-        &self,
-        _target_unit: &ndarray::ArrayView1<f64>,
-        _observer_pos: &ndarray::ArrayView1<f64>,
-    ) -> (f64, f64) {
-        // Simplified: assume target position is given in topocentric coordinates
-        // In practice, you'd need to convert from ICRS to topocentric alt/az
-        // For now, return dummy values that allow testing
-        // TODO: Implement proper alt/az calculation
-        (45.0, 180.0) // 45° altitude, 180° azimuth (south) for testing
-    }
-
+    /// Format a description of the violation based on altitude and azimuth
     fn format_violation_description(&self, altitude_deg: f64, azimuth_deg: f64) -> String {
         let mut reasons = Vec::new();
 

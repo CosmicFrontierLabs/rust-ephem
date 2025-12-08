@@ -49,8 +49,14 @@ classifiers = [
 dependencies = ["numpy>=1.16", "pydantic>=2.12.4"]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0", "astropy>=5.0", "pluggy>=1.6.0"]
+test = [
+    "pytest>=7.0",
+    "astropy>=5.0",
+    "pluggy>=1.6.0",
+    "pytest-cov>=7.0.0",
+]
 docs = ["sphinx>=6.0", "sphinx-rtd-theme", "maturin>=1.0"]
+dev = ["mypy", "ruff", "pre-commit"]
 all = [
     "pytest>=7.0",
     "astropy>=5.0",

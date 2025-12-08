@@ -120,6 +120,26 @@ impl GroundEphemeris {
         self.longitude
     }
 
+    /// Convert RA/Dec to Altitude/Azimuth for this ground site
+    ///
+    /// Returns a NumPy array with shape (N, 2) of [altitude_deg, azimuth_deg]
+    #[pyo3(signature = (ra_deg, dec_deg, time_indices=None))]
+    fn radec_to_altaz(
+        &self,
+        py: Python,
+        ra_deg: f64,
+        dec_deg: f64,
+        time_indices: Option<Vec<usize>>,
+    ) -> PyResult<Py<PyAny>> {
+        let result = <Self as crate::ephemeris::ephemeris_common::EphemerisBase>::radec_to_altaz(
+            self,
+            ra_deg,
+            dec_deg,
+            time_indices.as_deref(),
+        );
+        Ok(result.into_pyarray(py).into())
+    }
+
     /// Get the input height in meters (constructor argument)
     #[getter]
     fn input_height(&self) -> f64 {
@@ -425,5 +445,14 @@ impl EphemerisBase for GroundEphemeris {
 
     fn set_itrs_skycoord_cache(&self, skycoord: Py<PyAny>) -> Result<(), Py<PyAny>> {
         self.itrs_skycoord.set(skycoord)
+    }
+
+    fn radec_to_altaz(
+        &self,
+        ra_deg: f64,
+        dec_deg: f64,
+        time_indices: Option<&[usize]>,
+    ) -> Array2<f64> {
+        crate::utils::celestial::radec_to_altaz(ra_deg, dec_deg, self, time_indices)
     }
 }
