@@ -136,6 +136,7 @@ ConstraintConfig = (
     | DaytimeConstraint
     | AirmassConstraint
     | MoonPhaseConstraint
+    | SAAConstraint
     | AltAzConstraint
     | AndConstraint
     | OrConstraint
