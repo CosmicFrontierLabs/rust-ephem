@@ -2,10 +2,14 @@
 ///
 /// This module provides the Python API for constraint evaluation,
 /// including JSON-based configuration and convenient factory methods.
+use crate::constraints::airmass::AirmassConfig;
+use crate::constraints::alt_az::AltAzConfig;
 use crate::constraints::body_proximity::{BodyProximityConfig, BodyProximityEvaluator};
 use crate::constraints::core::*;
+use crate::constraints::daytime::{DaytimeConfig, TwilightType};
 use crate::constraints::earth_limb::EarthLimbConfig;
 use crate::constraints::eclipse::EclipseConfig;
+use crate::constraints::moon_phase::MoonPhaseConfig;
 use crate::constraints::moon_proximity::MoonProximityConfig;
 use crate::constraints::sun_proximity::SunProximityConfig;
 use crate::ephemeris::ephemeris_common::EphemerisBase;
@@ -285,6 +289,258 @@ impl PyConstraint {
             json_obj["max_angle"] = serde_json::json!(max);
         }
         json_obj["horizon_dip"] = serde_json::json!(horizon_dip);
+        let config_json = json_obj.to_string();
+
+        Ok(PyConstraint {
+            evaluator: config.to_evaluator(),
+            config_json,
+        })
+    }
+
+    /// Create a Daytime constraint
+    ///
+    /// Args:
+    ///     allow_daytime (bool): Whether to allow daytime observations (true) or require nighttime (false)
+    ///     twilight (str, optional): Twilight definition - "civil", "nautical", "astronomical", or "none" (default: "civil")
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint object
+    ///
+    /// Twilight definitions:
+    ///     - "civil": Civil twilight (-6° below horizon)
+    ///     - "nautical": Nautical twilight (-12° below horizon)
+    ///     - "astronomical": Astronomical twilight (-18° below horizon)
+    ///     - "none": Strict daytime only (Sun above horizon)
+    #[pyo3(signature=(allow_daytime, twilight="civil"))]
+    #[staticmethod]
+    fn daytime(allow_daytime: bool, twilight: &str) -> PyResult<Self> {
+        let twilight_type = match twilight.to_lowercase().as_str() {
+            "civil" => TwilightType::Civil,
+            "nautical" => TwilightType::Nautical,
+            "astronomical" => TwilightType::Astronomical,
+            "none" => TwilightType::None,
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "twilight must be one of: 'civil', 'nautical', 'astronomical', 'none'",
+                ));
+            }
+        };
+
+        let config = DaytimeConfig {
+            allow_daytime,
+            twilight: twilight_type,
+        };
+
+        let twilight_str = match config.twilight {
+            TwilightType::Civil => "civil",
+            TwilightType::Nautical => "nautical",
+            TwilightType::Astronomical => "astronomical",
+            TwilightType::None => "none",
+        };
+
+        let config_json = serde_json::json!({
+            "type": "daytime",
+            "allow_daytime": allow_daytime,
+            "twilight": twilight_str
+        })
+        .to_string();
+
+        Ok(PyConstraint {
+            evaluator: config.to_evaluator(),
+            config_json,
+        })
+    }
+
+    /// Create an Airmass constraint
+    ///
+    /// Args:
+    ///     max_airmass (float): Maximum allowed airmass (lower = better observing conditions)
+    ///     min_airmass (float, optional): Minimum allowed airmass (for excluding very high targets)
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint object
+    ///
+    /// Airmass represents the optical path length through the atmosphere:
+    /// - Airmass = 1 at zenith (best conditions)
+    /// - Airmass = 2 at 30° altitude
+    /// - Airmass = 3 at ~19° altitude
+    /// - Higher airmass = worse observing conditions
+    #[pyo3(signature=(max_airmass, min_airmass=None))]
+    #[staticmethod]
+    fn airmass(max_airmass: f64, min_airmass: Option<f64>) -> PyResult<Self> {
+        if max_airmass <= 1.0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "max_airmass must be greater than 1.0",
+            ));
+        }
+
+        if let Some(min) = min_airmass {
+            if min <= 1.0 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "min_airmass must be greater than 1.0",
+                ));
+            }
+            if min >= max_airmass {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "min_airmass must be less than max_airmass",
+                ));
+            }
+        }
+
+        let config = AirmassConfig {
+            max_airmass,
+            min_airmass,
+        };
+
+        let mut json_obj = serde_json::json!({
+            "type": "airmass",
+            "max_airmass": max_airmass
+        });
+        if let Some(min) = min_airmass {
+            json_obj["min_airmass"] = serde_json::json!(min);
+        }
+        let config_json = json_obj.to_string();
+
+        Ok(PyConstraint {
+            evaluator: config.to_evaluator(),
+            config_json,
+        })
+    }
+
+    /// Create a Moon phase constraint
+    ///
+    /// Args:
+    ///     max_illumination (float): Maximum allowed Moon illumination fraction (0.0 = new moon, 1.0 = full moon)
+    ///     min_illumination (float, optional): Minimum allowed Moon illumination fraction
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint object
+    ///
+    /// Moon illumination affects observing conditions:
+    /// - 0.0: New moon (dark, best for deep observations)
+    /// - 0.5: Quarter moon
+    /// - 1.0: Full moon (bright, worst for deep observations)
+    #[pyo3(signature=(max_illumination, min_illumination=None))]
+    #[staticmethod]
+    fn moon_phase(max_illumination: f64, min_illumination: Option<f64>) -> PyResult<Self> {
+        if !(0.0..=1.0).contains(&max_illumination) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "max_illumination must be between 0.0 and 1.0",
+            ));
+        }
+
+        if let Some(min) = min_illumination {
+            if !(0.0..=1.0).contains(&min) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "min_illumination must be between 0.0 and 1.0",
+                ));
+            }
+            if min >= max_illumination {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "min_illumination must be less than max_illumination",
+                ));
+            }
+        }
+
+        let config = MoonPhaseConfig {
+            max_illumination,
+            min_illumination,
+        };
+
+        let mut json_obj = serde_json::json!({
+            "type": "moon_phase",
+            "max_illumination": max_illumination
+        });
+        if let Some(min) = min_illumination {
+            json_obj["min_illumination"] = serde_json::json!(min);
+        }
+        let config_json = json_obj.to_string();
+
+        Ok(PyConstraint {
+            evaluator: config.to_evaluator(),
+            config_json,
+        })
+    }
+
+    /// Create an Altitude/Azimuth constraint
+    ///
+    /// Args:
+    ///     min_altitude (float): Minimum allowed altitude in degrees (0 = horizon, 90 = zenith)
+    ///     max_altitude (float, optional): Maximum allowed altitude in degrees
+    ///     min_azimuth (float, optional): Minimum allowed azimuth in degrees (0 = North, 90 = East)
+    ///     max_azimuth (float, optional): Maximum allowed azimuth in degrees
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint object
+    ///
+    /// Altitude and azimuth define the target's position in the sky:
+    /// - Altitude: Angular distance from horizon (0° = horizon, 90° = zenith)
+    /// - Azimuth: Angular distance from North, measured eastward (0° = North, 90° = East, etc.)
+    ///
+    /// For azimuth ranges that cross North (e.g., 330° to 30°), specify min_azimuth > max_azimuth.
+    #[pyo3(signature=(min_altitude, max_altitude=None, min_azimuth=None, max_azimuth=None))]
+    #[staticmethod]
+    fn alt_az(
+        min_altitude: f64,
+        max_altitude: Option<f64>,
+        min_azimuth: Option<f64>,
+        max_azimuth: Option<f64>,
+    ) -> PyResult<Self> {
+        if !(0.0..=90.0).contains(&min_altitude) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "min_altitude must be between 0 and 90 degrees",
+            ));
+        }
+
+        if let Some(max_alt) = max_altitude {
+            if !(0.0..=90.0).contains(&max_alt) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_altitude must be between 0 and 90 degrees",
+                ));
+            }
+            if max_alt <= min_altitude {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_altitude must be greater than min_altitude",
+                ));
+            }
+        }
+
+        if let Some(min_az) = min_azimuth {
+            if !(0.0..=360.0).contains(&min_az) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "min_azimuth must be between 0 and 360 degrees",
+                ));
+            }
+        }
+
+        if let Some(max_az) = max_azimuth {
+            if !(0.0..=360.0).contains(&max_az) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_azimuth must be between 0 and 360 degrees",
+                ));
+            }
+        }
+
+        let config = AltAzConfig {
+            min_altitude,
+            max_altitude,
+            min_azimuth,
+            max_azimuth,
+        };
+
+        let mut json_obj = serde_json::json!({
+            "type": "alt_az",
+            "min_altitude": min_altitude
+        });
+        if let Some(max_alt) = max_altitude {
+            json_obj["max_altitude"] = serde_json::json!(max_alt);
+        }
+        if let Some(min_az) = min_azimuth {
+            json_obj["min_azimuth"] = serde_json::json!(min_az);
+        }
+        if let Some(max_az) = max_azimuth {
+            json_obj["max_azimuth"] = serde_json::json!(max_az);
+        }
         let config_json = json_obj.to_string();
 
         Ok(PyConstraint {
@@ -1003,6 +1259,80 @@ fn parse_constraint_json(value: &serde_json::Value) -> PyResult<Box<dyn Constrai
                 body,
                 min_angle,
                 max_angle,
+            };
+            Ok(config.to_evaluator())
+        }
+        "daytime" => {
+            let allow_daytime = value
+                .get("allow_daytime")
+                .and_then(|v| v.as_bool())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("Missing 'allow_daytime' field")
+                })?;
+            let twilight = value
+                .get("twilight")
+                .and_then(|v| v.as_str())
+                .unwrap_or("civil");
+            let twilight_type = match twilight {
+                "civil" => TwilightType::Civil,
+                "nautical" => TwilightType::Nautical,
+                "astronomical" => TwilightType::Astronomical,
+                "none" => TwilightType::None,
+                _ => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Unknown twilight type: {twilight}"
+                    )))
+                }
+            };
+            let config = DaytimeConfig {
+                allow_daytime,
+                twilight: twilight_type,
+            };
+            Ok(config.to_evaluator())
+        }
+        "airmass" => {
+            let max_airmass = value
+                .get("max_airmass")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("Missing 'max_airmass' field")
+                })?;
+            let min_airmass = value.get("min_airmass").and_then(|v| v.as_f64());
+            let config = AirmassConfig {
+                min_airmass,
+                max_airmass,
+            };
+            Ok(config.to_evaluator())
+        }
+        "moon_phase" => {
+            let max_illumination = value
+                .get("max_illumination")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("Missing 'max_illumination' field")
+                })?;
+            let min_illumination = value.get("min_illumination").and_then(|v| v.as_f64());
+            let config = MoonPhaseConfig {
+                min_illumination,
+                max_illumination,
+            };
+            Ok(config.to_evaluator())
+        }
+        "alt_az" => {
+            let min_altitude = value
+                .get("min_altitude")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("Missing 'min_altitude' field")
+                })?;
+            let max_altitude = value.get("max_altitude").and_then(|v| v.as_f64());
+            let min_azimuth = value.get("min_azimuth").and_then(|v| v.as_f64());
+            let max_azimuth = value.get("max_azimuth").and_then(|v| v.as_f64());
+            let config = AltAzConfig {
+                min_altitude,
+                max_altitude,
+                min_azimuth,
+                max_azimuth,
             };
             Ok(config.to_evaluator())
         }

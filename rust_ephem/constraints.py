@@ -409,6 +409,98 @@ class NotConstraint(RustConstraintMixin):
     constraint: ConstraintConfig = Field(..., description="Constraint to negate")
 
 
+class DaytimeConstraint(RustConstraintMixin):
+    """Daytime visibility constraint
+
+    Controls whether observations are allowed during daytime hours,
+    with configurable twilight definitions.
+
+    Attributes:
+        type: Always "daytime"
+        allow_daytime: Whether daytime observations are allowed
+        twilight: Twilight definition ("civil", "nautical", "astronomical", "none")
+    """
+
+    type: Literal["daytime"] = "daytime"
+    allow_daytime: bool = Field(
+        ..., description="Whether daytime observations are allowed"
+    )
+    twilight: Literal["civil", "nautical", "astronomical", "none"] = Field(
+        default="civil", description="Twilight definition for daytime boundary"
+    )
+
+
+class AirmassConstraint(RustConstraintMixin):
+    """Airmass constraint
+
+    Limits observations based on atmospheric airmass (secant of zenith angle).
+    Lower airmass values indicate better observing conditions.
+
+    Attributes:
+        type: Always "airmass"
+        min_airmass: Minimum allowed airmass (≥1.0), optional
+        max_airmass: Maximum allowed airmass (>0.0)
+    """
+
+    type: Literal["airmass"] = "airmass"
+    min_airmass: float | None = Field(
+        default=None, ge=1.0, description="Minimum allowed airmass"
+    )
+    max_airmass: float = Field(..., gt=0.0, description="Maximum allowed airmass")
+
+
+class MoonPhaseConstraint(RustConstraintMixin):
+    """Moon phase constraint
+
+    Limits observations based on Moon illumination fraction.
+
+    Attributes:
+        type: Always "moon_phase"
+        min_illumination: Minimum allowed illumination fraction (0.0-1.0), optional
+        max_illumination: Maximum allowed illumination fraction (0.0-1.0)
+    """
+
+    type: Literal["moon_phase"] = "moon_phase"
+    min_illumination: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Minimum allowed illumination fraction",
+    )
+    max_illumination: float = Field(
+        ..., ge=0.0, le=1.0, description="Maximum allowed illumination fraction"
+    )
+
+
+class AltAzConstraint(RustConstraintMixin):
+    """Altitude/Azimuth constraint
+
+    Limits observations based on target's altitude and azimuth angles
+    from the observer's location.
+
+    Attributes:
+        type: Always "alt_az"
+        min_altitude: Minimum allowed altitude in degrees (0-90)
+        max_altitude: Maximum allowed altitude in degrees (0-90), optional
+        min_azimuth: Minimum allowed azimuth in degrees (0-360), optional
+        max_azimuth: Maximum allowed azimuth in degrees (0-360), optional
+    """
+
+    type: Literal["alt_az"] = "alt_az"
+    min_altitude: float = Field(
+        ..., ge=0.0, le=90.0, description="Minimum allowed altitude in degrees"
+    )
+    max_altitude: float | None = Field(
+        default=None, ge=0.0, le=90.0, description="Maximum allowed altitude in degrees"
+    )
+    min_azimuth: float | None = Field(
+        default=None, ge=0.0, le=360.0, description="Minimum allowed azimuth in degrees"
+    )
+    max_azimuth: float | None = Field(
+        default=None, ge=0.0, le=360.0, description="Maximum allowed azimuth in degrees"
+    )
+
+
 # Union type for all constraints
 ConstraintConfig = Union[
     SunConstraint,
@@ -416,6 +508,10 @@ ConstraintConfig = Union[
     EclipseConstraint,
     EarthLimbConstraint,
     BodyConstraint,
+    DaytimeConstraint,
+    AirmassConstraint,
+    MoonPhaseConstraint,
+    AltAzConstraint,
     AndConstraint,
     OrConstraint,
     XorConstraint,
