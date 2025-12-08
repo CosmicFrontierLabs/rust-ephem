@@ -3,6 +3,7 @@ use erfa::earth::position_velocity_00;
 use erfa::prenut::precession_matrix_06;
 use erfa::vectors_and_matrices::mat_mul_pvec;
 use ndarray::{s, Array2};
+use sofars::astro::atco13;
 use std::sync::Arc;
 
 use crate::ephemeris::ephemeris_common::EphemerisBase;
@@ -491,25 +492,12 @@ pub fn radec_to_altaz(
         let dut1 = ut1_provider::get_ut1_utc_offset(time);
         let (xp, yp) = eop_provider::get_polar_motion_rad(time);
 
-        // Use ERFA apparent-place routine for full topocentric alt/az (pressure=0: no refraction)
-        let mut aob = 0.0;
-        let mut zob = 0.0;
-        let mut hob = 0.0;
-        let mut dob = 0.0;
-        let mut rob = 0.0;
-        let mut eo = 0.0;
-
-        let status = unsafe {
-            erfa_sys::eraAtco13(
-                ra_rad, dec_rad, 0.0, 0.0, 0.0, 0.0, utc1, utc2, dut1, lon_rad, lat_rad, height_m,
-                xp, yp, 0.0, 0.0, 0.0, 0.55, &mut aob, &mut zob, &mut hob, &mut dob, &mut rob,
-                &mut eo,
-            )
-        };
-
-        if status < 0 {
-            panic!("ERFA eraAtco13 failed with status {status}");
-        }
+        // Use SOFA apparent-place routine for full topocentric alt/az (pressure=0: no refraction)
+        let (aob, zob, _hob, _dob, _rob, _eo) = atco13(
+            ra_rad, dec_rad, 0.0, 0.0, 0.0, 0.0, utc1, utc2, dut1, lon_rad, lat_rad, height_m, xp,
+            yp, 0.0, 0.0, 0.0, 0.55,
+        )
+        .expect("SOFA atco13 failed");
 
         let alt_deg = (std::f64::consts::FRAC_PI_2 - zob).to_degrees();
         let mut az_deg = aob.to_degrees();

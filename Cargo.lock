@@ -301,15 +301,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "erfa-sys"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3328d3ae80520ed9b844e5b5994315c6876fee8b707594c008fac4418be85389"
-dependencies = [
- "pkg-config",
-]
-
-[[package]]
 name = "find-msvc-tools"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1178,7 +1169,6 @@ dependencies = [
  "dirs",
  "dotenvy",
  "erfa",
- "erfa-sys",
  "hifitime",
  "md5",
  "ndarray",
@@ -1189,6 +1179,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sgp4",
+ "sofars",
  "ureq",
 ]
 
@@ -1360,6 +1351,12 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "sofars"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ee31d13039e0d9e06713c8222e982744d1686861fff7a7b213aac429b69e8ae"
 
 [[package]]
 name = "stable_deref_trait"
