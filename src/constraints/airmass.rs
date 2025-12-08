@@ -194,17 +194,9 @@ impl ConstraintEvaluator for AirmassEvaluator {
 }
 
 impl AirmassEvaluator {
-    /// Placeholder for target altitude calculation
-    /// TODO: Implement proper alt/az calculation from ICRS to topocentric coordinates
-    #[allow(dead_code)]
-    fn calculate_target_altitude_placeholder(&self) -> f64 {
-        45.0 // 45 degrees altitude for testing
-    }
-
     /// Calculate target's altitude angle from observer position
     /// This is a simplified calculation - in practice you'd need proper
     /// astronomical coordinate transformations from ICRS to topocentric
-    #[allow(dead_code)]
     fn calculate_target_altitude(
         &self,
         target_unit: &ndarray::ArrayView1<f64>,
