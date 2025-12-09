@@ -50,16 +50,6 @@ class PositionVelocityData:
         """Unit for velocity (always 'km/s')"""
         ...
 
-class ConstraintViolation:
-    """A single violation of a constraint within a time window"""
-
-    start_time: str
-    end_time: str
-    max_severity: float
-    description: str
-
-    def __repr__(self) -> str: ...
-
 class VisibilityWindow:
     """A time window when the target is not constrained (visible)"""
 
@@ -70,57 +60,6 @@ class VisibilityWindow:
     @property
     def duration_seconds(self) -> float:
         """Duration of the visibility window in seconds"""
-        ...
-
-class ConstraintResult:
-    """Result of constraint evaluation containing all violations"""
-
-    violations: list[ConstraintViolation]
-    all_satisfied: bool
-    constraint_name: str
-
-    def __repr__(self) -> str: ...
-    def total_violation_duration(self) -> float:
-        """Get the total duration of violations in seconds"""
-        ...
-
-    @property
-    def constraint_array(self) -> npt.NDArray[np.bool_]:
-        """
-        Array of booleans for each timestamp where True means constraint satisfied.
-
-        This property is cached for performance - repeated access is ~90x faster.
-        """
-        ...
-
-    @property
-    def timestamp(self) -> npt.NDArray[np.object_]:
-        """
-        Array of Python datetime objects for each evaluation time.
-
-        Returns a NumPy array (not a list) for efficient indexing.
-        This property is cached for performance - repeated access is ~90x faster.
-        """
-        ...
-
-    @property
-    def visibility(self) -> list[VisibilityWindow]:
-        """Array of visibility windows when target is not constrained"""
-        ...
-
-    def in_constraint(self, time: datetime) -> bool:
-        """
-        Check if the target is in-constraint at a given time.
-
-        Args:
-            time: A Python datetime object (naive datetimes are treated as UTC)
-
-        Returns:
-            True if constraint is satisfied at the given time
-
-        Raises:
-            ValueError: If time is not in the evaluated timestamps
-        """
         ...
 
 class Constraint:
@@ -453,7 +392,7 @@ class Constraint:
         target_dec: float,
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-    ) -> ConstraintResult:
+    ) -> Any:
         """
         Evaluate constraint against ephemeris data.
 

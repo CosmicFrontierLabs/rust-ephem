@@ -18,7 +18,64 @@ from pydantic import BaseModel, Field, TypeAdapter, model_validator
 from .ephemeris import Ephemeris
 
 if TYPE_CHECKING:
-    from rust_ephem import ConstraintResult
+    pass
+
+
+class ConstraintViolation(BaseModel):
+    """A time window where a constraint was violated."""
+
+    start_time: str = Field(
+        ..., description="Start time of violation window (ISO 8601)"
+    )
+    end_time: str = Field(..., description="End time of violation window (ISO 8601)")
+    max_severity: float = Field(
+        ..., description="Maximum severity of violation in this window"
+    )
+    description: str = Field(
+        ..., description="Human-readable description of the violation"
+    )
+
+
+class ConstraintResult(BaseModel):
+    """Result of constraint evaluation containing all violations."""
+
+    violations: list[ConstraintViolation] = Field(
+        default_factory=list, description="List of violation windows"
+    )
+    all_satisfied: bool = Field(
+        ..., description="Whether constraint was satisfied for entire time range"
+    )
+    constraint_name: str = Field(..., description="Name/description of the constraint")
+    timestamps: list[datetime] = Field(
+        default_factory=list, description="Evaluation timestamps"
+    )
+    constraint_array: list[bool] = Field(
+        default_factory=list, description="Boolean array indicating violations"
+    )
+
+    def total_violation_duration(self) -> float:
+        """Get the total duration of violations in seconds."""
+        total_seconds = 0.0
+        for violation in self.violations:
+            start = datetime.fromisoformat(violation.start_time.replace("Z", "+00:00"))
+            end = datetime.fromisoformat(violation.end_time.replace("Z", "+00:00"))
+            total_seconds += (end - start).total_seconds()
+        return total_seconds
+
+    def in_constraint(self, time: datetime) -> bool:
+        """Check if target is in-constraint at a given time."""
+        time_str = time.isoformat().replace("+00:00", "Z")
+        for violation in self.violations:
+            if violation.start_time <= time_str <= violation.end_time:
+                return False
+        return True
+
+    def __repr__(self) -> str:
+        return f"ConstraintResult(constraint='{self.constraint_name}', violations={len(self.violations)}, all_satisfied={self.all_satisfied})"
+
+
+if TYPE_CHECKING:
+    pass
 
 
 class RustConstraintMixin(BaseModel):
@@ -52,12 +109,31 @@ class RustConstraintMixin(BaseModel):
             from rust_ephem import Constraint
 
             self._rust_constraint = Constraint.from_json(self.model_dump_json())
-        return self._rust_constraint.evaluate(
+
+        # Get the Rust result
+        rust_result = self._rust_constraint.evaluate(
             ephemeris,
             target_ra,
             target_dec,
             times,
             indices,
+        )
+
+        # Convert to Pydantic model
+        return ConstraintResult(
+            violations=[
+                ConstraintViolation(
+                    start_time=v.start_time,
+                    end_time=v.end_time,
+                    max_severity=v.max_severity,
+                    description=v.description,
+                )
+                for v in rust_result.violations
+            ],
+            all_satisfied=rust_result.all_satisfied,
+            constraint_name=rust_result.constraint_name,
+            timestamps=list(rust_result.timestamp),
+            constraint_array=list(rust_result.constraint_array),
         )
 
     def in_constraint_batch(

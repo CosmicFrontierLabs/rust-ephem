@@ -5,12 +5,6 @@ from rust_ephem._rust_ephem import (
     Constraint as Constraint,
 )
 from rust_ephem._rust_ephem import (
-    ConstraintResult as ConstraintResult,
-)
-from rust_ephem._rust_ephem import (
-    ConstraintViolation as ConstraintViolation,
-)
-from rust_ephem._rust_ephem import (
     GroundEphemeris as GroundEphemeris,
 )
 from rust_ephem._rust_ephem import (
@@ -81,6 +75,12 @@ from rust_ephem.constraints import (
 )
 from rust_ephem.constraints import (
     ConstraintConfig as ConstraintConfig,
+)
+from rust_ephem.constraints import (
+    ConstraintResult as ConstraintResult,
+)
+from rust_ephem.constraints import (
+    ConstraintViolation as ConstraintViolation,
 )
 from rust_ephem.constraints import (
     DaytimeConstraint as DaytimeConstraint,

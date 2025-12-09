@@ -1,7 +1,5 @@
 from ._rust_ephem import (
     Constraint,
-    ConstraintResult,
-    ConstraintViolation,
     GroundEphemeris,
     OEMEphemeris,
     PositionVelocityData,
@@ -28,6 +26,8 @@ from .constraints import (
     BodyConstraint,
     CombinedConstraintConfig,
     ConstraintConfig,
+    ConstraintResult,
+    ConstraintViolation,
     DaytimeConstraint,
     EarthLimbConstraint,
     EclipseConstraint,
