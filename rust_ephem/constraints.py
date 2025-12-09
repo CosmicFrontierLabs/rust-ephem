@@ -64,7 +64,15 @@ class ConstraintResult(BaseModel):
 
     @property
     def constraint_array(self) -> list[bool]:
-        """Boolean array indicating violations (lazily accessed from Rust result)."""
+        """
+        Boolean array indicating constraint violations (lazily accessed from Rust result).
+
+        Returns
+        -------
+        numpy.ndarray or list of bool
+            Boolean array where True indicates the constraint is violated at that time,
+            and False indicates the constraint is satisfied.
+        """
         if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
             return cast(list[bool], self._rust_result_ref.constraint_array)
         return []
