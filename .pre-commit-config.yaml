@@ -9,8 +9,7 @@ repos:
           - --
           - -D
           - warnings
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
+  - repo: builtin
     hooks:
       - id: no-commit-to-branch
         name: Prevent main branch commits
@@ -20,6 +19,10 @@ repos:
         description: Prevent the user from committing very large files.
         args:
           - --maxkb=500
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: mixed-line-ending
   - repo: https://github.com/abravalheri/validate-pyproject
     rev: v0.24.1
     hooks:

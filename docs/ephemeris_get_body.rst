@@ -13,7 +13,7 @@ Before using ``get_body()``, ensure the planetary ephemeris is loaded:
 .. code-block:: python
 
     import rust_ephem
-    
+
     # Load planetary ephemeris (downloads DE440S if needed)
     rust_ephem.ensure_planetary_ephemeris()
 
@@ -30,14 +30,14 @@ Basic Usage
     tle2 = "2 25544  51.6460  44.6055 0002398  79.4451  23.5248 15.49364984256518"
     begin = dt.datetime(2024, 1, 1, 0, 0, 0, tzinfo=dt.timezone.utc)
     end = dt.datetime(2024, 1, 1, 1, 0, 0, tzinfo=dt.timezone.utc)
-    
+
     ephem = re.TLEEphemeris(tle1, tle2, begin, end, step_size=60)
 
     # Get body position/velocity data
     sun_pv = ephem.get_body_pv("Sun")
     moon_pv = ephem.get_body_pv("Moon")
     mars_pv = ephem.get_body_pv("Mars")
-    
+
     print(f"Sun distance: {np.linalg.norm(sun_pv.position[0]):.0f} km")
     print(f"Moon distance: {np.linalg.norm(moon_pv.position[0]):.0f} km")
     print(f"Mars distance: {np.linalg.norm(mars_pv.position[0]):.0f} km")
@@ -58,7 +58,7 @@ Bodies can be specified by name or NAIF ID:
     ephem.get_body("moon")
     ephem.get_body("Mars")
     ephem.get_body("Jupiter barycenter")
-    
+
     # By NAIF ID as string
     ephem.get_body("10")    # Sun
     ephem.get_body("301")   # Moon
@@ -86,11 +86,11 @@ Ground Observatory Example
         end=end,
         step_size=60
     )
-    
+
     # Get bodies from observatory perspective
     moon = obs.get_body("Moon")
     jupiter = obs.get_body("Jupiter barycenter")
-    
+
     # The SkyCoord includes observer location for proper parallax
     print(f"Observer location set: {moon.frame.obsgeoloc[0]}")
 
@@ -101,15 +101,15 @@ Calculating Separations
 
     from astropy.coordinates import SkyCoord
     import astropy.units as u
-    
+
     # Get positions
     moon = ephem.get_body("Moon")
     mars = ephem.get_body("Mars")
-    
+
     # Calculate angular separation
     separation = moon.separation(mars)
     print(f"Moon-Mars separation: {separation[0].to(u.deg):.2f}")
-    
+
     # Define a target and check separation from Sun
     target = SkyCoord(ra=83.63*u.deg, dec=22.01*u.deg, frame='icrs')
     sun = ephem.get_body("Sun")

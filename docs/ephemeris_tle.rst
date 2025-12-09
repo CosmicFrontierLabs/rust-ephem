@@ -20,24 +20,24 @@ set and obtain positions in different frames.
     step_size = 60  # seconds
 
     # Create ephemeris from TLE - several methods available:
-    
+
     # Method 1: Direct TLE strings (legacy)
     sat = re.TLEEphemeris(tle1, tle2, begin, end, step_size, polar_motion=False)
-    
+
     # Method 2: From file path
     # sat = re.TLEEphemeris(tle="path/to/tle_file.txt", begin=begin, end=end, step_size=step_size)
-    
+
     # Method 3: From URL (with caching)
     # sat = re.TLEEphemeris(tle="https://celestrak.org/NORAD/elements/gp.php?CATNR=25544", begin=begin, end=end, step_size=step_size)
-    
+
     # Method 4: From NORAD ID (Celestrak, or Space-Track.org if credentials are set)
     # If SPACETRACK_USERNAME and SPACETRACK_PASSWORD are set, Space-Track.org is
     # tried first with automatic failover to Celestrak on failure.
     # sat = re.TLEEphemeris(norad_id=25544, begin=begin, end=end, step_size=step_size)
-    
+
     # Method 5: From satellite name (fetches from Celestrak)
     # sat = re.TLEEphemeris(norad_name="ISS (ZARYA)", begin=begin, end=end, step_size=step_size)
-    
+
     # Method 6: Explicit Space-Track.org credentials with norad_id
     # sat = re.TLEEphemeris(
     #     norad_id=25544,
@@ -134,20 +134,20 @@ which returns a ``TLERecord`` object. This is useful when you need to:
 
     # Fetch TLE and inspect metadata
     tle = rust_ephem.fetch_tle(norad_id=25544)
-    
+
     print(f"Satellite: {tle.name}")
     print(f"NORAD ID: {tle.norad_id}")
     print(f"TLE Epoch: {tle.epoch}")
     print(f"Source: {tle.source}")
     print(f"Classification: {tle.classification}")
-    
+
     # View the raw TLE lines
     print(tle.to_tle_string())
-    
+
     # Pass TLERecord directly to TLEEphemeris
     begin = datetime(2024, 1, 1, tzinfo=timezone.utc)
     end = datetime(2024, 1, 2, tzinfo=timezone.utc)
-    
+
     sat = rust_ephem.TLEEphemeris(
         tle=tle,  # Pass TLERecord directly
         begin=begin,
@@ -166,7 +166,7 @@ which returns a ``TLERecord`` object. This is useful when you need to:
 
     # Serialize TLE for storage
     json_str = tle.model_dump_json()
-    
+
     # Fetch from Space-Track with specific epoch
     historical_tle = rust_ephem.fetch_tle(
         norad_id=25544,

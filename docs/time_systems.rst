@@ -36,11 +36,11 @@ The TAI-UTC offset represents the number of leap seconds at a given time.
     # Initialize UT1 provider (loads IERS data)
     if re.init_ut1_provider():
         print("UT1 data available")
-        
+
         when = dt.datetime(2024, 1, 1, tzinfo=dt.timezone.utc)
         ut1_utc = re.get_ut1_utc_offset(when)
         print(f"UT1-UTC offset: {ut1_utc} seconds")
-    
+
     # Check availability
     if re.is_ut1_available():
         print("UT1 data is loaded")
@@ -57,11 +57,11 @@ up-to-date IERS data for accurate values.
     # Initialize EOP provider (loads polar motion data)
     if re.init_eop_provider():
         print("EOP data available")
-        
+
         when = dt.datetime(2024, 1, 1, tzinfo=dt.timezone.utc)
         xp, yp = re.get_polar_motion(when)
         print(f"Polar motion: x_p = {xp} arcsec, y_p = {yp} arcsec")
-    
+
     # Check availability
     if re.is_eop_available():
         print("EOP data is loaded")
@@ -99,4 +99,3 @@ Practical guidance
 - UT1 and polar motion data must be explicitly loaded via init functions
 
 See also: :doc:`frames` and :doc:`accuracy_precision`.
-

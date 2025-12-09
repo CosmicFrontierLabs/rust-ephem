@@ -44,7 +44,7 @@ Key Technologies
 - **Language**: `Rust (2021 edition) <https://www.rust-lang.org/>`_
 - **Python integration**: `PyO3 <https://pyo3.rs/>`_ with `maturin <https://www.maturin.rs>`_ wheels
 - **Astronomy libraries**:
-  
+
   - `ERFA <https://docs.rs/erfa/latest/erfa/index.html>`_ (IAU standards)
   - `SGP4 <https://github.com/neuromorphicsystems/sgp4>`_ (pure-Rust TLE propagation)
   - `ANISE <https://github.com/nyx-space/anise>`_ (SPICE kernel handling)

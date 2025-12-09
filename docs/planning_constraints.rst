@@ -82,7 +82,7 @@ Evaluate multiple targets efficiently using vectorized operations:
     violations = constraint.in_constraint_batch(ephem, target_ras, target_decs)
 
     print(f"Shape: {violations.shape}")  # (100, n_times)
-    
+
     # Find targets that are always visible
     always_visible = ~violations.any(axis=1)  # No violations at any time
     print(f"Always visible targets: {always_visible.sum()}")
@@ -124,10 +124,10 @@ Available Constraint Types
 
     # Sun proximity (min/max angles in degrees)
     sun = SunConstraint(min_angle=45.0, max_angle=135.0)
-    
+
     # Moon proximity
     moon = MoonConstraint(min_angle=10.0)
-    
+
     # Generic body proximity (requires planetary ephemeris)
     from rust_ephem.constraints import BodyConstraint
     mars = BodyConstraint(body="Mars", min_angle=15.0)
@@ -137,10 +137,10 @@ Available Constraint Types
 .. code-block:: python
 
     from rust_ephem.constraints import EarthLimbConstraint
-    
+
     # Basic earth limb avoidance
     earth_limb = EarthLimbConstraint(min_angle=28.0)
-    
+
     # With atmospheric refraction (for ground observers)
     earth_limb_refracted = EarthLimbConstraint(
         min_angle=28.0,
@@ -154,7 +154,7 @@ Available Constraint Types
 
     # Avoid umbra only
     eclipse_umbra = EclipseConstraint(umbra_only=True)
-    
+
     # Avoid umbra and penumbra
     eclipse_both = EclipseConstraint(umbra_only=False)
 
@@ -171,7 +171,7 @@ Available Constraint Types
     combined = SunConstraint(min_angle=45) & MoonConstraint(min_angle=10)
     either = SunConstraint(min_angle=45) | MoonConstraint(min_angle=10)
     not_eclipse = ~EclipseConstraint()
-    
+
     # Using explicit classes
     combined_explicit = AndConstraint(constraints=[
         SunConstraint(min_angle=45),

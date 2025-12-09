@@ -18,7 +18,7 @@ determine when targets are actually observable. This requires checking multiple
 constraints:
 
 - **Sun avoidance**: Target must be far enough from the Sun
-- **Moon avoidance**: Target must be far enough from the Moon  
+- **Moon avoidance**: Target must be far enough from the Moon
 - **Earth limb**: Target must not be blocked by Earth (for spacecraft)
 - **Eclipse avoidance**: Spacecraft must not be in Earth's shadow
 - **Bright object avoidance**: Target must avoid planets or other bright objects
@@ -168,7 +168,7 @@ Invert any constraint:
 
    # EclipseConstraint is violated when IN eclipse
    # ~EclipseConstraint is violated when NOT in eclipse
-   
+
    eclipse = EclipseConstraint()
    not_eclipse = ~eclipse
 
@@ -202,13 +202,13 @@ For spacecraft like Hubble or JWST, you typically need comprehensive constraints
        avoid_eclipse: bool = True,
    ):
        """Create a typical spacecraft observation constraint.
-       
+
        Args:
            sun_angle: Minimum angle from Sun (degrees)
            moon_angle: Minimum angle from Moon (degrees)
            earth_limb_angle: Minimum angle above Earth's limb (degrees)
            avoid_eclipse: If True, avoid observations during eclipse
-           
+
        Returns:
            Combined constraint for spacecraft observations
        """
@@ -217,10 +217,10 @@ For spacecraft like Hubble or JWST, you typically need comprehensive constraints
            MoonConstraint(min_angle=moon_angle) &
            EarthLimbConstraint(min_angle=earth_limb_angle)
        )
-       
+
        if avoid_eclipse:
            constraint = constraint & ~EclipseConstraint()
-       
+
        return constraint
 
    # Create constraint with typical values
@@ -253,7 +253,7 @@ horizon elevation:
    # Create ground station ephemeris (Mauna Kea Observatory)
    ground = rust_ephem.GroundEphemeris(
        latitude=19.8207,     # degrees N
-       longitude=-155.4681,  # degrees W  
+       longitude=-155.4681,  # degrees W
        height=4207,          # meters
        begin=begin,
        end=end,
@@ -346,7 +346,7 @@ For survey observations or target selection, evaluate many targets efficiently:
        # Count satisfied timestamps
        satisfied = ~violations[i]  # Invert: True = satisfied
        visibility_fraction = satisfied.sum() / len(satisfied)
-       
+
        print(f"{target['name']}: {visibility_fraction*100:.1f}% observable")
 
 Large Target Catalogs
@@ -416,9 +416,9 @@ Calculate detailed statistics:
                "max_window_minutes": 0,
                "min_window_minutes": 0,
            }
-       
+
        durations = [w.duration_seconds for w in result.visibility]
-       
+
        return {
            "total_hours": sum(durations) / 3600,
            "window_count": len(durations),
@@ -428,7 +428,7 @@ Calculate detailed statistics:
        }
 
    stats = analyze_visibility(result)
-   
+
    print(f"Visibility Statistics:")
    print(f"  Total observable time: {stats['total_hours']:.2f} hours")
    print(f"  Number of windows: {stats['window_count']}")
@@ -556,19 +556,19 @@ Plan observations over multiple days:
 
    for target in survey_targets:
        result = constraint.evaluate(ephem, target["ra"], target["dec"])
-       
+
        total_hours = sum(w.duration_seconds for w in result.visibility) / 3600
        avg_window = (total_hours * 60 / len(result.visibility)) if result.visibility else 0
-       
+
        print(f"\n{target['name']}:")
        print(f"  Total visibility: {total_hours:.1f} hours")
        print(f"  Windows: {len(result.visibility)}")
        print(f"  Avg window: {avg_window:.1f} minutes")
-       
+
        # Show best windows (longest 3)
        if result.visibility:
-           best_windows = sorted(result.visibility, 
-                                key=lambda w: w.duration_seconds, 
+           best_windows = sorted(result.visibility,
+                                key=lambda w: w.duration_seconds,
                                 reverse=True)[:3]
            print("  Best windows:")
            for w in best_windows:
@@ -585,7 +585,7 @@ Performance Tips
 
       # FAST: Single batch call
       violations = constraint.in_constraint_batch(ephem, ras, decs)
-      
+
       # SLOW: Loop over targets
       for ra, dec in zip(ras, decs):
           result = constraint.evaluate(ephem, ra, dec)  # Avoid!
@@ -596,10 +596,10 @@ Performance Tips
 
       # Coarse: 5 minutes (good for week-long planning)
       ephem = rust_ephem.TLEEphemeris(..., step_size=300)
-      
+
       # Fine: 1 minute (good for precise scheduling)
       ephem = rust_ephem.TLEEphemeris(..., step_size=60)
-      
+
       # Very fine: 10 seconds (only if needed)
       ephem = rust_ephem.TLEEphemeris(..., step_size=10)
 
@@ -612,7 +612,7 @@ Performance Tips
           if satisfied:
               # Process visible time
               pass
-      
+
       # SLOW: Call method repeatedly
       for time in result.timestamp:
           if result.in_constraint(time):  # Lookups on each call
@@ -624,7 +624,7 @@ Performance Tips
 
       # Only evaluate specific indices
       result = constraint.evaluate(ephem, ra, dec, indices=[0, 100, 200])
-      
+
       # Only evaluate specific times
       specific_times = [datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)]
       result = constraint.evaluate(ephem, ra, dec, times=specific_times)
