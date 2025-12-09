@@ -12,6 +12,7 @@ pub mod eop_provider;
 pub mod geo;
 pub mod interpolation;
 pub mod math_utils;
+pub mod moon;
 pub mod naif_ids;
 pub mod polygon;
 pub mod time_utils;

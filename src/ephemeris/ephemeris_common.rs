@@ -499,6 +499,34 @@ pub trait EphemerisBase {
         Ok(moon_data.slice(s![.., 0..3]).to_owned())
     }
 
+    /// Calculate Moon illumination fraction for all ephemeris times
+    ///
+    /// Returns the fraction of the Moon's illuminated surface as seen from the
+    /// spacecraft observer (0.0 = new moon, 1.0 = full moon).
+    ///
+    /// # Arguments
+    /// * `time_indices` - Optional indices into ephemeris times to evaluate (default: all times)
+    ///
+    /// # Returns
+    /// Vector of Moon illumination fractions for each selected time
+    fn moon_phase(&self, time_indices: Option<&[usize]>) -> PyResult<Vec<f64>> {
+        use crate::utils::moon::calculate_moon_illumination;
+
+        let times = self.get_times()?;
+        let selected_times: Vec<DateTime<Utc>> = if let Some(indices) = time_indices {
+            indices.iter().map(|&i| times[i]).collect()
+        } else {
+            times
+        };
+
+        let illuminations: Vec<f64> = selected_times
+            .iter()
+            .map(calculate_moon_illumination)
+            .collect();
+
+        Ok(illuminations)
+    }
+
     /// Get observer (spacecraft/satellite) positions in GCRS (N x 3 array, km) for constraint evaluation
     fn get_gcrs_positions(&self) -> PyResult<Array2<f64>> {
         let gcrs_data = self.data().gcrs.as_ref().ok_or_else(|| {

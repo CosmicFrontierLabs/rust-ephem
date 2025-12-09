@@ -357,6 +357,21 @@ impl GroundEphemeris {
         self.get_earth_radius_rad(py)
     }
 
+    /// Calculate Moon illumination fraction for all ephemeris times
+    ///
+    /// Returns the fraction of the Moon's illuminated surface as seen from the
+    /// spacecraft observer (0.0 = new moon, 1.0 = full moon).
+    ///
+    /// # Arguments
+    /// * `time_indices` - Optional indices into ephemeris times (default: all times)
+    ///
+    /// # Returns
+    /// List of Moon illumination fractions
+    #[pyo3(signature = (time_indices=None))]
+    fn moon_phase(&self, time_indices: Option<Vec<usize>>) -> PyResult<Vec<f64>> {
+        EphemerisBase::moon_phase(self, time_indices.as_deref())
+    }
+
     fn index(&self, time: &Bound<'_, PyDateTime>) -> PyResult<usize> {
         self.find_closest_index(time)
     }

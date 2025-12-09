@@ -878,6 +878,21 @@ class TLEEphemeris(Ephemeris):
         """
         ...
 
+    def moon_phase(self, time_indices: list[int] | None = None) -> list[float]:
+        """
+        Calculate Moon illumination fraction for all ephemeris times.
+
+        Returns the fraction of the Moon's illuminated surface as seen from the
+        spacecraft observer (0.0 = new moon, 1.0 = full moon).
+
+        Args:
+            time_indices: Optional indices into ephemeris times (default: all times)
+
+        Returns:
+            List of Moon illumination fractions
+        """
+        ...
+
     @property
     def obsgeoloc(
         self,
@@ -1242,6 +1257,45 @@ class SPICEEphemeris(Ephemeris):
         """
         ...
 
+    def moon_phase(self, time_indices: list[int] | None = None) -> list[float]:
+        """
+        Calculate Moon illumination fraction for all ephemeris times.
+
+        Returns the fraction of the Moon's illuminated surface as seen from the
+        spacecraft observer (0.0 = new moon, 1.0 = full moon).
+
+        Args:
+            time_indices: Optional indices into ephemeris times (default: all times)
+
+        Returns:
+            List of Moon illumination fractions
+        """
+        ...
+
+    def get_body_pv(self, body: str) -> PositionVelocityData:
+        """
+        Get position and velocity of a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+
+        Returns:
+            Position and velocity data for the requested body
+        """
+        ...
+
+    def get_body(self, body: str) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """
+        Get SkyCoord for a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+
+        Returns:
+            astropy.coordinates.SkyCoord object
+        """
+        ...
+
 class OEMEphemeris(Ephemeris):
     """
     Ephemeris calculator using CCSDS Orbit Ephemeris Messages (OEM).
@@ -1587,6 +1641,45 @@ class OEMEphemeris(Ephemeris):
         """
         ...
 
+    def moon_phase(self, time_indices: list[int] | None = None) -> list[float]:
+        """
+        Calculate Moon illumination fraction for all ephemeris times.
+
+        Returns the fraction of the Moon's illuminated surface as seen from the
+        spacecraft observer (0.0 = new moon, 1.0 = full moon).
+
+        Args:
+            time_indices: Optional indices into ephemeris times (default: all times)
+
+        Returns:
+            List of Moon illumination fractions
+        """
+        ...
+
+    def get_body_pv(self, body: str) -> PositionVelocityData:
+        """
+        Get position and velocity of a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+
+        Returns:
+            Position and velocity data for the requested body
+        """
+        ...
+
+    def get_body(self, body: str) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """
+        Get SkyCoord for a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+
+        Returns:
+            astropy.coordinates.SkyCoord object
+        """
+        ...
+
 class GroundEphemeris(Ephemeris):
     """Ephemeris for a fixed ground location"""
 
@@ -1927,6 +2020,45 @@ class GroundEphemeris(Ephemeris):
             >>> target_time = datetime(2024, 1, 15, 12, 0, 0)
             >>> idx = eph.index(target_time)
             >>> sun_position = eph.sun_pv.position[idx]
+        """
+        ...
+
+    def moon_phase(self, time_indices: list[int] | None = None) -> list[float]:
+        """
+        Calculate Moon illumination fraction for all ephemeris times.
+
+        Returns the fraction of the Moon's illuminated surface as seen from the
+        spacecraft observer (0.0 = new moon, 1.0 = full moon).
+
+        Args:
+            time_indices: Optional indices into ephemeris times (default: all times)
+
+        Returns:
+            List of Moon illumination fractions
+        """
+        ...
+
+    def get_body_pv(self, body: str) -> PositionVelocityData:
+        """
+        Get position and velocity of a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+
+        Returns:
+            Position and velocity data for the requested body
+        """
+        ...
+
+    def get_body(self, body: str) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """
+        Get SkyCoord for a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+
+        Returns:
+            astropy.coordinates.SkyCoord object
         """
         ...
 
