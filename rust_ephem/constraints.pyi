@@ -23,8 +23,8 @@ if TYPE_CHECKING:
 class ConstraintViolation(BaseModel):
     """A time window where a constraint was violated."""
 
-    start_time: str
-    end_time: str
+    start_time: datetime
+    end_time: datetime
     max_severity: float
     description: str
 

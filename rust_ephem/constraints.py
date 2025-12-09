@@ -24,10 +24,8 @@ if TYPE_CHECKING:
 class ConstraintViolation(BaseModel):
     """A time window where a constraint was violated."""
 
-    start_time: str = Field(
-        ..., description="Start time of violation window (ISO 8601)"
-    )
-    end_time: str = Field(..., description="End time of violation window (ISO 8601)")
+    start_time: datetime = Field(..., description="Start time of violation window")
+    end_time: datetime = Field(..., description="End time of violation window")
     max_severity: float = Field(
         ..., description="Maximum severity of violation in this window"
     )
@@ -86,9 +84,7 @@ class ConstraintResult(BaseModel):
         """Get the total duration of violations in seconds."""
         total_seconds = 0.0
         for violation in self.violations:
-            start = datetime.fromisoformat(violation.start_time.replace("Z", "+00:00"))
-            end = datetime.fromisoformat(violation.end_time.replace("Z", "+00:00"))
-            total_seconds += (end - start).total_seconds()
+            total_seconds += (violation.end_time - violation.start_time).total_seconds()
         return total_seconds
 
     def in_constraint(self, time: datetime) -> bool:
@@ -162,12 +158,14 @@ class RustConstraintMixin(BaseModel):
             indices,
         )
 
-        # Convert to Pydantic model
+        # Convert to Pydantic model, parsing ISO 8601 timestamps to datetime objects
         return ConstraintResult(
             violations=[
                 ConstraintViolation(
-                    start_time=v.start_time,
-                    end_time=v.end_time,
+                    start_time=datetime.fromisoformat(
+                        v.start_time.replace("Z", "+00:00")
+                    ),
+                    end_time=datetime.fromisoformat(v.end_time.replace("Z", "+00:00")),
                     max_severity=v.max_severity,
                     description=v.description,
                 )
