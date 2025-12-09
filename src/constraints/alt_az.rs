@@ -1,5 +1,6 @@
 /// Altitude/Azimuth constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
+use crate::utils::polygon;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
@@ -76,28 +77,7 @@ impl AltAzEvaluator {
             None => return true, // If no polygon defined, point is always inside
         };
 
-        let mut winding_number = 0.0;
-        let n = polygon.len();
-
-        for i in 0..n {
-            let j = (i + 1) % n;
-            let (alt1, az1) = polygon[i];
-            let (alt2, az2) = polygon[j];
-
-            if alt1 <= altitude {
-                if alt2 > altitude
-                    && (az2 - az1) * (altitude - alt1) - (azimuth - az1) * (alt2 - alt1) > 0.0
-                {
-                    winding_number += 1.0;
-                }
-            } else if alt2 <= altitude
-                && (az2 - az1) * (altitude - alt1) - (azimuth - az1) * (alt2 - alt1) < 0.0
-            {
-                winding_number -= 1.0;
-            }
-        }
-
-        winding_number != 0.0
+        polygon::point_in_polygon(polygon, altitude, azimuth)
     }
 }
 

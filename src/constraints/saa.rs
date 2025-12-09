@@ -1,5 +1,6 @@
 /// South Atlantic Anomaly constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
+use crate::utils::polygon;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
@@ -33,24 +34,7 @@ impl SAAEvaluator {
     /// Check if a point is inside the polygon using the winding number algorithm
     /// This is more robust than ray casting for complex polygons
     fn point_in_polygon(&self, lon: f64, lat: f64) -> bool {
-        let mut winding_number = 0.0;
-        let n = self.polygon.len();
-
-        for i in 0..n {
-            let j = (i + 1) % n;
-            let (x1, y1) = self.polygon[i];
-            let (x2, y2) = self.polygon[j];
-
-            if y1 <= lat {
-                if y2 > lat && (x2 - x1) * (lat - y1) - (lon - x1) * (y2 - y1) > 0.0 {
-                    winding_number += 1.0;
-                }
-            } else if y2 <= lat && (x2 - x1) * (lat - y1) - (lon - x1) * (y2 - y1) < 0.0 {
-                winding_number -= 1.0;
-            }
-        }
-
-        winding_number != 0.0
+        polygon::point_in_polygon(&self.polygon, lon, lat)
     }
 }
 

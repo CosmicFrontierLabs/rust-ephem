@@ -13,6 +13,7 @@ pub mod geo;
 pub mod interpolation;
 pub mod math_utils;
 pub mod naif_ids;
+pub mod polygon;
 pub mod time_utils;
 pub mod tle_utils;
 pub mod to_skycoord;
