@@ -48,6 +48,9 @@ Classes
     * ``index(time)`` — Find closest timestamp index
     * ``get_body(body)`` — Get SkyCoord for a celestial body
     * ``get_body_pv(body)`` — Get position/velocity for a celestial body
+    * ``moon_illumination(time_indices=None)`` — Calculate Moon illumination fraction (0.0-1.0) as seen from observer
+    * ``radec_to_altaz(ra_deg, dec_deg, time_indices=None)`` — Convert RA/Dec to Alt/Az coordinates
+    * ``calculate_airmass(ra_deg, dec_deg, time_indices=None)`` — Calculate astronomical airmass for target
   
   **Type Alias:**
     ``EphemerisType = TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris``
