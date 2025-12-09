@@ -3,7 +3,7 @@
 /// This module provides a generic constraint API for evaluating constraints on
 /// astronomical observations, such as:
 /// - Sun proximity constraints
-/// - Moon proximity constraints  
+/// - Moon proximity constraints
 /// - Eclipse constraints
 /// - Logical combinations of constraints (AND, OR, NOT)
 ///

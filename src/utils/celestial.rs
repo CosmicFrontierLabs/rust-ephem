@@ -428,7 +428,7 @@ pub fn calculate_body_positions_spice_result(
 ///
 /// # Arguments
 /// * `ra_deg` - Right ascension in degrees
-/// * `dec_deg` - Declination in degrees  
+/// * `dec_deg` - Declination in degrees
 /// * `ephemeris` - Ephemeris containing observer positions and times
 /// * `time_indices` - Optional indices into ephemeris times to evaluate (default: all times)
 ///

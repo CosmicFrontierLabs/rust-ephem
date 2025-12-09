@@ -9,16 +9,120 @@ to configure the Rust constraint evaluators.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
 import numpy as np
 import numpy.typing as npt
-from pydantic import BaseModel, Field, TypeAdapter, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from .ephemeris import Ephemeris
 
 if TYPE_CHECKING:
-    from rust_ephem import ConstraintResult
+    pass
+
+
+class ConstraintViolation(BaseModel):
+    """A time window where a constraint was violated."""
+
+    start_time: datetime = Field(..., description="Start time of violation window")
+    end_time: datetime = Field(..., description="End time of violation window")
+    max_severity: float = Field(
+        ..., description="Maximum severity of violation in this window"
+    )
+    description: str = Field(
+        ..., description="Human-readable description of the violation"
+    )
+
+
+class ConstraintResult(BaseModel):
+    """Result of constraint evaluation containing all violations."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    violations: list[ConstraintViolation] = Field(
+        default_factory=list, description="List of violation windows"
+    )
+    all_satisfied: bool = Field(
+        ..., description="Whether constraint was satisfied for entire time range"
+    )
+    constraint_name: str = Field(..., description="Name/description of the constraint")
+
+    # Store reference to Rust result for lazy access to timestamps/constraint_array
+    def __init__(self, **data: Any) -> None:
+        super().__init__(**data)
+        self._rust_result_ref = data.get("_rust_result_ref", None)
+
+    @property
+    def timestamps(self) -> npt.NDArray[np.datetime64] | list[datetime]:
+        """Evaluation timestamps (lazily accessed from Rust result)."""
+        if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
+            return cast(
+                npt.NDArray[np.datetime64] | list[datetime],
+                self._rust_result_ref.timestamp,
+            )
+        return []
+
+    @property
+    def constraint_array(self) -> list[bool]:
+        """
+        Boolean array indicating constraint violations (lazily accessed from Rust result).
+
+        Returns
+        -------
+        numpy.ndarray or list of bool
+            Boolean array where True indicates the constraint is violated at that time,
+            and False indicates the constraint is satisfied.
+        """
+        if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
+            return cast(list[bool], self._rust_result_ref.constraint_array)
+        return []
+
+    @property
+    def visibility(self) -> list[bool]:
+        """Visibility windows - inverse of constraint violations.
+
+        Returns an array where True indicates the constraint is satisfied
+        (target is visible), opposite of constraint_array semantics.
+        """
+        if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
+            return cast(list[bool], self._rust_result_ref.visibility)
+        return []
+
+    def total_violation_duration(self) -> float:
+        """Get the total duration of violations in seconds."""
+        total_seconds = 0.0
+        for violation in self.violations:
+            total_seconds += (violation.end_time - violation.start_time).total_seconds()
+        return total_seconds
+
+    def in_constraint(self, time: datetime) -> bool:
+        """Check if target is in-constraint at a given time.
+
+        This method operates on timestamps from the evaluate() call.
+        The given time must exist in the evaluated timestamps.
+
+        Args:
+            time: The datetime to check (must be in evaluated timestamps)
+
+        Returns:
+            True if the constraint is violated at this time (target is in-constraint),
+            False if the constraint is satisfied (target is out-of-constraint).
+
+        Raises:
+            ValueError: If the time is not found in evaluated timestamps
+        """
+        if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
+            return cast(bool, self._rust_result_ref.in_constraint(time))
+        raise ValueError(
+            "ConstraintResult has no evaluated timestamps (was not created from evaluate())"
+        )
+
+    def __repr__(self) -> str:
+        return f"ConstraintResult(constraint='{self.constraint_name}', violations={len(self.violations)}, all_satisfied={self.all_satisfied})"
+
+
+if TYPE_CHECKING:
+    pass
 
 
 class RustConstraintMixin(BaseModel):
@@ -52,12 +156,32 @@ class RustConstraintMixin(BaseModel):
             from rust_ephem import Constraint
 
             self._rust_constraint = Constraint.from_json(self.model_dump_json())
-        return self._rust_constraint.evaluate(
+
+        # Get the Rust result
+        rust_result = self._rust_constraint.evaluate(
             ephemeris,
             target_ra,
             target_dec,
             times,
             indices,
+        )
+
+        # Convert to Pydantic model, parsing ISO 8601 timestamps to datetime objects
+        return ConstraintResult(
+            violations=[
+                ConstraintViolation(
+                    start_time=datetime.fromisoformat(
+                        v.start_time.replace("Z", "+00:00")
+                    ),
+                    end_time=datetime.fromisoformat(v.end_time.replace("Z", "+00:00")),
+                    max_severity=v.max_severity,
+                    description=v.description,
+                )
+                for v in rust_result.violations
+            ],
+            all_satisfied=rust_result.all_satisfied,
+            constraint_name=rust_result.constraint_name,
+            _rust_result_ref=rust_result,
         )
 
     def in_constraint_batch(
@@ -103,11 +227,15 @@ class RustConstraintMixin(BaseModel):
         target_ra: float,
         target_dec: float,
     ) -> bool | list[bool]:
-        """
-        Check if target violates the constraint at given time(s).
+        """Check if target is in-constraint at given time(s).
 
-        This method lazily creates the corresponding Rust constraint
-        object and delegates to its in_constraint method.
+        This method performs full constraint evaluation for the given times.
+        Use this to check constraint status without pre-computing evaluate().
+
+        **API Note:** This differs from ConstraintResult.in_constraint() which
+        operates on pre-evaluated timestamps. Use this method when you need
+        to check arbitrary times, and use ConstraintResult.in_constraint()
+        only for times already evaluated via evaluate().
 
         Args:
             time: The time(s) to check (must exist in ephemeris). Can be a single datetime,
@@ -117,8 +245,9 @@ class RustConstraintMixin(BaseModel):
             target_dec: Target declination in degrees (ICRS/J2000)
 
         Returns:
-            True if constraint is violated at the given time(s). Returns a single bool
-            for a single time, or a list of bools for multiple times.
+            True if constraint is violated at the given time(s) (in-constraint).
+            False if constraint is satisfied (out-of-constraint).
+            Returns a single bool for a single time, or a list of bools for multiple times.
         """
         if not hasattr(self, "_rust_constraint"):
             from rust_ephem import Constraint

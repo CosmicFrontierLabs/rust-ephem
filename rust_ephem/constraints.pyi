@@ -18,7 +18,31 @@ from pydantic import BaseModel, TypeAdapter
 from .ephemeris import Ephemeris
 
 if TYPE_CHECKING:
-    from rust_ephem import ConstraintResult
+    pass
+
+class ConstraintViolation(BaseModel):
+    """A time window where a constraint was violated."""
+
+    start_time: datetime
+    end_time: datetime
+    max_severity: float
+    description: str
+
+class ConstraintResult(BaseModel):
+    """Result of constraint evaluation containing all violations."""
+
+    violations: list[ConstraintViolation]
+    all_satisfied: bool
+    constraint_name: str
+
+    @property
+    def timestamps(self) -> npt.NDArray[np.datetime64] | list[datetime]: ...
+    @property
+    def constraint_array(self) -> list[bool]: ...
+    @property
+    def visibility(self) -> list[bool]: ...
+    def total_violation_duration(self) -> float: ...
+    def in_constraint(self, time: datetime) -> bool: ...
 
 class RustConstraintMixin(BaseModel):
     """Base class for Rust constraint configurations"""
