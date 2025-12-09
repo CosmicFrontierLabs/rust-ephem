@@ -332,6 +332,61 @@ Factory Methods
       # Combine polygon with additional altitude constraint
       constraint = Constraint.alt_az(min_altitude=35.0, polygon=observing_region)
 
+.. py:staticmethod:: Constraint.orbit_ram(min_angle, max_angle=None)
+
+   Create an orbit RAM direction constraint.
+
+   Ensures the target maintains minimum angular separation from the spacecraft's
+   velocity vector (RAM direction).
+
+   :param float min_angle: Minimum allowed angular separation from RAM direction in degrees (0-180)
+   :param float max_angle: Maximum allowed angular separation from RAM direction in degrees (optional)
+   :returns: A new Constraint instance
+   :rtype: Constraint
+   :raises ValueError: If angles are out of valid range
+
+   **Requirements:**
+
+   The ephemeris must contain velocity data (6 columns: position + velocity).
+
+   **Example:**
+
+   .. code-block:: python
+
+      # Target must be at least 10° from RAM direction
+      constraint = Constraint.orbit_ram(10.0)
+
+      # Target must be between 5° and 45° from RAM direction
+      constraint = Constraint.orbit_ram(5.0, 45.0)
+
+.. py:staticmethod:: Constraint.orbit_pole(min_angle, max_angle=None)
+
+   Create an orbit pole direction constraint.
+
+   Ensures the target maintains minimum angular separation from the orbital pole
+   (direction perpendicular to the orbital plane). Useful for maintaining
+   specific orientations relative to the spacecraft's orbit.
+
+   :param float min_angle: Minimum allowed angular separation from orbital pole in degrees (0-180)
+   :param float max_angle: Maximum allowed angular separation from orbital pole in degrees (optional)
+   :returns: A new Constraint instance
+   :rtype: Constraint
+   :raises ValueError: If angles are out of valid range
+
+   **Requirements:**
+
+   The ephemeris must contain velocity data (6 columns: position + velocity).
+
+   **Example:**
+
+   .. code-block:: python
+
+      # Target must be at least 15° from orbital pole
+      constraint = Constraint.orbit_pole(15.0)
+
+      # Target must be between 10° and 80° from orbital pole
+      constraint = Constraint.orbit_pole(10.0, 80.0)
+
 Logical Combinators
 ^^^^^^^^^^^^^^^^^^^
 
@@ -620,6 +675,8 @@ Import all constraint models:
        DaytimeConstraint,
        MoonPhaseConstraint,
        SAAConstraint,
+       OrbitRamConstraint,
+       OrbitPoleConstraint,
        AndConstraint,
        OrConstraint,
        XorConstraint,
@@ -980,6 +1037,70 @@ Altitude/Azimuth constraint restricting observations based on local horizon coor
 
       # Combine polygon with additional altitude constraint
       alt_az = AltAzConstraint(min_altitude=35.0, polygon=observing_window)
+
+OrbitRamConstraint
+^^^^^^^^^^^^^^^^^^
+
+Orbit RAM direction constraint ensuring target maintains minimum angular separation from spacecraft velocity vector.
+
+.. py:class:: OrbitRamConstraint(min_angle, max_angle=None)
+
+   :param float min_angle: Minimum allowed angular separation from RAM direction in degrees (0-180, required)
+   :param float max_angle: Maximum allowed angular separation from RAM direction in degrees (0-180, optional)
+
+   **Attributes:**
+
+   - ``type`` — Always ``"orbit_ram"`` (Literal)
+   - ``min_angle`` — Minimum angle from RAM direction in degrees
+   - ``max_angle`` — Maximum angle from RAM direction in degrees (or None)
+
+   **Requirements:**
+
+   The ephemeris must contain velocity data (6 columns: position + velocity).
+
+   **Example:**
+
+   .. code-block:: python
+
+      from rust_ephem.constraints import OrbitRamConstraint
+
+      # Target must be at least 10° from RAM direction
+      orbit_ram = OrbitRamConstraint(min_angle=10.0)
+
+      # Target must be between 5° and 45° from RAM direction
+      orbit_ram = OrbitRamConstraint(min_angle=5.0, max_angle=45.0)
+
+OrbitPoleConstraint
+^^^^^^^^^^^^^^^^^^^
+
+Orbit pole direction constraint ensuring target maintains minimum angular separation from orbital pole.
+
+.. py:class:: OrbitPoleConstraint(min_angle, max_angle=None)
+
+   :param float min_angle: Minimum allowed angular separation from orbital pole in degrees (0-180, required)
+   :param float max_angle: Maximum allowed angular separation from orbital pole in degrees (0-180, optional)
+
+   **Attributes:**
+
+   - ``type`` — Always ``"orbit_pole"`` (Literal)
+   - ``min_angle`` — Minimum angle from orbital pole in degrees
+   - ``max_angle`` — Maximum angle from orbital pole in degrees (or None)
+
+   **Requirements:**
+
+   The ephemeris must contain velocity data (6 columns: position + velocity).
+
+   **Example:**
+
+   .. code-block:: python
+
+      from rust_ephem.constraints import OrbitPoleConstraint
+
+      # Target must be at least 15° from orbital pole
+      orbit_pole = OrbitPoleConstraint(min_angle=15.0)
+
+      # Target must be between 10° and 80° from orbital pole
+      orbit_pole = OrbitPoleConstraint(min_angle=10.0, max_angle=80.0)
 
 AndConstraint
 ^^^^^^^^^^^^^
