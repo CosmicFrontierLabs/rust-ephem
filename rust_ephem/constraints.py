@@ -55,28 +55,31 @@ class ConstraintResult(BaseModel):
         self._rust_result_ref = data.get("_rust_result_ref", None)
 
     @property
-    def timestamps(self) -> Any:
+    def timestamps(self) -> npt.NDArray[np.datetime64] | list[datetime]:
         """Evaluation timestamps (lazily accessed from Rust result)."""
         if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
-            return self._rust_result_ref.timestamp
+            return cast(
+                npt.NDArray[np.datetime64] | list[datetime],
+                self._rust_result_ref.timestamp,
+            )
         return []
 
     @property
-    def constraint_array(self) -> Any:
+    def constraint_array(self) -> list[bool]:
         """Boolean array indicating violations (lazily accessed from Rust result)."""
         if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
-            return self._rust_result_ref.constraint_array
+            return cast(list[bool], self._rust_result_ref.constraint_array)
         return []
 
     @property
-    def visibility(self) -> Any:
+    def visibility(self) -> list[bool]:
         """Visibility windows - inverse of constraint violations.
 
         Returns an array where True indicates the constraint is satisfied
         (target is visible), opposite of constraint_array semantics.
         """
         if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
-            return self._rust_result_ref.visibility
+            return cast(list[bool], self._rust_result_ref.visibility)
         return []
 
     def total_violation_duration(self) -> float:
