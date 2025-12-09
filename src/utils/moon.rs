@@ -15,7 +15,13 @@ pub fn calculate_moon_illumination<
     ephemeris: &E,
     time_index: usize,
 ) -> f64 {
-    // Get Sun and Moon positions relative to the observer
+    // Get observer position
+    let observer_positions = match ephemeris.data().gcrs.as_ref() {
+        Some(pos) => pos,
+        None => return 0.5, // Default to half illumination if no observer position
+    };
+
+    // Get Sun and Moon positions (absolute in GCRS)
     let sun_positions = match ephemeris.get_sun_positions() {
         Ok(pos) => pos,
         Err(_) => return 0.5, // Default to half illumination on error
@@ -26,13 +32,17 @@ pub fn calculate_moon_illumination<
     };
 
     // Extract positions for the specific time index
-    let sun_x = sun_positions[[time_index, 0]];
-    let sun_y = sun_positions[[time_index, 1]];
-    let sun_z = sun_positions[[time_index, 2]];
+    let obs_x = observer_positions[[time_index, 0]];
+    let obs_y = observer_positions[[time_index, 1]];
+    let obs_z = observer_positions[[time_index, 2]];
 
-    let moon_x = moon_positions[[time_index, 0]];
-    let moon_y = moon_positions[[time_index, 1]];
-    let moon_z = moon_positions[[time_index, 2]];
+    let sun_x = sun_positions[[time_index, 0]] - obs_x;
+    let sun_y = sun_positions[[time_index, 1]] - obs_y;
+    let sun_z = sun_positions[[time_index, 2]] - obs_z;
+
+    let moon_x = moon_positions[[time_index, 0]] - obs_x;
+    let moon_y = moon_positions[[time_index, 1]] - obs_y;
+    let moon_z = moon_positions[[time_index, 2]] - obs_z;
 
     // Convert to RA/Dec
     let sun_r = (sun_x * sun_x + sun_y * sun_y + sun_z * sun_z).sqrt();
