@@ -565,6 +565,56 @@ class AltAzConstraint(RustConstraintMixin):
     )
 
 
+class OrbitRamConstraint(RustConstraintMixin):
+    """Orbit RAM direction constraint
+
+    Ensures target maintains minimum angular separation from the spacecraft's
+    velocity vector (RAM direction). Useful for instruments that need to sample
+    the atmosphere or for thermal management.
+
+    Attributes:
+        type: Always "orbit_ram"
+        min_angle: Minimum allowed angular separation from RAM direction in degrees (0-180)
+        max_angle: Maximum allowed angular separation from RAM direction in degrees (0-180), optional
+    """
+
+    type: Literal["orbit_ram"] = "orbit_ram"
+    min_angle: float = Field(
+        ..., ge=0.0, le=180.0, description="Minimum angle from RAM direction in degrees"
+    )
+    max_angle: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=180.0,
+        description="Maximum angle from RAM direction in degrees",
+    )
+
+
+class OrbitPoleConstraint(RustConstraintMixin):
+    """Orbit pole direction constraint
+
+    Ensures target maintains minimum angular separation from the orbital pole
+    (direction perpendicular to the orbital plane). Useful for maintaining
+    specific orientations relative to the spacecraft's orbit.
+
+    Attributes:
+        type: Always "orbit_pole"
+        min_angle: Minimum allowed angular separation from orbital pole in degrees (0-180)
+        max_angle: Maximum allowed angular separation from orbital pole in degrees (0-180), optional
+    """
+
+    type: Literal["orbit_pole"] = "orbit_pole"
+    min_angle: float = Field(
+        ..., ge=0.0, le=180.0, description="Minimum angle from orbital pole in degrees"
+    )
+    max_angle: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=180.0,
+        description="Maximum angle from orbital pole in degrees",
+    )
+
+
 # Union type for all constraints
 ConstraintConfig = Union[
     SunConstraint,
@@ -575,6 +625,8 @@ ConstraintConfig = Union[
     DaytimeConstraint,
     AirmassConstraint,
     MoonPhaseConstraint,
+    OrbitRamConstraint,
+    OrbitPoleConstraint,
     SAAConstraint,
     AltAzConstraint,
     AndConstraint,

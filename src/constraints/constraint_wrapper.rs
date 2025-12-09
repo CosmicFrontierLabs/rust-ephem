@@ -11,6 +11,8 @@ use crate::constraints::earth_limb::EarthLimbConfig;
 use crate::constraints::eclipse::EclipseConfig;
 use crate::constraints::moon_phase::MoonPhaseConfig;
 use crate::constraints::moon_proximity::MoonProximityConfig;
+use crate::constraints::orbit_pole::OrbitPoleConfig;
+use crate::constraints::orbit_ram::OrbitRamConfig;
 use crate::constraints::saa::SAAConfig;
 use crate::constraints::sun_proximity::SunProximityConfig;
 use crate::ephemeris::ephemeris_common::EphemerisBase;
@@ -479,6 +481,112 @@ impl PyConstraint {
             "polygon": polygon
         })
         .to_string();
+
+        Ok(PyConstraint {
+            evaluator: config.to_evaluator(),
+            config_json,
+        })
+    }
+
+    /// Create an Orbit RAM direction constraint
+    ///
+    /// Ensures target maintains minimum angular separation from the spacecraft's
+    /// velocity vector (RAM direction). Useful for instruments that need to sample
+    /// the atmosphere or for thermal management.
+    ///
+    /// Args:
+    ///     min_angle (float): Minimum allowed angular separation from RAM direction in degrees
+    ///     max_angle (float, optional): Maximum allowed angular separation from RAM direction in degrees
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint object
+    #[pyo3(signature=(min_angle, max_angle=None))]
+    #[staticmethod]
+    fn orbit_ram(min_angle: f64, max_angle: Option<f64>) -> PyResult<Self> {
+        if !(0.0..=180.0).contains(&min_angle) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "min_angle must be between 0 and 180 degrees",
+            ));
+        }
+
+        if let Some(max) = max_angle {
+            if !(0.0..=180.0).contains(&max) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_angle must be between 0 and 180 degrees",
+                ));
+            }
+            if max <= min_angle {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_angle must be greater than min_angle",
+                ));
+            }
+        }
+
+        let config = OrbitRamConfig {
+            min_angle,
+            max_angle,
+        };
+        let mut json_obj = serde_json::json!({
+            "type": "orbit_ram",
+            "min_angle": min_angle
+        });
+        if let Some(max) = max_angle {
+            json_obj["max_angle"] = serde_json::json!(max);
+        }
+        let config_json = json_obj.to_string();
+
+        Ok(PyConstraint {
+            evaluator: config.to_evaluator(),
+            config_json,
+        })
+    }
+
+    /// Create an Orbit pole direction constraint
+    ///
+    /// Ensures target maintains minimum angular separation from the orbital pole
+    /// (direction perpendicular to the orbital plane). Useful for maintaining
+    /// specific orientations relative to the spacecraft's orbit.
+    ///
+    /// Args:
+    ///     min_angle (float): Minimum allowed angular separation from orbital pole in degrees
+    ///     max_angle (float, optional): Maximum allowed angular separation from orbital pole in degrees
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint object
+    #[pyo3(signature=(min_angle, max_angle=None))]
+    #[staticmethod]
+    fn orbit_pole(min_angle: f64, max_angle: Option<f64>) -> PyResult<Self> {
+        if !(0.0..=180.0).contains(&min_angle) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "min_angle must be between 0 and 180 degrees",
+            ));
+        }
+
+        if let Some(max) = max_angle {
+            if !(0.0..=180.0).contains(&max) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_angle must be between 0 and 180 degrees",
+                ));
+            }
+            if max <= min_angle {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_angle must be greater than min_angle",
+                ));
+            }
+        }
+
+        let config = OrbitPoleConfig {
+            min_angle,
+            max_angle,
+        };
+        let mut json_obj = serde_json::json!({
+            "type": "orbit_pole",
+            "min_angle": min_angle
+        });
+        if let Some(max) = max_angle {
+            json_obj["max_angle"] = serde_json::json!(max);
+        }
+        let config_json = json_obj.to_string();
 
         Ok(PyConstraint {
             evaluator: config.to_evaluator(),
