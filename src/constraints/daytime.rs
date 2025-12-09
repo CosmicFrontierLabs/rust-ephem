@@ -1,6 +1,5 @@
 /// Daytime constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
-use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
@@ -68,19 +67,25 @@ impl ConstraintEvaluator for DaytimeEvaluator {
         _target_dec: f64,
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
-        // Extract and filter ephemeris data
-        let (times_filtered, sun_filtered, obs_filtered) =
-            extract_standard_ephemeris_data!(ephemeris, time_indices);
+        // Calculate Sun altitudes for all times at once (vectorized)
+        let sun_altitudes =
+            crate::utils::celestial::calculate_sun_altitudes_batch(ephemeris, time_indices);
+
+        // Get filtered times
+        let times = ephemeris.get_times().expect("Ephemeris must have times");
+        let times_filtered = if let Some(indices) = time_indices {
+            indices.iter().map(|&i| times[i]).collect()
+        } else {
+            times.to_vec()
+        };
+
+        let twilight_angle = self.twilight_angle();
+
         let violations = track_violations(
             &times_filtered,
             |i| {
-                let sun_pos = sun_filtered.row(i);
-                let observer_pos = obs_filtered.row(i);
-
-                // Calculate Sun's altitude from observer's perspective
-                let sun_alt = self.calculate_sun_altitude(&sun_pos, &observer_pos);
-
-                let is_daytime = sun_alt > self.twilight_angle();
+                let sun_alt = sun_altitudes[i];
+                let is_daytime = sun_alt > twilight_angle;
                 let violated = is_daytime; // Daytime observations are not allowed
 
                 (violated, 1.0)
@@ -93,7 +98,7 @@ impl ConstraintEvaluator for DaytimeEvaluator {
             violations,
             all_satisfied,
             self.format_name(),
-            times_filtered.to_vec(),
+            times_filtered,
         ))
     }
 
@@ -104,25 +109,23 @@ impl ConstraintEvaluator for DaytimeEvaluator {
         _target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
-        // Extract and filter ephemeris data
-        let (times_filtered, sun_filtered, obs_filtered) =
-            extract_standard_ephemeris_data!(ephemeris, time_indices);
+        // Calculate Sun altitudes for all times at once (vectorized)
+        let sun_altitudes =
+            crate::utils::celestial::calculate_sun_altitudes_batch(ephemeris, time_indices);
 
         let n_targets = _target_ras.len();
-        let n_times = times_filtered.len();
+        let n_times = sun_altitudes.len();
+
+        // Broadcast Sun altitudes to all targets (Sun position is time-dependent, not target-dependent)
         let mut result = Array2::from_elem((n_targets, n_times), false);
 
-        let twilight_angle_rad = self.twilight_angle();
+        let twilight_angle = self.twilight_angle();
 
         for i in 0..n_times {
-            let sun_pos = sun_filtered.row(i);
-            let observer_pos = obs_filtered.row(i);
-
-            let sun_alt = self.calculate_sun_altitude(&sun_pos, &observer_pos);
-            let is_daytime = sun_alt > twilight_angle_rad;
+            let is_daytime = sun_altitudes[i] > twilight_angle;
+            let violated = is_daytime; // Daytime observations are not allowed
 
             for j in 0..n_targets {
-                let violated = is_daytime; // Daytime observations are not allowed
                 result[[j, i]] = violated;
             }
         }
@@ -136,22 +139,5 @@ impl ConstraintEvaluator for DaytimeEvaluator {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
-    }
-}
-
-impl DaytimeEvaluator {
-    /// Calculate Sun's altitude angle from observer position
-    /// This is a simplified calculation - in practice you'd need proper
-    /// astronomical coordinate transformations
-    fn calculate_sun_altitude(
-        &self,
-        _sun_pos: &ndarray::ArrayView1<f64>,
-        _observer_pos: &ndarray::ArrayView1<f64>,
-    ) -> f64 {
-        // Simplified: assume Sun position is given in topocentric coordinates
-        // In practice, you'd need to convert from GCRS to topocentric alt/az
-        // For now, return a dummy value that allows testing
-        // TODO: Implement proper alt/az calculation
-        0.1 // Slightly above horizon for testing
     }
 }
