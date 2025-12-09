@@ -13,6 +13,11 @@ pub struct OrbitPoleConfig {
     /// Maximum allowed angular separation from orbital pole in degrees (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_angle: Option<f64>,
+    /// If true, the pole avoidance angle is calculated as earth_radius_deg + min_angle - 90
+    /// This is used for NASA's Neil Gehrels Swift Observatory where the pole is an emergent
+    /// property of the Earth size plus the Earth limb avoidance angle being greater than 90°
+    #[serde(default)]
+    pub earth_limb_pole: bool,
 }
 
 impl ConstraintConfig for OrbitPoleConfig {
@@ -20,6 +25,7 @@ impl ConstraintConfig for OrbitPoleConfig {
         Box::new(OrbitPoleEvaluator {
             min_angle_deg: self.min_angle,
             max_angle_deg: self.max_angle,
+            earth_limb_pole: self.earth_limb_pole,
         })
     }
 }
@@ -28,17 +34,28 @@ impl ConstraintConfig for OrbitPoleConfig {
 struct OrbitPoleEvaluator {
     min_angle_deg: f64,
     max_angle_deg: Option<f64>,
+    earth_limb_pole: bool,
 }
 
 impl OrbitPoleEvaluator {
     fn format_name(&self) -> String {
-        match self.max_angle_deg {
-            Some(max) => format!(
-                "OrbitPoleConstraint(min={:.1}°, max={:.1}°)",
-                self.min_angle_deg, max
-            ),
-            None => format!("OrbitPoleConstraint(min={:.1}°)", self.min_angle_deg),
+        let mut parts = vec![];
+
+        if self.earth_limb_pole {
+            parts.push("earth_limb_pole".to_string());
         }
+
+        match self.max_angle_deg {
+            Some(max) => {
+                parts.push(format!("min={:.1}°", self.min_angle_deg));
+                parts.push(format!("max={:.1}°", max));
+            }
+            None => {
+                parts.push(format!("min={:.1}°", self.min_angle_deg));
+            }
+        }
+
+        format!("OrbitPoleConstraint({})", parts.join(", "))
     }
 
     /// Calculate the orbital pole unit vector (normal to orbital plane)
@@ -106,6 +123,21 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
                 let target_unit =
                     crate::utils::vector_math::radec_to_unit_vector(target_ra, target_dec);
 
+                // Calculate effective minimum angle
+                let effective_min_angle = if self.earth_limb_pole {
+                    // Calculate Earth angular radius at this time
+                    // Angular radius = arcsin(EARTH_RADIUS_KM / distance_from_earth_center)
+                    let distance = (position[0] * position[0]
+                        + position[1] * position[1]
+                        + position[2] * position[2])
+                        .sqrt();
+                    let ratio = (6378.137 / distance).min(1.0); // EARTH_RADIUS_KM = 6378.137
+                    let earth_radius_deg = ratio.asin().to_degrees();
+                    earth_radius_deg + self.min_angle_deg - 90.0
+                } else {
+                    self.min_angle_deg
+                };
+
                 // Calculate angular separation
                 let cos_angle = crate::utils::vector_math::dot_product(&target_unit, &pole_unit);
                 let angle_deg = cos_angle.clamp(-1.0, 1.0).acos().to_degrees();
@@ -113,9 +145,9 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
                 // Check constraints
                 let mut violated = false;
                 let mut severity = 1.0;
-                if angle_deg < self.min_angle_deg {
+                if angle_deg < effective_min_angle {
                     violated = true;
-                    severity = (self.min_angle_deg - angle_deg).min(1.0);
+                    severity = (effective_min_angle - angle_deg).min(1.0);
                 }
                 if let Some(max_angle) = self.max_angle_deg {
                     if angle_deg > max_angle {
@@ -150,14 +182,27 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
                 let cos_angle = crate::utils::vector_math::dot_product(&target_unit, &pole_unit);
                 let angle_deg = cos_angle.clamp(-1.0, 1.0).acos().to_degrees();
 
+                // Calculate effective minimum angle for description
+                let effective_min_angle = if self.earth_limb_pole {
+                    let distance = (position[0] * position[0]
+                        + position[1] * position[1]
+                        + position[2] * position[2])
+                        .sqrt();
+                    let ratio = (6378.137 / distance).min(1.0);
+                    let earth_radius_deg = ratio.asin().to_degrees();
+                    earth_radius_deg + self.min_angle_deg - 90.0
+                } else {
+                    self.min_angle_deg
+                };
+
                 match self.max_angle_deg {
                     Some(max) => format!(
                         "Target angle from orbital pole ({:.1}°) outside allowed range {:.1}°-{:.1}°",
-                        angle_deg, self.min_angle_deg, max
+                        angle_deg, effective_min_angle, max
                     ),
                     None => format!(
                         "Target too close to orbital pole ({:.1}° < {:.1}° minimum)",
-                        angle_deg, self.min_angle_deg
+                        angle_deg, effective_min_angle
                     ),
                 }
             },
@@ -238,9 +283,28 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
         for j in 0..n_targets {
             for i in 0..n_times {
                 let angle_deg = angles_deg[[j, i]];
+
+                // Calculate effective minimum angle for this time
+                let effective_min_angle = if self.earth_limb_pole {
+                    let position = [
+                        gcrs_filtered[[i, 0]], // x
+                        gcrs_filtered[[i, 1]], // y
+                        gcrs_filtered[[i, 2]], // z
+                    ];
+                    let distance = (position[0] * position[0]
+                        + position[1] * position[1]
+                        + position[2] * position[2])
+                        .sqrt();
+                    let ratio = (6378.137 / distance).min(1.0);
+                    let earth_radius_deg = ratio.asin().to_degrees();
+                    earth_radius_deg + self.min_angle_deg - 90.0
+                } else {
+                    self.min_angle_deg
+                };
+
                 let mut violated = false;
 
-                if angle_deg < self.min_angle_deg {
+                if angle_deg < effective_min_angle {
                     violated = true;
                 }
                 if let Some(max_angle) = self.max_angle_deg {

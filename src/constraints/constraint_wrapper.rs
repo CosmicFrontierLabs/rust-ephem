@@ -550,12 +550,18 @@ impl PyConstraint {
     /// Args:
     ///     min_angle (float): Minimum allowed angular separation from orbital pole in degrees
     ///     max_angle (float, optional): Maximum allowed angular separation from orbital pole in degrees
+    ///     earth_limb_pole (bool, optional): If True, pole avoidance angle is earth_radius_deg + min_angle - 90.
+    ///                                       Used for NASA's Neil Gehrels Swift Observatory.
     ///
     /// Returns:
     ///     Constraint: A new constraint object
-    #[pyo3(signature=(min_angle, max_angle=None))]
+    #[pyo3(signature=(min_angle, max_angle=None, earth_limb_pole=false))]
     #[staticmethod]
-    fn orbit_pole(min_angle: f64, max_angle: Option<f64>) -> PyResult<Self> {
+    fn orbit_pole(
+        min_angle: f64,
+        max_angle: Option<f64>,
+        earth_limb_pole: Option<bool>,
+    ) -> PyResult<Self> {
         if !(0.0..=180.0).contains(&min_angle) {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "min_angle must be between 0 and 180 degrees",
@@ -575,13 +581,17 @@ impl PyConstraint {
             }
         }
 
+        let earth_limb_pole = earth_limb_pole.unwrap_or(false);
+
         let config = OrbitPoleConfig {
             min_angle,
             max_angle,
+            earth_limb_pole,
         };
         let mut json_obj = serde_json::json!({
             "type": "orbit_pole",
-            "min_angle": min_angle
+            "min_angle": min_angle,
+            "earth_limb_pole": earth_limb_pole
         });
         if let Some(max) = max_angle {
             json_obj["max_angle"] = serde_json::json!(max);

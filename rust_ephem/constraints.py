@@ -569,8 +569,8 @@ class OrbitRamConstraint(RustConstraintMixin):
     """Orbit RAM direction constraint
 
     Ensures target maintains minimum angular separation from the spacecraft's
-    velocity vector (RAM direction). Useful for instruments that need to sample
-    the atmosphere or for thermal management.
+    velocity vector (RAM direction). Useful for avoiding pointing
+    directions that may cause contamination.
 
     Attributes:
         type: Always "orbit_ram"
@@ -601,6 +601,9 @@ class OrbitPoleConstraint(RustConstraintMixin):
         type: Always "orbit_pole"
         min_angle: Minimum allowed angular separation from orbital pole in degrees (0-180)
         max_angle: Maximum allowed angular separation from orbital pole in degrees (0-180), optional
+        earth_limb_pole: If True, pole avoidance angle is earth_radius_deg + min_angle - 90.
+                        Used for NASA's Neil Gehrels Swift Observatory where the pole is an emergent
+                        property of Earth size plus Earth limb avoidance angle > 90°.
     """
 
     type: Literal["orbit_pole"] = "orbit_pole"
@@ -612,6 +615,10 @@ class OrbitPoleConstraint(RustConstraintMixin):
         ge=0.0,
         le=180.0,
         description="Maximum angle from orbital pole in degrees",
+    )
+    earth_limb_pole: bool = Field(
+        default=False,
+        description="If True, pole avoidance angle is earth_radius_deg + min_angle - 90",
     )
 
 
