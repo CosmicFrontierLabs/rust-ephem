@@ -489,7 +489,7 @@ impl PyConstraint {
     /// Create an Altitude/Azimuth constraint
     ///
     /// Args:
-    ///     min_altitude (float): Minimum allowed altitude in degrees (0 = horizon, 90 = zenith)
+    ///     min_altitude (float, optional): Minimum allowed altitude in degrees (0 = horizon, 90 = zenith)
     ///     max_altitude (float, optional): Maximum allowed altitude in degrees
     ///     min_azimuth (float, optional): Minimum allowed azimuth in degrees (0 = North, 90 = East)
     ///     max_azimuth (float, optional): Maximum allowed azimuth in degrees
@@ -504,19 +504,21 @@ impl PyConstraint {
     ///
     /// For azimuth ranges that cross North (e.g., 330° to 30°), specify min_azimuth > max_azimuth.
     /// If polygon is provided, the target must be inside this polygon to satisfy the constraint.
-    #[pyo3(signature=(min_altitude, max_altitude=None, min_azimuth=None, max_azimuth=None, polygon=None))]
+    #[pyo3(signature=(min_altitude=None, max_altitude=None, min_azimuth=None, max_azimuth=None, polygon=None))]
     #[staticmethod]
     fn alt_az(
-        min_altitude: f64,
+        min_altitude: Option<f64>,
         max_altitude: Option<f64>,
         min_azimuth: Option<f64>,
         max_azimuth: Option<f64>,
         polygon: Option<Vec<(f64, f64)>>,
     ) -> PyResult<Self> {
-        if !(0.0..=90.0).contains(&min_altitude) {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "min_altitude must be between 0 and 90 degrees",
-            ));
+        if let Some(min_alt) = min_altitude {
+            if !(0.0..=90.0).contains(&min_alt) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "min_altitude must be between 0 and 90 degrees",
+                ));
+            }
         }
 
         if let Some(max_alt) = max_altitude {
@@ -525,7 +527,10 @@ impl PyConstraint {
                     "max_altitude must be between 0 and 90 degrees",
                 ));
             }
-            if max_alt <= min_altitude {
+        }
+
+        if let (Some(min_alt), Some(max_alt)) = (min_altitude, max_altitude) {
+            if max_alt <= min_alt {
                 return Err(pyo3::exceptions::PyValueError::new_err(
                     "max_altitude must be greater than min_altitude",
                 ));
@@ -566,9 +571,11 @@ impl PyConstraint {
         };
 
         let mut json_obj = serde_json::json!({
-            "type": "alt_az",
-            "min_altitude": min_altitude
+            "type": "alt_az"
         });
+        if let Some(min_alt) = min_altitude {
+            json_obj["min_altitude"] = serde_json::json!(min_alt);
+        }
         if let Some(max_alt) = max_altitude {
             json_obj["max_altitude"] = serde_json::json!(max_alt);
         }
@@ -1360,12 +1367,7 @@ fn parse_constraint_json(value: &serde_json::Value) -> PyResult<Box<dyn Constrai
             Ok(config.to_evaluator())
         }
         "alt_az" => {
-            let min_altitude = value
-                .get("min_altitude")
-                .and_then(|v| v.as_f64())
-                .ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err("Missing 'min_altitude' field")
-                })?;
+            let min_altitude = value.get("min_altitude").and_then(|v| v.as_f64());
             let max_altitude = value.get("max_altitude").and_then(|v| v.as_f64());
             let min_azimuth = value.get("min_azimuth").and_then(|v| v.as_f64());
             let max_azimuth = value.get("max_azimuth").and_then(|v| v.as_f64());

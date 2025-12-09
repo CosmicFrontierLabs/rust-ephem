@@ -539,7 +539,7 @@ class AltAzConstraint(RustConstraintMixin):
 
     Attributes:
         type: Always "alt_az"
-        min_altitude: Minimum allowed altitude in degrees (0-90)
+        min_altitude: Minimum allowed altitude in degrees (0-90), optional
         max_altitude: Maximum allowed altitude in degrees (0-90), optional
         min_azimuth: Minimum allowed azimuth in degrees (0-360), optional
         max_azimuth: Maximum allowed azimuth in degrees (0-360), optional
@@ -547,8 +547,8 @@ class AltAzConstraint(RustConstraintMixin):
     """
 
     type: Literal["alt_az"] = "alt_az"
-    min_altitude: float = Field(
-        ..., ge=0.0, le=90.0, description="Minimum allowed altitude in degrees"
+    min_altitude: float | None = Field(
+        default=None, ge=0.0, le=90.0, description="Minimum allowed altitude in degrees"
     )
     max_altitude: float | None = Field(
         default=None, ge=0.0, le=90.0, description="Maximum allowed altitude in degrees"

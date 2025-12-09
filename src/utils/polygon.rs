@@ -22,3 +22,8 @@ pub fn point_in_polygon(polygon: &[(f64, f64)], x: f64, y: f64) -> bool {
 
     winding_number != 0.0
 }
+
+/// Check if a point violates a polygon constraint (i.e., is outside the polygon if one is defined)
+pub fn polygon_violation(polygon: Option<&Vec<(f64, f64)>>, x: f64, y: f64) -> bool {
+    polygon.is_some_and(|poly| !point_in_polygon(poly, x, y))
+}

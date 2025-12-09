@@ -291,7 +291,7 @@ class Constraint:
 
     @staticmethod
     def alt_az(
-        min_altitude: float,
+        min_altitude: float | None = None,
         max_altitude: float | None = None,
         min_azimuth: float | None = None,
         max_azimuth: float | None = None,
@@ -301,7 +301,7 @@ class Constraint:
         Create an altitude/azimuth constraint.
 
         Args:
-            min_altitude: Minimum allowed altitude in degrees (0-90)
+            min_altitude: Minimum allowed altitude in degrees (0-90), optional
             max_altitude: Maximum allowed altitude in degrees (0-90), optional
             min_azimuth: Minimum allowed azimuth in degrees (0-360), optional
             max_azimuth: Maximum allowed azimuth in degrees (0-360), optional
