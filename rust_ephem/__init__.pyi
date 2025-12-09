@@ -77,12 +77,6 @@ from rust_ephem.constraints import (
     ConstraintConfig as ConstraintConfig,
 )
 from rust_ephem.constraints import (
-    ConstraintResult as ConstraintResult,
-)
-from rust_ephem.constraints import (
-    ConstraintViolation as ConstraintViolation,
-)
-from rust_ephem.constraints import (
     DaytimeConstraint as DaytimeConstraint,
 )
 from rust_ephem.constraints import (
@@ -154,8 +148,6 @@ __all__ = [
     "GroundEphemeris",
     "PositionVelocityData",
     "Constraint",
-    "ConstraintResult",
-    "ConstraintViolation",
     "VisibilityWindow",
     "init_planetary_ephemeris",
     "download_planetary_ephemeris",
