@@ -593,14 +593,14 @@ class OrbitRamConstraint(RustConstraintMixin):
 class OrbitPoleConstraint(RustConstraintMixin):
     """Orbit pole direction constraint
 
-    Ensures target maintains minimum angular separation from the orbital pole
-    (direction perpendicular to the orbital plane). Useful for maintaining
+    Ensures target maintains minimum angular separation from both the north and south
+    orbital poles (directions perpendicular to the orbital plane). Useful for maintaining
     specific orientations relative to the spacecraft's orbit.
 
     Attributes:
         type: Always "orbit_pole"
-        min_angle: Minimum allowed angular separation from orbital pole in degrees (0-180)
-        max_angle: Maximum allowed angular separation from orbital pole in degrees (0-180), optional
+        min_angle: Minimum allowed angular separation from both orbital poles in degrees (0-180)
+        max_angle: Maximum allowed angular separation from both orbital poles in degrees (0-180), optional
         earth_limb_pole: If True, pole avoidance angle is earth_radius_deg + min_angle - 90.
                         Used for NASA's Neil Gehrels Swift Observatory where the pole is an emergent
                         property of Earth size plus Earth limb avoidance angle > 90°.
@@ -608,13 +608,16 @@ class OrbitPoleConstraint(RustConstraintMixin):
 
     type: Literal["orbit_pole"] = "orbit_pole"
     min_angle: float = Field(
-        ..., ge=0.0, le=180.0, description="Minimum angle from orbital pole in degrees"
+        ...,
+        ge=0.0,
+        le=180.0,
+        description="Minimum angle from both orbital poles in degrees",
     )
     max_angle: float | None = Field(
         default=None,
         ge=0.0,
         le=180.0,
-        description="Maximum angle from orbital pole in degrees",
+        description="Maximum angle from both orbital poles in degrees",
     )
     earth_limb_pole: bool = Field(
         default=False,

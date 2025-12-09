@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 /// Configuration for Orbit Pole constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrbitPoleConfig {
-    /// Minimum allowed angular separation from orbital pole in degrees
+    /// Minimum allowed angular separation from both orbital poles in degrees
     pub min_angle: f64,
-    /// Maximum allowed angular separation from orbital pole in degrees (optional)
+    /// Maximum allowed angular separation from both orbital poles in degrees (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_angle: Option<f64>,
     /// If true, the pole avoidance angle is calculated as earth_radius_deg + min_angle - 90
@@ -58,8 +58,13 @@ impl OrbitPoleEvaluator {
         format!("OrbitPoleConstraint({})", parts.join(", "))
     }
 
-    /// Calculate the orbital pole unit vector (normal to orbital plane)
-    fn calculate_orbital_pole(&self, position: &[f64; 3], velocity: &[f64; 3]) -> [f64; 3] {
+    /// Calculate the orbital pole unit vectors (both north and south poles)
+    /// Returns both possible normals to the orbital plane
+    fn calculate_orbital_poles(
+        &self,
+        position: &[f64; 3],
+        velocity: &[f64; 3],
+    ) -> ([f64; 3], [f64; 3]) {
         // Orbital pole is the cross product of position and velocity vectors
         let pole = [
             position[1] * velocity[2] - position[2] * velocity[1],
@@ -68,7 +73,12 @@ impl OrbitPoleEvaluator {
         ];
 
         // Normalize to unit vector
-        crate::utils::vector_math::normalize_vector(&pole)
+        let north_pole = crate::utils::vector_math::normalize_vector(&pole);
+
+        // South pole is the negative of north pole
+        let south_pole = [-north_pole[0], -north_pole[1], -north_pole[2]];
+
+        (north_pole, south_pole)
     }
 }
 
@@ -116,8 +126,8 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
                     gcrs_data[[i, 5]], // vz
                 ];
 
-                // Calculate orbital pole unit vector
-                let pole_unit = self.calculate_orbital_pole(&position, &velocity);
+                // Calculate orbital pole unit vectors (both north and south)
+                let (north_pole, south_pole) = self.calculate_orbital_poles(&position, &velocity);
 
                 // Convert target RA/Dec to unit vector
                 let target_unit =
@@ -138,21 +148,28 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
                     self.min_angle_deg
                 };
 
-                // Calculate angular separation
-                let cos_angle = crate::utils::vector_math::dot_product(&target_unit, &pole_unit);
-                let angle_deg = cos_angle.clamp(-1.0, 1.0).acos().to_degrees();
+                // Calculate angular separation to both poles
+                let cos_angle_north =
+                    crate::utils::vector_math::dot_product(&target_unit, &north_pole);
+                let cos_angle_south =
+                    crate::utils::vector_math::dot_product(&target_unit, &south_pole);
+                let angle_north_deg = cos_angle_north.clamp(-1.0, 1.0).acos().to_degrees();
+                let angle_south_deg = cos_angle_south.clamp(-1.0, 1.0).acos().to_degrees();
+
+                // Use the smaller angle (closer pole) for constraint checking
+                let min_angle_to_pole = angle_north_deg.min(angle_south_deg);
 
                 // Check constraints
                 let mut violated = false;
                 let mut severity = 1.0;
-                if angle_deg < effective_min_angle {
+                if min_angle_to_pole < effective_min_angle {
                     violated = true;
-                    severity = (effective_min_angle - angle_deg).min(1.0);
+                    severity = (effective_min_angle - min_angle_to_pole).min(1.0);
                 }
                 if let Some(max_angle) = self.max_angle_deg {
-                    if angle_deg > max_angle {
+                    if min_angle_to_pole > max_angle {
                         violated = true;
-                        severity = (angle_deg - max_angle).min(1.0);
+                        severity = (min_angle_to_pole - max_angle).min(1.0);
                     }
                 }
 
@@ -176,11 +193,16 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
                     gcrs_data[[i, 5]], // vz
                 ];
 
-                let pole_unit = self.calculate_orbital_pole(&position, &velocity);
+                let (north_pole, south_pole) = self.calculate_orbital_poles(&position, &velocity);
                 let target_unit =
                     crate::utils::vector_math::radec_to_unit_vector(target_ra, target_dec);
-                let cos_angle = crate::utils::vector_math::dot_product(&target_unit, &pole_unit);
-                let angle_deg = cos_angle.clamp(-1.0, 1.0).acos().to_degrees();
+                let cos_angle_north =
+                    crate::utils::vector_math::dot_product(&target_unit, &north_pole);
+                let cos_angle_south =
+                    crate::utils::vector_math::dot_product(&target_unit, &south_pole);
+                let angle_north_deg = cos_angle_north.clamp(-1.0, 1.0).acos().to_degrees();
+                let angle_south_deg = cos_angle_south.clamp(-1.0, 1.0).acos().to_degrees();
+                let angle_deg = angle_north_deg.min(angle_south_deg);
 
                 // Calculate effective minimum angle for description
                 let effective_min_angle = if self.earth_limb_pole {
@@ -252,8 +274,9 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
             gcrs_data.clone()
         };
 
-        // Create orbital pole direction vectors for all times
-        let mut pole_directions = Array2::<f64>::zeros((n_times, 3));
+        // Create orbital pole direction vectors for all times (both north and south)
+        let mut north_pole_directions = Array2::<f64>::zeros((n_times, 3));
+        let mut south_pole_directions = Array2::<f64>::zeros((n_times, 3));
         for i in 0..n_times {
             let position = [
                 gcrs_filtered[[i, 0]], // x
@@ -266,23 +289,39 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
                 gcrs_filtered[[i, 5]], // vz
             ];
 
-            // Calculate orbital pole unit vector
-            let pole_unit = self.calculate_orbital_pole(&position, &velocity);
-            pole_directions[[i, 0]] = pole_unit[0];
-            pole_directions[[i, 1]] = pole_unit[1];
-            pole_directions[[i, 2]] = pole_unit[2];
+            // Calculate both orbital pole unit vectors
+            let (north_pole, south_pole) = self.calculate_orbital_poles(&position, &velocity);
+            north_pole_directions[[i, 0]] = north_pole[0];
+            north_pole_directions[[i, 1]] = north_pole[1];
+            north_pole_directions[[i, 2]] = north_pole[2];
+            south_pole_directions[[i, 0]] = south_pole[0];
+            south_pole_directions[[i, 1]] = south_pole[1];
+            south_pole_directions[[i, 2]] = south_pole[2];
         }
 
-        // Calculate angular separations for all targets and times (vectorized)
-        let angles_deg = crate::utils::vector_math::calculate_angular_separations_batch(
+        // Calculate angular separations to both poles for all targets and times (vectorized)
+        let angles_north_deg = crate::utils::vector_math::calculate_angular_separations_batch(
             &target_vectors,
-            &pole_directions,
+            &north_pole_directions,
         );
+        let angles_south_deg = crate::utils::vector_math::calculate_angular_separations_batch(
+            &target_vectors,
+            &south_pole_directions,
+        );
+
+        // Use the minimum angle to either pole for constraint checking
+        let mut min_angles_to_poles = Array2::<f64>::zeros((n_targets, n_times));
+        for j in 0..n_targets {
+            for i in 0..n_times {
+                min_angles_to_poles[[j, i]] =
+                    angles_north_deg[[j, i]].min(angles_south_deg[[j, i]]);
+            }
+        }
 
         // Check constraints for all targets and times
         for j in 0..n_targets {
             for i in 0..n_times {
-                let angle_deg = angles_deg[[j, i]];
+                let angle_deg = min_angles_to_poles[[j, i]];
 
                 // Calculate effective minimum angle for this time
                 let effective_min_angle = if self.earth_limb_pole {

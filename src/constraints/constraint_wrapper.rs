@@ -543,13 +543,13 @@ impl PyConstraint {
 
     /// Create an Orbit pole direction constraint
     ///
-    /// Ensures target maintains minimum angular separation from the orbital pole
-    /// (direction perpendicular to the orbital plane). Useful for maintaining
+    /// Ensures target maintains minimum angular separation from both the north and south
+    /// orbital poles (directions perpendicular to the orbital plane). Useful for maintaining
     /// specific orientations relative to the spacecraft's orbit.
     ///
     /// Args:
-    ///     min_angle (float): Minimum allowed angular separation from orbital pole in degrees
-    ///     max_angle (float, optional): Maximum allowed angular separation from orbital pole in degrees
+    ///     min_angle (float): Minimum allowed angular separation from both orbital poles in degrees
+    ///     max_angle (float, optional): Maximum allowed angular separation from both orbital poles in degrees
     ///     earth_limb_pole (bool, optional): If True, pole avoidance angle is earth_radius_deg + min_angle - 90.
     ///                                       Used for NASA's Neil Gehrels Swift Observatory.
     ///
@@ -1577,6 +1577,39 @@ fn parse_constraint_json(value: &serde_json::Value) -> PyResult<Box<dyn Constrai
             Ok(Box::new(NotEvaluator {
                 constraint: evaluator,
             }))
+        }
+        "orbit_pole" => {
+            let min_angle = value
+                .get("min_angle")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("Missing 'min_angle' field")
+                })?;
+            let max_angle = value.get("max_angle").and_then(|v| v.as_f64());
+            let earth_limb_pole = value
+                .get("earth_limb_pole")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let config = OrbitPoleConfig {
+                min_angle,
+                max_angle,
+                earth_limb_pole,
+            };
+            Ok(config.to_evaluator())
+        }
+        "orbit_ram" => {
+            let min_angle = value
+                .get("min_angle")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("Missing 'min_angle' field")
+                })?;
+            let max_angle = value.get("max_angle").and_then(|v| v.as_f64());
+            let config = OrbitRamConfig {
+                min_angle,
+                max_angle,
+            };
+            Ok(config.to_evaluator())
         }
         _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Unknown constraint type: {constraint_type}"
