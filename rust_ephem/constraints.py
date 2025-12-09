@@ -92,12 +92,26 @@ class ConstraintResult(BaseModel):
         return total_seconds
 
     def in_constraint(self, time: datetime) -> bool:
-        """Check if target is in-constraint at a given time."""
-        time_str = time.isoformat().replace("+00:00", "Z")
-        for violation in self.violations:
-            if violation.start_time <= time_str <= violation.end_time:
-                return False
-        return True
+        """Check if target is in-constraint at a given time.
+
+        This method operates on timestamps from the evaluate() call.
+        The given time must exist in the evaluated timestamps.
+
+        Args:
+            time: The datetime to check (must be in evaluated timestamps)
+
+        Returns:
+            True if the constraint is violated at this time (target is in-constraint),
+            False if the constraint is satisfied (target is out-of-constraint).
+
+        Raises:
+            ValueError: If the time is not found in evaluated timestamps
+        """
+        if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
+            return cast(bool, self._rust_result_ref.in_constraint(time))
+        raise ValueError(
+            "ConstraintResult has no evaluated timestamps (was not created from evaluate())"
+        )
 
     def __repr__(self) -> str:
         return f"ConstraintResult(constraint='{self.constraint_name}', violations={len(self.violations)}, all_satisfied={self.all_satisfied})"
@@ -207,11 +221,15 @@ class RustConstraintMixin(BaseModel):
         target_ra: float,
         target_dec: float,
     ) -> bool | list[bool]:
-        """
-        Check if target violates the constraint at given time(s).
+        """Check if target is in-constraint at given time(s).
 
-        This method lazily creates the corresponding Rust constraint
-        object and delegates to its in_constraint method.
+        This method performs full constraint evaluation for the given times.
+        Use this to check constraint status without pre-computing evaluate().
+
+        **API Note:** This differs from ConstraintResult.in_constraint() which
+        operates on pre-evaluated timestamps. Use this method when you need
+        to check arbitrary times, and use ConstraintResult.in_constraint()
+        only for times already evaluated via evaluate().
 
         Args:
             time: The time(s) to check (must exist in ephemeris). Can be a single datetime,
@@ -221,8 +239,9 @@ class RustConstraintMixin(BaseModel):
             target_dec: Target declination in degrees (ICRS/J2000)
 
         Returns:
-            True if constraint is violated at the given time(s). Returns a single bool
-            for a single time, or a list of bools for multiple times.
+            True if constraint is violated at the given time(s) (in-constraint).
+            False if constraint is satisfied (out-of-constraint).
+            Returns a single bool for a single time, or a list of bools for multiple times.
         """
         if not hasattr(self, "_rust_constraint"):
             from rust_ephem import Constraint
