@@ -68,6 +68,17 @@ class ConstraintResult(BaseModel):
             return self._rust_result_ref.constraint_array
         return []
 
+    @property
+    def visibility(self) -> Any:
+        """Visibility windows - inverse of constraint violations.
+
+        Returns an array where True indicates the constraint is satisfied
+        (target is visible), opposite of constraint_array semantics.
+        """
+        if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
+            return self._rust_result_ref.visibility
+        return []
+
     def total_violation_duration(self) -> float:
         """Get the total duration of violations in seconds."""
         total_seconds = 0.0
