@@ -44,7 +44,7 @@ impl DaytimeEvaluator {
             TwilightType::Civil => -6.0,
             TwilightType::Nautical => -12.0,
             TwilightType::Astronomical => -18.0,
-            TwilightType::None => 0.0,
+            TwilightType::None => -0.8333, // Approximate angle for Sun just below horizon
         }
     }
 
@@ -67,9 +67,23 @@ impl ConstraintEvaluator for DaytimeEvaluator {
         _target_dec: f64,
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
-        // Calculate Sun altitudes for all times at once (vectorized)
-        let sun_altitudes =
-            crate::utils::celestial::calculate_sun_altitudes_batch(ephemeris, time_indices);
+        // Use cached Sun altitudes if available, otherwise compute them
+        // Use the fast geocentric approximation (good enough for daytime/twilight)
+        let sun_altitudes = if let Some(_indices) = time_indices {
+            // When filtering times, we need to compute altitudes for just those indices
+            crate::utils::celestial::calculate_sun_altitudes_batch_fast(ephemeris, time_indices)
+        } else {
+            // When using all times, try to use cache first
+            if let Some(cached) = ephemeris.data().sun_altitudes_cache.get() {
+                cached.clone()
+            } else {
+                // Compute and cache for all times using fast approximation
+                let altitudes =
+                    crate::utils::celestial::calculate_sun_altitudes_batch_fast(ephemeris, None);
+                let _ = ephemeris.data().sun_altitudes_cache.set(altitudes.clone());
+                altitudes
+            }
+        };
 
         // Get filtered times
         let times = ephemeris.get_times().expect("Ephemeris must have times");
@@ -109,9 +123,9 @@ impl ConstraintEvaluator for DaytimeEvaluator {
         _target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
-        // Calculate Sun altitudes for all times at once (vectorized)
+        // Use fast geocentric approximation for daytime constraint
         let sun_altitudes =
-            crate::utils::celestial::calculate_sun_altitudes_batch(ephemeris, time_indices);
+            crate::utils::celestial::calculate_sun_altitudes_batch_fast(ephemeris, time_indices);
 
         let n_targets = _target_ras.len();
         let n_times = sun_altitudes.len();

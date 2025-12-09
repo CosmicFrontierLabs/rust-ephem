@@ -175,22 +175,18 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
 
                 (violated, severity)
             },
-            |i, violated| {
-                if !violated {
-                    return "".to_string();
-                }
-
-                //let time = &times_filtered[i];
+            |violation_start_idx, _is_open| {
+                // Use the start of the violation window for calculations
                 let gcrs_data = ephemeris.data().gcrs.as_ref().unwrap(); // We already checked this exists
                 let position = [
-                    gcrs_data[[i, 0]], // x
-                    gcrs_data[[i, 1]], // y
-                    gcrs_data[[i, 2]], // z
+                    gcrs_data[[violation_start_idx, 0]], // x
+                    gcrs_data[[violation_start_idx, 1]], // y
+                    gcrs_data[[violation_start_idx, 2]], // z
                 ];
                 let velocity = [
-                    gcrs_data[[i, 3]], // vx
-                    gcrs_data[[i, 4]], // vy
-                    gcrs_data[[i, 5]], // vz
+                    gcrs_data[[violation_start_idx, 3]], // vx
+                    gcrs_data[[violation_start_idx, 4]], // vy
+                    gcrs_data[[violation_start_idx, 5]], // vz
                 ];
 
                 let (north_pole, south_pole) = self.calculate_orbital_poles(&position, &velocity);

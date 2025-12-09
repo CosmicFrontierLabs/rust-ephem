@@ -1631,86 +1631,70 @@ impl ConstraintEvaluator for AndEvaluator {
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
         let times = ephemeris.get_times()?;
+        let times_filtered = if let Some(indices) = time_indices {
+            indices.iter().map(|&i| times[i]).collect()
+        } else {
+            times.to_vec()
+        };
 
-        // Evaluate all constraints
-        let results: Vec<_> = self
-            .constraints
-            .iter()
-            .map(|c| c.evaluate(ephemeris, target_ra, target_dec, time_indices))
-            .collect::<PyResult<Vec<_>>>()?;
+        let violations = track_violations(
+            &times_filtered,
+            |i| {
+                let mut all_violated = true;
+                let mut min_severity = f64::MAX;
 
-        // Merge violations - a violation exists if ALL constraints are violated at that time
-        let mut merged_violations = Vec::new();
-        let mut current_violation: Option<(usize, f64, Vec<String>)> = None;
-
-        for (i, time) in times.iter().enumerate() {
-            let time_str = time.to_rfc3339();
-            let mut all_violated = true;
-            let mut min_severity = f64::MAX;
-            let mut descriptions = Vec::new();
-
-            // Check if all constraints are violated at this time
-            for result in &results {
-                let mut this_violated = false;
-                for violation in &result.violations {
-                    if violation.start_time <= time_str && time_str <= violation.end_time {
-                        this_violated = true;
-                        min_severity = min_severity.min(violation.max_severity);
-                        descriptions.push(&violation.description);
-                        break;
-                    }
-                }
-                if !this_violated {
-                    all_violated = false;
-                    break;
-                }
-            }
-
-            if all_violated {
-                match &mut current_violation {
-                    Some((_, sev, descs)) => {
-                        *sev = sev.max(min_severity);
-                        for desc in descriptions {
-                            // Only store string references, clone at the end
-                            if !descs.iter().any(|d| d == desc) {
-                                descs.push(desc.to_string());
+                // Check each constraint at this time
+                for constraint in &self.constraints {
+                    let result = constraint.evaluate(ephemeris, target_ra, target_dec, Some(&[i]));
+                    if let Ok(ref res) = result {
+                        if res.violations.is_empty() {
+                            all_violated = false;
+                        } else {
+                            for violation in &res.violations {
+                                min_severity = min_severity.min(violation.max_severity);
                             }
                         }
-                    }
-                    None => {
-                        current_violation = Some((
-                            i,
-                            min_severity,
-                            descriptions.iter().map(|s| s.to_string()).collect(),
-                        ));
+                    } else {
+                        all_violated = false;
                     }
                 }
-            } else if let Some((start_idx, severity, descs)) = current_violation.take() {
-                merged_violations.push(ConstraintViolation {
-                    start_time: times[start_idx].to_rfc3339(),
-                    end_time: times[i - 1].to_rfc3339(),
-                    max_severity: severity,
-                    description: format!("AND violation: {}", descs.join("; ")),
-                });
-            }
-        }
 
-        // Close any open violation
-        if let Some((start_idx, severity, descs)) = current_violation {
-            merged_violations.push(ConstraintViolation {
-                start_time: times[start_idx].to_rfc3339(),
-                end_time: times[times.len() - 1].to_rfc3339(),
-                max_severity: severity,
-                description: format!("AND violation: {}", descs.join("; ")),
-            });
-        }
+                (
+                    all_violated,
+                    if min_severity == f64::MAX {
+                        1.0
+                    } else {
+                        min_severity
+                    },
+                )
+            },
+            |i, _is_open| {
+                let mut descriptions = Vec::new();
 
-        let all_satisfied = merged_violations.is_empty();
+                // Get descriptions from all violated constraints at this time
+                for constraint in &self.constraints {
+                    let result = constraint.evaluate(ephemeris, target_ra, target_dec, Some(&[i]));
+                    if let Ok(ref res) = result {
+                        for violation in &res.violations {
+                            descriptions.push(violation.description.clone());
+                        }
+                    }
+                }
+
+                if descriptions.is_empty() {
+                    "AND violation".to_string()
+                } else {
+                    format!("AND violation: {}", descriptions.join("; "))
+                }
+            },
+        );
+
+        let all_satisfied = violations.is_empty();
         Ok(ConstraintResult::new(
-            merged_violations,
+            violations,
             all_satisfied,
             self.name(),
-            times.to_vec(),
+            times_filtered,
         ))
     }
 
@@ -1781,82 +1765,60 @@ impl ConstraintEvaluator for OrEvaluator {
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
         let times = ephemeris.get_times()?;
+        let times_filtered = if let Some(indices) = time_indices {
+            indices.iter().map(|&i| times[i]).collect()
+        } else {
+            times.to_vec()
+        };
 
-        // Evaluate all constraints
-        let results: Vec<_> = self
-            .constraints
-            .iter()
-            .map(|c| c.evaluate(ephemeris, target_ra, target_dec, time_indices))
-            .collect::<PyResult<Vec<_>>>()?;
+        let violations = track_violations(
+            &times_filtered,
+            |i| {
+                let mut any_violated = false;
+                let mut max_severity = 0.0f64;
 
-        // For OR, we violate when ANY constraint is violated
-        let mut merged_violations = Vec::new();
-        let mut current_violation: Option<(usize, f64, Vec<String>)> = None;
-
-        for (i, time) in times.iter().enumerate() {
-            let time_str = time.to_rfc3339();
-            let mut any_violated = false;
-            let mut max_severity: f64 = 0.0;
-            let mut descriptions = Vec::new();
-
-            // Check if any constraint is violated at this time
-            for result in &results {
-                for violation in &result.violations {
-                    if violation.start_time <= time_str && time_str <= violation.end_time {
-                        any_violated = true;
-                        max_severity = max_severity.max(violation.max_severity);
-                        // Avoid cloning by using reference
-                        descriptions.push(&violation.description);
-                        break;
-                    }
-                }
-            }
-
-            if any_violated {
-                match &mut current_violation {
-                    Some((_, sev, descs)) => {
-                        *sev = sev.max(max_severity);
-                        for desc in descriptions {
-                            // Only store string references, clone at the end
-                            if !descs.iter().any(|d| d == desc) {
-                                descs.push(desc.to_string());
+                // Check each constraint at this time
+                for constraint in &self.constraints {
+                    let result = constraint.evaluate(ephemeris, target_ra, target_dec, Some(&[i]));
+                    if let Ok(ref res) = result {
+                        if !res.violations.is_empty() {
+                            any_violated = true;
+                            for violation in &res.violations {
+                                max_severity = max_severity.max(violation.max_severity);
                             }
                         }
                     }
-                    None => {
-                        current_violation = Some((
-                            i,
-                            max_severity,
-                            descriptions.iter().map(|s| s.to_string()).collect(),
-                        ));
+                }
+
+                (any_violated, max_severity)
+            },
+            |i, _is_open| {
+                let mut descriptions = Vec::new();
+
+                // Get descriptions from all violated constraints at this time
+                for constraint in &self.constraints {
+                    let result = constraint.evaluate(ephemeris, target_ra, target_dec, Some(&[i]));
+                    if let Ok(ref res) = result {
+                        for violation in &res.violations {
+                            descriptions.push(violation.description.clone());
+                        }
                     }
                 }
-            } else if let Some((start_idx, severity, descs)) = current_violation.take() {
-                merged_violations.push(ConstraintViolation {
-                    start_time: times[start_idx].to_rfc3339(),
-                    end_time: times[i - 1].to_rfc3339(),
-                    max_severity: severity,
-                    description: format!("OR violation: {}", descs.join("; ")),
-                });
-            }
-        }
 
-        // Close any open violation
-        if let Some((start_idx, severity, descs)) = current_violation {
-            merged_violations.push(ConstraintViolation {
-                start_time: times[start_idx].to_rfc3339(),
-                end_time: times[times.len() - 1].to_rfc3339(),
-                max_severity: severity,
-                description: format!("OR violation: {}", descs.join("; ")),
-            });
-        }
+                if descriptions.is_empty() {
+                    "OR violation".to_string()
+                } else {
+                    format!("OR violation: {}", descriptions.join("; "))
+                }
+            },
+        );
 
-        let all_satisfied = merged_violations.is_empty();
+        let all_satisfied = violations.is_empty();
         Ok(ConstraintResult::new(
-            merged_violations,
+            violations,
             all_satisfied,
             self.name(),
-            times.to_vec(),
+            times_filtered,
         ))
     }
 

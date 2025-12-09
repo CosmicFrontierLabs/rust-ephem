@@ -577,7 +577,99 @@ pub fn radec_to_altaz(
 /// Array1 containing Sun altitude in degrees for each time
 ///
 /// # Performance
+/// Calculate Sun altitude angles - FAST approximation version
+/// This is suitable for daytime/twilight constraints where we don't need
+/// topocentric accuracy (sub-degree is fine).
+///
+/// This version avoids expensive frame conversions and SOFA calls by using
+/// a simpler geocentric approximation, which is typically within 0.5-1.0 degrees
+/// of the true topocentric value for ground-based observers.
+pub fn calculate_sun_altitudes_batch_fast(
+    ephemeris: &dyn EphemerisBase,
+    time_indices: Option<&[usize]>,
+) -> Array1<f64> {
+    // Get Sun positions in GCRS frame
+    let sun_positions = ephemeris
+        .data()
+        .sun_gcrs
+        .as_ref()
+        .expect("Ephemeris must have Sun data");
+
+    // Get observer positions in GCRS frame
+    let obs_positions = ephemeris
+        .data()
+        .gcrs
+        .as_ref()
+        .expect("Ephemeris must have GCRS data");
+
+    // Get times
+    let times = ephemeris.get_times().expect("Ephemeris must have times");
+
+    // Filter data if indices provided
+    let (sun_filtered, obs_filtered, times_filtered) = if let Some(indices) = time_indices {
+        let sun_filtered = sun_positions.select(ndarray::Axis(0), indices);
+        let obs_filtered = obs_positions.select(ndarray::Axis(0), indices);
+        let times_filtered: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+        (sun_filtered, obs_filtered, times_filtered)
+    } else {
+        (sun_positions.clone(), obs_positions.clone(), times.to_vec())
+    };
+
+    let n_times = times_filtered.len();
+    let mut result = Array1::<f64>::zeros(n_times);
+
+    // Use simple geocentric approximation:
+    // 1. Calculate relative Sun position (Sun as seen from observer)
+    // 2. Convert to altitude using observer's latitude/longitude from geocentric position
+    // 3. This avoids expensive frame conversions and is good enough for twilight
+
+    for i in 0..n_times {
+        // Get positions
+        let sun_x = sun_filtered[[i, 0]];
+        let sun_y = sun_filtered[[i, 1]];
+        let sun_z = sun_filtered[[i, 2]];
+
+        let obs_x = obs_filtered[[i, 0]];
+        let obs_y = obs_filtered[[i, 1]];
+        let obs_z = obs_filtered[[i, 2]];
+
+        // Relative Sun position from observer
+        let rel_x = sun_x - obs_x;
+        let rel_y = sun_y - obs_y;
+        let rel_z = sun_z - obs_z;
+
+        // Observer's geocentric latitude and longitude (from GCRS position)
+        let obs_lat = obs_z.atan2((obs_x * obs_x + obs_y * obs_y).sqrt());
+        let obs_lon = obs_y.atan2(obs_x);
+
+        // Convert Sun's relative position to RA/Dec
+        let sun_dist = (rel_x * rel_x + rel_y * rel_y + rel_z * rel_z).sqrt();
+        if sun_dist == 0.0 {
+            result[i] = -90.0; // Sun at observer position
+            continue;
+        }
+
+        let sun_dec = (rel_z / sun_dist).asin();
+        let sun_ra = rel_y.atan2(rel_x);
+
+        // Calculate Hour Angle (HA = LST - RA)
+        // For simplicity, approximate LST ≈ observer_longitude (geocentric)
+        // In GCRS, the x-axis points to vernal equinox, so longitude ≈ atan2(y, x)
+        let lst_approx = obs_lon;
+        let ha = lst_approx - sun_ra;
+
+        // Simple altitude formula (good enough for daytime constraint):
+        // sin(alt) = sin(dec) * sin(lat) + cos(dec) * cos(lat) * cos(HA)
+        let sin_alt = sun_dec.sin() * obs_lat.sin() + sun_dec.cos() * obs_lat.cos() * ha.cos();
+        let alt_rad = sin_alt.asin();
+        result[i] = alt_rad.to_degrees();
+    }
+
+    result
+}
+
 /// This vectorized implementation calculates altitudes for all times at once for maximum performance.
+#[allow(dead_code)]
 pub fn calculate_sun_altitudes_batch(
     ephemeris: &dyn EphemerisBase,
     time_indices: Option<&[usize]>,

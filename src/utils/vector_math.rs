@@ -139,6 +139,7 @@ pub fn radec_to_unit_vectors_batch(ras_deg: &[f64], decs_deg: &[f64]) -> Array2<
 ///
 /// # Performance
 /// This vectorized implementation converts all positions at once for maximum performance.
+#[allow(dead_code)]
 pub fn cartesian_to_radec_batch(positions: &Array2<f64>) -> Array2<f64> {
     let n = positions.nrows();
     let mut result = Array2::<f64>::zeros((n, 2));
