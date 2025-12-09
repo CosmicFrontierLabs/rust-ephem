@@ -214,3 +214,43 @@ Performance Tips
 
     # Or use indices
     result = constraint.evaluate(ephem, ra, dec, indices=[0, 10, 20])
+
+Tracking Moving Bodies with Horizons
+-------------------------------------
+
+Use the ``moving_body_visibility()`` function to track solar system bodies (asteroids,
+comets, spacecraft) with automatic JPL Horizons fallback:
+
+.. code-block:: python
+
+    from rust_ephem.constraints import moving_body_visibility
+
+    # Constraint for observation planning
+    constraint = SunConstraint(min_angle=30) & MoonConstraint(min_angle=15)
+
+    # Track Ceres (asteroid 1)
+    result = moving_body_visibility(
+        constraint=constraint,
+        ephemeris=ephem,
+        body="1",  # Ceres
+        use_horizons=True  # Enable JPL Horizons fallback
+    )
+
+    print(f"Visibility windows: {len(result.visibility)}")
+    for window in result.visibility:
+        duration = (window.end_time - window.start_time).total_seconds()
+        print(f"  {window.start_time} to {window.end_time} ({duration:.0f}s)")
+
+The ``use_horizons=True`` flag enables automatic fallback to NASA's JPL Horizons
+system when a body is not found in local SPICE kernels. This allows tracking of
+asteroids, comets, and spacecraft without requiring additional configuration.
+
+**Key Features:**
+
+- **SPICE-first lookup** — Uses fast cached SPICE kernels when available
+- **Automatic fallback** — Queries JPL Horizons only when SPICE lacks the body
+- **Constraint integration** — Works with all constraint types and combinations
+- **Full accuracy** — Returns observer-relative positions with proper frame conversions
+
+For detailed Horizons documentation including asteroid tracking examples,
+constraint combinations, and troubleshooting, see :doc:`ephemeris_horizons`.

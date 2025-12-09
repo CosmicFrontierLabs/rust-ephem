@@ -376,20 +376,34 @@ impl GroundEphemeris {
         self.find_closest_index(time)
     }
 
-    #[pyo3(signature = (body, kernel_spec=None))]
+    #[pyo3(signature = (body, kernel_spec=None, use_horizons=false))]
     fn get_body_pv(
         &self,
         py: Python,
         body: &str,
         kernel_spec: Option<String>,
+        use_horizons: bool,
     ) -> PyResult<Py<PositionVelocityData>> {
-        <Self as EphemerisBase>::get_body_pv(self, py, body, kernel_spec.as_deref())
+        <Self as EphemerisBase>::get_body_pv(self, py, body, kernel_spec.as_deref(), use_horizons)
     }
 
-    #[pyo3(signature = (body, kernel_spec=None))]
-    fn get_body(&self, py: Python, body: &str, kernel_spec: Option<String>) -> PyResult<Py<PyAny>> {
+    #[pyo3(signature = (body, kernel_spec=None, use_horizons=false))]
+    fn get_body(
+        &self,
+        py: Python,
+        body: &str,
+        kernel_spec: Option<String>,
+        use_horizons: bool,
+    ) -> PyResult<Py<PyAny>> {
         let modules = AstropyModules::import(py)?;
-        <Self as EphemerisBase>::get_body(self, py, &modules, body, kernel_spec.as_deref())
+        <Self as EphemerisBase>::get_body(
+            self,
+            py,
+            &modules,
+            body,
+            kernel_spec.as_deref(),
+            use_horizons,
+        )
     }
 }
 

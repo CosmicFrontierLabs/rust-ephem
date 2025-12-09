@@ -727,7 +727,7 @@ pub fn calculate_sun_positions(times: &[DateTime<Utc>]) -> Array2<f64> {
 ///
 /// # Arguments
 /// * `times` - Vector of timestamps for which to calculate positions
-/// * `body_identifier` - NAIF ID or body name (e.g., "Jupiter", "mars", "301" for Moon)
+/// * `body_identifier` - NAIF ID or body name (e.g., "Jupiter", "mars", "301" for Moon, "Halley" for comet)
 /// * `observer_id` - NAIF ID of the observer/center body (default: 399 for Earth)
 ///
 /// # Returns
@@ -746,18 +746,93 @@ pub fn calculate_sun_positions(times: &[DateTime<Utc>]) -> Array2<f64> {
 /// let mars = calculate_body_by_id_or_name(&times, "499", 399).unwrap();
 ///
 /// // By name (case insensitive)
-/// let moon = calculate_body_by_id_or_name(&times, "moon", 399).unwrap();
+/// let moon = calculate_body_by_id_or_name(&times, "moon", 399, None, false).unwrap();
+///
+/// // Comet by name (requires use_horizons=true)
+/// let halley = calculate_body_by_id_or_name(&times, "Halley", 399, None, true).unwrap();
+///
+/// // Or use JPL Horizons as fallback when SPICE data unavailable
+/// let asteroid = calculate_body_by_id_or_name(&times, "433", 399, None, true).unwrap();
 /// ```
 pub fn calculate_body_by_id_or_name(
     times: &[DateTime<Utc>],
     body_identifier: &str,
     observer_id: i32,
     kernel_spec: Option<&str>,
+    use_horizons: bool,
 ) -> Result<Array2<f64>, String> {
     use crate::naif_ids::parse_body_identifier;
+    use crate::utils::horizons::query_horizons_body;
 
-    let target_id = parse_body_identifier(body_identifier)
-        .ok_or_else(|| format!("Unknown body identifier: '{body_identifier}'. Provide a valid NAIF ID or body name (e.g., 'Jupiter', 'Mars', '301' for Moon)."))?;
+    // First, try to parse as a known NAIF ID/name
+    if let Some(target_id) = parse_body_identifier(body_identifier) {
+        // Try SPICE first
+        let spice_result =
+            calculate_body_positions_spice_result(times, target_id, observer_id, kernel_spec);
 
-    calculate_body_positions_spice_result(times, target_id, observer_id, kernel_spec)
+        // If SPICE fails and use_horizons is enabled, try JPL Horizons
+        if spice_result.is_err() && use_horizons {
+            return query_and_convert_horizons(times, target_id, observer_id, &query_horizons_body);
+        }
+
+        return spice_result;
+    }
+
+    // If not a recognized NAIF ID/name and use_horizons is enabled, try as a comet or object name
+    if use_horizons {
+        // Treat as a comet/object name
+        return query_and_convert_horizons_by_name(times, body_identifier, observer_id);
+    }
+
+    // Neither NAIF ID/name nor Horizons
+    Err(format!(
+        "Unknown body identifier: '{}'. Provide a valid NAIF ID, body name (e.g., 'Jupiter', 'Mars', '301' for Moon), or enable use_horizons=True for comet/asteroid names.",
+        body_identifier
+    ))
+}
+
+/// Helper function to query Horizons by ID and convert coordinates
+#[allow(clippy::type_complexity)]
+fn query_and_convert_horizons(
+    times: &[DateTime<Utc>],
+    target_id: i32,
+    observer_id: i32,
+    query_fn: &dyn Fn(&[DateTime<Utc>], i32) -> Result<Array2<f64>, String>,
+) -> Result<Array2<f64>, String> {
+    // Horizons fallback only works for Earth-centered observers (NAIF ID 399)
+    // For satellite observers, use SPICE kernels instead
+    if observer_id != EARTH_NAIF_ID {
+        return Err(format!(
+            "Horizons fallback only supports Earth-centered observer (NAIF ID {}). \
+            For satellite/spacecraft observers, ensure SPICE kernels are available. Got observer_id={}",
+            EARTH_NAIF_ID, observer_id
+        ));
+    }
+
+    // Query Horizons for geocentric position (CENTER='@399' in the API)
+    // The Horizons API already returns Earth-centered ICRF coordinates
+    query_fn(times, target_id)
+}
+
+/// Helper function to query Horizons by name and convert coordinates
+fn query_and_convert_horizons_by_name(
+    times: &[DateTime<Utc>],
+    body_name: &str,
+    observer_id: i32,
+) -> Result<Array2<f64>, String> {
+    use crate::utils::horizons::query_horizons_body_by_name;
+
+    // Horizons fallback only works for Earth-centered observers (NAIF ID 399)
+    // For satellite observers, use SPICE kernels instead
+    if observer_id != EARTH_NAIF_ID {
+        return Err(format!(
+            "Horizons fallback only supports Earth-centered observer (NAIF ID {}). \
+            For satellite/spacecraft observers, ensure SPICE kernels are available. Got observer_id={}",
+            EARTH_NAIF_ID, observer_id
+        ));
+    }
+
+    // Query Horizons for geocentric position by name (CENTER='@399' in the API)
+    // The Horizons API already returns Earth-centered ICRF coordinates
+    query_horizons_body_by_name(times, body_name)
 }

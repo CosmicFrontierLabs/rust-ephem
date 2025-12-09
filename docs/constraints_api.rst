@@ -1449,6 +1449,40 @@ Time window when the observation target is not constrained (visible).
       (default planetary kernel ``de440s.bsp``; override with ``kernel_spec``
       path or URL, downloads cached under ``~/.cache/rust_ephem``).
 
+   JPL Horizons Support
+   ~~~~~~~~~~~~~~~~~~~~
+
+   When the SPICE kernel (e.g., ``de440s.bsp``) does not contain a body, you can automatically
+   fall back to JPL Horizons to query its position and velocity. Set ``use_horizons=True``
+   in ``get_body()`` or ``moving_body_visibility()`` to enable this fallback:
+
+   .. code-block:: python
+
+      from rust_ephem import TLEEphemeris
+      from rust_ephem.constraints import SunConstraint, moving_body_visibility
+      from datetime import datetime
+
+      eph = TLEEphemeris(norad_id=28485, begin=datetime(2024, 6, 1), end=datetime(2024, 6, 2))
+      constraint = SunConstraint(min_angle=45)
+
+      # Query a minor planet (Ceres, NAIF ID 1) using JPL Horizons
+      result = moving_body_visibility(
+         constraint=constraint,
+         ephemeris=eph,
+         body="1",  # Ceres
+         use_horizons=True,  # Fall back to JPL Horizons if SPICE doesn't have it
+      )
+
+      print(result.all_satisfied)  # Overall constraint satisfaction
+      print(len(result.visibility))  # Number of visibility windows
+
+   **Notes:**
+
+   - Horizons queries use the default time range from the ephemeris.
+   - Positions are queried from NASA's JPL Horizons system via HTTP (requires internet).
+   - Both ``get_body()`` and ``moving_body_visibility()`` support the ``use_horizons`` parameter.
+   - Without ``use_horizons=True``, bodies not in SPICE kernels will raise an error.
+
    Example (body lookup)
    ~~~~~~~~~~~~~~~~~~~~~
 
@@ -1500,10 +1534,11 @@ Time window when the observation target is not constrained (visible).
    * ``timestamps`` must match ``ras``/``decs`` length when provided.
    * When ``body`` is set, timestamps come from the ephemeris.
     * Body positions use the planetary ephemeris kernel (default ``de440s.bsp``). To override for a specific
-       body lookup, call ``ephemeris.get_body(body, kernel_spec="path_or_url")`` (local file or URL). Downloads
+       body lookup, call ``ephemeris.get_body(body, kernel_spec="path_or_url", use_horizons=True)`` (local file or URL). Downloads
        are cached under ``~/.cache/rust_ephem``; reuse the cached path to avoid re-fetching.
     * If you already have a planetary kernel on disk, point ``kernel_spec`` at that path; this does not affect
        telescope/observer geometry — only body positions.
+    * Use ``use_horizons=True`` for bodies not available in your SPICE kernels; JPL Horizons covers all major and many minor solar system bodies.
 
 
 Type Aliases

@@ -897,6 +897,7 @@ pub trait EphemerisBase {
         py: Python,
         body_identifier: &str,
         kernel_spec: Option<&str>,
+        use_horizons: bool,
     ) -> PyResult<Py<PositionVelocityData>> {
         use crate::utils::celestial::calculate_body_by_id_or_name;
         use crate::utils::config::EARTH_NAIF_ID;
@@ -908,9 +909,14 @@ pub trait EphemerisBase {
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available."))?;
 
         // Calculate body position relative to Earth center
-        let body_geocentric =
-            calculate_body_by_id_or_name(times, body_identifier, EARTH_NAIF_ID, kernel_spec)
-                .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        let body_geocentric = calculate_body_by_id_or_name(
+            times,
+            body_identifier,
+            EARTH_NAIF_ID,
+            kernel_spec,
+            use_horizons,
+        )
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
 
         // Get observer's geocentric position
         let observer_geocentric = self.data().gcrs.as_ref().ok_or_else(|| {
@@ -950,6 +956,7 @@ pub trait EphemerisBase {
         modules: &AstropyModules,
         body_identifier: &str,
         kernel_spec: Option<&str>,
+        use_horizons: bool,
     ) -> PyResult<Py<PyAny>> {
         use crate::utils::celestial::calculate_body_by_id_or_name;
         use crate::utils::config::EARTH_NAIF_ID;
@@ -961,9 +968,14 @@ pub trait EphemerisBase {
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available."))?;
 
         // Calculate body position relative to Earth center
-        let body_geocentric =
-            calculate_body_by_id_or_name(times, body_identifier, EARTH_NAIF_ID, kernel_spec)
-                .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        let body_geocentric = calculate_body_by_id_or_name(
+            times,
+            body_identifier,
+            EARTH_NAIF_ID,
+            kernel_spec,
+            use_horizons,
+        )
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
 
         // Get observer's geocentric position
         let observer_geocentric = self.data().gcrs.as_ref().ok_or_else(|| {

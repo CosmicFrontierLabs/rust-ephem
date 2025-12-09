@@ -10,6 +10,7 @@ pub mod conversions;
 pub mod eop_cache;
 pub mod eop_provider;
 pub mod geo;
+pub mod horizons;
 pub mod interpolation;
 pub mod math_utils;
 pub mod moon;

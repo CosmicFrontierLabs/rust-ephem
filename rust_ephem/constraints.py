@@ -834,6 +834,7 @@ def moving_body_visibility(
     decs: npt.ArrayLike | None = None,
     timestamps: npt.ArrayLike | None = None,
     body: str | int | None = None,
+    use_horizons: bool = False,
 ) -> MovingVisibilityResult:
     """Evaluate constraint visibility for a moving target.
 
@@ -849,6 +850,7 @@ def moving_body_visibility(
         timestamps: Array-like of datetimes aligned with ras/decs. If None and
             `body` is provided, uses the ephemeris timestamps.
         body: NAIF ID (int/str) or body name to resolve using ephemeris.get_body().
+        use_horizons: If True, query JPL Horizons when SPICE kernels don't have the body.
 
     Returns:
         MovingVisibilityResult with per-timestamp violation flags, visibility flags,
@@ -858,7 +860,7 @@ def moving_body_visibility(
     # Resolve positions from body identifier if provided
     if body is not None:
         body_id = str(body)
-        skycoord = ephemeris.get_body(body_id)
+        skycoord = ephemeris.get_body(body_id, use_horizons=use_horizons)
         ras_array = np.asarray(skycoord.ra.deg)
         decs_array = np.asarray(skycoord.dec.deg)
         ts_list = _to_datetime_list(ephemeris.timestamp)
