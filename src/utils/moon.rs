@@ -51,6 +51,7 @@ pub fn calculate_moon_illumination(time: &DateTime<Utc>) -> f64 {
     let cos_d = dec1.sin() * dec2.sin() + dec1.cos() * dec2.cos() * ra_diff.cos();
     let angular_separation = cos_d.acos(); // in radians
 
-    // Illumination fraction: (1 + cos(phase_angle)) / 2
-    (1.0 + angular_separation.cos()) / 2.0
+    // Illumination fraction: (1 - cos(phase_angle)) / 2
+    // where phase_angle is the angular separation between Sun and Moon
+    (1.0 - angular_separation.cos()) / 2.0
 }
