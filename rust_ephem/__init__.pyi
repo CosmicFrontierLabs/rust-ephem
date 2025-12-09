@@ -1,7 +1,5 @@
 """Type stubs for rust_ephem package"""
 
-from typing import Any
-
 # Re-export from _rust_ephem
 from rust_ephem._rust_ephem import (
     Constraint as Constraint,
@@ -103,6 +101,12 @@ from rust_ephem.constraints import (
     NotConstraint as NotConstraint,
 )
 from rust_ephem.constraints import (
+    OrbitPoleConstraint as OrbitPoleConstraint,
+)
+from rust_ephem.constraints import (
+    OrbitRamConstraint as OrbitRamConstraint,
+)
+from rust_ephem.constraints import (
     OrConstraint as OrConstraint,
 )
 from rust_ephem.constraints import (
@@ -123,14 +127,6 @@ from .ephemeris import (
     EphemerisType as EphemerisType,
 )
 
-# Optional convenience functions (may not be available)
-def and_constraint(*args: Any, **kwargs: Any) -> Any: ...
-def constraint_to_rust(*args: Any, **kwargs: Any) -> Any: ...
-def eclipse(*args: Any, **kwargs: Any) -> Any: ...
-def moon_proximity(*args: Any, **kwargs: Any) -> Any: ...
-def not_constraint(*args: Any, **kwargs: Any) -> Any: ...
-def sun_proximity(*args: Any, **kwargs: Any) -> Any: ...
-
 __all__ = [
     "SunConstraint",
     "MoonConstraint",
@@ -142,6 +138,8 @@ __all__ = [
     "MoonPhaseConstraint",
     "SAAConstraint",
     "AltAzConstraint",
+    "OrbitRamConstraint",
+    "OrbitPoleConstraint",
     "ConstraintConfig",
     "CombinedConstraintConfig",
     "AndConstraint",

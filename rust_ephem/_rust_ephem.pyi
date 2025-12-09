@@ -317,6 +317,43 @@ class Constraint:
         ...
 
     @staticmethod
+    def orbit_ram(min_angle: float, max_angle: float | None = None) -> Constraint:
+        """
+        Create an orbit RAM direction constraint.
+
+        Args:
+            min_angle: Minimum allowed angular separation from spacecraft velocity vector in degrees (0-180)
+            max_angle: Maximum allowed angular separation from spacecraft velocity vector in degrees (optional)
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If angles are out of valid range
+        """
+        ...
+
+    @staticmethod
+    def orbit_pole(
+        min_angle: float, max_angle: float | None = None, earth_limb_pole: bool = False
+    ) -> Constraint:
+        """
+        Create an orbit pole direction constraint.
+
+        Args:
+            min_angle: Minimum allowed angular separation from orbital poles in degrees (0-180)
+            max_angle: Maximum allowed angular separation from orbital poles in degrees (optional)
+            earth_limb_pole: If True, pole avoidance angle is earth_radius_deg + min_angle - 90
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If angles are out of valid range
+        """
+        ...
+
+    @staticmethod
     def and_(*constraints: Constraint) -> Constraint:
         """
         Combine constraints with logical AND.

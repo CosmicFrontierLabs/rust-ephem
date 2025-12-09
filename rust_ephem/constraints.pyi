@@ -111,6 +111,17 @@ class AltAzConstraint(RustConstraintMixin):
     min_azimuth: float | None = None
     max_azimuth: float | None = None
 
+class OrbitRamConstraint(RustConstraintMixin):
+    type: Literal["orbit_ram"] = "orbit_ram"
+    min_angle: float
+    max_angle: float | None = None
+
+class OrbitPoleConstraint(RustConstraintMixin):
+    type: Literal["orbit_pole"] = "orbit_pole"
+    min_angle: float
+    max_angle: float | None = None
+    earth_limb_pole: bool = False
+
 class AndConstraint(RustConstraintMixin):
     type: Literal["and"] = "and"
     constraints: list[ConstraintConfig]
@@ -138,6 +149,8 @@ ConstraintConfig = (
     | MoonPhaseConstraint
     | SAAConstraint
     | AltAzConstraint
+    | OrbitRamConstraint
+    | OrbitPoleConstraint
     | AndConstraint
     | OrConstraint
     | XorConstraint
