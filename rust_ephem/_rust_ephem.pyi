@@ -805,7 +805,9 @@ class TLEEphemeris(Ephemeris):
         """
         ...
 
-    def get_body_pv(self, body: str) -> PositionVelocityData:
+    def get_body_pv(
+        self, body: str, kernel_spec: str | None = ...
+    ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body.
 
@@ -817,7 +819,9 @@ class TLEEphemeris(Ephemeris):
         """
         ...
 
-    def get_body(self, body: str) -> Any:  # Returns astropy.coordinates.SkyCoord
+    def get_body(
+        self, body: str, kernel_spec: str | None = ...
+    ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
 
@@ -1248,7 +1252,9 @@ class SPICEEphemeris(Ephemeris):
         """
         ...
 
-    def get_body_pv(self, body: str) -> PositionVelocityData:
+    def get_body_pv(
+        self, body: str, kernel_spec: str | None = ...
+    ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body.
 
@@ -1260,7 +1266,9 @@ class SPICEEphemeris(Ephemeris):
         """
         ...
 
-    def get_body(self, body: str) -> Any:  # Returns astropy.coordinates.SkyCoord
+    def get_body(
+        self, body: str, kernel_spec: str | None = ...
+    ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
 
@@ -1632,7 +1640,9 @@ class OEMEphemeris(Ephemeris):
         """
         ...
 
-    def get_body_pv(self, body: str) -> PositionVelocityData:
+    def get_body_pv(
+        self, body: str, kernel_spec: str | None = ...
+    ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body.
 
@@ -1644,7 +1654,9 @@ class OEMEphemeris(Ephemeris):
         """
         ...
 
-    def get_body(self, body: str) -> Any:  # Returns astropy.coordinates.SkyCoord
+    def get_body(
+        self, body: str, kernel_spec: str | None = ...
+    ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
 
@@ -2014,7 +2026,9 @@ class GroundEphemeris(Ephemeris):
         """
         ...
 
-    def get_body_pv(self, body: str) -> PositionVelocityData:
+    def get_body_pv(
+        self, body: str, kernel_spec: str | None = ...
+    ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body.
 
@@ -2026,7 +2040,9 @@ class GroundEphemeris(Ephemeris):
         """
         ...
 
-    def get_body(self, body: str) -> Any:  # Returns astropy.coordinates.SkyCoord
+    def get_body(
+        self, body: str, kernel_spec: str | None = ...
+    ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
 

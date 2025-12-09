@@ -1353,8 +1353,8 @@ Result of constraint evaluation containing all violation information.
    - ``violations`` (list[ConstraintViolation]) — List of violation time windows
    - ``all_satisfied`` (bool) — True if constraint was satisfied for entire time range
    - ``constraint_name`` (str) — Name/description of the constraint
-   - ``timestamp`` (numpy.ndarray) — Array of datetime objects for each evaluation time (cached)
-   - ``constraint_array`` (numpy.ndarray) — Boolean array where True = satisfied (cached)
+   - ``timestamps`` (numpy.ndarray | list[datetime]) — Evaluation times (cached, lazy)
+   - ``constraint_array`` (list[bool]) — Boolean array where True = violated (cached, lazy)
    - ``visibility`` (list[VisibilityWindow]) — Contiguous windows when target is visible
 
    **Methods:**
@@ -1371,7 +1371,7 @@ Result of constraint evaluation containing all violation information.
       Check if the target is in-constraint at a given time.
 
       :param datetime time: A datetime object (must exist in evaluated timestamps)
-      :returns: True if constraint is satisfied at the given time
+      :returns: True if constraint is violated at the given time
       :rtype: bool
       :raises ValueError: If time is not in the evaluated timestamps
 
@@ -1386,12 +1386,12 @@ Result of constraint evaluation containing all violation information.
       print(f"Total violation duration: {result.total_violation_duration()} seconds")
 
       # Access visibility windows
-      for window in result.visibility:
-          print(f"Visible: {window.start_time} to {window.end_time}")
+        for window in result.visibility:
+           print(f"Visible: {window.start_time} to {window.end_time}")
 
-      # Efficient iteration using cached arrays
-      for i, (time, satisfied) in enumerate(zip(result.timestamp, result.constraint_array)):
-          if satisfied:
+        # Efficient iteration using cached arrays
+        for time, violated in zip(result.timestamps, result.constraint_array):
+           if not violated:
               print(f"Target visible at {time}")
 
 ConstraintViolation
@@ -1403,8 +1403,8 @@ Information about a specific constraint violation time window.
 
    **Attributes:**
 
-   - ``start_time`` (str) — Start time of violation window (ISO 8601 string)
-   - ``end_time`` (str) — End time of violation window (ISO 8601 string)
+   - ``start_time`` (datetime) — Start time of violation window
+   - ``end_time`` (datetime) — End time of violation window
    - ``max_severity`` (float) — Maximum severity of violation (0.0 = just violated, 1.0+ = severe)
    - ``description`` (str) — Human-readable description of the violation
 
@@ -1437,6 +1437,73 @@ Time window when the observation target is not constrained (visible).
       for window in result.visibility:
           print(f"Window: {window.start_time} to {window.end_time}")
           print(f"  Duration: {window.duration_seconds / 3600:.2f} hours")
+
+
+   Moving Target Visibility
+   ^^^^^^^^^^^^^^^^^^^^^^^^
+
+   Use ``moving_body_visibility`` when RA/Dec change with time. Two modes:
+
+   1. Provide aligned arrays: ``ras``, ``decs``, and ``timestamps`` (same length).
+   2. Provide a ``body`` name or NAIF ID; positions come from ``ephemeris.get_body``
+      (default planetary kernel ``de440s.bsp``; override with ``kernel_spec``
+      path or URL, downloads cached under ``~/.cache/rust_ephem``).
+
+   Example (body lookup)
+   ~~~~~~~~~~~~~~~~~~~~~
+
+   .. code-block:: python
+
+      from rust_ephem import TLEEphemeris
+      from rust_ephem.constraints import SunConstraint, moving_body_visibility
+      from datetime import datetime, timedelta
+
+      eph = TLEEphemeris(norad_id=28485, begin=datetime(2024, 6, 1), end=datetime(2024, 6, 2))
+      constraint = SunConstraint(min_angle=45)
+
+      result = moving_body_visibility(
+         constraint=constraint,
+         ephemeris=eph,
+         body="4",  # Mars (names like "Mars" also work)
+      )
+
+      print(result.constraint_array[0:5])              # per-sample satisfied flags
+      print(len(result.visibility))                # merged visibility windows
+      print(result.visibility)
+
+
+   Example (explicit RA/Dec arrays)
+   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   .. code-block:: python
+
+      import numpy as np
+      from rust_ephem import TLEEphemeris
+      from rust_ephem.constraints import EarthLimbConstraint, moving_body_visibility
+
+      eph = TLEEphemeris(norad_id=28485)
+      times = eph.timestamp[:100]  # numpy datetime64 array
+      ras = np.linspace(10.0, 12.0, len(times))
+      decs = np.linspace(-20.0, -21.0, len(times))
+
+      result = moving_body_visibility(
+         constraint=EarthLimbConstraint(min_angle=30),
+         ephemeris=eph,
+         ras=ras,
+         decs=decs,
+         timestamps=times,
+      )
+
+   Notes
+   ~~~~~
+
+   * ``timestamps`` must match ``ras``/``decs`` length when provided.
+   * When ``body`` is set, timestamps come from the ephemeris.
+    * Body positions use the planetary ephemeris kernel (default ``de440s.bsp``). To override for a specific
+       body lookup, call ``ephemeris.get_body(body, kernel_spec="path_or_url")`` (local file or URL). Downloads
+       are cached under ``~/.cache/rust_ephem``; reuse the cached path to avoid re-fetching.
+    * If you already have a planetary kernel on disk, point ``kernel_spec`` at that path; this does not affect
+       telescope/observer geometry — only body positions.
 
 
 Type Aliases

@@ -354,10 +354,17 @@ pub fn calculate_body_positions_spice_result(
     times: &[DateTime<Utc>],
     target_id: i32,
     center_id: i32,
+    kernel_spec: Option<&str>,
 ) -> Result<Array2<f64>, String> {
     use crate::ephemeris::spice_manager;
     use anise::prelude::*;
     use hifitime::Epoch as HifiEpoch;
+
+    // If a kernel is specified, initialize from it (URL or path). Otherwise use cache/defaults.
+    if let Some(spec) = kernel_spec {
+        spice_manager::ensure_planetary_ephemeris_spec(spec)
+            .map_err(|e| format!("Failed to initialize planetary ephemeris from '{spec}': {e}"))?;
+    }
 
     let almanac = if let Some(almanac) = spice_manager::get_planetary_ephemeris() {
         almanac
@@ -745,11 +752,12 @@ pub fn calculate_body_by_id_or_name(
     times: &[DateTime<Utc>],
     body_identifier: &str,
     observer_id: i32,
+    kernel_spec: Option<&str>,
 ) -> Result<Array2<f64>, String> {
     use crate::naif_ids::parse_body_identifier;
 
     let target_id = parse_body_identifier(body_identifier)
         .ok_or_else(|| format!("Unknown body identifier: '{body_identifier}'. Provide a valid NAIF ID or body name (e.g., 'Jupiter', 'Mars', '301' for Moon)."))?;
 
-    calculate_body_positions_spice_result(times, target_id, observer_id)
+    calculate_body_positions_spice_result(times, target_id, observer_id, kernel_spec)
 }

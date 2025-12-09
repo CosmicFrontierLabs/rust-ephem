@@ -15,7 +15,12 @@ import numpy as np
 import numpy.typing as npt
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
+import rust_ephem
+
 from .ephemeris import Ephemeris
+
+if TYPE_CHECKING:
+    import rust_ephem
 
 if TYPE_CHECKING:
     pass
@@ -78,14 +83,12 @@ class ConstraintResult(BaseModel):
         return []
 
     @property
-    def visibility(self) -> list[bool]:
-        """Visibility windows - inverse of constraint violations.
-
-        Returns an array where True indicates the constraint is satisfied
-        (target is visible), opposite of constraint_array semantics.
-        """
+    def visibility(self) -> list["rust_ephem.VisibilityWindow"]:
+        """Visibility windows when the constraint is satisfied (target visible)."""
         if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
-            return cast(list[bool], self._rust_result_ref.visibility)
+            return cast(
+                list["rust_ephem.VisibilityWindow"], self._rust_result_ref.visibility
+            )
         return []
 
     def total_violation_duration(self) -> float:
@@ -784,3 +787,143 @@ NotConstraint.model_rebuild()
 
 # Type adapter for ConstraintConfig union
 CombinedConstraintConfig: TypeAdapter[ConstraintConfig] = TypeAdapter(ConstraintConfig)
+
+
+def _to_datetime_list(times: Any) -> list[datetime]:
+    """Convert supported timestamp inputs to a list of Python datetimes."""
+    if times is None:
+        return []
+    if isinstance(times, datetime):
+        return [times]
+    if isinstance(times, np.ndarray):
+        return [_convert_single_datetime(t) for t in times.tolist()]
+    return [_convert_single_datetime(t) for t in times]
+
+
+def _convert_single_datetime(t: Any) -> datetime:
+    if isinstance(t, datetime):
+        return t
+    if isinstance(t, np.datetime64):
+        return datetime.fromisoformat(np.datetime_as_string(t))
+    raise TypeError(f"Unsupported timestamp type: {type(t)}")
+
+
+class VisibilityWindowResult(BaseModel):
+    """Visibility window for a moving target."""
+
+    start_time: datetime
+    end_time: datetime
+    duration_seconds: float
+
+
+class MovingVisibilityResult(BaseModel):
+    """Result for moving target visibility evaluation."""
+
+    timestamps: list[datetime]
+    constraint_array: list[bool]
+    visibility_flags: list[bool]
+    visibility: list[VisibilityWindowResult]
+    all_satisfied: bool
+    constraint_name: str
+
+
+def moving_body_visibility(
+    constraint: ConstraintConfig,
+    ephemeris: Ephemeris,
+    ras: npt.ArrayLike | None = None,
+    decs: npt.ArrayLike | None = None,
+    timestamps: npt.ArrayLike | None = None,
+    body: str | int | None = None,
+) -> MovingVisibilityResult:
+    """Evaluate constraint visibility for a moving target.
+
+    Supports either explicit RA/Dec arrays aligned with timestamps or automatic
+    ephemeris-based positions via NAIF ID/body name using the default planetary
+    ephemeris (de440s) available through the provided ephemeris instance.
+
+    Args:
+        constraint: Constraint configuration to evaluate.
+        ephemeris: Ephemeris providing observer timeline and geometry.
+        ras: Array-like of right ascension values in degrees (matches timestamps).
+        decs: Array-like of declination values in degrees (matches timestamps).
+        timestamps: Array-like of datetimes aligned with ras/decs. If None and
+            `body` is provided, uses the ephemeris timestamps.
+        body: NAIF ID (int/str) or body name to resolve using ephemeris.get_body().
+
+    Returns:
+        MovingVisibilityResult with per-timestamp violation flags, visibility flags,
+        and merged visibility windows.
+    """
+
+    # Resolve positions from body identifier if provided
+    if body is not None:
+        body_id = str(body)
+        skycoord = ephemeris.get_body(body_id)
+        ras_array = np.asarray(skycoord.ra.deg)
+        decs_array = np.asarray(skycoord.dec.deg)
+        ts_list = _to_datetime_list(ephemeris.timestamp)
+    else:
+        if ras is None or decs is None or timestamps is None:
+            raise ValueError(
+                "ras, decs, and timestamps must be provided when body is None"
+            )
+        ras_array = np.asarray(ras, dtype=float)
+        decs_array = np.asarray(decs, dtype=float)
+        ts_list = _to_datetime_list(timestamps)
+
+    if ras_array.shape != decs_array.shape:
+        raise ValueError("ras and decs must have the same shape")
+    if len(ts_list) != ras_array.shape[0]:
+        raise ValueError("timestamps length must match ras/decs length")
+
+    # Compute violation flags per timestamp using single-time checks to align RA/Dec per time
+    violations: list[bool] = []
+    for ra, dec, t in zip(ras_array.tolist(), decs_array.tolist(), ts_list):
+        violations.append(
+            bool(
+                constraint.in_constraint(
+                    time=t, ephemeris=ephemeris, target_ra=ra, target_dec=dec
+                )
+            )
+        )
+
+    visibility_flags = [not v for v in violations]
+    all_satisfied = not any(violations)
+
+    windows = _build_visibility_windows(ts_list, visibility_flags)
+
+    return MovingVisibilityResult(
+        timestamps=ts_list,
+        constraint_array=violations,
+        visibility_flags=visibility_flags,
+        visibility=windows,
+        all_satisfied=all_satisfied,
+        constraint_name=getattr(constraint, "__class__", type(constraint)).__name__,
+    )
+
+
+def _build_visibility_windows(
+    timestamps: list[datetime], visibility: list[bool]
+) -> list[VisibilityWindowResult]:
+    """Merge consecutive visibility samples into windows."""
+    windows: list[VisibilityWindowResult] = []
+    if not timestamps or not visibility:
+        return windows
+
+    current_start: datetime | None = None
+    for idx, is_visible in enumerate(visibility):
+        if is_visible and current_start is None:
+            current_start = timestamps[idx]
+        if (not is_visible or idx == len(visibility) - 1) and current_start is not None:
+            end_idx = idx if not is_visible else idx
+            end_time = timestamps[end_idx]
+            duration = (end_time - current_start).total_seconds()
+            windows.append(
+                VisibilityWindowResult(
+                    start_time=current_start,
+                    end_time=end_time,
+                    duration_seconds=duration,
+                )
+            )
+            current_start = None
+    return windows

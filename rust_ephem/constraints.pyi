@@ -18,6 +18,9 @@ from pydantic import BaseModel, TypeAdapter
 from .ephemeris import Ephemeris
 
 if TYPE_CHECKING:
+    from rust_ephem import VisibilityWindow
+
+if TYPE_CHECKING:
     pass
 
 class ConstraintViolation(BaseModel):
@@ -40,9 +43,22 @@ class ConstraintResult(BaseModel):
     @property
     def constraint_array(self) -> list[bool]: ...
     @property
-    def visibility(self) -> list[bool]: ...
+    def visibility(self) -> list[VisibilityWindow]: ...
     def total_violation_duration(self) -> float: ...
     def in_constraint(self, time: datetime) -> bool: ...
+
+class VisibilityWindowResult(BaseModel):
+    start_time: datetime
+    end_time: datetime
+    duration_seconds: float
+
+class MovingVisibilityResult(BaseModel):
+    timestamps: list[datetime]
+    constraint_array: list[bool]
+    visibility_flags: list[bool]
+    visibility: list[VisibilityWindowResult]
+    all_satisfied: bool
+    constraint_name: str
 
 class RustConstraintMixin(BaseModel):
     """Base class for Rust constraint configurations"""
@@ -181,3 +197,12 @@ ConstraintConfig = (
     | NotConstraint
 )
 CombinedConstraintConfig: TypeAdapter[ConstraintConfig]
+
+def moving_body_visibility(
+    constraint: ConstraintConfig,
+    ephemeris: Ephemeris,
+    ras: npt.ArrayLike | None = ...,
+    decs: npt.ArrayLike | None = ...,
+    timestamps: npt.ArrayLike | None = ...,
+    body: str | int | None = ...,
+) -> MovingVisibilityResult: ...

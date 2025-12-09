@@ -1181,6 +1181,7 @@ dependencies = [
  "sgp4",
  "sofars",
  "ureq",
+ "url",
 ]
 
 [[package]]

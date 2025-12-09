@@ -346,13 +346,20 @@ impl OEMEphemeris {
         self.find_closest_index(time)
     }
 
-    fn get_body_pv(&self, py: Python, body: &str) -> PyResult<Py<PositionVelocityData>> {
-        <Self as EphemerisBase>::get_body_pv(self, py, body)
+    #[pyo3(signature = (body, kernel_spec=None))]
+    fn get_body_pv(
+        &self,
+        py: Python,
+        body: &str,
+        kernel_spec: Option<String>,
+    ) -> PyResult<Py<PositionVelocityData>> {
+        <Self as EphemerisBase>::get_body_pv(self, py, body, kernel_spec.as_deref())
     }
 
-    fn get_body(&self, py: Python, body: &str) -> PyResult<Py<PyAny>> {
+    #[pyo3(signature = (body, kernel_spec=None))]
+    fn get_body(&self, py: Python, body: &str, kernel_spec: Option<String>) -> PyResult<Py<PyAny>> {
         let modules = crate::utils::to_skycoord::AstropyModules::import(py)?;
-        <Self as EphemerisBase>::get_body(self, py, &modules, body)
+        <Self as EphemerisBase>::get_body(self, py, &modules, body, kernel_spec.as_deref())
     }
 
     /// Convert RA/Dec to Altitude/Azimuth for this OEM ephemeris
