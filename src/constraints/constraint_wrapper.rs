@@ -493,6 +493,7 @@ impl PyConstraint {
     ///     max_altitude (float, optional): Maximum allowed altitude in degrees
     ///     min_azimuth (float, optional): Minimum allowed azimuth in degrees (0 = North, 90 = East)
     ///     max_azimuth (float, optional): Maximum allowed azimuth in degrees
+    ///     polygon (list of tuples, optional): List of (altitude, azimuth) pairs defining allowed region
     ///
     /// Returns:
     ///     Constraint: A new constraint object
@@ -502,13 +503,15 @@ impl PyConstraint {
     /// - Azimuth: Angular distance from North, measured eastward (0° = North, 90° = East, etc.)
     ///
     /// For azimuth ranges that cross North (e.g., 330° to 30°), specify min_azimuth > max_azimuth.
-    #[pyo3(signature=(min_altitude, max_altitude=None, min_azimuth=None, max_azimuth=None))]
+    /// If polygon is provided, the target must be inside this polygon to satisfy the constraint.
+    #[pyo3(signature=(min_altitude, max_altitude=None, min_azimuth=None, max_azimuth=None, polygon=None))]
     #[staticmethod]
     fn alt_az(
         min_altitude: f64,
         max_altitude: Option<f64>,
         min_azimuth: Option<f64>,
         max_azimuth: Option<f64>,
+        polygon: Option<Vec<(f64, f64)>>,
     ) -> PyResult<Self> {
         if !(0.0..=90.0).contains(&min_altitude) {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -545,11 +548,21 @@ impl PyConstraint {
             }
         }
 
+        // Validate polygon if provided
+        if let Some(ref poly) = polygon {
+            if poly.len() < 3 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "polygon must have at least 3 vertices",
+                ));
+            }
+        }
+
         let config = AltAzConfig {
             min_altitude,
             max_altitude,
             min_azimuth,
             max_azimuth,
+            polygon: polygon.clone(),
         };
 
         let mut json_obj = serde_json::json!({
@@ -564,6 +577,9 @@ impl PyConstraint {
         }
         if let Some(max_az) = max_azimuth {
             json_obj["max_azimuth"] = serde_json::json!(max_az);
+        }
+        if let Some(poly) = polygon {
+            json_obj["polygon"] = serde_json::json!(poly);
         }
         let config_json = json_obj.to_string();
 
@@ -1353,11 +1369,39 @@ fn parse_constraint_json(value: &serde_json::Value) -> PyResult<Box<dyn Constrai
             let max_altitude = value.get("max_altitude").and_then(|v| v.as_f64());
             let min_azimuth = value.get("min_azimuth").and_then(|v| v.as_f64());
             let max_azimuth = value.get("max_azimuth").and_then(|v| v.as_f64());
+            let polygon = value
+                .get("polygon")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .map(|point| {
+                            let p = point.as_array().ok_or_else(|| {
+                                pyo3::exceptions::PyValueError::new_err(
+                                    "Polygon points must be arrays",
+                                )
+                            })?;
+                            if p.len() != 2 {
+                                return Err(pyo3::exceptions::PyValueError::new_err(
+                                    "Polygon points must be [alt, az] pairs",
+                                ));
+                            }
+                            let alt = p[0].as_f64().ok_or_else(|| {
+                                pyo3::exceptions::PyValueError::new_err("Altitude must be a number")
+                            })?;
+                            let az = p[1].as_f64().ok_or_else(|| {
+                                pyo3::exceptions::PyValueError::new_err("Azimuth must be a number")
+                            })?;
+                            Ok((alt, az))
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?;
             let config = AltAzConfig {
                 min_altitude,
                 max_altitude,
                 min_azimuth,
                 max_azimuth,
+                polygon,
             };
             Ok(config.to_evaluator())
         }

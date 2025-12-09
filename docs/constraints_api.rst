@@ -281,6 +281,57 @@ Factory Methods
       # To require being in SAA region, use NOT
       require_saa = ~Constraint.saa(saa_polygon)
 
+.. py:staticmethod:: Constraint.alt_az(min_altitude, max_altitude=None, min_azimuth=None, max_azimuth=None, polygon=None)
+
+   Create an altitude/azimuth constraint.
+
+   Constrains observations based on target position in the observer's local horizon
+   coordinate system. Can use simple altitude/azimuth ranges or define a custom
+   polygon region in altitude/azimuth space.
+
+   :param float min_altitude: Minimum allowed altitude in degrees (0-90)
+   :param float max_altitude: Maximum allowed altitude in degrees (0-90), optional
+   :param float min_azimuth: Minimum allowed azimuth in degrees (0-360), optional
+   :param float max_azimuth: Maximum allowed azimuth in degrees (0-360), optional
+   :param list polygon: List of (altitude, azimuth) pairs defining allowed region, optional
+   :returns: A new Constraint instance
+   :rtype: Constraint
+   :raises ValueError: If angles are out of valid range or polygon has fewer than 3 vertices
+
+   **Coordinate System:**
+
+   * Altitude: Angular distance from horizon (0° = horizon, 90° = zenith)
+   * Azimuth: Angular distance from North, measured eastward (0° = North, 90° = East, 180° = South, 270° = West)
+
+   **Polygon Mode:**
+
+   When a polygon is provided, the target must be inside the polygon to satisfy the constraint.
+   The polygon is defined as a list of (altitude, azimuth) coordinate pairs forming a closed region.
+   Uses the winding number algorithm for robust point-in-polygon testing.
+
+   **Example:**
+
+   .. code-block:: python
+
+      # Simple altitude range constraint
+      constraint = Constraint.alt_az(min_altitude=10.0, max_altitude=85.0)
+
+      # Azimuth range constraint (e.g., avoid west, only observe east/south)
+      constraint = Constraint.alt_az(min_altitude=5.0, min_azimuth=45.0, max_azimuth=225.0)
+
+      # Define a custom observing region as a polygon
+      # Observing window at altitude [30-70°] and azimuth [90-180°] (south to east)
+      observing_region = [
+          (30, 90),    # Southwest corner
+          (30, 180),   # Southeast corner
+          (70, 180),   # Northeast corner
+          (70, 90),    # Northwest corner
+      ]
+      constraint = Constraint.alt_az(min_altitude=0.0, polygon=observing_region)
+
+      # Combine polygon with additional altitude constraint
+      constraint = Constraint.alt_az(min_altitude=35.0, polygon=observing_region)
+
 Logical Combinators
 ^^^^^^^^^^^^^^^^^^^
 
@@ -867,6 +918,68 @@ South Atlantic Anomaly constraint with polygon-defined region.
 
       # To require being in SAA region, use NOT
       require_saa = ~SAAConstraint(polygon=saa_polygon)
+
+AltAzConstraint
+^^^^^^^^^^^^^^^
+
+Altitude/Azimuth constraint restricting observations based on local horizon coordinates.
+
+.. py:class:: AltAzConstraint(min_altitude, max_altitude=None, min_azimuth=None, max_azimuth=None, polygon=None)
+
+   :param float min_altitude: Minimum allowed altitude in degrees (0-90)
+   :param float max_altitude: Maximum allowed altitude in degrees (0-90), optional
+   :param float min_azimuth: Minimum allowed azimuth in degrees (0-360), optional
+   :param float max_azimuth: Maximum allowed azimuth in degrees (0-360), optional
+   :param list polygon: List of (altitude, azimuth) pairs defining allowed region, optional
+
+   **Attributes:**
+
+   - ``type`` — Always ``"alt_az"`` (Literal)
+   - ``min_altitude`` — Minimum allowed altitude in degrees
+   - ``max_altitude`` — Maximum allowed altitude in degrees (optional)
+   - ``min_azimuth`` — Minimum allowed azimuth in degrees (optional)
+   - ``max_azimuth`` — Maximum allowed azimuth in degrees (optional)
+   - ``polygon`` — List of (altitude, azimuth) pairs defining allowed region (optional)
+
+   **Coordinate System:**
+
+   * Altitude: Angular distance from horizon (0° = horizon, 90° = zenith)
+   * Azimuth: Angular distance from North, measured eastward (0° = North, 90° = East, 180° = South, 270° = West)
+
+   **Polygon Mode:**
+
+   When a polygon is provided, it defines an allowed region in altitude/azimuth space.
+   The target must be inside this polygon to satisfy the constraint. Uses the winding
+   number algorithm for robust point-in-polygon testing.
+
+   **Example:**
+
+   .. code-block:: python
+
+      from rust_ephem.constraints import AltAzConstraint
+
+      # Simple altitude constraint (target above 10° elevation)
+      alt_az = AltAzConstraint(min_altitude=10.0)
+
+      # Altitude and azimuth range constraint
+      alt_az = AltAzConstraint(
+          min_altitude=10.0,
+          max_altitude=85.0,
+          min_azimuth=45.0,   # Only observe east/south
+          max_azimuth=225.0
+      )
+
+      # Define custom observing region with polygon
+      observing_window = [
+          (30, 90),    # Southwest corner (alt=30°, az=90°=East)
+          (30, 180),   # Southeast corner (alt=30°, az=180°=South)
+          (70, 180),   # Northeast corner (alt=70°, az=180°=South)
+          (70, 90),    # Northwest corner (alt=70°, az=90°=East)
+      ]
+      alt_az = AltAzConstraint(min_altitude=0.0, polygon=observing_window)
+
+      # Combine polygon with additional altitude constraint
+      alt_az = AltAzConstraint(min_altitude=35.0, polygon=observing_window)
 
 AndConstraint
 ^^^^^^^^^^^^^

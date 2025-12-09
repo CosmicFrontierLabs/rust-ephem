@@ -290,11 +290,12 @@ class Constraint:
         ...
 
     @staticmethod
-    def altaz(
+    def alt_az(
         min_altitude: float,
         max_altitude: float | None = None,
         min_azimuth: float | None = None,
         max_azimuth: float | None = None,
+        polygon: list[tuple[float, float]] | None = None,
     ) -> Constraint:
         """
         Create an altitude/azimuth constraint.
@@ -304,12 +305,14 @@ class Constraint:
             max_altitude: Maximum allowed altitude in degrees (0-90), optional
             min_azimuth: Minimum allowed azimuth in degrees (0-360), optional
             max_azimuth: Maximum allowed azimuth in degrees (0-360), optional
+            polygon: List of (altitude, azimuth) pairs in degrees defining allowed region, optional.
+                     If provided, the target must be inside this polygon to satisfy the constraint.
 
         Returns:
             A new Constraint instance
 
         Raises:
-            ValueError: If angles are out of valid range
+            ValueError: If angles are out of valid range or polygon has fewer than 3 vertices
         """
         ...
 

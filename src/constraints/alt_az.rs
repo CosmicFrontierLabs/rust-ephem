@@ -19,6 +19,10 @@ pub struct AltAzConfig {
     /// Maximum allowed azimuth in degrees (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_azimuth: Option<f64>,
+    /// Polygon defining an allowed region in Alt/Az space as (altitude, azimuth) pairs in degrees
+    /// If provided, the target must be inside this polygon (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub polygon: Option<Vec<(f64, f64)>>,
 }
 
 impl ConstraintConfig for AltAzConfig {
@@ -28,6 +32,7 @@ impl ConstraintConfig for AltAzConfig {
             max_altitude: self.max_altitude,
             min_azimuth: self.min_azimuth,
             max_azimuth: self.max_azimuth,
+            polygon: self.polygon.clone(),
         })
     }
 }
@@ -38,6 +43,7 @@ struct AltAzEvaluator {
     max_altitude: Option<f64>,
     min_azimuth: Option<f64>,
     max_azimuth: Option<f64>,
+    polygon: Option<Vec<(f64, f64)>>,
 }
 
 impl AltAzEvaluator {
@@ -56,8 +62,42 @@ impl AltAzEvaluator {
         if let Some(max_az) = self.max_azimuth {
             parts.push(format!("max_az={:.1}°", max_az));
         }
+        if self.polygon.is_some() {
+            parts.push("polygon".to_string());
+        }
 
         parts.join(", ")
+    }
+
+    /// Check if a point (altitude, azimuth) is inside the polygon using the winding number algorithm
+    fn point_in_polygon(&self, altitude: f64, azimuth: f64) -> bool {
+        let polygon = match &self.polygon {
+            Some(p) => p,
+            None => return true, // If no polygon defined, point is always inside
+        };
+
+        let mut winding_number = 0.0;
+        let n = polygon.len();
+
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let (alt1, az1) = polygon[i];
+            let (alt2, az2) = polygon[j];
+
+            if alt1 <= altitude {
+                if alt2 > altitude
+                    && (az2 - az1) * (altitude - alt1) - (azimuth - az1) * (alt2 - alt1) > 0.0
+                {
+                    winding_number += 1.0;
+                }
+            } else if alt2 <= altitude
+                && (az2 - az1) * (altitude - alt1) - (azimuth - az1) * (alt2 - alt1) < 0.0
+            {
+                winding_number -= 1.0;
+            }
+        }
+
+        winding_number != 0.0
     }
 }
 
@@ -81,6 +121,11 @@ impl ConstraintEvaluator for AltAzEvaluator {
             |i| {
                 let altitude_deg = altaz[[i, 0]];
                 let azimuth_deg = altaz[[i, 1]];
+
+                // Check polygon constraint first if defined
+                if self.polygon.is_some() && !self.point_in_polygon(altitude_deg, azimuth_deg) {
+                    return (true, 1.0);
+                }
 
                 // Check altitude constraints
                 let mut violated = false;
@@ -173,13 +218,20 @@ impl ConstraintEvaluator for AltAzEvaluator {
 
                 let mut violated = false;
 
-                // Check altitude
-                if altitude_deg < self.min_altitude {
+                // Check polygon constraint first if defined
+                if self.polygon.is_some() && !self.point_in_polygon(altitude_deg, azimuth_deg) {
                     violated = true;
                 }
-                if let Some(max_altitude) = self.max_altitude {
-                    if altitude_deg > max_altitude {
+
+                if !violated {
+                    // Check altitude
+                    if altitude_deg < self.min_altitude {
                         violated = true;
+                    }
+                    if let Some(max_altitude) = self.max_altitude {
+                        if altitude_deg > max_altitude {
+                            violated = true;
+                        }
                     }
                 }
 
@@ -225,6 +277,14 @@ impl AltAzEvaluator {
     /// Format a description of the violation based on altitude and azimuth
     fn format_violation_description(&self, altitude_deg: f64, azimuth_deg: f64) -> String {
         let mut reasons = Vec::new();
+
+        // Check polygon violation first
+        if self.polygon.is_some() && !self.point_in_polygon(altitude_deg, azimuth_deg) {
+            reasons.push(format!(
+                "outside allowed Alt/Az polygon (alt: {:.1}°, az: {:.1}°)",
+                altitude_deg, azimuth_deg
+            ));
+        }
 
         if altitude_deg < self.min_altitude {
             reasons.push(format!(

@@ -534,7 +534,8 @@ class AltAzConstraint(RustConstraintMixin):
     """Altitude/Azimuth constraint
 
     Limits observations based on target's altitude and azimuth angles
-    from the observer's location.
+    from the observer's location. Can use simple min/max ranges or a
+    custom polygon defining an allowed region.
 
     Attributes:
         type: Always "alt_az"
@@ -542,6 +543,7 @@ class AltAzConstraint(RustConstraintMixin):
         max_altitude: Maximum allowed altitude in degrees (0-90), optional
         min_azimuth: Minimum allowed azimuth in degrees (0-360), optional
         max_azimuth: Maximum allowed azimuth in degrees (0-360), optional
+        polygon: List of (altitude, azimuth) pairs defining allowed region, optional
     """
 
     type: Literal["alt_az"] = "alt_az"
@@ -556,6 +558,10 @@ class AltAzConstraint(RustConstraintMixin):
     )
     max_azimuth: float | None = Field(
         default=None, ge=0.0, le=360.0, description="Maximum allowed azimuth in degrees"
+    )
+    polygon: list[tuple[float, float]] | None = Field(
+        default=None,
+        description="List of (altitude, azimuth) pairs in degrees defining allowed region",
     )
 
 
