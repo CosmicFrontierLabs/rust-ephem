@@ -1,5 +1,6 @@
 use chrono::{Datelike, Timelike};
 use ndarray::Array2;
+use numpy::IntoPyArray;
 use pyo3::{prelude::*, types::PyDateTime};
 use sgp4::{parse_2les, Constants};
 use std::sync::OnceLock;
@@ -256,6 +257,53 @@ impl TLEEphemeris {
         self.get_moon(py)
     }
 
+    /// Convert RA/Dec to Altitude/Azimuth
+    ///
+    /// # Arguments
+    /// * `ra_deg` - Right ascension in degrees
+    /// * `dec_deg` - Declination in degrees
+    /// * `time_indices` - Optional indices into ephemeris times (default: all times)
+    ///
+    /// # Returns
+    /// Numpy array with shape (N, 2) containing [altitude_deg, azimuth_deg]
+    fn radec_to_altaz(
+        &self,
+        py: Python,
+        ra_deg: f64,
+        dec_deg: f64,
+        time_indices: Option<Vec<usize>>,
+    ) -> PyResult<Py<PyAny>> {
+        use crate::utils::celestial::radec_to_altaz;
+        let result = radec_to_altaz(ra_deg, dec_deg, self, time_indices.as_deref());
+        Ok(result.into_pyarray(py).into())
+    }
+
+    /// Calculate airmass for a target at given RA/Dec
+    ///
+    /// Airmass represents the relative path length through Earth's atmosphere compared to
+    /// zenith observation. Lower values indicate better observing conditions.
+    ///
+    /// # Arguments
+    /// * `ra_deg` - Right ascension in degrees (ICRS/J2000)
+    /// * `dec_deg` - Declination in degrees (ICRS/J2000)
+    /// * `time_indices` - Optional indices into ephemeris times (default: all times)
+    ///
+    /// # Returns
+    /// List of airmass values:
+    /// - 1.0 at zenith (directly overhead)
+    /// - ~2.0 at 30° altitude
+    /// - ~5.8 at 10° altitude
+    /// - Infinity for targets below horizon
+    #[pyo3(signature = (ra_deg, dec_deg, time_indices=None))]
+    fn calculate_airmass(
+        &self,
+        ra_deg: f64,
+        dec_deg: f64,
+        time_indices: Option<Vec<usize>>,
+    ) -> PyResult<Vec<f64>> {
+        EphemerisBase::calculate_airmass(self, ra_deg, dec_deg, time_indices.as_deref())
+    }
+
     #[getter]
     fn gcrs_pv(&self, py: Python) -> Option<Py<PositionVelocityData>> {
         self.get_gcrs_pv(py)
@@ -374,6 +422,21 @@ impl TLEEphemeris {
     #[getter]
     fn earth_radius_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
         self.get_earth_radius_rad(py)
+    }
+
+    /// Calculate Moon illumination fraction for all ephemeris times
+    ///
+    /// Returns the fraction of the Moon's illuminated surface as seen from the
+    /// spacecraft observer (0.0 = new moon, 1.0 = full moon).
+    ///
+    /// # Arguments
+    /// * `time_indices` - Optional indices into ephemeris times (default: all times)
+    ///
+    /// # Returns
+    /// List of Moon illumination fractions
+    #[pyo3(signature = (time_indices=None))]
+    fn moon_illumination(&self, time_indices: Option<Vec<usize>>) -> PyResult<Vec<f64>> {
+        EphemerisBase::moon_illumination(self, time_indices.as_deref())
     }
 
     fn index(&self, time: &Bound<'_, PyDateTime>) -> PyResult<usize> {
@@ -548,5 +611,14 @@ impl EphemerisBase for TLEEphemeris {
 
     fn set_itrs_skycoord_cache(&self, skycoord: Py<PyAny>) -> Result<(), Py<PyAny>> {
         self.itrs_skycoord.set(skycoord)
+    }
+
+    fn radec_to_altaz(
+        &self,
+        ra_deg: f64,
+        dec_deg: f64,
+        time_indices: Option<&[usize]>,
+    ) -> Array2<f64> {
+        crate::utils::celestial::radec_to_altaz(ra_deg, dec_deg, self, time_indices)
     }
 }

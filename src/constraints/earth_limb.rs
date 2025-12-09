@@ -6,6 +6,7 @@ use crate::utils::vector_math::{
 };
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
+use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
 
 /// Configuration for Earth limb avoidance constraint
@@ -55,13 +56,14 @@ struct EarthLimbEvaluator {
 impl ConstraintEvaluator for EarthLimbEvaluator {
     fn evaluate(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ra: f64,
         target_dec: f64,
-        _sun_positions: &Array2<f64>,
-        _moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> ConstraintResult {
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<ConstraintResult> {
+        // Extract and filter ephemeris data
+        let (times_filtered, obs_filtered) =
+            extract_observer_ephemeris_data!(ephemeris, time_indices);
         let mut violations = Vec::new();
         let mut current_violation: Option<(usize, f64)> = None;
 
@@ -71,12 +73,12 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         // Convert target RA/Dec to unit vector
         let target_vec = radec_to_unit_vector(target_ra, target_dec);
 
-        for (i, _time) in times.iter().enumerate() {
+        for (i, _time) in times_filtered.iter().enumerate() {
             // Vector from observer to Earth center is -observer position
             let obs_pos = [
-                observer_positions[[i, 0]],
-                observer_positions[[i, 1]],
-                observer_positions[[i, 2]],
+                obs_filtered[[i, 0]],
+                obs_filtered[[i, 1]],
+                obs_filtered[[i, 2]],
             ];
 
             let r = vector_magnitude(&obs_pos);
@@ -127,8 +129,8 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
                 }
             } else if let Some((start_idx, max_severity)) = current_violation {
                 violations.push(ConstraintViolation {
-                    start_time: times[start_idx].to_rfc3339(),
-                    end_time: times[i - 1].to_rfc3339(),
+                    start_time: times_filtered[start_idx].to_rfc3339(),
+                    end_time: times_filtered[i - 1].to_rfc3339(),
                     max_severity,
                     description: match self.max_angle_deg {
                         Some(max) => format!(
@@ -146,9 +148,9 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         if let Some((start_idx, max_severity)) = current_violation {
             // Compute threshold at final time for description consistency
             let obs_pos = [
-                observer_positions[[times.len() - 1, 0]],
-                observer_positions[[times.len() - 1, 1]],
-                observer_positions[[times.len() - 1, 2]],
+                obs_filtered[[times_filtered.len() - 1, 0]],
+                obs_filtered[[times_filtered.len() - 1, 1]],
+                obs_filtered[[times_filtered.len() - 1, 2]],
             ];
             let r = vector_magnitude(&obs_pos);
             let ratio = (EARTH_RADIUS / r).clamp(-1.0, 1.0);
@@ -169,8 +171,8 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
             let threshold_deg = earth_ang_radius_deg + self.min_angle_deg + horizon_dip_correction;
 
             violations.push(ConstraintViolation {
-                start_time: times[start_idx].to_rfc3339(),
-                end_time: times[times.len() - 1].to_rfc3339(),
+                start_time: times_filtered[start_idx].to_rfc3339(),
+                end_time: times_filtered[times_filtered.len() - 1].to_rfc3339(),
                 max_severity,
                 description: match self.max_angle_deg {
                     Some(max) => format!(
@@ -184,7 +186,12 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         }
 
         let all_satisfied = violations.is_empty();
-        ConstraintResult::new(violations, all_satisfied, self.name(), times.to_vec())
+        Ok(ConstraintResult::new(
+            violations,
+            all_satisfied,
+            self.name(),
+            times_filtered.to_vec(),
+        ))
     }
 
     fn name(&self) -> String {
@@ -198,13 +205,14 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
     /// Vectorized batch evaluation - MUCH faster than calling evaluate() in a loop
     fn in_constraint_batch(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-        _sun_positions: &Array2<f64>,
-        _moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> pyo3::PyResult<Array2<bool>> {
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Array2<bool>> {
+        // Extract and filter ephemeris data
+        let (times_filtered, obs_filtered) =
+            extract_observer_ephemeris_data!(ephemeris, time_indices);
         // Earth radius in km
         const EARTH_RADIUS: f64 = 6378.137;
 
@@ -219,7 +227,7 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
 
         let n_targets = target_ras.len();
-        let n_times = times.len();
+        let n_times = times_filtered.len();
         // Initialize to false (not violated) for consistency with default implementation
         let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
 
@@ -230,9 +238,9 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
 
         for t in 0..n_times {
             let obs_pos = [
-                observer_positions[[t, 0]],
-                observer_positions[[t, 1]],
-                observer_positions[[t, 2]],
+                obs_filtered[[t, 0]],
+                obs_filtered[[t, 1]],
+                obs_filtered[[t, 2]],
             ];
 
             let r = vector_magnitude(&obs_pos);

@@ -120,6 +120,57 @@ impl GroundEphemeris {
         self.longitude
     }
 
+    /// Convert RA/Dec to Altitude/Azimuth for this ground site
+    ///
+    /// Returns a NumPy array with shape (N, 2) of [altitude_deg, azimuth_deg]
+    #[pyo3(signature = (ra_deg, dec_deg, time_indices=None))]
+    fn radec_to_altaz(
+        &self,
+        py: Python,
+        ra_deg: f64,
+        dec_deg: f64,
+        time_indices: Option<Vec<usize>>,
+    ) -> PyResult<Py<PyAny>> {
+        let result = <Self as crate::ephemeris::ephemeris_common::EphemerisBase>::radec_to_altaz(
+            self,
+            ra_deg,
+            dec_deg,
+            time_indices.as_deref(),
+        );
+        Ok(result.into_pyarray(py).into())
+    }
+
+    /// Calculate airmass for a target at given RA/Dec
+    ///
+    /// Airmass represents the relative path length through Earth's atmosphere compared to
+    /// zenith observation. Lower values indicate better observing conditions.
+    ///
+    /// # Arguments
+    /// * `ra_deg` - Right ascension in degrees (ICRS/J2000)
+    /// * `dec_deg` - Declination in degrees (ICRS/J2000)
+    /// * `time_indices` - Optional indices into ephemeris times (default: all times)
+    ///
+    /// # Returns
+    /// List of airmass values:
+    /// - 1.0 at zenith (directly overhead)
+    /// - ~2.0 at 30° altitude
+    /// - ~5.8 at 10° altitude
+    /// - Infinity for targets below horizon
+    #[pyo3(signature = (ra_deg, dec_deg, time_indices=None))]
+    fn calculate_airmass(
+        &self,
+        ra_deg: f64,
+        dec_deg: f64,
+        time_indices: Option<Vec<usize>>,
+    ) -> PyResult<Vec<f64>> {
+        <Self as crate::ephemeris::ephemeris_common::EphemerisBase>::calculate_airmass(
+            self,
+            ra_deg,
+            dec_deg,
+            time_indices.as_deref(),
+        )
+    }
+
     /// Get the input height in meters (constructor argument)
     #[getter]
     fn input_height(&self) -> f64 {
@@ -306,6 +357,21 @@ impl GroundEphemeris {
         self.get_earth_radius_rad(py)
     }
 
+    /// Calculate Moon illumination fraction for all ephemeris times
+    ///
+    /// Returns the fraction of the Moon's illuminated surface as seen from the
+    /// spacecraft observer (0.0 = new moon, 1.0 = full moon).
+    ///
+    /// # Arguments
+    /// * `time_indices` - Optional indices into ephemeris times (default: all times)
+    ///
+    /// # Returns
+    /// List of Moon illumination fractions
+    #[pyo3(signature = (time_indices=None))]
+    fn moon_illumination(&self, time_indices: Option<Vec<usize>>) -> PyResult<Vec<f64>> {
+        EphemerisBase::moon_illumination(self, time_indices.as_deref())
+    }
+
     fn index(&self, time: &Bound<'_, PyDateTime>) -> PyResult<usize> {
         self.find_closest_index(time)
     }
@@ -425,5 +491,14 @@ impl EphemerisBase for GroundEphemeris {
 
     fn set_itrs_skycoord_cache(&self, skycoord: Py<PyAny>) -> Result<(), Py<PyAny>> {
         self.itrs_skycoord.set(skycoord)
+    }
+
+    fn radec_to_altaz(
+        &self,
+        ra_deg: f64,
+        dec_deg: f64,
+        time_indices: Option<&[usize]>,
+    ) -> Array2<f64> {
+        crate::utils::celestial::radec_to_altaz(ra_deg, dec_deg, self, time_indices)
     }
 }

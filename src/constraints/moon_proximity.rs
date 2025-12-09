@@ -62,33 +62,53 @@ impl MoonProximityEvaluator {
 impl ConstraintEvaluator for MoonProximityEvaluator {
     fn evaluate(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ra: f64,
         target_dec: f64,
-        _sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> ConstraintResult {
-        self.evaluate_common(
-            times,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<ConstraintResult> {
+        // Extract data from ephemeris
+        let (times_slice, moon_positions_slice, observer_positions_slice) =
+            extract_body_ephemeris_data!(ephemeris, time_indices, get_moon_positions);
+
+        Ok(self.evaluate_common(
+            &times_slice,
             (target_ra, target_dec),
-            moon_positions,
-            observer_positions,
+            &moon_positions_slice,
+            &observer_positions_slice,
             || self.default_final_violation_description(),
             || self.default_intermediate_violation_description(),
-        )
+        ))
     }
 
     /// Vectorized batch evaluation - MUCH faster than calling evaluate() in a loop
     fn in_constraint_batch(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-        _sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
+        time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
+        // Extract data from ephemeris
+        let times = ephemeris.get_times()?;
+        let (moon_positions_slice, observer_positions_slice, n_times) =
+            if let Some(indices) = time_indices {
+                let moon_filtered = ephemeris
+                    .get_moon_positions()?
+                    .select(ndarray::Axis(0), indices);
+                let obs_filtered = ephemeris
+                    .get_gcrs_positions()?
+                    .select(ndarray::Axis(0), indices);
+                (moon_filtered, obs_filtered, indices.len())
+            } else {
+                let moon_positions = ephemeris.get_moon_positions()?;
+                let observer_positions = ephemeris.get_gcrs_positions()?;
+                (
+                    moon_positions.clone(),
+                    observer_positions.clone(),
+                    times.len(),
+                )
+            };
         // Validate inputs
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -97,7 +117,6 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
         }
 
         let n_targets = target_ras.len();
-        let n_times = times.len();
 
         // Convert all target RA/Dec to unit vectors at once
         let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
@@ -108,14 +127,14 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
         // For each time, check all targets
         for t in 0..n_times {
             let moon_pos = [
-                moon_positions[[t, 0]],
-                moon_positions[[t, 1]],
-                moon_positions[[t, 2]],
+                moon_positions_slice[[t, 0]],
+                moon_positions_slice[[t, 1]],
+                moon_positions_slice[[t, 2]],
             ];
             let obs_pos = [
-                observer_positions[[t, 0]],
-                observer_positions[[t, 1]],
-                observer_positions[[t, 2]],
+                observer_positions_slice[[t, 0]],
+                observer_positions_slice[[t, 1]],
+                observer_positions_slice[[t, 2]],
             ];
 
             // Compute relative moon position from observer

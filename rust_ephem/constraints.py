@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Literal, Union, cast
 
 import numpy as np
 import numpy.typing as npt
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter, model_validator
 
 from .ephemeris import Ephemeris
 
@@ -409,6 +409,222 @@ class NotConstraint(RustConstraintMixin):
     constraint: ConstraintConfig = Field(..., description="Constraint to negate")
 
 
+class DaytimeConstraint(RustConstraintMixin):
+    """Daytime visibility constraint
+
+    Prevents observations during daytime hours,
+    with configurable twilight definitions.
+
+    Attributes:
+        type: Always "daytime"
+        twilight: Twilight definition ("civil", "nautical", "astronomical", "none")
+    """
+
+    type: Literal["daytime"] = "daytime"
+    twilight: Literal["civil", "nautical", "astronomical", "none"] = Field(
+        default="civil", description="Twilight definition for daytime boundary"
+    )
+
+
+class AirmassConstraint(RustConstraintMixin):
+    """Airmass constraint
+
+    Limits observations based on atmospheric airmass (secant of zenith angle).
+    Lower airmass values indicate better observing conditions.
+
+    Attributes:
+        type: Always "airmass"
+        min_airmass: Minimum allowed airmass (≥1.0), optional
+        max_airmass: Maximum allowed airmass (>0.0)
+    """
+
+    type: Literal["airmass"] = "airmass"
+    min_airmass: float | None = Field(
+        default=None, ge=1.0, description="Minimum allowed airmass"
+    )
+    max_airmass: float = Field(..., ge=1.0, description="Maximum allowed airmass")
+
+    @model_validator(mode="after")
+    def validate_airmass_values(self) -> AirmassConstraint:
+        if self.min_airmass is not None and self.max_airmass < self.min_airmass:
+            raise ValueError("max_airmass must be >= min_airmass")
+        return self
+
+
+class MoonPhaseConstraint(RustConstraintMixin):
+    """Moon phase constraint
+
+    Limits observations based on Moon illumination fraction and distance.
+
+    Attributes:
+        type: Always "moon_phase"
+        min_illumination: Minimum allowed illumination fraction (0.0-1.0), optional
+        max_illumination: Maximum allowed illumination fraction (0.0-1.0)
+        min_distance: Minimum allowed Moon distance in degrees from target, optional
+        max_distance: Maximum allowed Moon distance in degrees from target, optional
+        enforce_when_below_horizon: Whether to enforce constraint when Moon is below horizon
+        moon_visibility: Moon visibility requirement ("full" or "partial")
+    """
+
+    type: Literal["moon_phase"] = "moon_phase"
+    min_illumination: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Minimum allowed illumination fraction",
+    )
+    max_illumination: float = Field(
+        ..., ge=0.0, le=1.0, description="Maximum allowed illumination fraction"
+    )
+    min_distance: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="Minimum allowed Moon distance in degrees from target",
+    )
+    max_distance: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="Maximum allowed Moon distance in degrees from target",
+    )
+    enforce_when_below_horizon: bool = Field(
+        default=False,
+        description="Whether to enforce constraint when Moon is below horizon",
+    )
+    moon_visibility: Literal["full", "partial"] = Field(
+        default="full",
+        description="Moon visibility requirement: 'full' (only when fully above horizon) or 'partial' (when any part visible)",
+    )
+
+    @model_validator(mode="after")
+    def validate_moon_phase_values(self) -> MoonPhaseConstraint:
+        if (
+            self.min_illumination is not None
+            and self.max_illumination < self.min_illumination
+        ):
+            raise ValueError("max_illumination must be >= min_illumination")
+        if (
+            self.min_distance is not None
+            and self.max_distance is not None
+            and self.max_distance < self.min_distance
+        ):
+            raise ValueError("max_distance must be >= min_distance")
+        return self
+
+
+class SAAConstraint(RustConstraintMixin):
+    """South Atlantic Anomaly constraint
+
+    Limits observations based on whether the spacecraft is within a defined
+    geographic region (typically the South Atlantic Anomaly).
+
+    Attributes:
+        type: Always "saa"
+        polygon: List of (longitude, latitude) pairs defining the region boundary
+    """
+
+    type: Literal["saa"] = "saa"
+    polygon: list[tuple[float, float]] = Field(
+        ...,
+        min_length=3,
+        description="List of (longitude, latitude) pairs defining the region boundary in degrees",
+    )
+
+
+class AltAzConstraint(RustConstraintMixin):
+    """Altitude/Azimuth constraint
+
+    Limits observations based on target's altitude and azimuth angles
+    from the observer's location. Can use simple min/max ranges or a
+    custom polygon defining an allowed region.
+
+    Attributes:
+        type: Always "alt_az"
+        min_altitude: Minimum allowed altitude in degrees (0-90), optional
+        max_altitude: Maximum allowed altitude in degrees (0-90), optional
+        min_azimuth: Minimum allowed azimuth in degrees (0-360), optional
+        max_azimuth: Maximum allowed azimuth in degrees (0-360), optional
+        polygon: List of (altitude, azimuth) pairs defining allowed region, optional
+    """
+
+    type: Literal["alt_az"] = "alt_az"
+    min_altitude: float | None = Field(
+        default=None, ge=0.0, le=90.0, description="Minimum allowed altitude in degrees"
+    )
+    max_altitude: float | None = Field(
+        default=None, ge=0.0, le=90.0, description="Maximum allowed altitude in degrees"
+    )
+    min_azimuth: float | None = Field(
+        default=None, ge=0.0, le=360.0, description="Minimum allowed azimuth in degrees"
+    )
+    max_azimuth: float | None = Field(
+        default=None, ge=0.0, le=360.0, description="Maximum allowed azimuth in degrees"
+    )
+    polygon: list[tuple[float, float]] | None = Field(
+        default=None,
+        description="List of (altitude, azimuth) pairs in degrees defining allowed region",
+    )
+
+
+class OrbitRamConstraint(RustConstraintMixin):
+    """Orbit RAM direction constraint
+
+    Ensures target maintains minimum angular separation from the spacecraft's
+    velocity vector (RAM direction). Useful for avoiding pointing
+    directions that may cause contamination.
+
+    Attributes:
+        type: Always "orbit_ram"
+        min_angle: Minimum allowed angular separation from RAM direction in degrees (0-180)
+        max_angle: Maximum allowed angular separation from RAM direction in degrees (0-180), optional
+    """
+
+    type: Literal["orbit_ram"] = "orbit_ram"
+    min_angle: float = Field(
+        ..., ge=0.0, le=180.0, description="Minimum angle from RAM direction in degrees"
+    )
+    max_angle: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=180.0,
+        description="Maximum angle from RAM direction in degrees",
+    )
+
+
+class OrbitPoleConstraint(RustConstraintMixin):
+    """Orbit pole direction constraint
+
+    Ensures target maintains minimum angular separation from both the north and south
+    orbital poles (directions perpendicular to the orbital plane). Useful for maintaining
+    specific orientations relative to the spacecraft's orbit.
+
+    Attributes:
+        type: Always "orbit_pole"
+        min_angle: Minimum allowed angular separation from both orbital poles in degrees (0-180)
+        max_angle: Maximum allowed angular separation from both orbital poles in degrees (0-180), optional
+        earth_limb_pole: If True, pole avoidance angle is earth_radius_deg + min_angle - 90.
+                        Used for NASA's Neil Gehrels Swift Observatory where the pole is an emergent
+                        property of Earth size plus Earth limb avoidance angle > 90°.
+    """
+
+    type: Literal["orbit_pole"] = "orbit_pole"
+    min_angle: float = Field(
+        ...,
+        ge=0.0,
+        le=180.0,
+        description="Minimum angle from both orbital poles in degrees",
+    )
+    max_angle: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=180.0,
+        description="Maximum angle from both orbital poles in degrees",
+    )
+    earth_limb_pole: bool = Field(
+        default=False,
+        description="If True, pole avoidance angle is earth_radius_deg + min_angle - 90",
+    )
+
+
 # Union type for all constraints
 ConstraintConfig = Union[
     SunConstraint,
@@ -416,6 +632,13 @@ ConstraintConfig = Union[
     EclipseConstraint,
     EarthLimbConstraint,
     BodyConstraint,
+    DaytimeConstraint,
+    AirmassConstraint,
+    MoonPhaseConstraint,
+    OrbitRamConstraint,
+    OrbitPoleConstraint,
+    SAAConstraint,
+    AltAzConstraint,
     AndConstraint,
     OrConstraint,
     XorConstraint,

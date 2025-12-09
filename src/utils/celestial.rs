@@ -2,11 +2,16 @@ use chrono::{DateTime, Datelike, Timelike, Utc};
 use erfa::earth::position_velocity_00;
 use erfa::prenut::precession_matrix_06;
 use erfa::vectors_and_matrices::mat_mul_pvec;
-use ndarray::Array2;
+use ndarray::{s, Array1, Array2};
+use sofars::astro::atco13;
 use std::sync::Arc;
 
+use crate::ephemeris::ephemeris_common::EphemerisBase;
+use crate::utils::conversions::{convert_frames, Frame};
+use crate::utils::geo::ecef_to_geodetic_deg;
 use crate::utils::math_utils::transpose_matrix;
-use crate::utils::time_utils::datetime_to_jd_tt;
+use crate::utils::time_utils::{datetime_to_jd_tt, datetime_to_jd_utc};
+use crate::utils::{eop_provider, ut1_provider};
 use crate::{is_planetary_ephemeris_initialized, utils::config::*};
 
 /// Calculate Sun positions for multiple timestamps
@@ -256,20 +261,7 @@ pub fn calculate_moon_positions_meeus(times: &[DateTime<Utc>]) -> Array2<f64> {
 /// * `target_id` - NAIF ID of the target body (e.g., 301 for Moon, 10 for Sun)
 /// * `center_id` - NAIF ID of the center body (e.g., 399 for Earth, 0 for Solar System Barycenter)
 ///
-/// # Returns
-/// Array2 with shape (N, 6) containing [x, y, z, vx, vy, vz] in J2000/GCRS frame for each timestamp
-/// Positions are in km, velocities in km/s
-///
-/// # Panics
-/// Panics if:
-/// - The SPK file cannot be loaded
-/// - The SPK file doesn't contain the requested body data
-/// - Time conversion fails
-///
-/// # Example
-/// ```rust,ignore
-/// use chrono::{DateTime, Utc};
-/// let times = vec![DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z").unwrap().into()];
+/// Panics if the ephemeris has no GCRS position data
 /// // Moon relative to Earth
 /// let moon_positions = calculate_body_positions_spice(&times, 301, 399);
 /// // Sun relative to Earth
@@ -429,6 +421,263 @@ pub fn calculate_body_positions_spice_result(
     Ok(out)
 }
 
+/// Convert RA/Dec to Altitude/Azimuth for given ephemeris times
+///
+/// This function calculates the topocentric altitude and azimuth of a celestial target
+/// as seen from the observer locations defined in the ephemeris.
+///
+/// # Arguments
+/// * `ra_deg` - Right ascension in degrees
+/// * `dec_deg` - Declination in degrees  
+/// * `ephemeris` - Ephemeris containing observer positions and times
+/// * `time_indices` - Optional indices into ephemeris times to evaluate (default: all times)
+///
+/// # Returns
+/// Array2 with shape (N, 2) containing [altitude_deg, azimuth_deg] for each time
+/// where N is the number of selected times
+///
+/// # Panics
+/// Panics if the ephemeris has no GCRS position data
+/// Calculate airmass from altitude angle and observer height above sea level
+///
+/// Airmass represents the relative path length through Earth's atmosphere compared to
+/// zenith observation. Lower airmass values indicate better observing conditions.
+///
+/// # Arguments
+/// * `altitude_deg` - Altitude angle in degrees (0° = horizon, 90° = zenith)
+/// * `height_km` - Observer height above sea level in kilometers
+///
+/// # Returns
+/// Airmass value:
+/// - 1.0 at zenith (directly overhead)
+/// - ~2.0 at 30° altitude
+/// - ~5.8 at 10° altitude
+/// - Infinity for targets below horizon
+///
+/// # Implementation
+/// - For altitude < 10°: Uses Rozenberg approximation for low elevations
+/// - For altitude ≥ 10°: Uses simple secant approximation (1 / sin(altitude))
+/// - Corrects for observer height using exponential atmospheric scale height (8.5 km)
+///
+/// # Example
+/// ```rust,ignore
+/// let airmass_zenith = altitude_to_airmass(90.0, 0.0);  // 1.0 at sea level
+/// let airmass_30deg = altitude_to_airmass(30.0, 0.0);   // ~2.0
+/// let airmass_high_altitude = altitude_to_airmass(90.0, 2.0);  // <1.0 (less atmosphere above)
+/// ```
+pub fn altitude_to_airmass(altitude_deg: f64, height_km: f64) -> f64 {
+    let alt_rad = altitude_deg.to_radians();
+    let scale_height_km = 8.5; // Atmospheric scale height in km
+
+    let airmass_sea_level = if alt_rad <= 0.0 {
+        // Target below horizon - infinite airmass
+        f64::INFINITY
+    } else if alt_rad < 0.174533 {
+        // 10 degrees
+        // Use Rozenberg approximation for low elevations
+        1.0 / (alt_rad.sin() + 0.025 * (alt_rad + 0.15 * alt_rad.powi(2)).exp().ln())
+    } else {
+        // Simple secant approximation: airmass ≈ 1 / sin(altitude)
+        1.0 / alt_rad.sin()
+    };
+
+    // Correct for observer height above sea level
+    // At higher altitudes, there's less atmosphere above, so airmass is reduced
+    if airmass_sea_level.is_finite() {
+        airmass_sea_level * (-height_km / scale_height_km).exp()
+    } else {
+        airmass_sea_level
+    }
+}
+
+pub fn radec_to_altaz(
+    ra_deg: f64,
+    dec_deg: f64,
+    ephemeris: &dyn EphemerisBase,
+    time_indices: Option<&[usize]>,
+) -> Array2<f64> {
+    // Get ephemeris data
+    let times = ephemeris.get_times().expect("Ephemeris must have times");
+    let gcrs_data = ephemeris
+        .data()
+        .gcrs
+        .as_ref()
+        .expect("Ephemeris must have GCRS data");
+
+    // Filter times and GCRS data if indices provided
+    let (times_filtered, gcrs_filtered) = if let Some(indices) = time_indices {
+        let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+        let obs_filtered = gcrs_data.select(ndarray::Axis(0), indices);
+        (filtered_times, obs_filtered)
+    } else {
+        (times.to_vec(), gcrs_data.clone())
+    };
+
+    let n_times = times_filtered.len();
+    let mut result = Array2::<f64>::zeros((n_times, 2));
+
+    // Convert observer positions from GCRS to ITRS (convert_frames expects 6 columns: pos + vel)
+    let itrs_data = convert_frames(
+        &gcrs_filtered,
+        &times_filtered,
+        Frame::GCRS,
+        Frame::ITRS,
+        true,
+    );
+
+    // Convert ITRS positions to geodetic coordinates (extract position columns only)
+    let positions_slice = itrs_data.slice(s![.., 0..3]);
+    let positions_array = positions_slice.to_owned();
+    let (lats_deg, lons_deg, heights_km) = ecef_to_geodetic_deg(&positions_array);
+
+    // Precompute target coordinates in radians
+    let ra_rad = ra_deg.to_radians();
+    let dec_rad = dec_deg.to_radians();
+
+    for i in 0..n_times {
+        let lat_rad = lats_deg[i].to_radians();
+        let lon_rad = lons_deg[i].to_radians();
+        let height_m = heights_km[i] * 1000.0;
+        let time = &times_filtered[i];
+
+        let (utc1, utc2) = datetime_to_jd_utc(time);
+        let dut1 = ut1_provider::get_ut1_utc_offset(time);
+        let (xp, yp) = eop_provider::get_polar_motion_rad(time);
+
+        // Use SOFA apparent-place routine for full topocentric alt/az (pressure=0: no refraction)
+        let (aob, zob, _hob, _dob, _rob, _eo) = atco13(
+            ra_rad, dec_rad, 0.0, 0.0, 0.0, 0.0, utc1, utc2, dut1, lon_rad, lat_rad, height_m, xp,
+            yp, 0.0, 0.0, 0.0, 0.55,
+        )
+        .expect("SOFA atco13 failed");
+
+        let alt_deg = (std::f64::consts::FRAC_PI_2 - zob).to_degrees();
+        let mut az_deg = aob.to_degrees();
+        if az_deg < 0.0 {
+            az_deg += 360.0;
+        }
+
+        result[[i, 0]] = alt_deg;
+        result[[i, 1]] = az_deg;
+    }
+
+    result
+}
+
+/// Calculate Sun altitudes for all ephemeris times (vectorized for daytime constraints)
+///
+/// This function calculates the Sun's altitude above the horizon for all times in the ephemeris,
+/// which is needed for daytime constraint evaluation.
+///
+/// # Arguments
+/// * `ephemeris` - Ephemeris object containing Sun positions and observer positions
+/// * `time_indices` - Optional indices into ephemeris times (default: all times)
+///
+/// # Returns
+/// Array1 containing Sun altitude in degrees for each time
+///
+/// # Performance
+/// Calculate Sun altitude angles - FAST approximation version
+/// This is suitable for daytime/twilight constraints where we don't need
+/// topocentric accuracy (sub-degree is fine).
+///
+/// This version avoids expensive frame conversions and SOFA calls by using
+/// a simpler geocentric approximation, which is typically within 0.5-1.0 degrees
+/// of the true topocentric value for ground-based observers.
+pub fn calculate_sun_altitudes_batch_fast(
+    ephemeris: &dyn EphemerisBase,
+    time_indices: Option<&[usize]>,
+) -> Array1<f64> {
+    // Get Sun positions in GCRS frame
+    let sun_positions = ephemeris
+        .data()
+        .sun_gcrs
+        .as_ref()
+        .expect("Ephemeris must have Sun data");
+
+    // Get observer positions in GCRS frame
+    let obs_positions = ephemeris
+        .data()
+        .gcrs
+        .as_ref()
+        .expect("Ephemeris must have GCRS data");
+
+    // Get times
+    let times = ephemeris.get_times().expect("Ephemeris must have times");
+
+    // Filter data if indices provided
+    let (sun_filtered, obs_filtered, times_filtered) = if let Some(indices) = time_indices {
+        let sun_filtered = sun_positions.select(ndarray::Axis(0), indices);
+        let obs_filtered = obs_positions.select(ndarray::Axis(0), indices);
+        let times_filtered: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+        (sun_filtered, obs_filtered, times_filtered)
+    } else {
+        (sun_positions.clone(), obs_positions.clone(), times.to_vec())
+    };
+
+    let n_times = times_filtered.len();
+    let mut result = Array1::<f64>::zeros(n_times);
+
+    // Use simple geocentric approximation:
+    // 1. Calculate relative Sun position (Sun as seen from observer)
+    // 2. Convert to altitude using observer's latitude/longitude from geocentric position
+    // 3. This avoids expensive frame conversions and is good enough for twilight
+
+    for i in 0..n_times {
+        // Get positions
+        let sun_x = sun_filtered[[i, 0]];
+        let sun_y = sun_filtered[[i, 1]];
+        let sun_z = sun_filtered[[i, 2]];
+
+        let obs_x = obs_filtered[[i, 0]];
+        let obs_y = obs_filtered[[i, 1]];
+        let obs_z = obs_filtered[[i, 2]];
+
+        // Relative Sun position from observer
+        let rel_x = sun_x - obs_x;
+        let rel_y = sun_y - obs_y;
+        let rel_z = sun_z - obs_z;
+
+        // Observer's geocentric latitude and longitude (from GCRS position)
+        let obs_lat = obs_z.atan2((obs_x * obs_x + obs_y * obs_y).sqrt());
+        let obs_lon = obs_y.atan2(obs_x);
+
+        // Convert Sun's relative position to RA/Dec
+        let sun_dist = (rel_x * rel_x + rel_y * rel_y + rel_z * rel_z).sqrt();
+        if sun_dist == 0.0 {
+            result[i] = -90.0; // Sun at observer position
+            continue;
+        }
+
+        let sun_dec = (rel_z / sun_dist).asin();
+        let sun_ra = rel_y.atan2(rel_x);
+
+        // Calculate Hour Angle (HA = LST - RA)
+        // For simplicity, approximate LST ≈ observer_longitude (geocentric)
+        // In GCRS, the x-axis points to vernal equinox, so longitude ≈ atan2(y, x)
+        let lst_approx = obs_lon;
+        let ha = lst_approx - sun_ra;
+
+        // Simple altitude formula (good enough for daytime constraint):
+        // sin(alt) = sin(dec) * sin(lat) + cos(dec) * cos(lat) * cos(HA)
+        let sin_alt = sun_dec.sin() * obs_lat.sin() + sun_dec.cos() * obs_lat.cos() * ha.cos();
+        let alt_rad = sin_alt.asin();
+        result[i] = alt_rad.to_degrees();
+    }
+
+    result
+}
+
+/// Convert CIRS RA/Dec to horizontal coordinates (altitude/azimuth)
+///
+/// # Arguments
+/// * `lat_deg` - Observer latitude in degrees
+/// * `lst_deg` - Local Sidereal Time in degrees
+/// * `ra_deg` - Right ascension in CIRS frame (degrees)
+/// * `dec_deg` - Declination in CIRS frame (degrees)
+///
+/// # Returns
+/// (altitude_deg, azimuth_deg)
 /// Compatibility stub for old calculate_moon_positions_spice function
 ///
 /// This function maintains backward compatibility with code that used the old

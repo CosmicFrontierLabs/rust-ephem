@@ -214,6 +214,146 @@ class Constraint:
         ...
 
     @staticmethod
+    def daytime(twilight: str = "civil") -> Constraint:
+        """
+        Create a daytime visibility constraint.
+
+        Args:
+            twilight: Twilight definition ("civil", "nautical", "astronomical", "none")
+
+        Returns:
+            A new Constraint instance
+        """
+        ...
+
+    @staticmethod
+    def airmass(
+        min_airmass: float | None = None, max_airmass: float | None = None
+    ) -> Constraint:
+        """
+        Create an airmass constraint.
+
+        Args:
+            min_airmass: Minimum allowed airmass (≥1.0), optional
+            max_airmass: Maximum allowed airmass (>0.0)
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If airmass values are invalid
+        """
+        ...
+
+    @staticmethod
+    def moon_phase(
+        min_illumination: float | None = None,
+        max_illumination: float | None = None,
+        min_distance: float | None = None,
+        max_distance: float | None = None,
+        enforce_when_below_horizon: bool = False,
+        moon_visibility: str = "full",
+    ) -> Constraint:
+        """
+        Create a Moon phase constraint.
+
+        Args:
+            min_illumination: Minimum allowed illumination fraction (0.0-1.0), optional
+            max_illumination: Maximum allowed illumination fraction (0.0-1.0)
+            min_distance: Minimum allowed Moon distance in degrees from target, optional
+            max_distance: Maximum allowed Moon distance in degrees from target, optional
+            enforce_when_below_horizon: Whether to enforce constraint when Moon is below horizon
+            moon_visibility: Moon visibility requirement ("full" or "partial")
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If illumination or distance values are invalid
+        """
+        ...
+
+    @staticmethod
+    def saa(polygon: list[tuple[float, float]]) -> Constraint:
+        """
+        Create a South Atlantic Anomaly (SAA) constraint.
+
+        Args:
+            polygon: List of (longitude, latitude) pairs defining the region boundary in degrees
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If polygon has fewer than 3 vertices
+        """
+        ...
+
+    @staticmethod
+    def alt_az(
+        min_altitude: float | None = None,
+        max_altitude: float | None = None,
+        min_azimuth: float | None = None,
+        max_azimuth: float | None = None,
+        polygon: list[tuple[float, float]] | None = None,
+    ) -> Constraint:
+        """
+        Create an altitude/azimuth constraint.
+
+        Args:
+            min_altitude: Minimum allowed altitude in degrees (0-90), optional
+            max_altitude: Maximum allowed altitude in degrees (0-90), optional
+            min_azimuth: Minimum allowed azimuth in degrees (0-360), optional
+            max_azimuth: Maximum allowed azimuth in degrees (0-360), optional
+            polygon: List of (altitude, azimuth) pairs in degrees defining allowed region, optional.
+                     If provided, the target must be inside this polygon to satisfy the constraint.
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If angles are out of valid range or polygon has fewer than 3 vertices
+        """
+        ...
+
+    @staticmethod
+    def orbit_ram(min_angle: float, max_angle: float | None = None) -> Constraint:
+        """
+        Create an orbit RAM direction constraint.
+
+        Args:
+            min_angle: Minimum allowed angular separation from spacecraft velocity vector in degrees (0-180)
+            max_angle: Maximum allowed angular separation from spacecraft velocity vector in degrees (optional)
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If angles are out of valid range
+        """
+        ...
+
+    @staticmethod
+    def orbit_pole(
+        min_angle: float, max_angle: float | None = None, earth_limb_pole: bool = False
+    ) -> Constraint:
+        """
+        Create an orbit pole direction constraint.
+
+        Args:
+            min_angle: Minimum allowed angular separation from orbital poles in degrees (0-180)
+            max_angle: Maximum allowed angular separation from orbital poles in degrees (optional)
+            earth_limb_pole: If True, pole avoidance angle is earth_radius_deg + min_angle - 90
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If angles are out of valid range
+        """
+        ...
+
+    @staticmethod
     def and_(*constraints: Constraint) -> Constraint:
         """
         Combine constraints with logical AND.
@@ -292,6 +432,13 @@ class Constraint:
             {"type": "sun", "min_angle": 45.0}
             {"type": "moon", "min_angle": 10.0}
             {"type": "eclipse", "umbra_only": true}
+            {"type": "earth_limb", "min_angle": 10.0}
+            {"type": "body", "body": "Mars", "min_angle": 45.0}
+            {"type": "daytime", "twilight": "civil"}
+            {"type": "airmass", "max_airmass": 2.0}
+            {"type": "moon_phase", "max_illumination": 0.5}
+            {"type": "saa", "polygon": [[-60, -20], [-30, -60], [0, -60], [0, -20]]}
+            {"type": "alt_az", "min_altitude": 10.0}
             {"type": "and", "constraints": [ ... ]}
             {"type": "or", "constraints": [ ... ]}
             {"type": "xor", "constraints": [ ... ]}
@@ -768,6 +915,21 @@ class TLEEphemeris(Ephemeris):
         """
         ...
 
+    def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
+        """
+        Calculate Moon illumination fraction for all ephemeris times.
+
+        Returns the fraction of the Moon's illuminated surface as seen from the
+        spacecraft observer (0.0 = new moon, 1.0 = full moon).
+
+        Args:
+            time_indices: Optional indices into ephemeris times (default: all times)
+
+        Returns:
+            List of Moon illumination fractions
+        """
+        ...
+
     @property
     def obsgeoloc(
         self,
@@ -782,6 +944,28 @@ class TLEEphemeris(Ephemeris):
     @property
     def obsgeovel(self) -> npt.NDArray[np.float64]:  # Returns astropy quantity array
         """Observer geocentric velocity (alias for GCRS velocity)"""
+        ...
+
+    def radec_to_altaz(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> npt.NDArray[np.float64]:
+        """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
+        ...
+
+    def calculate_airmass(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> list[float]:
+        """Calculate airmass for given RA/Dec (deg) at selected times.
+
+        Returns airmass values (1.0 at zenith, ~2.0 at 30° altitude, infinity below horizon).
+        Accounts for observer height using atmospheric scale height correction.
+        """
         ...
 
 class SPICEEphemeris(Ephemeris):
@@ -967,6 +1151,28 @@ class SPICEEphemeris(Ephemeris):
         """
         ...
 
+    def radec_to_altaz(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> npt.NDArray[np.float64]:
+        """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
+        ...
+
+    def calculate_airmass(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> list[float]:
+        """Calculate airmass for given RA/Dec (deg) at selected times.
+
+        Returns airmass values (1.0 at zenith, ~2.0 at 30° altitude, infinity below horizon).
+        Accounts for observer height using atmospheric scale height correction.
+        """
+        ...
+
     @property
     def sun_radius(self) -> Any:  # Returns astropy.units.Quantity
         """
@@ -1085,6 +1291,45 @@ class SPICEEphemeris(Ephemeris):
             >>> target_time = datetime(2024, 1, 15, 12, 0, 0)
             >>> idx = eph.index(target_time)
             >>> position = eph.gcrs_pv.position[idx]
+        """
+        ...
+
+    def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
+        """
+        Calculate Moon illumination fraction for all ephemeris times.
+
+        Returns the fraction of the Moon's illuminated surface as seen from the
+        spacecraft observer (0.0 = new moon, 1.0 = full moon).
+
+        Args:
+            time_indices: Optional indices into ephemeris times (default: all times)
+
+        Returns:
+            List of Moon illumination fractions
+        """
+        ...
+
+    def get_body_pv(self, body: str) -> PositionVelocityData:
+        """
+        Get position and velocity of a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+
+        Returns:
+            Position and velocity data for the requested body
+        """
+        ...
+
+    def get_body(self, body: str) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """
+        Get SkyCoord for a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+
+        Returns:
+            astropy.coordinates.SkyCoord object
         """
         ...
 
@@ -1290,6 +1535,28 @@ class OEMEphemeris(Ephemeris):
         """
         ...
 
+    def radec_to_altaz(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> npt.NDArray[np.float64]:
+        """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
+        ...
+
+    def calculate_airmass(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> list[float]:
+        """Calculate airmass for given RA/Dec (deg) at selected times.
+
+        Returns airmass values (1.0 at zenith, ~2.0 at 30° altitude, infinity below horizon).
+        Accounts for observer height using atmospheric scale height correction.
+        """
+        ...
+
     @property
     def sun_radius(self) -> Any:  # Returns astropy.units.Quantity
         """
@@ -1411,6 +1678,45 @@ class OEMEphemeris(Ephemeris):
         """
         ...
 
+    def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
+        """
+        Calculate Moon illumination fraction for all ephemeris times.
+
+        Returns the fraction of the Moon's illuminated surface as seen from the
+        spacecraft observer (0.0 = new moon, 1.0 = full moon).
+
+        Args:
+            time_indices: Optional indices into ephemeris times (default: all times)
+
+        Returns:
+            List of Moon illumination fractions
+        """
+        ...
+
+    def get_body_pv(self, body: str) -> PositionVelocityData:
+        """
+        Get position and velocity of a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+
+        Returns:
+            Position and velocity data for the requested body
+        """
+        ...
+
+    def get_body(self, body: str) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """
+        Get SkyCoord for a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+
+        Returns:
+            astropy.coordinates.SkyCoord object
+        """
+        ...
+
 class GroundEphemeris(Ephemeris):
     """Ephemeris for a fixed ground location"""
 
@@ -1492,6 +1798,28 @@ class GroundEphemeris(Ephemeris):
     @property
     def gcrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object in GCRS frame for ground location"""
+        ...
+
+    def radec_to_altaz(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> npt.NDArray[np.float64]:
+        """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
+        ...
+
+    def calculate_airmass(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> list[float]:
+        """Calculate airmass for given RA/Dec (deg) at selected times.
+
+        Returns airmass values (1.0 at zenith, ~2.0 at 30° altitude, infinity below horizon).
+        Accounts for observer height using atmospheric scale height correction.
+        """
         ...
 
     @property
@@ -1729,6 +2057,45 @@ class GroundEphemeris(Ephemeris):
             >>> target_time = datetime(2024, 1, 15, 12, 0, 0)
             >>> idx = eph.index(target_time)
             >>> sun_position = eph.sun_pv.position[idx]
+        """
+        ...
+
+    def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
+        """
+        Calculate Moon illumination fraction for all ephemeris times.
+
+        Returns the fraction of the Moon's illuminated surface as seen from the
+        spacecraft observer (0.0 = new moon, 1.0 = full moon).
+
+        Args:
+            time_indices: Optional indices into ephemeris times (default: all times)
+
+        Returns:
+            List of Moon illumination fractions
+        """
+        ...
+
+    def get_body_pv(self, body: str) -> PositionVelocityData:
+        """
+        Get position and velocity of a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+
+        Returns:
+            Position and velocity data for the requested body
+        """
+        ...
+
+    def get_body(self, body: str) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """
+        Get SkyCoord for a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+
+        Returns:
+            astropy.coordinates.SkyCoord object
         """
         ...
 

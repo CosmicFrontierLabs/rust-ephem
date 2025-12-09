@@ -285,10 +285,13 @@ impl ConstraintResult {
             } else {
                 // Constraint is violated (target not visible)
                 if let Some(start_idx) = current_window_start {
-                    windows.push(VisibilityWindow {
-                        start_time: utc_to_python_datetime(py, &self.times[start_idx])?,
-                        end_time: utc_to_python_datetime(py, &self.times[i - 1])?,
-                    });
+                    // Only add window if it's non-zero length
+                    if i - 1 != start_idx {
+                        windows.push(VisibilityWindow {
+                            start_time: utc_to_python_datetime(py, &self.times[start_idx])?,
+                            end_time: utc_to_python_datetime(py, &self.times[i - 1])?,
+                        });
+                    }
                     current_window_start = None;
                 }
             }
@@ -318,60 +321,47 @@ pub trait ConstraintConfig: fmt::Debug + Send + Sync {
 ///
 /// Implementations of this trait perform the actual constraint checking logic.
 pub trait ConstraintEvaluator: Send + Sync {
-    /// Evaluate the constraint over a time range
+    /// Evaluate the constraint with full ephemeris access
     ///
     /// # Arguments
-    /// * `times` - Vector of timestamps to evaluate
+    /// * `ephemeris` - Ephemeris object providing all positional data
     /// * `target_ra` - Right ascension of target in degrees (ICRS/J2000)
     /// * `target_dec` - Declination of target in degrees (ICRS/J2000)
-    /// * `sun_positions` - Sun positions in GCRS (N x 3 array, km)
-    /// * `moon_positions` - Moon positions in GCRS (N x 3 array, km)
-    /// * `observer_positions` - Observer positions in GCRS (N x 3 array, km)
+    /// * `time_indices` - Optional subset of time indices to evaluate
     ///
     /// # Returns
     /// Result containing violation windows
     fn evaluate(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ra: f64,
         target_dec: f64,
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> ConstraintResult;
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<ConstraintResult>;
 
     /// Check if targets are in-constraint for multiple RA/Dec positions (vectorized)
     ///
-    /// This method provides vectorized evaluation for multiple targets,
-    /// returning a 2D array of constraint satisfaction where:
-    /// - Rows correspond to different RA/Dec positions
-    /// - Columns correspond to time indices
-    ///
     /// # Arguments
-    /// * `times` - Vector of timestamps to evaluate (length N)
+    /// * `ephemeris` - Ephemeris object providing all positional data
     /// * `target_ras` - Array of right ascensions in degrees (length M)
     /// * `target_decs` - Array of declinations in degrees (length M)
-    /// * `sun_positions` - Sun positions in GCRS (N x 3 array, km)
-    /// * `moon_positions` - Moon positions in GCRS (N x 3 array, km)
-    /// * `observer_positions` - Observer positions in GCRS (N x 3 array, km)
+    /// * `time_indices` - Optional subset of time indices to evaluate
     ///
     /// # Returns
     /// 2D boolean array (M x N) where True indicates constraint violation
-    /// at that (target, time) combination
     fn in_constraint_batch(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
+        time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>>;
 
     /// Get constraint name
     fn name(&self) -> String;
 
     /// Downcast support for special handling
+    #[allow(dead_code)]
     fn as_any(&self) -> &dyn std::any::Any;
 }
 
@@ -486,4 +476,113 @@ where
     }
 
     violations
+}
+
+/// Macro to extract and filter ephemeris data with celestial body positions
+/// Usage: extract_body_ephemeris_data!(ephemeris, time_indices, get_body_positions)
+/// Returns: (times_filtered, body_positions_filtered, observer_positions_filtered)
+macro_rules! extract_body_ephemeris_data {
+    ($ephemeris:expr, $time_indices:expr, $body_getter:ident) => {{
+        let times = $ephemeris.get_times()?;
+        let body_positions = $ephemeris.$body_getter()?;
+        let observer_positions = $ephemeris.get_gcrs_positions()?;
+
+        if let Some(indices) = $time_indices {
+            let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+            let body_filtered = body_positions.select(ndarray::Axis(0), indices);
+            let obs_filtered = observer_positions.select(ndarray::Axis(0), indices);
+            (filtered_times, body_filtered, obs_filtered)
+        } else {
+            (
+                times.to_vec(),
+                body_positions.clone(),
+                observer_positions.clone(),
+            )
+        }
+    }};
+}
+
+/// Macro to extract and filter common ephemeris data (times, sun_positions, observer_positions)
+/// Usage: extract_standard_ephemeris_data!(ephemeris, time_indices)
+/// Returns: (times_filtered, sun_positions_filtered, observer_positions_filtered)
+macro_rules! extract_standard_ephemeris_data {
+    ($ephemeris:expr, $time_indices:expr) => {{
+        extract_body_ephemeris_data!($ephemeris, $time_indices, get_sun_positions)
+    }};
+}
+
+/// Returns: (times_filtered, observer_positions_filtered)
+macro_rules! extract_observer_ephemeris_data {
+    ($ephemeris:expr, $time_indices:expr) => {{
+        let times = $ephemeris.get_times()?;
+        let observer_positions = $ephemeris.get_gcrs_positions()?;
+
+        if let Some(indices) = $time_indices {
+            let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+            let obs_filtered = observer_positions.select(ndarray::Axis(0), indices);
+            (filtered_times, obs_filtered)
+        } else {
+            (times.to_vec(), observer_positions.clone())
+        }
+    }};
+}
+
+/// Macro to extract and filter time data
+/// Usage: extract_time_data!(ephemeris, time_indices)
+/// Returns: (times_filtered,)
+macro_rules! extract_time_data {
+    ($ephemeris:expr, $time_indices:expr) => {{
+        let times = $ephemeris.get_times()?;
+
+        let times_filtered = if let Some(indices) = $time_indices {
+            indices.iter().map(|&i| times[i]).collect()
+        } else {
+            times.to_vec()
+        };
+
+        (times_filtered,)
+    }};
+}
+
+/// Returns: (times_filtered, lats_filtered, lons_filtered)
+/// Usage: extract_latlon_data!(ephemeris, time_indices)
+macro_rules! extract_latlon_data {
+    ($ephemeris:expr, $time_indices:expr) => {{
+        let (lats_vec, lons_vec) = {
+            use numpy::{PyArray1, PyArrayMethods};
+            use pyo3::Python;
+
+            Python::attach(|py| -> pyo3::PyResult<(Vec<f64>, Vec<f64>)> {
+                let lat_opt = $ephemeris.get_latitude_deg(py)?;
+                let lon_opt = $ephemeris.get_longitude_deg(py)?;
+
+                let lat_array = lat_opt.ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("Latitude data not available")
+                })?;
+                let lon_array = lon_opt.ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("Longitude data not available")
+                })?;
+
+                let lat_bound = lat_array.downcast_bound::<PyArray1<f64>>(py)?;
+                let lon_bound = lon_array.downcast_bound::<PyArray1<f64>>(py)?;
+
+                let lats = lat_bound.readonly().as_slice()?.to_vec();
+                let lons = lon_bound.readonly().as_slice()?.to_vec();
+
+                Ok((lats, lons))
+            })?
+        };
+        let times = $ephemeris.get_times()?;
+
+        let (times_slice, lats_slice, lons_slice) = if let Some(indices) = $time_indices {
+            let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+            let filtered_lats: Vec<f64> = indices.iter().map(|&i| lats_vec[i]).collect();
+            let filtered_lons: Vec<f64> = indices.iter().map(|&i| lons_vec[i]).collect();
+            (filtered_times, filtered_lats, filtered_lons)
+        } else {
+            (times.to_vec(), lats_vec, lons_vec)
+        };
+
+        (times_slice, lats_slice, lons_slice)
+    }};
 }

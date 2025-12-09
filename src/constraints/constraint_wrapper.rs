@@ -2,11 +2,18 @@
 ///
 /// This module provides the Python API for constraint evaluation,
 /// including JSON-based configuration and convenient factory methods.
-use crate::constraints::body_proximity::{BodyProximityConfig, BodyProximityEvaluator};
+use crate::constraints::airmass::AirmassConfig;
+use crate::constraints::alt_az::AltAzConfig;
+use crate::constraints::body_proximity::BodyProximityConfig;
 use crate::constraints::core::*;
+use crate::constraints::daytime::{DaytimeConfig, TwilightType};
 use crate::constraints::earth_limb::EarthLimbConfig;
 use crate::constraints::eclipse::EclipseConfig;
+use crate::constraints::moon_phase::MoonPhaseConfig;
 use crate::constraints::moon_proximity::MoonProximityConfig;
+use crate::constraints::orbit_pole::OrbitPoleConfig;
+use crate::constraints::orbit_ram::OrbitRamConfig;
+use crate::constraints::saa::SAAConfig;
 use crate::constraints::sun_proximity::SunProximityConfig;
 use crate::ephemeris::ephemeris_common::EphemerisBase;
 use crate::ephemeris::GroundEphemeris;
@@ -30,7 +37,7 @@ pub struct PyConstraint {
 
 impl PyConstraint {
     /// Internal helper to evaluate against any Ephemeris implementing EphemerisBase
-    #[allow(deprecated)] // Python::with_gil is appropriate in this non-pyo3 context
+    #[allow(deprecated)]
     fn eval_with_ephemeris<E: EphemerisBase>(
         &self,
         ephemeris: &E,
@@ -38,75 +45,9 @@ impl PyConstraint {
         target_dec: f64,
         time_indices: Option<Vec<usize>>,
     ) -> PyResult<ConstraintResult> {
-        let mut times = ephemeris.get_times()?;
-        let mut sun_positions = ephemeris.get_sun_positions()?;
-        let mut moon_positions = ephemeris.get_moon_positions()?;
-        let mut observer_positions = ephemeris.get_gcrs_positions()?;
-
-        // Filter by time indices if provided
-        if let Some(ref indices) = time_indices {
-            // Validate indices
-            let n_times = times.len();
-            for &idx in indices {
-                if idx >= n_times {
-                    return Err(pyo3::exceptions::PyIndexError::new_err(format!(
-                        "Index {idx} out of range for ephemeris with {n_times} timestamps"
-                    )));
-                }
-            }
-
-            // Filter times and positions
-            times = indices.iter().map(|&i| times[i]).collect();
-            sun_positions =
-                Array2::from_shape_fn((indices.len(), 3), |(i, j)| sun_positions[[indices[i], j]]);
-            moon_positions =
-                Array2::from_shape_fn((indices.len(), 3), |(i, j)| moon_positions[[indices[i], j]]);
-            observer_positions = Array2::from_shape_fn((indices.len(), 3), |(i, j)| {
-                observer_positions[[indices[i], j]]
-            });
-        }
-
-        // Special handling for body proximity - need to compute body positions
-        if let Some(body_eval) = self
-            .evaluator
-            .as_any()
-            .downcast_ref::<BodyProximityEvaluator>()
-        {
-            // Get body positions via get_body_pv
-            use pyo3::Python;
-            let result = Python::with_gil(|py| {
-                let body_pv = ephemeris.get_body_pv(py, &body_eval.body)?;
-                let body_pv_ref = body_pv.bind(py).borrow();
-                let mut body_positions = body_pv_ref.position.clone();
-
-                // Filter body positions if time_indices was provided
-                if let Some(ref indices) = time_indices {
-                    body_positions = Array2::from_shape_fn((indices.len(), 3), |(i, j)| {
-                        body_positions[[indices[i], j]]
-                    });
-                }
-
-                // Pass body positions via sun_positions slot (a bit hacky but avoids API changes)
-                Ok::<_, PyErr>(self.evaluator.evaluate(
-                    &times,
-                    target_ra,
-                    target_dec,
-                    &body_positions,
-                    &moon_positions,
-                    &observer_positions,
-                ))
-            })?;
-            return Ok(result);
-        }
-
-        Ok(self.evaluator.evaluate(
-            &times,
-            target_ra,
-            target_dec,
-            &sun_positions,
-            &moon_positions,
-            &observer_positions,
-        ))
+        // Delegate to evaluator with new interface
+        self.evaluator
+            .evaluate(ephemeris, target_ra, target_dec, time_indices.as_deref())
     }
 }
 
@@ -285,6 +226,486 @@ impl PyConstraint {
             json_obj["max_angle"] = serde_json::json!(max);
         }
         json_obj["horizon_dip"] = serde_json::json!(horizon_dip);
+        let config_json = json_obj.to_string();
+
+        Ok(PyConstraint {
+            evaluator: config.to_evaluator(),
+            config_json,
+        })
+    }
+
+    /// Create a Daytime constraint
+    ///
+    /// This constraint prevents observations during daytime hours.
+    ///
+    /// Args:
+    ///     twilight (str, optional): Twilight definition - "civil", "nautical", "astronomical", or "none" (default: "civil")
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint object
+    ///
+    /// Twilight definitions:
+    ///     - "civil": Civil twilight (-6° below horizon)
+    ///     - "nautical": Nautical twilight (-12° below horizon)
+    ///     - "astronomical": Astronomical twilight (-18° below horizon)
+    ///     - "none": Strict daytime only (Sun above horizon)
+    #[pyo3(signature=(twilight="civil"))]
+    #[staticmethod]
+    fn daytime(twilight: &str) -> PyResult<Self> {
+        let twilight_type = match twilight.to_lowercase().as_str() {
+            "civil" => TwilightType::Civil,
+            "nautical" => TwilightType::Nautical,
+            "astronomical" => TwilightType::Astronomical,
+            "none" => TwilightType::None,
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "twilight must be one of: 'civil', 'nautical', 'astronomical', 'none'",
+                ));
+            }
+        };
+
+        let config = DaytimeConfig {
+            twilight: twilight_type,
+        };
+
+        let twilight_str = match config.twilight {
+            TwilightType::Civil => "civil",
+            TwilightType::Nautical => "nautical",
+            TwilightType::Astronomical => "astronomical",
+            TwilightType::None => "none",
+        };
+
+        let config_json = serde_json::json!({
+            "type": "daytime",
+            "twilight": twilight_str
+        })
+        .to_string();
+
+        Ok(PyConstraint {
+            evaluator: config.to_evaluator(),
+            config_json,
+        })
+    }
+
+    /// Create an Airmass constraint
+    ///
+    /// Args:
+    ///     max_airmass (float): Maximum allowed airmass (lower = better observing conditions)
+    ///     min_airmass (float, optional): Minimum allowed airmass (for excluding very high targets)
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint object
+    ///
+    /// Airmass represents the optical path length through the atmosphere:
+    /// - Airmass = 1 at zenith (best conditions)
+    /// - Airmass = 2 at 30° altitude
+    /// - Airmass = 3 at ~19° altitude
+    /// - Higher airmass = worse observing conditions
+    #[pyo3(signature=(max_airmass, min_airmass=None))]
+    #[staticmethod]
+    fn airmass(max_airmass: f64, min_airmass: Option<f64>) -> PyResult<Self> {
+        if max_airmass <= 1.0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "max_airmass must be greater than 1.0",
+            ));
+        }
+
+        if let Some(min) = min_airmass {
+            if min <= 1.0 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "min_airmass must be greater than 1.0",
+                ));
+            }
+            if min >= max_airmass {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "min_airmass must be less than max_airmass",
+                ));
+            }
+        }
+
+        let config = AirmassConfig {
+            max_airmass,
+            min_airmass,
+        };
+
+        let mut json_obj = serde_json::json!({
+            "type": "airmass",
+            "max_airmass": max_airmass
+        });
+        if let Some(min) = min_airmass {
+            json_obj["min_airmass"] = serde_json::json!(min);
+        }
+        let config_json = json_obj.to_string();
+
+        Ok(PyConstraint {
+            evaluator: config.to_evaluator(),
+            config_json,
+        })
+    }
+
+    /// Create a Moon phase constraint
+    ///
+    /// Args:
+    ///     max_illumination (float): Maximum allowed Moon illumination fraction (0.0 = new moon, 1.0 = full moon)
+    ///     min_illumination (float, optional): Minimum allowed Moon illumination fraction
+    ///     min_distance (float, optional): Minimum allowed Moon distance in degrees from target
+    ///     max_distance (float, optional): Maximum allowed Moon distance in degrees from target
+    ///     enforce_when_below_horizon (bool, optional): Whether to enforce constraint when Moon is below horizon (default: false)
+    ///     moon_visibility (str, optional): Moon visibility requirement - "full" or "partial" (default: "full")
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint object
+    ///
+    /// Moon illumination affects observing conditions:
+    /// - 0.0: New moon (dark, best for deep observations)
+    /// - 0.5: Quarter moon
+    /// - 1.0: Full moon (bright, worst for deep observations)
+    ///
+    /// Moon visibility options:
+    /// - "full": Only enforce when Moon is fully above horizon
+    /// - "partial": Enforce when any part of Moon is visible above horizon
+    #[pyo3(signature=(max_illumination, min_illumination=None, min_distance=None, max_distance=None, enforce_when_below_horizon=false, moon_visibility="full"))]
+    #[staticmethod]
+    fn moon_phase(
+        max_illumination: f64,
+        min_illumination: Option<f64>,
+        min_distance: Option<f64>,
+        max_distance: Option<f64>,
+        enforce_when_below_horizon: bool,
+        moon_visibility: &str,
+    ) -> PyResult<Self> {
+        if !(0.0..=1.0).contains(&max_illumination) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "max_illumination must be between 0.0 and 1.0",
+            ));
+        }
+
+        if let Some(min) = min_illumination {
+            if !(0.0..=1.0).contains(&min) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "min_illumination must be between 0.0 and 1.0",
+                ));
+            }
+            if min >= max_illumination {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "min_illumination must be less than max_illumination",
+                ));
+            }
+        }
+
+        if let Some(min_dist) = min_distance {
+            if min_dist < 0.0 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "min_distance must be non-negative",
+                ));
+            }
+        }
+
+        if let Some(max_dist) = max_distance {
+            if max_dist < 0.0 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_distance must be non-negative",
+                ));
+            }
+            if let Some(min_dist) = min_distance {
+                if min_dist >= max_dist {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "min_distance must be less than max_distance",
+                    ));
+                }
+            }
+        }
+
+        if moon_visibility != "full" && moon_visibility != "partial" {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "moon_visibility must be 'full' or 'partial'",
+            ));
+        }
+
+        let config = MoonPhaseConfig {
+            max_illumination,
+            min_illumination,
+            min_distance,
+            max_distance,
+            enforce_when_below_horizon,
+            moon_visibility: moon_visibility.to_string(),
+        };
+
+        let mut json_obj = serde_json::json!({
+            "type": "moon_phase",
+            "max_illumination": max_illumination,
+            "enforce_when_below_horizon": enforce_when_below_horizon,
+            "moon_visibility": moon_visibility
+        });
+        if let Some(min) = min_illumination {
+            json_obj["min_illumination"] = serde_json::json!(min);
+        }
+        if let Some(min_dist) = min_distance {
+            json_obj["min_distance"] = serde_json::json!(min_dist);
+        }
+        if let Some(max_dist) = max_distance {
+            json_obj["max_distance"] = serde_json::json!(max_dist);
+        }
+        let config_json = json_obj.to_string();
+
+        Ok(PyConstraint {
+            evaluator: config.to_evaluator(),
+            config_json,
+        })
+    }
+
+    /// Create a South Atlantic Anomaly constraint
+    ///
+    /// The South Atlantic Anomaly is a region of reduced magnetic field strength
+    /// that increases radiation exposure for satellites.
+    ///
+    /// Args:
+    ///     polygon (list of tuples): List of (longitude, latitude) pairs defining the SAA region boundary
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint object
+    #[pyo3(signature=(polygon))]
+    #[staticmethod]
+    fn saa(polygon: Vec<(f64, f64)>) -> PyResult<Self> {
+        if polygon.len() < 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Polygon must have at least 3 vertices",
+            ));
+        }
+
+        let config = SAAConfig {
+            polygon: polygon.clone(),
+        };
+        let config_json = serde_json::json!({
+            "type": "saa",
+            "polygon": polygon
+        })
+        .to_string();
+
+        Ok(PyConstraint {
+            evaluator: config.to_evaluator(),
+            config_json,
+        })
+    }
+
+    /// Create an Orbit RAM direction constraint
+    ///
+    /// Ensures target maintains minimum angular separation from the spacecraft's
+    /// velocity vector (RAM direction). Useful for instruments that need to sample
+    /// the atmosphere or for thermal management.
+    ///
+    /// Args:
+    ///     min_angle (float): Minimum allowed angular separation from RAM direction in degrees
+    ///     max_angle (float, optional): Maximum allowed angular separation from RAM direction in degrees
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint object
+    #[pyo3(signature=(min_angle, max_angle=None))]
+    #[staticmethod]
+    fn orbit_ram(min_angle: f64, max_angle: Option<f64>) -> PyResult<Self> {
+        if !(0.0..=180.0).contains(&min_angle) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "min_angle must be between 0 and 180 degrees",
+            ));
+        }
+
+        if let Some(max) = max_angle {
+            if !(0.0..=180.0).contains(&max) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_angle must be between 0 and 180 degrees",
+                ));
+            }
+            if max <= min_angle {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_angle must be greater than min_angle",
+                ));
+            }
+        }
+
+        let config = OrbitRamConfig {
+            min_angle,
+            max_angle,
+        };
+        let mut json_obj = serde_json::json!({
+            "type": "orbit_ram",
+            "min_angle": min_angle
+        });
+        if let Some(max) = max_angle {
+            json_obj["max_angle"] = serde_json::json!(max);
+        }
+        let config_json = json_obj.to_string();
+
+        Ok(PyConstraint {
+            evaluator: config.to_evaluator(),
+            config_json,
+        })
+    }
+
+    /// Create an Orbit pole direction constraint
+    ///
+    /// Ensures target maintains minimum angular separation from both the north and south
+    /// orbital poles (directions perpendicular to the orbital plane). Useful for maintaining
+    /// specific orientations relative to the spacecraft's orbit.
+    ///
+    /// Args:
+    ///     min_angle (float): Minimum allowed angular separation from both orbital poles in degrees
+    ///     max_angle (float, optional): Maximum allowed angular separation from both orbital poles in degrees
+    ///     earth_limb_pole (bool, optional): If True, pole avoidance angle is earth_radius_deg + min_angle - 90.
+    ///                                       Used for NASA's Neil Gehrels Swift Observatory.
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint object
+    #[pyo3(signature=(min_angle, max_angle=None, earth_limb_pole=false))]
+    #[staticmethod]
+    fn orbit_pole(
+        min_angle: f64,
+        max_angle: Option<f64>,
+        earth_limb_pole: Option<bool>,
+    ) -> PyResult<Self> {
+        if !(0.0..=180.0).contains(&min_angle) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "min_angle must be between 0 and 180 degrees",
+            ));
+        }
+
+        if let Some(max) = max_angle {
+            if !(0.0..=180.0).contains(&max) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_angle must be between 0 and 180 degrees",
+                ));
+            }
+            if max <= min_angle {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_angle must be greater than min_angle",
+                ));
+            }
+        }
+
+        let earth_limb_pole = earth_limb_pole.unwrap_or(false);
+
+        let config = OrbitPoleConfig {
+            min_angle,
+            max_angle,
+            earth_limb_pole,
+        };
+        let mut json_obj = serde_json::json!({
+            "type": "orbit_pole",
+            "min_angle": min_angle,
+            "earth_limb_pole": earth_limb_pole
+        });
+        if let Some(max) = max_angle {
+            json_obj["max_angle"] = serde_json::json!(max);
+        }
+        let config_json = json_obj.to_string();
+
+        Ok(PyConstraint {
+            evaluator: config.to_evaluator(),
+            config_json,
+        })
+    }
+
+    /// Create an Altitude/Azimuth constraint
+    ///
+    /// Args:
+    ///     min_altitude (float, optional): Minimum allowed altitude in degrees (0 = horizon, 90 = zenith)
+    ///     max_altitude (float, optional): Maximum allowed altitude in degrees
+    ///     min_azimuth (float, optional): Minimum allowed azimuth in degrees (0 = North, 90 = East)
+    ///     max_azimuth (float, optional): Maximum allowed azimuth in degrees
+    ///     polygon (list of tuples, optional): List of (altitude, azimuth) pairs defining allowed region
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint object
+    ///
+    /// Altitude and azimuth define the target's position in the sky:
+    /// - Altitude: Angular distance from horizon (0° = horizon, 90° = zenith)
+    /// - Azimuth: Angular distance from North, measured eastward (0° = North, 90° = East, etc.)
+    ///
+    /// For azimuth ranges that cross North (e.g., 330° to 30°), specify min_azimuth > max_azimuth.
+    /// If polygon is provided, the target must be inside this polygon to satisfy the constraint.
+    #[pyo3(signature=(min_altitude=None, max_altitude=None, min_azimuth=None, max_azimuth=None, polygon=None))]
+    #[staticmethod]
+    fn alt_az(
+        min_altitude: Option<f64>,
+        max_altitude: Option<f64>,
+        min_azimuth: Option<f64>,
+        max_azimuth: Option<f64>,
+        polygon: Option<Vec<(f64, f64)>>,
+    ) -> PyResult<Self> {
+        if let Some(min_alt) = min_altitude {
+            if !(0.0..=90.0).contains(&min_alt) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "min_altitude must be between 0 and 90 degrees",
+                ));
+            }
+        }
+
+        if let Some(max_alt) = max_altitude {
+            if !(0.0..=90.0).contains(&max_alt) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_altitude must be between 0 and 90 degrees",
+                ));
+            }
+        }
+
+        if let (Some(min_alt), Some(max_alt)) = (min_altitude, max_altitude) {
+            if max_alt <= min_alt {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_altitude must be greater than min_altitude",
+                ));
+            }
+        }
+
+        if let Some(min_az) = min_azimuth {
+            if !(0.0..=360.0).contains(&min_az) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "min_azimuth must be between 0 and 360 degrees",
+                ));
+            }
+        }
+
+        if let Some(max_az) = max_azimuth {
+            if !(0.0..=360.0).contains(&max_az) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_azimuth must be between 0 and 360 degrees",
+                ));
+            }
+        }
+
+        // Validate polygon if provided
+        if let Some(ref poly) = polygon {
+            if poly.len() < 3 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "polygon must have at least 3 vertices",
+                ));
+            }
+        }
+
+        let config = AltAzConfig {
+            min_altitude,
+            max_altitude,
+            min_azimuth,
+            max_azimuth,
+            polygon: polygon.clone(),
+        };
+
+        let mut json_obj = serde_json::json!({
+            "type": "alt_az"
+        });
+        if let Some(min_alt) = min_altitude {
+            json_obj["min_altitude"] = serde_json::json!(min_alt);
+        }
+        if let Some(max_alt) = max_altitude {
+            json_obj["max_altitude"] = serde_json::json!(max_alt);
+        }
+        if let Some(min_az) = min_azimuth {
+            json_obj["min_azimuth"] = serde_json::json!(min_az);
+        }
+        if let Some(max_az) = max_azimuth {
+            json_obj["max_azimuth"] = serde_json::json!(max_az);
+        }
+        if let Some(poly) = polygon {
+            json_obj["polygon"] = serde_json::json!(poly);
+        }
         let config_json = json_obj.to_string();
 
         Ok(PyConstraint {
@@ -624,74 +1045,40 @@ impl PyConstraint {
             None
         };
 
-        // Get ephemeris data based on type
-        let (mut times_vec, mut sun_positions, mut moon_positions, mut observer_positions) =
-            if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
-                (
-                    ephem.get_times()?,
-                    ephem.get_sun_positions()?,
-                    ephem.get_moon_positions()?,
-                    ephem.get_gcrs_positions()?,
-                )
-            } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
-                (
-                    ephem.get_times()?,
-                    ephem.get_sun_positions()?,
-                    ephem.get_moon_positions()?,
-                    ephem.get_gcrs_positions()?,
-                )
-            } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
-                (
-                    ephem.get_times()?,
-                    ephem.get_sun_positions()?,
-                    ephem.get_moon_positions()?,
-                    ephem.get_gcrs_positions()?,
-                )
-            } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
-                (
-                    ephem.get_times()?,
-                    ephem.get_sun_positions()?,
-                    ephem.get_moon_positions()?,
-                    ephem.get_gcrs_positions()?,
-                )
-            } else {
-                return Err(pyo3::exceptions::PyTypeError::new_err(
-                    "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
-                ));
-            };
-
-        // Filter by time indices if provided
-        if let Some(ref indices) = time_indices {
-            // Validate indices
-            let n_times = times_vec.len();
-            for &idx in indices {
-                if idx >= n_times {
-                    return Err(pyo3::exceptions::PyIndexError::new_err(format!(
-                        "Index {idx} out of range for ephemeris with {n_times} timestamps"
-                    )));
-                }
-            }
-
-            // Filter times and positions
-            times_vec = indices.iter().map(|&i| times_vec[i]).collect();
-            sun_positions =
-                Array2::from_shape_fn((indices.len(), 3), |(i, j)| sun_positions[[indices[i], j]]);
-            moon_positions =
-                Array2::from_shape_fn((indices.len(), 3), |(i, j)| moon_positions[[indices[i], j]]);
-            observer_positions = Array2::from_shape_fn((indices.len(), 3), |(i, j)| {
-                observer_positions[[indices[i], j]]
-            });
-        }
-
-        // Call batch evaluation
-        let result_array = self.evaluator.in_constraint_batch(
-            &times_vec,
-            &target_ras,
-            &target_decs,
-            &sun_positions,
-            &moon_positions,
-            &observer_positions,
-        )?;
+        // Call batch evaluation with ephemeris based on type
+        let result_array = if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
+            self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &target_ras,
+                &target_decs,
+                time_indices.as_deref(),
+            )?
+        } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
+            self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &target_ras,
+                &target_decs,
+                time_indices.as_deref(),
+            )?
+        } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
+            self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &target_ras,
+                &target_decs,
+                time_indices.as_deref(),
+            )?
+        } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+            self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &target_ras,
+                &target_decs,
+                time_indices.as_deref(),
+            )?
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
+            ));
+        };
 
         // Convert to numpy array
         use numpy::IntoPyArray;
@@ -1006,6 +1393,138 @@ fn parse_constraint_json(value: &serde_json::Value) -> PyResult<Box<dyn Constrai
             };
             Ok(config.to_evaluator())
         }
+        "daytime" => {
+            let twilight = value
+                .get("twilight")
+                .and_then(|v| v.as_str())
+                .unwrap_or("civil");
+            let twilight_type = match twilight {
+                "civil" => TwilightType::Civil,
+                "nautical" => TwilightType::Nautical,
+                "astronomical" => TwilightType::Astronomical,
+                "none" => TwilightType::None,
+                _ => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Unknown twilight type: {twilight}"
+                    )))
+                }
+            };
+            let config = DaytimeConfig {
+                twilight: twilight_type,
+            };
+            Ok(config.to_evaluator())
+        }
+        "airmass" => {
+            let max_airmass = value
+                .get("max_airmass")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("Missing 'max_airmass' field")
+                })?;
+            let min_airmass = value.get("min_airmass").and_then(|v| v.as_f64());
+            let config = AirmassConfig {
+                min_airmass,
+                max_airmass,
+            };
+            Ok(config.to_evaluator())
+        }
+        "moon_phase" => {
+            let max_illumination = value
+                .get("max_illumination")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("Missing 'max_illumination' field")
+                })?;
+            let min_illumination = value.get("min_illumination").and_then(|v| v.as_f64());
+            let min_distance = value.get("min_distance").and_then(|v| v.as_f64());
+            let max_distance = value.get("max_distance").and_then(|v| v.as_f64());
+            let enforce_when_below_horizon = value
+                .get("enforce_when_below_horizon")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let moon_visibility = value
+                .get("moon_visibility")
+                .and_then(|v| v.as_str())
+                .unwrap_or("full")
+                .to_string();
+            let config = MoonPhaseConfig {
+                min_illumination,
+                max_illumination,
+                min_distance,
+                max_distance,
+                enforce_when_below_horizon,
+                moon_visibility,
+            };
+            Ok(config.to_evaluator())
+        }
+        "saa" => {
+            let polygon = value
+                .get("polygon")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Missing 'polygon' field"))?
+                .iter()
+                .map(|point| {
+                    let arr = point.as_array().ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err("Polygon points must be arrays")
+                    })?;
+                    if arr.len() != 2 {
+                        return Err(pyo3::exceptions::PyValueError::new_err(
+                            "Polygon points must be [lon, lat] pairs",
+                        ));
+                    }
+                    let lon = arr[0].as_f64().ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err("Longitude must be a number")
+                    })?;
+                    let lat = arr[1].as_f64().ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err("Latitude must be a number")
+                    })?;
+                    Ok((lon, lat))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let config = SAAConfig { polygon };
+            Ok(config.to_evaluator())
+        }
+        "alt_az" => {
+            let min_altitude = value.get("min_altitude").and_then(|v| v.as_f64());
+            let max_altitude = value.get("max_altitude").and_then(|v| v.as_f64());
+            let min_azimuth = value.get("min_azimuth").and_then(|v| v.as_f64());
+            let max_azimuth = value.get("max_azimuth").and_then(|v| v.as_f64());
+            let polygon = value
+                .get("polygon")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .map(|point| {
+                            let p = point.as_array().ok_or_else(|| {
+                                pyo3::exceptions::PyValueError::new_err(
+                                    "Polygon points must be arrays",
+                                )
+                            })?;
+                            if p.len() != 2 {
+                                return Err(pyo3::exceptions::PyValueError::new_err(
+                                    "Polygon points must be [alt, az] pairs",
+                                ));
+                            }
+                            let alt = p[0].as_f64().ok_or_else(|| {
+                                pyo3::exceptions::PyValueError::new_err("Altitude must be a number")
+                            })?;
+                            let az = p[1].as_f64().ok_or_else(|| {
+                                pyo3::exceptions::PyValueError::new_err("Azimuth must be a number")
+                            })?;
+                            Ok((alt, az))
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?;
+            let config = AltAzConfig {
+                min_altitude,
+                max_altitude,
+                min_azimuth,
+                max_azimuth,
+                polygon,
+            };
+            Ok(config.to_evaluator())
+        }
         "and" => {
             let constraints = value
                 .get("constraints")
@@ -1059,6 +1578,39 @@ fn parse_constraint_json(value: &serde_json::Value) -> PyResult<Box<dyn Constrai
                 constraint: evaluator,
             }))
         }
+        "orbit_pole" => {
+            let min_angle = value
+                .get("min_angle")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("Missing 'min_angle' field")
+                })?;
+            let max_angle = value.get("max_angle").and_then(|v| v.as_f64());
+            let earth_limb_pole = value
+                .get("earth_limb_pole")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let config = OrbitPoleConfig {
+                min_angle,
+                max_angle,
+                earth_limb_pole,
+            };
+            Ok(config.to_evaluator())
+        }
+        "orbit_ram" => {
+            let min_angle = value
+                .get("min_angle")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("Missing 'min_angle' field")
+                })?;
+            let max_angle = value.get("max_angle").and_then(|v| v.as_f64());
+            let config = OrbitRamConfig {
+                min_angle,
+                max_angle,
+            };
+            Ok(config.to_evaluator())
+        }
         _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Unknown constraint type: {constraint_type}"
         ))),
@@ -1073,112 +1625,85 @@ struct AndEvaluator {
 impl ConstraintEvaluator for AndEvaluator {
     fn evaluate(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ra: f64,
         target_dec: f64,
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> ConstraintResult {
-        // Evaluate all constraints
-        let results: Vec<_> = self
-            .constraints
-            .iter()
-            .map(|c| {
-                c.evaluate(
-                    times,
-                    target_ra,
-                    target_dec,
-                    sun_positions,
-                    moon_positions,
-                    observer_positions,
-                )
-            })
-            .collect();
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<ConstraintResult> {
+        let times = ephemeris.get_times()?;
+        let times_filtered = if let Some(indices) = time_indices {
+            indices.iter().map(|&i| times[i]).collect()
+        } else {
+            times.to_vec()
+        };
 
-        // Merge violations - a violation exists if ALL constraints are violated at that time
-        let mut merged_violations = Vec::new();
-        let mut current_violation: Option<(usize, f64, Vec<String>)> = None;
+        let violations = track_violations(
+            &times_filtered,
+            |i| {
+                let mut all_violated = true;
+                let mut min_severity = f64::MAX;
 
-        for (i, time) in times.iter().enumerate() {
-            let time_str = time.to_rfc3339();
-            let mut all_violated = true;
-            let mut min_severity = f64::MAX;
-            let mut descriptions = Vec::new();
-
-            // Check if all constraints are violated at this time
-            for result in &results {
-                let mut this_violated = false;
-                for violation in &result.violations {
-                    if violation.start_time <= time_str && time_str <= violation.end_time {
-                        this_violated = true;
-                        min_severity = min_severity.min(violation.max_severity);
-                        descriptions.push(&violation.description);
-                        break;
-                    }
-                }
-                if !this_violated {
-                    all_violated = false;
-                    break;
-                }
-            }
-
-            if all_violated {
-                match &mut current_violation {
-                    Some((_, sev, descs)) => {
-                        *sev = sev.max(min_severity);
-                        for desc in descriptions {
-                            // Only store string references, clone at the end
-                            if !descs.iter().any(|d| d == desc) {
-                                descs.push(desc.to_string());
+                // Check each constraint at this time
+                for constraint in &self.constraints {
+                    let result = constraint.evaluate(ephemeris, target_ra, target_dec, Some(&[i]));
+                    if let Ok(ref res) = result {
+                        if res.violations.is_empty() {
+                            all_violated = false;
+                        } else {
+                            for violation in &res.violations {
+                                min_severity = min_severity.min(violation.max_severity);
                             }
                         }
-                    }
-                    None => {
-                        current_violation = Some((
-                            i,
-                            min_severity,
-                            descriptions.iter().map(|s| s.to_string()).collect(),
-                        ));
+                    } else {
+                        all_violated = false;
                     }
                 }
-            } else if let Some((start_idx, severity, descs)) = current_violation.take() {
-                merged_violations.push(ConstraintViolation {
-                    start_time: times[start_idx].to_rfc3339(),
-                    end_time: times[i - 1].to_rfc3339(),
-                    max_severity: severity,
-                    description: format!("AND violation: {}", descs.join("; ")),
-                });
-            }
-        }
 
-        // Close any open violation
-        if let Some((start_idx, severity, descs)) = current_violation {
-            merged_violations.push(ConstraintViolation {
-                start_time: times[start_idx].to_rfc3339(),
-                end_time: times[times.len() - 1].to_rfc3339(),
-                max_severity: severity,
-                description: format!("AND violation: {}", descs.join("; ")),
-            });
-        }
+                (
+                    all_violated,
+                    if min_severity == f64::MAX {
+                        1.0
+                    } else {
+                        min_severity
+                    },
+                )
+            },
+            |i, _is_open| {
+                let mut descriptions = Vec::new();
 
-        let all_satisfied = merged_violations.is_empty();
-        ConstraintResult::new(
-            merged_violations,
+                // Get descriptions from all violated constraints at this time
+                for constraint in &self.constraints {
+                    let result = constraint.evaluate(ephemeris, target_ra, target_dec, Some(&[i]));
+                    if let Ok(ref res) = result {
+                        for violation in &res.violations {
+                            descriptions.push(violation.description.clone());
+                        }
+                    }
+                }
+
+                if descriptions.is_empty() {
+                    "AND violation".to_string()
+                } else {
+                    format!("AND violation: {}", descriptions.join("; "))
+                }
+            },
+        );
+
+        let all_satisfied = violations.is_empty();
+        Ok(ConstraintResult::new(
+            violations,
             all_satisfied,
             self.name(),
-            times.to_vec(),
-        )
+            times_filtered,
+        ))
     }
 
     fn in_constraint_batch(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
+        time_indices: Option<&[usize]>,
     ) -> pyo3::PyResult<Array2<bool>> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1186,25 +1711,18 @@ impl ConstraintEvaluator for AndEvaluator {
             ));
         }
 
+        let times = ephemeris.get_times()?;
+        let n_times = times.len();
+
         // Evaluate all sub-constraints in batch
         let results: Result<Vec<_>, _> = self
             .constraints
             .iter()
-            .map(|c| {
-                c.in_constraint_batch(
-                    times,
-                    target_ras,
-                    target_decs,
-                    sun_positions,
-                    moon_positions,
-                    observer_positions,
-                )
-            })
+            .map(|c| c.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices))
             .collect();
         let results = results?;
 
         let n_targets = target_ras.len();
-        let n_times = times.len();
         let mut result = Array2::from_elem((n_targets, n_times), false);
 
         // AND logic: violated only if ALL sub-constraints are violated
@@ -1241,108 +1759,75 @@ struct OrEvaluator {
 impl ConstraintEvaluator for OrEvaluator {
     fn evaluate(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ra: f64,
         target_dec: f64,
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> ConstraintResult {
-        // Evaluate all constraints
-        let results: Vec<_> = self
-            .constraints
-            .iter()
-            .map(|c| {
-                c.evaluate(
-                    times,
-                    target_ra,
-                    target_dec,
-                    sun_positions,
-                    moon_positions,
-                    observer_positions,
-                )
-            })
-            .collect();
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<ConstraintResult> {
+        let times = ephemeris.get_times()?;
+        let times_filtered = if let Some(indices) = time_indices {
+            indices.iter().map(|&i| times[i]).collect()
+        } else {
+            times.to_vec()
+        };
 
-        // For OR, we violate when ANY constraint is violated
-        let mut merged_violations = Vec::new();
-        let mut current_violation: Option<(usize, f64, Vec<String>)> = None;
+        let violations = track_violations(
+            &times_filtered,
+            |i| {
+                let mut any_violated = false;
+                let mut max_severity = 0.0f64;
 
-        for (i, time) in times.iter().enumerate() {
-            let time_str = time.to_rfc3339();
-            let mut any_violated = false;
-            let mut max_severity: f64 = 0.0;
-            let mut descriptions = Vec::new();
-
-            // Check if any constraint is violated at this time
-            for result in &results {
-                for violation in &result.violations {
-                    if violation.start_time <= time_str && time_str <= violation.end_time {
-                        any_violated = true;
-                        max_severity = max_severity.max(violation.max_severity);
-                        // Avoid cloning by using reference
-                        descriptions.push(&violation.description);
-                        break;
-                    }
-                }
-            }
-
-            if any_violated {
-                match &mut current_violation {
-                    Some((_, sev, descs)) => {
-                        *sev = sev.max(max_severity);
-                        for desc in descriptions {
-                            // Only store string references, clone at the end
-                            if !descs.iter().any(|d| d == desc) {
-                                descs.push(desc.to_string());
+                // Check each constraint at this time
+                for constraint in &self.constraints {
+                    let result = constraint.evaluate(ephemeris, target_ra, target_dec, Some(&[i]));
+                    if let Ok(ref res) = result {
+                        if !res.violations.is_empty() {
+                            any_violated = true;
+                            for violation in &res.violations {
+                                max_severity = max_severity.max(violation.max_severity);
                             }
                         }
                     }
-                    None => {
-                        current_violation = Some((
-                            i,
-                            max_severity,
-                            descriptions.iter().map(|s| s.to_string()).collect(),
-                        ));
+                }
+
+                (any_violated, max_severity)
+            },
+            |i, _is_open| {
+                let mut descriptions = Vec::new();
+
+                // Get descriptions from all violated constraints at this time
+                for constraint in &self.constraints {
+                    let result = constraint.evaluate(ephemeris, target_ra, target_dec, Some(&[i]));
+                    if let Ok(ref res) = result {
+                        for violation in &res.violations {
+                            descriptions.push(violation.description.clone());
+                        }
                     }
                 }
-            } else if let Some((start_idx, severity, descs)) = current_violation.take() {
-                merged_violations.push(ConstraintViolation {
-                    start_time: times[start_idx].to_rfc3339(),
-                    end_time: times[i - 1].to_rfc3339(),
-                    max_severity: severity,
-                    description: format!("OR violation: {}", descs.join("; ")),
-                });
-            }
-        }
 
-        // Close any open violation
-        if let Some((start_idx, severity, descs)) = current_violation {
-            merged_violations.push(ConstraintViolation {
-                start_time: times[start_idx].to_rfc3339(),
-                end_time: times[times.len() - 1].to_rfc3339(),
-                max_severity: severity,
-                description: format!("OR violation: {}", descs.join("; ")),
-            });
-        }
+                if descriptions.is_empty() {
+                    "OR violation".to_string()
+                } else {
+                    format!("OR violation: {}", descriptions.join("; "))
+                }
+            },
+        );
 
-        let all_satisfied = merged_violations.is_empty();
-        ConstraintResult::new(
-            merged_violations,
+        let all_satisfied = violations.is_empty();
+        Ok(ConstraintResult::new(
+            violations,
             all_satisfied,
             self.name(),
-            times.to_vec(),
-        )
+            times_filtered,
+        ))
     }
 
     fn in_constraint_batch(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
+        time_indices: Option<&[usize]>,
     ) -> pyo3::PyResult<Array2<bool>> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1350,25 +1835,18 @@ impl ConstraintEvaluator for OrEvaluator {
             ));
         }
 
+        let times = ephemeris.get_times()?;
+        let n_times = times.len();
+
         // Evaluate all sub-constraints in batch
         let results: Result<Vec<_>, _> = self
             .constraints
             .iter()
-            .map(|c| {
-                c.in_constraint_batch(
-                    times,
-                    target_ras,
-                    target_decs,
-                    sun_positions,
-                    moon_positions,
-                    observer_positions,
-                )
-            })
+            .map(|c| c.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices))
             .collect();
         let results = results?;
 
         let n_targets = target_ras.len();
-        let n_times = times.len();
         let mut result = Array2::from_elem((n_targets, n_times), false);
 
         // OR logic: violated if ANY sub-constraint is violated
@@ -1405,21 +1883,15 @@ struct NotEvaluator {
 impl ConstraintEvaluator for NotEvaluator {
     fn evaluate(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ra: f64,
         target_dec: f64,
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> ConstraintResult {
-        let result = self.constraint.evaluate(
-            times,
-            target_ra,
-            target_dec,
-            sun_positions,
-            moon_positions,
-            observer_positions,
-        );
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<ConstraintResult> {
+        let times = ephemeris.get_times()?;
+        let result = self
+            .constraint
+            .evaluate(ephemeris, target_ra, target_dec, time_indices)?;
 
         // Invert violations - find time periods NOT in violation
         let mut inverted_violations = Vec::new();
@@ -1472,31 +1944,28 @@ impl ConstraintEvaluator for NotEvaluator {
         }
 
         let all_satisfied = inverted_violations.is_empty();
-        ConstraintResult::new(
+        Ok(ConstraintResult::new(
             inverted_violations,
             all_satisfied,
             self.name(),
             times.to_vec(),
-        )
+        ))
     }
 
     fn in_constraint_batch(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
+        time_indices: Option<&[usize]>,
     ) -> pyo3::PyResult<Array2<bool>> {
+        let times = ephemeris.get_times()?;
         // Evaluate sub-constraint in batch
         let sub_result = self.constraint.in_constraint_batch(
-            times,
+            ephemeris,
             target_ras,
             target_decs,
-            sun_positions,
-            moon_positions,
-            observer_positions,
+            time_indices,
         )?;
 
         let n_targets = target_ras.len();
@@ -1529,28 +1998,18 @@ struct XorEvaluator {
 impl ConstraintEvaluator for XorEvaluator {
     fn evaluate(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ra: f64,
         target_dec: f64,
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> ConstraintResult {
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<ConstraintResult> {
+        let times = ephemeris.get_times()?;
         // Evaluate all constraints
         let results: Vec<_> = self
             .constraints
             .iter()
-            .map(|c| {
-                c.evaluate(
-                    times,
-                    target_ra,
-                    target_dec,
-                    sun_positions,
-                    moon_positions,
-                    observer_positions,
-                )
-            })
-            .collect();
+            .map(|c| c.evaluate(ephemeris, target_ra, target_dec, time_indices))
+            .collect::<PyResult<Vec<_>>>()?;
 
         // Violate when EXACTLY ONE sub-constraint is violated
         let mut merged_violations = Vec::new();
@@ -1606,22 +2065,20 @@ impl ConstraintEvaluator for XorEvaluator {
         }
 
         let all_satisfied = merged_violations.is_empty();
-        ConstraintResult::new(
+        Ok(ConstraintResult::new(
             merged_violations,
             all_satisfied,
             self.name(),
             times.to_vec(),
-        )
+        ))
     }
 
     fn in_constraint_batch(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-        sun_positions: &Array2<f64>,
-        moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
+        time_indices: Option<&[usize]>,
     ) -> pyo3::PyResult<Array2<bool>> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1629,25 +2086,18 @@ impl ConstraintEvaluator for XorEvaluator {
             ));
         }
 
+        let times = ephemeris.get_times()?;
+        let n_times = times.len();
+
         // Evaluate all sub-constraints in batch
         let results: Result<Vec<_>, _> = self
             .constraints
             .iter()
-            .map(|c| {
-                c.in_constraint_batch(
-                    times,
-                    target_ras,
-                    target_decs,
-                    sun_positions,
-                    moon_positions,
-                    observer_positions,
-                )
-            })
+            .map(|c| c.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices))
             .collect();
         let results = results?;
 
         let n_targets = target_ras.len();
-        let n_times = times.len();
         let mut result = Array2::from_elem((n_targets, n_times), false);
 
         // XOR logic: violated when EXACTLY ONE sub-constraint is violated

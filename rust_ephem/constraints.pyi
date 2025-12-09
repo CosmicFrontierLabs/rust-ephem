@@ -82,6 +82,46 @@ class EclipseConstraint(RustConstraintMixin):
     type: Literal["eclipse"] = "eclipse"
     umbra_only: bool = True
 
+class DaytimeConstraint(RustConstraintMixin):
+    type: Literal["daytime"] = "daytime"
+    twilight: Literal["civil", "nautical", "astronomical", "none"] = "civil"
+
+class AirmassConstraint(RustConstraintMixin):
+    type: Literal["airmass"] = "airmass"
+    min_airmass: float | None = None
+    max_airmass: float
+
+class MoonPhaseConstraint(RustConstraintMixin):
+    type: Literal["moon_phase"] = "moon_phase"
+    min_illumination: float | None = None
+    max_illumination: float
+    min_distance: float | None = None
+    max_distance: float | None = None
+    enforce_when_below_horizon: bool = False
+    moon_visibility: Literal["full", "partial"] = "full"
+
+class SAAConstraint(RustConstraintMixin):
+    type: Literal["saa"] = "saa"
+    polygon: list[tuple[float, float]]
+
+class AltAzConstraint(RustConstraintMixin):
+    type: Literal["alt_az"] = "alt_az"
+    min_altitude: float
+    max_altitude: float | None = None
+    min_azimuth: float | None = None
+    max_azimuth: float | None = None
+
+class OrbitRamConstraint(RustConstraintMixin):
+    type: Literal["orbit_ram"] = "orbit_ram"
+    min_angle: float
+    max_angle: float | None = None
+
+class OrbitPoleConstraint(RustConstraintMixin):
+    type: Literal["orbit_pole"] = "orbit_pole"
+    min_angle: float
+    max_angle: float | None = None
+    earth_limb_pole: bool = False
+
 class AndConstraint(RustConstraintMixin):
     type: Literal["and"] = "and"
     constraints: list[ConstraintConfig]
@@ -104,6 +144,13 @@ ConstraintConfig = (
     | EclipseConstraint
     | EarthLimbConstraint
     | BodyConstraint
+    | DaytimeConstraint
+    | AirmassConstraint
+    | MoonPhaseConstraint
+    | SAAConstraint
+    | AltAzConstraint
+    | OrbitRamConstraint
+    | OrbitPoleConstraint
     | AndConstraint
     | OrConstraint
     | XorConstraint

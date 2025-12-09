@@ -168,6 +168,225 @@ Factory Methods
       # Constraint violated in both umbra and penumbra
       constraint = Constraint.eclipse(umbra_only=False)
 
+.. py:staticmethod:: Constraint.airmass(max_airmass, min_airmass=None)
+
+   Create an airmass constraint that limits observations based on atmospheric path length.
+
+   :param float max_airmass: Maximum allowed airmass (> 1.0)
+   :param float min_airmass: Minimum allowed airmass (≥ 1.0, optional)
+   :returns: A new Constraint instance
+   :rtype: Constraint
+   :raises ValueError: If airmass values are out of valid range
+
+   Airmass represents the optical path length through Earth's atmosphere:
+
+   * Airmass = 1.0 at zenith (best observing conditions)
+   * Airmass = 2.0 at ~30° altitude
+   * Airmass = 3.0 at ~19° altitude
+   * Higher airmass values indicate worse observing conditions
+
+   **Example:**
+
+   .. code-block:: python
+
+      # Target must be at airmass ≤ 2.0 (altitude ≥ ~30°)
+      constraint = Constraint.airmass(2.0)
+
+      # Target must be between airmass 1.2 and 2.5
+      constraint = Constraint.airmass(2.5, min_airmass=1.2)
+
+.. py:staticmethod:: Constraint.daytime(twilight="civil")
+
+   Create a daytime constraint that prevents observations during daylight hours.
+
+   :param str twilight: Twilight definition ("civil", "nautical", "astronomical", or "none")
+   :returns: A new Constraint instance
+   :rtype: Constraint
+   :raises ValueError: If twilight type is invalid
+
+   Twilight definitions:
+
+   * ``"civil"``: Civil twilight (-6° below horizon, default)
+   * ``"nautical"``: Nautical twilight (-12° below horizon)
+   * ``"astronomical"``: Astronomical twilight (-18° below horizon)
+   * ``"none"``: Strict daytime only (Sun above horizon)
+
+   **Example:**
+
+   .. code-block:: python
+
+      # Prevent observations during civil twilight or daylight
+      constraint = Constraint.daytime()
+
+      # Use nautical twilight definition
+      constraint = Constraint.daytime(twilight="nautical")
+
+.. py:staticmethod:: Constraint.moon_phase(max_illumination, min_illumination=None, min_distance=None, max_distance=None, enforce_when_below_horizon=False, moon_visibility="full")
+
+   Create a Moon phase constraint with optional distance filtering.
+
+   :param float max_illumination: Maximum allowed Moon illumination fraction (0.0-1.0)
+   :param float min_illumination: Minimum allowed Moon illumination fraction (0.0-1.0, optional)
+   :param float min_distance: Minimum allowed Moon distance in degrees from target (optional)
+   :param float max_distance: Maximum allowed Moon distance in degrees from target (optional)
+   :param bool enforce_when_below_horizon: Whether to enforce constraint when Moon is below horizon
+   :param str moon_visibility: Moon visibility requirement ("full" or "partial")
+   :returns: A new Constraint instance
+   :rtype: Constraint
+   :raises ValueError: If parameters are out of valid range
+
+   Moon illumination ranges from 0.0 (new moon) to 1.0 (full moon).
+
+   **Example:**
+
+   .. code-block:: python
+
+      # Moon illumination must be ≤ 30%
+      constraint = Constraint.moon_phase(0.3)
+
+      # Moon illumination between 10% and 50%, keep Moon ≥ 30° away
+      constraint = Constraint.moon_phase(0.5, min_illumination=0.1, min_distance=30.0)
+
+.. py:staticmethod:: Constraint.saa(polygon)
+
+   Create a South Atlantic Anomaly constraint.
+
+   The South Atlantic Anomaly is a region of reduced magnetic field strength
+   that increases radiation exposure for satellites.
+
+   :param list polygon: List of (longitude, latitude) pairs defining the SAA region boundary
+   :returns: A new Constraint instance
+   :rtype: Constraint
+   :raises ValueError: If polygon has fewer than 3 vertices
+
+   The polygon should be defined as a list of (longitude, latitude) coordinate pairs
+   in degrees, defining the boundary of the region. The polygon is assumed to be
+   closed (first and last points are connected).
+
+   **Example:**
+
+   .. code-block:: python
+
+      # Define SAA region as a polygon
+      saa_polygon = [
+          (-90.0, -50.0),   # Southwest corner
+          (-40.0, -50.0),   # Southeast corner
+          (-40.0, 0.0),     # Northeast corner
+          (-90.0, 0.0),     # Northwest corner
+      ]
+
+      # Avoid SAA region
+      constraint = Constraint.saa(saa_polygon)
+
+      # To require being in SAA region, use NOT
+      require_saa = ~Constraint.saa(saa_polygon)
+
+.. py:staticmethod:: Constraint.alt_az(min_altitude, max_altitude=None, min_azimuth=None, max_azimuth=None, polygon=None)
+
+   Create an altitude/azimuth constraint.
+
+   Constrains observations based on target position in the observer's local horizon
+   coordinate system. Can use simple altitude/azimuth ranges or define a custom
+   polygon region in altitude/azimuth space.
+
+   :param float min_altitude: Minimum allowed altitude in degrees (0-90)
+   :param float max_altitude: Maximum allowed altitude in degrees (0-90), optional
+   :param float min_azimuth: Minimum allowed azimuth in degrees (0-360), optional
+   :param float max_azimuth: Maximum allowed azimuth in degrees (0-360), optional
+   :param list polygon: List of (altitude, azimuth) pairs defining allowed region, optional
+   :returns: A new Constraint instance
+   :rtype: Constraint
+   :raises ValueError: If angles are out of valid range or polygon has fewer than 3 vertices
+
+   **Coordinate System:**
+
+   * Altitude: Angular distance from horizon (0° = horizon, 90° = zenith)
+   * Azimuth: Angular distance from North, measured eastward (0° = North, 90° = East, 180° = South, 270° = West)
+
+   **Polygon Mode:**
+
+   When a polygon is provided, the target must be inside the polygon to satisfy the constraint.
+   The polygon is defined as a list of (altitude, azimuth) coordinate pairs forming a closed region.
+   Uses the winding number algorithm for robust point-in-polygon testing.
+
+   **Example:**
+
+   .. code-block:: python
+
+      # Simple altitude range constraint
+      constraint = Constraint.alt_az(min_altitude=10.0, max_altitude=85.0)
+
+      # Azimuth range constraint (e.g., avoid west, only observe east/south)
+      constraint = Constraint.alt_az(min_altitude=5.0, min_azimuth=45.0, max_azimuth=225.0)
+
+      # Define a custom observing region as a polygon
+      # Observing window at altitude [30-70°] and azimuth [90-180°] (south to east)
+      observing_region = [
+          (30, 90),    # Southwest corner
+          (30, 180),   # Southeast corner
+          (70, 180),   # Northeast corner
+          (70, 90),    # Northwest corner
+      ]
+      constraint = Constraint.alt_az(min_altitude=0.0, polygon=observing_region)
+
+      # Combine polygon with additional altitude constraint
+      constraint = Constraint.alt_az(min_altitude=35.0, polygon=observing_region)
+
+.. py:staticmethod:: Constraint.orbit_ram(min_angle, max_angle=None)
+
+   Create an orbit RAM direction constraint.
+
+   Ensures the target maintains minimum angular separation from the spacecraft's
+   velocity vector (RAM direction).
+
+   :param float min_angle: Minimum allowed angular separation from RAM direction in degrees (0-180)
+   :param float max_angle: Maximum allowed angular separation from RAM direction in degrees (optional)
+   :returns: A new Constraint instance
+   :rtype: Constraint
+   :raises ValueError: If angles are out of valid range
+
+   **Requirements:**
+
+   The ephemeris must contain velocity data (6 columns: position + velocity).
+
+   **Example:**
+
+   .. code-block:: python
+
+      # Target must be at least 10° from RAM direction
+      constraint = Constraint.orbit_ram(10.0)
+
+      # Target must be between 5° and 45° from RAM direction
+      constraint = Constraint.orbit_ram(5.0, 45.0)
+
+.. py:staticmethod:: Constraint.orbit_pole(min_angle, max_angle=None)
+
+   Create an orbit pole direction constraint.
+
+   Ensures the target maintains minimum angular separation from the orbital pole
+   (direction perpendicular to the orbital plane). Useful for maintaining
+   specific orientations relative to the spacecraft's orbit.
+
+   :param float min_angle: Minimum allowed angular separation from orbital pole in degrees (0-180)
+   :param float max_angle: Maximum allowed angular separation from orbital pole in degrees (optional)
+   :returns: A new Constraint instance
+   :rtype: Constraint
+   :raises ValueError: If angles are out of valid range
+
+   **Requirements:**
+
+   The ephemeris must contain velocity data (6 columns: position + velocity).
+
+   **Example:**
+
+   .. code-block:: python
+
+      # Target must be at least 15° from orbital pole
+      constraint = Constraint.orbit_pole(15.0)
+
+      # Target must be between 10° and 80° from orbital pole
+      constraint = Constraint.orbit_pole(10.0, 80.0)
+
 Logical Combinators
 ^^^^^^^^^^^^^^^^^^^
 
@@ -274,6 +493,10 @@ Logical Combinators
    .. code-block:: json
 
       {"type": "body", "body": "Mars", "min_angle": 15.0}
+
+   .. code-block:: json
+
+      {"type": "saa", "polygon": [[-90.0, -50.0], [-40.0, -50.0], [-40.0, 0.0], [-90.0, 0.0]]}
 
    Logical combinators:
 
@@ -448,6 +671,12 @@ Import all constraint models:
        EarthLimbConstraint,
        BodyConstraint,
        EclipseConstraint,
+       AirmassConstraint,
+       DaytimeConstraint,
+       MoonPhaseConstraint,
+       SAAConstraint,
+       OrbitRamConstraint,
+       OrbitPoleConstraint,
        AndConstraint,
        OrConstraint,
        XorConstraint,
@@ -598,6 +827,280 @@ Eclipse constraint detecting when observer is in Earth's shadow.
 
       # Detect both umbra and penumbra
       eclipse = EclipseConstraint(umbra_only=False)
+
+AirmassConstraint
+^^^^^^^^^^^^^^^^^
+
+Airmass constraint limiting observations based on atmospheric path length.
+
+.. py:class:: AirmassConstraint(max_airmass, min_airmass=None)
+
+   :param float max_airmass: Maximum allowed airmass (> 1.0, required)
+   :param float min_airmass: Minimum allowed airmass (≥ 1.0, optional)
+
+   **Attributes:**
+
+   - ``type`` — Always ``"airmass"`` (Literal)
+   - ``max_airmass`` — Maximum allowed airmass
+   - ``min_airmass`` — Minimum allowed airmass (or None)
+
+   Airmass represents the optical path length through Earth's atmosphere:
+
+   * Airmass = 1.0 at zenith (best observing conditions)
+   * Airmass = 2.0 at ~30° altitude
+   * Airmass = 3.0 at ~19° altitude
+
+   **Example:**
+
+   .. code-block:: python
+
+      from rust_ephem.constraints import AirmassConstraint
+
+      # Target must be at airmass ≤ 2.0 (altitude ≥ ~30°)
+      airmass = AirmassConstraint(max_airmass=2.0)
+
+      # Target must be between airmass 1.2 and 2.5
+      airmass = AirmassConstraint(max_airmass=2.5, min_airmass=1.2)
+
+DaytimeConstraint
+^^^^^^^^^^^^^^^^^
+
+Daytime constraint preventing observations during daylight hours.
+
+.. py:class:: DaytimeConstraint(twilight="civil")
+
+   :param str twilight: Twilight definition ("civil", "nautical", "astronomical", or "none", default: "civil")
+
+   **Attributes:**
+
+   - ``type`` — Always ``"daytime"`` (Literal)
+   - ``twilight`` — Twilight definition
+
+   Twilight definitions:
+
+   * ``"civil"``: Civil twilight (-6° below horizon)
+   * ``"nautical"``: Nautical twilight (-12° below horizon)
+   * ``"astronomical"``: Astronomical twilight (-18° below horizon)
+   * ``"none"``: Strict daytime only (Sun above horizon)
+
+   **Example:**
+
+   .. code-block:: python
+
+      from rust_ephem.constraints import DaytimeConstraint
+
+      # Prevent observations during civil twilight or daylight
+      daytime = DaytimeConstraint()
+
+      # Use nautical twilight definition
+      daytime = DaytimeConstraint(twilight="nautical")
+
+MoonPhaseConstraint
+^^^^^^^^^^^^^^^^^^^
+
+Moon phase constraint with optional distance filtering.
+
+.. py:class:: MoonPhaseConstraint(max_illumination, min_illumination=None, min_distance=None, max_distance=None, enforce_when_below_horizon=False, moon_visibility="full")
+
+   :param float max_illumination: Maximum allowed Moon illumination fraction (0.0-1.0, required)
+   :param float min_illumination: Minimum allowed Moon illumination fraction (0.0-1.0, optional)
+   :param float min_distance: Minimum allowed Moon distance in degrees from target (optional)
+   :param float max_distance: Maximum allowed Moon distance in degrees from target (optional)
+   :param bool enforce_when_below_horizon: Whether to enforce constraint when Moon is below horizon (default: False)
+   :param str moon_visibility: Moon visibility requirement ("full" or "partial", default: "full")
+
+   **Attributes:**
+
+   - ``type`` — Always ``"moon_phase"`` (Literal)
+   - ``max_illumination`` — Maximum allowed Moon illumination
+   - ``min_illumination`` — Minimum allowed Moon illumination (or None)
+   - ``min_distance`` — Minimum Moon distance from target (or None)
+   - ``max_distance`` — Maximum Moon distance from target (or None)
+   - ``enforce_when_below_horizon`` — Whether to enforce when Moon is below horizon
+   - ``moon_visibility`` — Moon visibility requirement
+
+   Moon illumination ranges from 0.0 (new moon) to 1.0 (full moon).
+
+   **Example:**
+
+   .. code-block:: python
+
+      from rust_ephem.constraints import MoonPhaseConstraint
+
+      # Moon illumination must be ≤ 30%
+      moon_phase = MoonPhaseConstraint(max_illumination=0.3)
+
+      # Moon illumination between 10% and 50%, keep Moon ≥ 30° away
+      moon_phase = MoonPhaseConstraint(
+          max_illumination=0.5,
+          min_illumination=0.1,
+          min_distance=30.0
+      )
+
+SAAConstraint
+^^^^^^^^^^^^^
+
+South Atlantic Anomaly constraint with polygon-defined region.
+
+.. py:class:: SAAConstraint(polygon)
+
+   :param list polygon: List of (longitude, latitude) pairs defining the region boundary (minimum 3 vertices)
+
+   **Attributes:**
+
+   - ``type`` — Always ``"saa"`` (Literal)
+   - ``polygon`` — List of (longitude, latitude) pairs defining the region boundary
+
+   The polygon should be defined as a list of (longitude, latitude) coordinate pairs
+   in degrees, defining the boundary of the region. The polygon is assumed to be
+   closed (first and last points are connected). Uses ray casting algorithm to
+   determine if a point is inside the polygon.
+
+   **Example:**
+
+   .. code-block:: python
+
+      from rust_ephem.constraints import SAAConstraint
+
+      # Define SAA region as a polygon
+      saa_polygon = [
+          (-90.0, -50.0),   # Southwest corner
+          (-40.0, -50.0),   # Southeast corner
+          (-40.0, 0.0),     # Northeast corner
+          (-90.0, 0.0),     # Northwest corner
+      ]
+
+      # Avoid SAA region
+      saa_constraint = SAAConstraint(polygon=saa_polygon)
+
+      # To require being in SAA region, use NOT
+      require_saa = ~SAAConstraint(polygon=saa_polygon)
+
+AltAzConstraint
+^^^^^^^^^^^^^^^
+
+Altitude/Azimuth constraint restricting observations based on local horizon coordinates.
+
+.. py:class:: AltAzConstraint(min_altitude, max_altitude=None, min_azimuth=None, max_azimuth=None, polygon=None)
+
+   :param float min_altitude: Minimum allowed altitude in degrees (0-90)
+   :param float max_altitude: Maximum allowed altitude in degrees (0-90), optional
+   :param float min_azimuth: Minimum allowed azimuth in degrees (0-360), optional
+   :param float max_azimuth: Maximum allowed azimuth in degrees (0-360), optional
+   :param list polygon: List of (altitude, azimuth) pairs defining allowed region, optional
+
+   **Attributes:**
+
+   - ``type`` — Always ``"alt_az"`` (Literal)
+   - ``min_altitude`` — Minimum allowed altitude in degrees
+   - ``max_altitude`` — Maximum allowed altitude in degrees (optional)
+   - ``min_azimuth`` — Minimum allowed azimuth in degrees (optional)
+   - ``max_azimuth`` — Maximum allowed azimuth in degrees (optional)
+   - ``polygon`` — List of (altitude, azimuth) pairs defining allowed region (optional)
+
+   **Coordinate System:**
+
+   * Altitude: Angular distance from horizon (0° = horizon, 90° = zenith)
+   * Azimuth: Angular distance from North, measured eastward (0° = North, 90° = East, 180° = South, 270° = West)
+
+   **Polygon Mode:**
+
+   When a polygon is provided, it defines an allowed region in altitude/azimuth space.
+   The target must be inside this polygon to satisfy the constraint. Uses the winding
+   number algorithm for robust point-in-polygon testing.
+
+   **Example:**
+
+   .. code-block:: python
+
+      from rust_ephem.constraints import AltAzConstraint
+
+      # Simple altitude constraint (target above 10° elevation)
+      alt_az = AltAzConstraint(min_altitude=10.0)
+
+      # Altitude and azimuth range constraint
+      alt_az = AltAzConstraint(
+          min_altitude=10.0,
+          max_altitude=85.0,
+          min_azimuth=45.0,   # Only observe east/south
+          max_azimuth=225.0
+      )
+
+      # Define custom observing region with polygon
+      observing_window = [
+          (30, 90),    # Southwest corner (alt=30°, az=90°=East)
+          (30, 180),   # Southeast corner (alt=30°, az=180°=South)
+          (70, 180),   # Northeast corner (alt=70°, az=180°=South)
+          (70, 90),    # Northwest corner (alt=70°, az=90°=East)
+      ]
+      alt_az = AltAzConstraint(min_altitude=0.0, polygon=observing_window)
+
+      # Combine polygon with additional altitude constraint
+      alt_az = AltAzConstraint(min_altitude=35.0, polygon=observing_window)
+
+OrbitRamConstraint
+^^^^^^^^^^^^^^^^^^
+
+Orbit RAM direction constraint ensuring target maintains minimum angular separation from spacecraft velocity vector.
+
+.. py:class:: OrbitRamConstraint(min_angle, max_angle=None)
+
+   :param float min_angle: Minimum allowed angular separation from RAM direction in degrees (0-180, required)
+   :param float max_angle: Maximum allowed angular separation from RAM direction in degrees (0-180, optional)
+
+   **Attributes:**
+
+   - ``type`` — Always ``"orbit_ram"`` (Literal)
+   - ``min_angle`` — Minimum angle from RAM direction in degrees
+   - ``max_angle`` — Maximum angle from RAM direction in degrees (or None)
+
+   **Requirements:**
+
+   The ephemeris must contain velocity data (6 columns: position + velocity).
+
+   **Example:**
+
+   .. code-block:: python
+
+      from rust_ephem.constraints import OrbitRamConstraint
+
+      # Target must be at least 10° from RAM direction
+      orbit_ram = OrbitRamConstraint(min_angle=10.0)
+
+      # Target must be between 5° and 45° from RAM direction
+      orbit_ram = OrbitRamConstraint(min_angle=5.0, max_angle=45.0)
+
+OrbitPoleConstraint
+^^^^^^^^^^^^^^^^^^^
+
+Orbit pole direction constraint ensuring target maintains minimum angular separation from orbital pole.
+
+.. py:class:: OrbitPoleConstraint(min_angle, max_angle=None)
+
+   :param float min_angle: Minimum allowed angular separation from orbital pole in degrees (0-180, required)
+   :param float max_angle: Maximum allowed angular separation from orbital pole in degrees (0-180, optional)
+
+   **Attributes:**
+
+   - ``type`` — Always ``"orbit_pole"`` (Literal)
+   - ``min_angle`` — Minimum angle from orbital pole in degrees
+   - ``max_angle`` — Maximum angle from orbital pole in degrees (or None)
+
+   **Requirements:**
+
+   The ephemeris must contain velocity data (6 columns: position + velocity).
+
+   **Example:**
+
+   .. code-block:: python
+
+      from rust_ephem.constraints import OrbitPoleConstraint
+
+      # Target must be at least 15° from orbital pole
+      orbit_pole = OrbitPoleConstraint(min_angle=15.0)
+
+      # Target must be between 10° and 80° from orbital pole
+      orbit_pole = OrbitPoleConstraint(min_angle=10.0, max_angle=80.0)
 
 AndConstraint
 ^^^^^^^^^^^^^

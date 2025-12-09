@@ -3,6 +3,7 @@ use super::core::{ConstraintConfig, ConstraintEvaluator, ConstraintResult, Const
 use crate::utils::vector_math::{normalize_vector, vector_magnitude};
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
+use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
 
 /// Configuration for eclipse constraint
@@ -106,13 +107,14 @@ impl EclipseEvaluator {
 impl ConstraintEvaluator for EclipseEvaluator {
     fn evaluate(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         _target_ra: f64,
         _target_dec: f64,
-        sun_positions: &Array2<f64>,
-        _moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> ConstraintResult {
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<ConstraintResult> {
+        // Extract and filter ephemeris data
+        let (times_filtered, sun_filtered, obs_filtered) =
+            extract_standard_ephemeris_data!(ephemeris, time_indices);
         let mut violations = Vec::new();
         let mut current_violation: Option<(usize, f64)> = None;
 
@@ -121,17 +123,17 @@ impl ConstraintEvaluator for EclipseEvaluator {
         // Sun radius in km (mean)
         const SUN_RADIUS: f64 = 696000.0;
 
-        for (i, _time) in times.iter().enumerate() {
+        for (i, _time) in times_filtered.iter().enumerate() {
             let obs_pos = [
-                observer_positions[[i, 0]],
-                observer_positions[[i, 1]],
-                observer_positions[[i, 2]],
+                obs_filtered[[i, 0]],
+                obs_filtered[[i, 1]],
+                obs_filtered[[i, 2]],
             ];
 
             let sun_pos = [
-                sun_positions[[i, 0]],
-                sun_positions[[i, 1]],
-                sun_positions[[i, 2]],
+                sun_filtered[[i, 0]],
+                sun_filtered[[i, 1]],
+                sun_filtered[[i, 2]],
             ];
 
             // Vector from observer to Sun
@@ -153,8 +155,8 @@ impl ConstraintEvaluator for EclipseEvaluator {
                 // Close any open violation
                 if let Some((start_idx, max_severity)) = current_violation {
                     violations.push(ConstraintViolation {
-                        start_time: times[start_idx].to_rfc3339(),
-                        end_time: times[i - 1].to_rfc3339(),
+                        start_time: times_filtered[start_idx].to_rfc3339(),
+                        end_time: times_filtered[i - 1].to_rfc3339(),
                         max_severity,
                         description: if self.umbra_only {
                             "Observer in umbra".to_string()
@@ -204,8 +206,8 @@ impl ConstraintEvaluator for EclipseEvaluator {
                 }
             } else if let Some((start_idx, max_severity)) = current_violation {
                 violations.push(ConstraintViolation {
-                    start_time: times[start_idx].to_rfc3339(),
-                    end_time: times[i - 1].to_rfc3339(),
+                    start_time: times_filtered[start_idx].to_rfc3339(),
+                    end_time: times_filtered[i - 1].to_rfc3339(),
                     max_severity,
                     description: if self.umbra_only {
                         "Observer in umbra".to_string()
@@ -220,8 +222,8 @@ impl ConstraintEvaluator for EclipseEvaluator {
         // Close any open violation at the end
         if let Some((start_idx, max_severity)) = current_violation {
             violations.push(ConstraintViolation {
-                start_time: times[start_idx].to_rfc3339(),
-                end_time: times[times.len() - 1].to_rfc3339(),
+                start_time: times_filtered[start_idx].to_rfc3339(),
+                end_time: times_filtered[times_filtered.len() - 1].to_rfc3339(),
                 max_severity,
                 description: if self.umbra_only {
                     "Observer in umbra".to_string()
@@ -232,18 +234,24 @@ impl ConstraintEvaluator for EclipseEvaluator {
         }
 
         let all_satisfied = violations.is_empty();
-        ConstraintResult::new(violations, all_satisfied, self.name(), times.to_vec())
+        Ok(ConstraintResult::new(
+            violations,
+            all_satisfied,
+            self.name(),
+            times_filtered.to_vec(),
+        ))
     }
 
     fn in_constraint_batch(
         &self,
-        times: &[DateTime<Utc>],
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-        sun_positions: &Array2<f64>,
-        _moon_positions: &Array2<f64>,
-        observer_positions: &Array2<f64>,
-    ) -> pyo3::PyResult<Array2<bool>> {
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Array2<bool>> {
+        // Extract and filter ephemeris data
+        let (times_filtered, sun_filtered, obs_filtered) =
+            extract_standard_ephemeris_data!(ephemeris, time_indices);
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "target_ras and target_decs must have the same length",
@@ -251,10 +259,10 @@ impl ConstraintEvaluator for EclipseEvaluator {
         }
 
         let n_targets = target_ras.len();
-        let n_times = times.len();
+        let n_times = times_filtered.len();
 
         // Eclipse is target-independent - compute once for all times
-        let time_results = self.compute_eclipse_mask(times, sun_positions, observer_positions);
+        let time_results = self.compute_eclipse_mask(&times_filtered, &sun_filtered, &obs_filtered);
 
         // Broadcast to all targets (same result for each RA/Dec)
         let result = Array2::from_shape_fn((n_targets, n_times), |(_, j)| time_results[j]);

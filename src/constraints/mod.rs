@@ -8,10 +8,17 @@
 pub mod core;
 
 // Constraint implementations
+pub mod airmass;
+pub mod alt_az;
 pub mod body_proximity;
+pub mod daytime;
 pub mod earth_limb;
 pub mod eclipse;
+pub mod moon_phase;
 pub mod moon_proximity;
+pub mod orbit_pole;
+pub mod orbit_ram;
+pub mod saa;
 pub mod sun_proximity;
 
 // Python wrapper

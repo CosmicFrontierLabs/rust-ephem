@@ -1,6 +1,6 @@
 [package]
 name = "rust_ephem"
-version = "0.1.13-dev.9"
+version = "0.1.15"
 edition = "2021"
 license = "Apache-2.0"
 
@@ -15,6 +15,7 @@ sgp4 = "2.3"                 # pure-Rust SGP4 propagation & TLE parsing. See doc
 chrono = { version = "0.4", features = ["serde"] }  # used by sgp4
 # Optionally for TEME->GCRS transforms in Rust:
 erfa = "0.2"                 # pure-Rust ERFA (SOFA) routines (time & transforms)
+sofars = "0.2"               # pure-Rust SOFA routines
 numpy = "0.26.0"
 pyo3-ffi = "0.26.0"
 pyo3 = { version = "0.26", features = ["extension-module"] }
