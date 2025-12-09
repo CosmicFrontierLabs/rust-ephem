@@ -26,6 +26,8 @@ from .constraints import (
     BodyConstraint,
     CombinedConstraintConfig,
     ConstraintConfig,
+    ConstraintResult,
+    ConstraintViolation,
     DaytimeConstraint,
     EarthLimbConstraint,
     EclipseConstraint,
