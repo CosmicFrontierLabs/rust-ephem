@@ -285,10 +285,13 @@ impl ConstraintResult {
             } else {
                 // Constraint is violated (target not visible)
                 if let Some(start_idx) = current_window_start {
-                    windows.push(VisibilityWindow {
-                        start_time: utc_to_python_datetime(py, &self.times[start_idx])?,
-                        end_time: utc_to_python_datetime(py, &self.times[i - 1])?,
-                    });
+                    // Only add window if it's non-zero length
+                    if i - 1 != start_idx {
+                        windows.push(VisibilityWindow {
+                            start_time: utc_to_python_datetime(py, &self.times[start_idx])?,
+                            end_time: utc_to_python_datetime(py, &self.times[i - 1])?,
+                        });
+                    }
                     current_window_start = None;
                 }
             }
