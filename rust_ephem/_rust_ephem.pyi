@@ -878,7 +878,7 @@ class TLEEphemeris(Ephemeris):
         """
         ...
 
-    def moon_phase(self, time_indices: list[int] | None = None) -> list[float]:
+    def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
         """
         Calculate Moon illumination fraction for all ephemeris times.
 
@@ -1257,7 +1257,7 @@ class SPICEEphemeris(Ephemeris):
         """
         ...
 
-    def moon_phase(self, time_indices: list[int] | None = None) -> list[float]:
+    def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
         """
         Calculate Moon illumination fraction for all ephemeris times.
 
@@ -1641,7 +1641,7 @@ class OEMEphemeris(Ephemeris):
         """
         ...
 
-    def moon_phase(self, time_indices: list[int] | None = None) -> list[float]:
+    def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
         """
         Calculate Moon illumination fraction for all ephemeris times.
 
@@ -2023,7 +2023,7 @@ class GroundEphemeris(Ephemeris):
         """
         ...
 
-    def moon_phase(self, time_indices: list[int] | None = None) -> list[float]:
+    def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
         """
         Calculate Moon illumination fraction for all ephemeris times.
 

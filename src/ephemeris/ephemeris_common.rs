@@ -509,19 +509,20 @@ pub trait EphemerisBase {
     ///
     /// # Returns
     /// Vector of Moon illumination fractions for each selected time
-    fn moon_phase(&self, time_indices: Option<&[usize]>) -> PyResult<Vec<f64>> {
+    fn moon_illumination(&self, time_indices: Option<&[usize]>) -> PyResult<Vec<f64>> {
         use crate::utils::moon::calculate_moon_illumination;
 
-        let times = self.get_times()?;
-        let selected_times: Vec<DateTime<Utc>> = if let Some(indices) = time_indices {
-            indices.iter().map(|&i| times[i]).collect()
+        // Get the indices to process
+        let indices: Vec<usize> = if let Some(indices) = time_indices {
+            indices.to_vec()
         } else {
-            times
+            (0..self.get_times()?.len()).collect()
         };
 
-        let illuminations: Vec<f64> = selected_times
+        // Calculate illumination for each time index
+        let illuminations: Vec<f64> = indices
             .iter()
-            .map(calculate_moon_illumination)
+            .map(|&i| calculate_moon_illumination(self, i))
             .collect();
 
         Ok(illuminations)

@@ -368,8 +368,8 @@ impl GroundEphemeris {
     /// # Returns
     /// List of Moon illumination fractions
     #[pyo3(signature = (time_indices=None))]
-    fn moon_phase(&self, time_indices: Option<Vec<usize>>) -> PyResult<Vec<f64>> {
-        EphemerisBase::moon_phase(self, time_indices.as_deref())
+    fn moon_illumination(&self, time_indices: Option<Vec<usize>>) -> PyResult<Vec<f64>> {
+        EphemerisBase::moon_illumination(self, time_indices.as_deref())
     }
 
     fn index(&self, time: &Bound<'_, PyDateTime>) -> PyResult<usize> {

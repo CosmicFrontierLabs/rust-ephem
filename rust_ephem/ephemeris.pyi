@@ -115,7 +115,9 @@ class Ephemeris(abc.ABC):
     @abc.abstractmethod
     def index(self, time: datetime) -> int: ...
     @abc.abstractmethod
-    def moon_phase(self, time_indices: list[int] | None = None) -> list[float]: ...
+    def moon_illumination(
+        self, time_indices: list[int] | None = None
+    ) -> list[float]: ...
     @abc.abstractmethod
     def radec_to_altaz(
         self, ra_deg: float, dec_deg: float, time_indices: list[int] | None = None

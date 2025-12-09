@@ -131,7 +131,7 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
             &times_filtered,
             |i| {
                 let time = &times_filtered[i];
-                let illumination = calculate_moon_illumination(time);
+                let illumination = calculate_moon_illumination(ephemeris, i);
                 let moon_altitude = self.calculate_moon_altitude(time);
                 let moon_distance = self.calculate_moon_distance(time, target_ra, target_dec);
 
@@ -179,7 +179,7 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
                 }
 
                 let time = &times_filtered[i];
-                let illumination = calculate_moon_illumination(time);
+                let illumination = calculate_moon_illumination(ephemeris, i);
                 let moon_altitude = self.calculate_moon_altitude(time);
                 let moon_distance = self.calculate_moon_distance(time, target_ra, target_dec);
                 let phase_name = self.get_moon_phase_name(illumination);
@@ -258,7 +258,7 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
 
         for i in 0..n_times {
             let time = &times_filtered[i];
-            let illumination = calculate_moon_illumination(time);
+            let illumination = calculate_moon_illumination(ephemeris, i);
             let moon_altitude = self.calculate_moon_altitude(time);
 
             // Check if we should enforce constraint based on Moon visibility
