@@ -9,7 +9,7 @@ to configure the Rust constraint evaluators.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -34,9 +34,11 @@ class ConstraintResult(BaseModel):
     violations: list[ConstraintViolation]
     all_satisfied: bool
     constraint_name: str
-    timestamps: list[datetime]
-    constraint_array: list[bool]
 
+    @property
+    def timestamps(self) -> Any: ...
+    @property
+    def constraint_array(self) -> Any: ...
     def total_violation_duration(self) -> float: ...
     def in_constraint(self, time: datetime) -> bool: ...
 

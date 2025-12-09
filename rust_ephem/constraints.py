@@ -9,11 +9,11 @@ to configure the Rust constraint evaluators.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
 import numpy as np
 import numpy.typing as npt
-from pydantic import BaseModel, Field, TypeAdapter, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from .ephemeris import Ephemeris
 
@@ -39,6 +39,8 @@ class ConstraintViolation(BaseModel):
 class ConstraintResult(BaseModel):
     """Result of constraint evaluation containing all violations."""
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     violations: list[ConstraintViolation] = Field(
         default_factory=list, description="List of violation windows"
     )
@@ -46,12 +48,25 @@ class ConstraintResult(BaseModel):
         ..., description="Whether constraint was satisfied for entire time range"
     )
     constraint_name: str = Field(..., description="Name/description of the constraint")
-    timestamps: list[datetime] = Field(
-        default_factory=list, description="Evaluation timestamps"
-    )
-    constraint_array: list[bool] = Field(
-        default_factory=list, description="Boolean array indicating violations"
-    )
+
+    # Store reference to Rust result for lazy access to timestamps/constraint_array
+    def __init__(self, **data: Any) -> None:
+        super().__init__(**data)
+        self._rust_result_ref = data.get("_rust_result_ref", None)
+
+    @property
+    def timestamps(self) -> Any:
+        """Evaluation timestamps (lazily accessed from Rust result)."""
+        if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
+            return self._rust_result_ref.timestamp
+        return []
+
+    @property
+    def constraint_array(self) -> Any:
+        """Boolean array indicating violations (lazily accessed from Rust result)."""
+        if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
+            return self._rust_result_ref.constraint_array
+        return []
 
     def total_violation_duration(self) -> float:
         """Get the total duration of violations in seconds."""
@@ -132,8 +147,7 @@ class RustConstraintMixin(BaseModel):
             ],
             all_satisfied=rust_result.all_satisfied,
             constraint_name=rust_result.constraint_name,
-            timestamps=list(rust_result.timestamp),
-            constraint_array=list(rust_result.constraint_array),
+            _rust_result_ref=rust_result,
         )
 
     def in_constraint_batch(
