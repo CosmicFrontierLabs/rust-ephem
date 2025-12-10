@@ -34,6 +34,7 @@ struct MoonProximityEvaluator {
 impl_proximity_evaluator!(MoonProximityEvaluator, "Moon", "Moon", moon_positions);
 
 impl MoonProximityEvaluator {
+    #[allow(dead_code)]
     fn default_final_violation_description(&self) -> String {
         match self.max_angle_deg {
             Some(max) => format!(
@@ -47,6 +48,7 @@ impl MoonProximityEvaluator {
         }
     }
 
+    #[allow(dead_code)]
     fn default_intermediate_violation_description(&self) -> String {
         "Target violates Moon proximity constraint".to_string()
     }

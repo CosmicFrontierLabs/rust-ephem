@@ -169,14 +169,12 @@ class RustConstraintMixin(BaseModel):
             indices,
         )
 
-        # Convert to Pydantic model, parsing ISO 8601 timestamps to datetime objects
+        # Convert to Pydantic model - Rust now returns datetime objects directly
         return ConstraintResult(
             violations=[
                 ConstraintViolation(
-                    start_time=datetime.fromisoformat(
-                        v.start_time.replace("Z", "+00:00")
-                    ),
-                    end_time=datetime.fromisoformat(v.end_time.replace("Z", "+00:00")),
+                    start_time=v.start_time,
+                    end_time=v.end_time,
                     max_severity=v.max_severity,
                     description=v.description,
                 )

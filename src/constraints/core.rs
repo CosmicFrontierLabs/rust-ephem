@@ -22,12 +22,10 @@ use std::sync::OnceLock;
 #[pyclass(name = "ConstraintViolation")]
 #[derive(Clone, Debug)]
 pub struct ConstraintViolation {
-    /// Start time of the violation window
-    #[pyo3(get)]
-    pub start_time: String, // ISO 8601 format
-    /// End time of the violation window
-    #[pyo3(get)]
-    pub end_time: String, // ISO 8601 format
+    /// Start time of the violation window (internal storage)
+    pub start_time_internal: DateTime<Utc>,
+    /// End time of the violation window (internal storage)
+    pub end_time_internal: DateTime<Utc>,
     /// Maximum severity of violation in this window (0.0 = just violated, 1.0+ = severe)
     #[pyo3(get)]
     pub max_severity: f64,
@@ -38,10 +36,23 @@ pub struct ConstraintViolation {
 
 #[pymethods]
 impl ConstraintViolation {
+    #[getter]
+    fn start_time(&self, py: Python) -> PyResult<Py<PyAny>> {
+        utc_to_python_datetime(py, &self.start_time_internal)
+    }
+
+    #[getter]
+    fn end_time(&self, py: Python) -> PyResult<Py<PyAny>> {
+        utc_to_python_datetime(py, &self.end_time_internal)
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "ConstraintViolation(start='{}', end='{}', max_severity={:.3}, description='{}')",
-            self.start_time, self.end_time, self.max_severity, self.description
+            self.start_time_internal.to_rfc3339(),
+            self.end_time_internal.to_rfc3339(),
+            self.max_severity,
+            self.description
         )
     }
 }
@@ -131,16 +142,8 @@ impl ConstraintResult {
     fn total_violation_duration(&self) -> PyResult<f64> {
         let mut total_seconds = 0.0;
         for violation in &self.violations {
-            let start = DateTime::parse_from_rfc3339(&violation.start_time)
-                .map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("Invalid start time: {e}"))
-                })?
-                .with_timezone(&Utc);
-            let end = DateTime::parse_from_rfc3339(&violation.end_time)
-                .map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("Invalid end time: {e}"))
-                })?
-                .with_timezone(&Utc);
+            let start = violation.start_time_internal;
+            let end = violation.end_time_internal;
             total_seconds += (end - start).num_seconds() as f64;
         }
         Ok(total_seconds)
@@ -168,14 +171,12 @@ impl ConstraintResult {
 
         // Mark violated times - violations are already sorted by time
         for (i, t) in self.times.iter().enumerate() {
-            let t_str = t.to_rfc3339();
             // Binary search could be used here, but violation count is typically small
-            // and the string comparison overhead dominates
             for v in &self.violations {
-                if t_str < v.start_time {
+                if t < &v.start_time_internal {
                     break; // Violations are sorted, no need to check further
                 }
-                if v.start_time <= t_str && t_str <= v.end_time {
+                if &v.start_time_internal <= t && t <= &v.end_time_internal {
                     violated[i] = true;
                     break;
                 }
@@ -246,9 +247,8 @@ impl ConstraintResult {
         // Find matching time in our array
         if let Some(_idx) = self.times.iter().position(|t| t == &dt) {
             // Check if this time falls within any violation window
-            let t_str = dt.to_rfc3339();
             for v in &self.violations {
-                if v.start_time <= t_str && t_str <= v.end_time {
+                if v.start_time_internal <= dt && dt <= v.end_time_internal {
                     // Time is in a violation window, so in-constraint (violated)
                     return Ok(true);
                 }
@@ -375,16 +375,8 @@ impl MovingBodyResult {
     fn total_violation_duration(&self) -> PyResult<f64> {
         let mut total_seconds = 0.0;
         for violation in &self.violations {
-            let start = DateTime::parse_from_rfc3339(&violation.start_time)
-                .map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("Invalid start time: {e}"))
-                })?
-                .with_timezone(&Utc);
-            let end = DateTime::parse_from_rfc3339(&violation.end_time)
-                .map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("Invalid end time: {e}"))
-                })?
-                .with_timezone(&Utc);
+            let start = violation.start_time_internal;
+            let end = violation.end_time_internal;
             total_seconds += (end - start).num_seconds() as f64;
         }
         Ok(total_seconds)
@@ -489,6 +481,7 @@ pub trait ConstraintEvaluator: Send + Sync {
     ///
     /// # Returns
     /// Result containing violation windows
+    #[allow(dead_code)]
     fn evaluate(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -557,6 +550,7 @@ pub trait ConstraintEvaluator: Send + Sync {
 macro_rules! impl_proximity_evaluator {
     ($evaluator:ty, $body_name:expr, $friendly_name:expr, $positions:ident) => {
         impl $evaluator {
+            #[allow(dead_code)]
             fn evaluate_common(
                 &self,
                 times: &[DateTime<Utc>],
@@ -643,8 +637,8 @@ where
             }
         } else if let Some((start_idx, max_severity)) = current_violation {
             violations.push(ConstraintViolation {
-                start_time: times[start_idx].to_rfc3339(),
-                end_time: times[i - 1].to_rfc3339(),
+                start_time_internal: times[start_idx],
+                end_time_internal: times[i - 1],
                 max_severity,
                 description: get_description(start_idx, false),
             });
@@ -655,8 +649,8 @@ where
     // Close any open violation at the end
     if let Some((start_idx, max_severity)) = current_violation {
         violations.push(ConstraintViolation {
-            start_time: times[start_idx].to_rfc3339(),
-            end_time: times[times.len() - 1].to_rfc3339(),
+            start_time_internal: times[start_idx],
+            end_time_internal: times[times.len() - 1],
             max_severity,
             description: get_description(start_idx, true),
         });

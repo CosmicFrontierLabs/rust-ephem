@@ -34,6 +34,7 @@ struct SunProximityEvaluator {
 impl_proximity_evaluator!(SunProximityEvaluator, "Sun", "Sun", sun_positions);
 
 impl SunProximityEvaluator {
+    #[allow(dead_code)]
     fn default_final_violation_description(&self) -> String {
         match self.max_angle_deg {
             Some(max) => format!(
@@ -47,6 +48,7 @@ impl SunProximityEvaluator {
         }
     }
 
+    #[allow(dead_code)]
     fn default_intermediate_violation_description(&self) -> String {
         "Target violates Sun proximity constraint".to_string()
     }

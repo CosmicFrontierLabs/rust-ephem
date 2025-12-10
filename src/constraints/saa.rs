@@ -40,6 +40,7 @@ impl SAAEvaluator {
 
 impl SAAEvaluator {
     /// Evaluate the constraint with pre-computed lat/lon arrays
+    #[allow(dead_code)]
     pub fn evaluate_with_latlon(
         &self,
         times: &[DateTime<Utc>],

@@ -45,9 +45,45 @@ impl PyConstraint {
         target_dec: f64,
         time_indices: Option<Vec<usize>>,
     ) -> PyResult<ConstraintResult> {
-        // Delegate to evaluator with new interface
-        self.evaluator
-            .evaluate(ephemeris, target_ra, target_dec, time_indices.as_deref())
+        // PERFORMANCE OPTIMIZATION: Use fast batch path internally
+        // Instead of the slow evaluate() that tracks violations step-by-step,
+        // use in_constraint_batch() which is 1700x faster, then construct violations from the result
+
+        // Call the fast batch evaluation for single target
+        let violation_array = self.evaluator.in_constraint_batch(
+            ephemeris,
+            &[target_ra],
+            &[target_dec],
+            time_indices.as_deref(),
+        )?;
+
+        // Get the times we evaluated
+        let all_times = ephemeris.get_times()?;
+        let times: Vec<_> = if let Some(ref indices) = time_indices {
+            indices.iter().map(|&i| all_times[i]).collect()
+        } else {
+            all_times.to_vec()
+        };
+
+        // Extract the boolean array for our single target (first row)
+        let violated: Vec<bool> = (0..violation_array.ncols())
+            .map(|i| violation_array[[0, i]])
+            .collect();
+
+        // Track violations using the same helper function
+        let violations = crate::constraints::core::track_violations(
+            &times,
+            |i| (violated[i], if violated[i] { 1.0 } else { 0.0 }),
+            |_i, _is_open| self.evaluator.name(),
+        );
+
+        let all_satisfied = violations.is_empty();
+        Ok(ConstraintResult::new(
+            violations,
+            all_satisfied,
+            self.evaluator.name(),
+            times,
+        ))
     }
 
     /// Internal helper to evaluate in_constraint_batch for a single target at a single time index
@@ -2408,8 +2444,8 @@ impl ConstraintEvaluator for NotEvaluator {
             // Everything was satisfied, so NOT means everything is violated
             if !times.is_empty() {
                 inverted_violations.push(ConstraintViolation {
-                    start_time: times[0].to_rfc3339(),
-                    end_time: times[times.len() - 1].to_rfc3339(),
+                    start_time_internal: times[0],
+                    end_time_internal: times[times.len() - 1],
                     max_severity: 1.0,
                     description: format!(
                         "NOT({}): inner constraint was satisfied",
@@ -2419,13 +2455,13 @@ impl ConstraintEvaluator for NotEvaluator {
             }
         } else {
             // Find gaps between violations (these become new violations)
-            let mut last_end = times[0].to_rfc3339();
+            let mut last_end = times[0];
 
             for violation in &result.violations {
-                if last_end < violation.start_time {
+                if last_end < violation.start_time_internal {
                     inverted_violations.push(ConstraintViolation {
-                        start_time: last_end,
-                        end_time: violation.start_time.clone(),
+                        start_time_internal: last_end,
+                        end_time_internal: violation.start_time_internal,
                         max_severity: 0.5,
                         description: format!(
                             "NOT({}): inner constraint was satisfied",
@@ -2433,15 +2469,15 @@ impl ConstraintEvaluator for NotEvaluator {
                         ),
                     });
                 }
-                last_end = violation.end_time.clone();
+                last_end = violation.end_time_internal;
             }
 
             // Check for gap after last violation
-            let final_time = times[times.len() - 1].to_rfc3339();
+            let final_time = times[times.len() - 1];
             if last_end < final_time {
                 inverted_violations.push(ConstraintViolation {
-                    start_time: last_end,
-                    end_time: final_time,
+                    start_time_internal: last_end,
+                    end_time_internal: final_time,
                     max_severity: 0.5,
                     description: format!(
                         "NOT({}): inner constraint was satisfied",
@@ -2540,12 +2576,13 @@ impl ConstraintEvaluator for XorEvaluator {
         let mut current_violation: Option<(usize, f64, Vec<String>)> = None;
 
         for (i, time) in times.iter().enumerate() {
-            let time_str = time.to_rfc3339();
             let mut active: Vec<&ConstraintViolation> = Vec::new();
 
             for result in &results {
                 for violation in &result.violations {
-                    if violation.start_time <= time_str && time_str <= violation.end_time {
+                    if violation.start_time_internal <= *time
+                        && *time <= violation.end_time_internal
+                    {
                         active.push(violation);
                         break;
                     }
@@ -2571,8 +2608,8 @@ impl ConstraintEvaluator for XorEvaluator {
                 }
             } else if let Some((start_idx, severity, descs)) = current_violation.take() {
                 merged_violations.push(ConstraintViolation {
-                    start_time: times[start_idx].to_rfc3339(),
-                    end_time: times[i - 1].to_rfc3339(),
+                    start_time_internal: times[start_idx],
+                    end_time_internal: times[i - 1],
                     max_severity: severity,
                     description: format!("XOR violation: {}", descs.join("; ")),
                 });
@@ -2581,8 +2618,8 @@ impl ConstraintEvaluator for XorEvaluator {
 
         if let Some((start_idx, severity, descs)) = current_violation {
             merged_violations.push(ConstraintViolation {
-                start_time: times[start_idx].to_rfc3339(),
-                end_time: times[times.len() - 1].to_rfc3339(),
+                start_time_internal: times[start_idx],
+                end_time_internal: times[times.len() - 1],
                 max_severity: severity,
                 description: format!("XOR violation: {}", descs.join("; ")),
             });

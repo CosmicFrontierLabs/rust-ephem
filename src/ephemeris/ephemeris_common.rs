@@ -160,6 +160,7 @@ pub struct EphemerisData {
     pub moon_angular_radius_rad_cache: OnceLock<Py<PyAny>>,
     pub earth_angular_radius_rad_cache: OnceLock<Py<PyAny>>,
     /// Cached Sun altitude angles (in degrees) for all times
+    #[allow(dead_code)]
     pub sun_altitudes_cache: OnceLock<Array1<f64>>,
 }
 
