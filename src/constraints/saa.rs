@@ -89,7 +89,7 @@ impl SAAEvaluator {
             let lat = lats[i];
             let lon = lons[i];
             let in_saa = self.point_in_polygon(lon, lat);
-            let satisfied = !in_saa;
+            let satisfied = in_saa;
 
             for target_idx in 0..n_targets {
                 result[[target_idx, i]] = satisfied;
