@@ -17,7 +17,7 @@ high-accuracy position and velocity data for:
 - **Spacecraft** (natural and artificial satellites, space probes)
 - **Interplanetary objects** (Voyager, New Horizons, etc.)
 
-When you set ``use_horizons=True`` in ``get_body()`` or ``moving_body_visibility()``,
+When you set ``use_horizons=True`` in ``get_body()`` or ``Constraint.evaluate_moving_body()``,
 ``rust-ephem`` automatically falls back to JPL Horizons if the requested body is not
 found in your local SPICE kernels. This enables seamless querying of a much broader
 range of bodies without requiring large kernel files or pre-configuration.
@@ -185,11 +185,7 @@ observation planning for any Horizons-accessible body:
 
 .. code-block:: python
 
-    from rust_ephem.constraints import (
-        SunConstraint,
-        MoonConstraint,
-        moving_body_visibility
-    )
+    from rust_ephem.constraints import SunConstraint, MoonConstraint
 
     # Set up ephemeris
     begin = datetime(2024, 6, 1, tzinfo=timezone.utc)
@@ -200,8 +196,7 @@ observation planning for any Horizons-accessible body:
     constraint = SunConstraint(min_angle=45) & MoonConstraint(min_angle=10)
 
     # Get visibility for Ceres
-    visibility = moving_body_visibility(
-        constraint=constraint,
+    visibility = constraint.evaluate_moving_body(
         ephemeris=ephem,
         body="1",  # Ceres
         use_horizons=True  # ← Enable Horizons fallback
@@ -246,8 +241,7 @@ Track an asteroid approaching Earth using Horizons:
     constraint = SunConstraint(min_angle=10) & MoonConstraint(min_angle=20)
 
     # Query Apophis during approach
-    result = moving_body_visibility(
-        constraint=constraint,
+    result = constraint.evaluate_moving_body(
         ephemeris=obs,
         body="99942",  # Apophis
         use_horizons=True
@@ -308,8 +302,7 @@ Monitor visibility for a set of potentially hazardous asteroids:
     constraint = SunConstraint(min_angle=30)
 
     for naif_id, name in phas.items():
-        result = moving_body_visibility(
-            constraint=constraint,
+        result = constraint.evaluate_moving_body(
             ephemeris=ephem,
             body=naif_id,
             use_horizons=True
@@ -444,10 +437,9 @@ Horizons support is seamlessly integrated into all constraint types:
     )
 
     # Works with any Horizons-accessible body
-    result = moving_body_visibility(
-        constraint=constraint,
+    result = constraint.evaluate_moving_body(
         ephemeris=ephem,
-        body="2",  # Pallas asteroid
+        body=\"2\",  # Pallas asteroid
         use_horizons=True
     )
 

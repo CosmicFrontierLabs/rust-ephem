@@ -218,19 +218,16 @@ Performance Tips
 Tracking Moving Bodies with Horizons
 -------------------------------------
 
-Use the ``moving_body_visibility()`` function to track solar system bodies (asteroids,
+Use the ``Constraint.evaluate_moving_body()`` method to track solar system bodies (asteroids,
 comets, spacecraft) with automatic JPL Horizons fallback:
 
 .. code-block:: python
-
-    from rust_ephem.constraints import moving_body_visibility
 
     # Constraint for observation planning
     constraint = SunConstraint(min_angle=30) & MoonConstraint(min_angle=15)
 
     # Track Ceres (asteroid 1)
-    result = moving_body_visibility(
-        constraint=constraint,
+    result = constraint.evaluate_moving_body(
         ephemeris=ephem,
         body="1",  # Ceres
         use_horizons=True  # Enable JPL Horizons fallback

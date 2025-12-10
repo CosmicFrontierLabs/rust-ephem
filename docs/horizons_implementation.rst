@@ -13,8 +13,8 @@ The JPL Horizons integration consists of several layers:
 ::
 
     ┌─────────────────────────────────────────┐
-    │  Python API (rust_ephem/constraints.py) │
-    │  - moving_body_visibility()             │
+    │  Python API (Constraint class)          │
+    │  - evaluate_moving_body()               │
     │  - use_horizons parameter               │
     └──────────────┬──────────────────────────┘
                    │
@@ -125,19 +125,20 @@ All four ephemeris types updated:
 
 **rust_ephem/constraints.py** (Updated)
 
-Python constraint system:
+Python constraint system - the ``Constraint`` class has an ``evaluate_moving_body()`` method:
 
 .. code-block:: python
 
-    def moving_body_visibility(
-        constraint: Constraint,
-        ephemeris: Ephemeris,
-        body: Optional[Union[int, str]] = None,
-        ras: Optional[np.ndarray] = None,
-        decs: Optional[np.ndarray] = None,
-        timestamps: Optional[np.ndarray] = None,
-        use_horizons: bool = False,  # ← New parameter
-    ) -> ConstraintResult:
+    class Constraint:
+        def evaluate_moving_body(
+            self,
+            ephemeris: Ephemeris,
+            body: Optional[Union[int, str]] = None,
+            target_ras: Optional[List[float]] = None,
+            target_decs: Optional[List[float]] = None,
+            use_horizons: bool = False,  # ← Horizons fallback
+            kernel_spec: Optional[str] = None,
+        ) -> MovingBodyResult:
 
 Dependencies
 ~~~~~~~~~~~~
@@ -287,24 +288,23 @@ Mark tests with ``#[ignore]`` since they require:
 Python Tests
 ~~~~~~~~~~~~
 
-Integration tests in ``tests/test_constraints_module.py`` verify:
+Integration tests verify the constraint evaluation with moving bodies:
 
 .. code-block:: python
 
-    def test_moving_body_visibility_with_body():
+    def test_evaluate_moving_body_with_body():
         # Uses mock DummyEphemeris that bypasses real queries
         timestamps = [...]
         ephem = DummyEphemeris(timestamps)
-        constraint = SequenceConstraint([True, False])
+        constraint = SunConstraint(min_angle=30)
 
-        result = moving_body_visibility(
-            constraint=constraint,
+        result = constraint.evaluate_moving_body(
             ephemeris=ephem,
-            body=499
+            body="499"  # Mars
         )
 
         # Verify constraint evaluation works
-        assert len(result.visibility) > 0
+        assert len(result.visibility) >= 0
 
 Type Hints
 ----------
@@ -383,8 +383,7 @@ Horizons integration works seamlessly with all constraint types:
         EarthLimbConstraint(min_angle=20)
     )
 
-    result = moving_body_visibility(
-        constraint=constraint,
+    result = constraint.evaluate_moving_body(
         ephemeris=ephem,
         body="99942",
         use_horizons=True
@@ -415,8 +414,6 @@ Related Documentation
 ---------------------
 
 - **User Guide** → :doc:`ephemeris_horizons`
-- **Quick Reference** → :doc:`horizons_quickref`
-- **FAQ** → :doc:`horizons_faq`
 - **Constraint System** → :doc:`planning_constraints`
 - **rhorizons** → https://github.com/nyx-space/rhorizons
 - **JPL Horizons** → https://ssd.jpl.nasa.gov/horizons/

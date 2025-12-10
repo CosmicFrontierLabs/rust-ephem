@@ -1442,9 +1442,9 @@ Time window when the observation target is not constrained (visible).
    Moving Target Visibility
    ^^^^^^^^^^^^^^^^^^^^^^^^
 
-   Use ``moving_body_visibility`` when RA/Dec change with time. Two modes:
+   Use ``Constraint.evaluate_moving_body()`` when RA/Dec change with time. Two modes:
 
-   1. Provide aligned arrays: ``ras``, ``decs``, and ``timestamps`` (same length).
+   1. Provide aligned arrays: ``target_ras``, ``target_decs`` (same length as ephemeris timestamps).
    2. Provide a ``body`` name or NAIF ID; positions come from ``ephemeris.get_body``
       (default planetary kernel ``de440s.bsp``; override with ``kernel_spec``
       path or URL, downloads cached under ``~/.cache/rust_ephem``).
@@ -1454,20 +1454,19 @@ Time window when the observation target is not constrained (visible).
 
    When the SPICE kernel (e.g., ``de440s.bsp``) does not contain a body, you can automatically
    fall back to JPL Horizons to query its position and velocity. Set ``use_horizons=True``
-   in ``get_body()`` or ``moving_body_visibility()`` to enable this fallback:
+   in ``get_body()`` or ``evaluate_moving_body()`` to enable this fallback:
 
    .. code-block:: python
 
       from rust_ephem import TLEEphemeris
-      from rust_ephem.constraints import SunConstraint, moving_body_visibility
+      from rust_ephem.constraints import SunConstraint
       from datetime import datetime
 
       eph = TLEEphemeris(norad_id=28485, begin=datetime(2024, 6, 1), end=datetime(2024, 6, 2))
       constraint = SunConstraint(min_angle=45)
 
       # Query a minor planet (Ceres, NAIF ID 1) using JPL Horizons
-      result = moving_body_visibility(
-         constraint=constraint,
+      result = constraint.evaluate_moving_body(
          ephemeris=eph,
          body="1",  # Ceres
          use_horizons=True,  # Fall back to JPL Horizons if SPICE doesn't have it
@@ -1480,7 +1479,7 @@ Time window when the observation target is not constrained (visible).
 
    - Horizons queries use the default time range from the ephemeris.
    - Positions are queried from NASA's JPL Horizons system via HTTP (requires internet).
-   - Both ``get_body()`` and ``moving_body_visibility()`` support the ``use_horizons`` parameter.
+   - Both ``get_body()`` and ``evaluate_moving_body()`` support the ``use_horizons`` parameter.
    - Without ``use_horizons=True``, bodies not in SPICE kernels will raise an error.
 
    Example (body lookup)
@@ -1489,14 +1488,13 @@ Time window when the observation target is not constrained (visible).
    .. code-block:: python
 
       from rust_ephem import TLEEphemeris
-      from rust_ephem.constraints import SunConstraint, moving_body_visibility
+      from rust_ephem.constraints import SunConstraint
       from datetime import datetime, timedelta
 
       eph = TLEEphemeris(norad_id=28485, begin=datetime(2024, 6, 1), end=datetime(2024, 6, 2))
       constraint = SunConstraint(min_angle=45)
 
-      result = moving_body_visibility(
-         constraint=constraint,
+      result = constraint.evaluate_moving_body(
          ephemeris=eph,
          body="4",  # Mars (names like "Mars" also work)
       )
@@ -1513,25 +1511,24 @@ Time window when the observation target is not constrained (visible).
 
       import numpy as np
       from rust_ephem import TLEEphemeris
-      from rust_ephem.constraints import EarthLimbConstraint, moving_body_visibility
+      from rust_ephem.constraints import EarthLimbConstraint
 
       eph = TLEEphemeris(norad_id=28485)
       times = eph.timestamp[:100]  # numpy datetime64 array
       ras = np.linspace(10.0, 12.0, len(times))
       decs = np.linspace(-20.0, -21.0, len(times))
 
-      result = moving_body_visibility(
-         constraint=EarthLimbConstraint(min_angle=30),
+      constraint = EarthLimbConstraint(min_angle=30)
+      result = constraint.evaluate_moving_body(
          ephemeris=eph,
-         ras=ras,
-         decs=decs,
-         timestamps=times,
+         target_ras=list(ras),
+         target_decs=list(decs),
       )
 
    Notes
    ~~~~~
 
-   * ``timestamps`` must match ``ras``/``decs`` length when provided.
+   * ``target_ras``/``target_decs`` must have the same length as ephemeris timestamps.
    * When ``body`` is set, timestamps come from the ephemeris.
     * Body positions use the planetary ephemeris kernel (default ``de440s.bsp``). To override for a specific
        body lookup, call ``ephemeris.get_body(body, kernel_spec="path_or_url", use_horizons=True)`` (local file or URL). Downloads

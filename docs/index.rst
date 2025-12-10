@@ -131,9 +131,6 @@ Documentation Contents
    ephemeris_skycoord
    ephemeris_get_body
    ephemeris_horizons
-   horizons_quickref
-   horizons_cheatsheet
-   horizons_faq
 
 .. toctree::
    :maxdepth: 2

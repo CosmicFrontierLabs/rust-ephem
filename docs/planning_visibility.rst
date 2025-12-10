@@ -580,7 +580,7 @@ Moving Target Visibility
 ------------------------
 
 For targets that move across the sky (asteroids, comets, spacecraft), use the
-``moving_body_visibility()`` function with JPL Horizons support:
+``Constraint.evaluate_moving_body()`` method with JPL Horizons support:
 
 Basic Moving Target Tracking
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -589,14 +589,11 @@ Track any solar system body by name or NAIF ID:
 
 .. code-block:: python
 
-    from rust_ephem.constraints import moving_body_visibility
-
     # Define constraint
     constraint = SunConstraint(min_angle=30) & MoonConstraint(min_angle=15)
 
     # Track Mars (using SPICE kernel)
-    result = moving_body_visibility(
-        constraint=constraint,
+    result = constraint.evaluate_moving_body(
         ephemeris=ephem,
         body="Mars"
     )
@@ -613,24 +610,21 @@ Enable JPL Horizons to access asteroids, comets, and spacecraft beyond SPICE ker
 .. code-block:: python
 
     # Track Ceres asteroid
-    result = moving_body_visibility(
-        constraint=constraint,
+    result = constraint.evaluate_moving_body(
         ephemeris=ephem,
         body="1",  # Ceres NAIF ID
         use_horizons=True  # ← Enable Horizons fallback
     )
 
     # Track Apophis asteroid
-    result = moving_body_visibility(
-        constraint=constraint,
+    result = constraint.evaluate_moving_body(
         ephemeris=ephem,
         body="99942",  # Apophis
         use_horizons=True
     )
 
     # Track by name (also works with Horizons)
-    result = moving_body_visibility(
-        constraint=constraint,
+    result = constraint.evaluate_moving_body(
         ephemeris=ephem,
         body="Apophis",
         use_horizons=True
@@ -657,12 +651,10 @@ For custom target paths (non-solar system objects), provide explicit RA/Dec arra
     ras = np.linspace(100, 110, len(times))      # RA moves from 100° to 110°
     decs = np.linspace(10, 20, len(times))       # Dec moves from 10° to 20°
 
-    result = moving_body_visibility(
-        constraint=constraint,
+    result = constraint.evaluate_moving_body(
         ephemeris=ephem,
-        ras=ras,
-        decs=decs,
-        timestamps=times
+        target_ras=list(ras),
+        target_decs=list(decs),
     )
 
     print(f"Visibility windows: {len(result.visibility)}")
@@ -697,8 +689,7 @@ Monitor visibility during an asteroid's close approach:
         EarthLimbConstraint(min_angle=5)  # Clear of Earth limb
     )
 
-    result = moving_body_visibility(
-        constraint=constraint,
+    result = constraint.evaluate_moving_body(
         ephemeris=obs,
         body="99942",  # Apophis
         use_horizons=True
