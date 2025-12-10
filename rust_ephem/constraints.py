@@ -882,25 +882,6 @@ NotConstraint.model_rebuild()
 CombinedConstraintConfig: TypeAdapter[ConstraintConfig] = TypeAdapter(ConstraintConfig)
 
 
-def _to_datetime_list(times: Any) -> list[datetime]:
-    """Convert supported timestamp inputs to a list of Python datetimes."""
-    if times is None:
-        return []
-    if isinstance(times, datetime):
-        return [times]
-    if isinstance(times, np.ndarray):
-        return [_convert_single_datetime(t) for t in times.tolist()]
-    return [_convert_single_datetime(t) for t in times]
-
-
-def _convert_single_datetime(t: Any) -> datetime:
-    if isinstance(t, datetime):
-        return t
-    if isinstance(t, np.datetime64):
-        return datetime.fromisoformat(np.datetime_as_string(t))
-    raise TypeError(f"Unsupported timestamp type: {type(t)}")
-
-
 class VisibilityWindowResult(BaseModel):
     """Visibility window for a moving target."""
 
@@ -920,58 +901,3 @@ class MovingVisibilityResult(BaseModel):
     visibility: list[VisibilityWindowResult]
     all_satisfied: bool
     constraint_name: str
-
-
-def _build_visibility_windows(
-    timestamps: list[datetime], visibility: list[bool]
-) -> list[VisibilityWindowResult]:
-    """Merge consecutive visibility samples into windows.
-
-    Matches the Rust implementation logic:
-    - Window end time is the last visible timestamp before a violation
-    - Single-point windows (start == end) are skipped
-    - Windows open at the end use the last timestamp as end time
-    """
-    windows: list[VisibilityWindowResult] = []
-    if not timestamps or not visibility:
-        return windows
-
-    current_start_idx: int | None = None
-
-    for idx, is_visible in enumerate(visibility):
-        if is_visible:
-            # Start a new window if not already in one
-            if current_start_idx is None:
-                current_start_idx = idx
-        else:
-            # Close the current window if one is open
-            if current_start_idx is not None:
-                end_idx = idx - 1
-                # Only add window if it has non-zero duration (more than 1 point)
-                if end_idx != current_start_idx:
-                    start_time = timestamps[current_start_idx]
-                    end_time = timestamps[end_idx]
-                    duration = (end_time - start_time).total_seconds()
-                    windows.append(
-                        VisibilityWindowResult(
-                            start_time=start_time,
-                            end_time=end_time,
-                            duration_seconds=duration,
-                        )
-                    )
-                current_start_idx = None
-
-    # Close any window that's still open at the end
-    if current_start_idx is not None:
-        start_time = timestamps[current_start_idx]
-        end_time = timestamps[-1]
-        duration = (end_time - start_time).total_seconds()
-        windows.append(
-            VisibilityWindowResult(
-                start_time=start_time,
-                end_time=end_time,
-                duration_seconds=duration,
-            )
-        )
-
-    return windows
