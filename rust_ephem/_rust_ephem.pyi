@@ -806,13 +806,15 @@ class TLEEphemeris(Ephemeris):
         ...
 
     def get_body_pv(
-        self, body: str, kernel_spec: str | None = ...
+        self, body: str, kernel_spec: str | None = ..., use_horizons: bool = ...
     ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            kernel_spec: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
             Position and velocity data for the requested body
@@ -820,13 +822,15 @@ class TLEEphemeris(Ephemeris):
         ...
 
     def get_body(
-        self, body: str, kernel_spec: str | None = ...
+        self, body: str, kernel_spec: str | None = ..., use_horizons: bool = ...
     ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            kernel_spec: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
             astropy.coordinates.SkyCoord object
@@ -1253,13 +1257,15 @@ class SPICEEphemeris(Ephemeris):
         ...
 
     def get_body_pv(
-        self, body: str, kernel_spec: str | None = ...
+        self, body: str, kernel_spec: str | None = ..., use_horizons: bool = ...
     ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            kernel_spec: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
             Position and velocity data for the requested body
@@ -1267,13 +1273,15 @@ class SPICEEphemeris(Ephemeris):
         ...
 
     def get_body(
-        self, body: str, kernel_spec: str | None = ...
+        self, body: str, kernel_spec: str | None = ..., use_horizons: bool = ...
     ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            kernel_spec: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
             astropy.coordinates.SkyCoord object
@@ -1641,13 +1649,15 @@ class OEMEphemeris(Ephemeris):
         ...
 
     def get_body_pv(
-        self, body: str, kernel_spec: str | None = ...
+        self, body: str, kernel_spec: str | None = ..., use_horizons: bool = ...
     ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            kernel_spec: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
             Position and velocity data for the requested body
@@ -1655,13 +1665,15 @@ class OEMEphemeris(Ephemeris):
         ...
 
     def get_body(
-        self, body: str, kernel_spec: str | None = ...
+        self, body: str, kernel_spec: str | None = ..., use_horizons: bool = ...
     ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            kernel_spec: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
             astropy.coordinates.SkyCoord object
@@ -2027,13 +2039,15 @@ class GroundEphemeris(Ephemeris):
         ...
 
     def get_body_pv(
-        self, body: str, kernel_spec: str | None = ...
+        self, body: str, kernel_spec: str | None = ..., use_horizons: bool = ...
     ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            kernel_spec: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
             Position and velocity data for the requested body
@@ -2041,13 +2055,15 @@ class GroundEphemeris(Ephemeris):
         ...
 
     def get_body(
-        self, body: str, kernel_spec: str | None = ...
+        self, body: str, kernel_spec: str | None = ..., use_horizons: bool = ...
     ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            kernel_spec: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
             astropy.coordinates.SkyCoord object

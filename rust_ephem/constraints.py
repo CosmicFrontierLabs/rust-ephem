@@ -820,6 +820,8 @@ class MovingVisibilityResult(BaseModel):
     """Result for moving target visibility evaluation."""
 
     timestamps: list[datetime]
+    ras: list[float]  # Right ascension in degrees for each timestamp
+    decs: list[float]  # Declination in degrees for each timestamp
     constraint_array: list[bool]
     visibility_flags: list[bool]
     visibility: list[VisibilityWindowResult]
@@ -896,6 +898,8 @@ def moving_body_visibility(
 
     return MovingVisibilityResult(
         timestamps=ts_list,
+        ras=ras_array.tolist(),
+        decs=decs_array.tolist(),
         constraint_array=violations,
         visibility_flags=visibility_flags,
         visibility=windows,
