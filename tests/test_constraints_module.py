@@ -235,7 +235,7 @@ class DummyEphemeris:
         self.timestamp = timestamps
         self.body_requests: list[str] = []
 
-    def get_body(self, body_id, kernel_spec=None, use_horizons=False):
+    def get_body(self, body_id, spice_kernel=None, use_horizons=False):
         self.body_requests.append(str(body_id))
         return DummySkyCoord(ra=[1.0, 2.0], dec=[3.0, 4.0])
 

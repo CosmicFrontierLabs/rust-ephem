@@ -104,7 +104,7 @@ Trait definitions and implementations:
         fn get_body_impl(
             &self,
             body_id: &str,
-            kernel_spec: Option<&str>,
+            spice_kernel: Option<&str>,
             use_horizons: bool,
         ) -> Result<SkyCoord, String>;
     }
@@ -115,8 +115,8 @@ All four ephemeris types updated:
 
 .. code-block:: rust
 
-    #[pyo3(signature = (body, kernel_spec=None, use_horizons=false))]
-    fn get_body(&self, body: &str, kernel_spec: Option<&str>, use_horizons: bool) -> ...
+    #[pyo3(signature = (body, spice_kernel=None, use_horizons=false))]
+    fn get_body(&self, body: &str, spice_kernel: Option<&str>, use_horizons: bool) -> ...
 
 - TLEEphemeris
 - SPICEEphemeris
@@ -137,7 +137,7 @@ Python constraint system - the ``Constraint`` class has an ``evaluate_moving_bod
             target_ras: Optional[List[float]] = None,
             target_decs: Optional[List[float]] = None,
             use_horizons: bool = False,  # ← Horizons fallback
-            kernel_spec: Optional[str] = None,
+            spice_kernel: Optional[str] = None,
         ) -> MovingBodyResult:
 
 Dependencies
@@ -317,7 +317,7 @@ Python type stubs (ephemeris.pyi) provide IDE support:
         def get_body(
             self,
             body: str,
-            kernel_spec: Optional[str] = None,
+            spice_kernel: Optional[str] = None,
             use_horizons: bool = False,
         ) -> SkyCoord:
             """Get SkyCoord for a body, with optional Horizons fallback."""

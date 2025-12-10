@@ -46,8 +46,8 @@ Classes
 
   **Common Methods:**
     * ``index(time)`` — Find closest timestamp index
-    * ``get_body(body, kernel_spec=None, use_horizons=False)`` — Get SkyCoord for a celestial body. If ``use_horizons=True``, falls back to JPL Horizons when the body is not found in SPICE kernels.
-    * ``get_body_pv(body, kernel_spec=None, use_horizons=False)`` — Get position/velocity for a celestial body. If ``use_horizons=True``, falls back to JPL Horizons when the body is not found in SPICE kernels.
+    * ``get_body(body, spice_kernel=None, use_horizons=False)`` — Get SkyCoord for a celestial body. If ``use_horizons=True``, falls back to JPL Horizons when the body is not found in SPICE kernels.
+    * ``get_body_pv(body, spice_kernel=None, use_horizons=False)`` — Get position/velocity for a celestial body. If ``use_horizons=True``, falls back to JPL Horizons when the body is not found in SPICE kernels.
     * ``moon_illumination(time_indices=None)`` — Calculate Moon illumination fraction (0.0-1.0) as seen from observer
     * ``radec_to_altaz(ra_deg, dec_deg, time_indices=None)`` — Convert RA/Dec to Alt/Az coordinates
     * ``calculate_airmass(ra_deg, dec_deg, time_indices=None)`` — Calculate astronomical airmass for target

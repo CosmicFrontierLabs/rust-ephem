@@ -1446,7 +1446,7 @@ Time window when the observation target is not constrained (visible).
 
    1. Provide aligned arrays: ``target_ras``, ``target_decs`` (same length as ephemeris timestamps).
    2. Provide a ``body`` name or NAIF ID; positions come from ``ephemeris.get_body``
-      (default planetary kernel ``de440s.bsp``; override with ``kernel_spec``
+      (default planetary kernel ``de440s.bsp``; override with ``spice_kernel``
       path or URL, downloads cached under ``~/.cache/rust_ephem``).
 
    JPL Horizons Support
@@ -1531,9 +1531,9 @@ Time window when the observation target is not constrained (visible).
    * ``target_ras``/``target_decs`` must have the same length as ephemeris timestamps.
    * When ``body`` is set, timestamps come from the ephemeris.
     * Body positions use the planetary ephemeris kernel (default ``de440s.bsp``). To override for a specific
-       body lookup, call ``ephemeris.get_body(body, kernel_spec="path_or_url", use_horizons=True)`` (local file or URL). Downloads
+       body lookup, call ``ephemeris.get_body(body, spice_kernel="path_or_url", use_horizons=True)`` (local file or URL). Downloads
        are cached under ``~/.cache/rust_ephem``; reuse the cached path to avoid re-fetching.
-    * If you already have a planetary kernel on disk, point ``kernel_spec`` at that path; this does not affect
+    * If you already have a planetary kernel on disk, point ``spice_kernel`` at that path; this does not affect
        telescope/observer geometry — only body positions.
     * Use ``use_horizons=True`` for bodies not available in your SPICE kernels; JPL Horizons covers all major and many minor solar system bodies.
 

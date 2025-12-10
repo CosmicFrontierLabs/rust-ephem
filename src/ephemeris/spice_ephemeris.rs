@@ -328,23 +328,23 @@ impl SPICEEphemeris {
         self.find_closest_index(time)
     }
 
-    #[pyo3(signature = (body, kernel_spec=None, use_horizons=false))]
+    #[pyo3(signature = (body, spice_kernel=None, use_horizons=false))]
     fn get_body_pv(
         &self,
         py: Python,
         body: &str,
-        kernel_spec: Option<String>,
+        spice_kernel: Option<String>,
         use_horizons: bool,
     ) -> PyResult<Py<PositionVelocityData>> {
-        <Self as EphemerisBase>::get_body_pv(self, py, body, kernel_spec.as_deref(), use_horizons)
+        <Self as EphemerisBase>::get_body_pv(self, py, body, spice_kernel.as_deref(), use_horizons)
     }
 
-    #[pyo3(signature = (body, kernel_spec=None, use_horizons=false))]
+    #[pyo3(signature = (body, spice_kernel=None, use_horizons=false))]
     fn get_body(
         &self,
         py: Python,
         body: &str,
-        kernel_spec: Option<String>,
+        spice_kernel: Option<String>,
         use_horizons: bool,
     ) -> PyResult<Py<PyAny>> {
         let modules = AstropyModules::import(py)?;
@@ -353,7 +353,7 @@ impl SPICEEphemeris {
             py,
             &modules,
             body,
-            kernel_spec.as_deref(),
+            spice_kernel.as_deref(),
             use_horizons,
         )
     }

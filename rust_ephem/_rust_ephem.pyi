@@ -580,7 +580,7 @@ class Constraint:
         times: datetime | list[datetime] | None = None,
         body: str | None = None,
         use_horizons: bool = False,
-        kernel_spec: str | None = None,
+        spice_kernel: str | None = None,
     ) -> MovingBodyResult:
         """
         Evaluate constraint for a moving body (varying RA/Dec over time).
@@ -600,7 +600,7 @@ class Constraint:
             times: Specific times to evaluate (must match ras/decs length)
             body: Body identifier (NAIF ID or name like "Jupiter", "90004910")
             use_horizons: If True, query JPL Horizons for body positions (default: False)
-            kernel_spec: Path or URL to a SPICE kernel file for body positions.
+            spice_kernel: Path or URL to a SPICE kernel file for body positions.
 
         Returns:
             MovingBodyResult containing:
@@ -954,14 +954,14 @@ class TLEEphemeris(Ephemeris):
         ...
 
     def get_body_pv(
-        self, body: str, kernel_spec: str | None = ..., use_horizons: bool = ...
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
     ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
-            kernel_spec: Optional path to SPICE kernel
+            spice_kernel: Optional path to SPICE kernel
             use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
@@ -970,14 +970,14 @@ class TLEEphemeris(Ephemeris):
         ...
 
     def get_body(
-        self, body: str, kernel_spec: str | None = ..., use_horizons: bool = ...
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
     ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
-            kernel_spec: Optional path to SPICE kernel
+            spice_kernel: Optional path to SPICE kernel
             use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
@@ -1405,14 +1405,14 @@ class SPICEEphemeris(Ephemeris):
         ...
 
     def get_body_pv(
-        self, body: str, kernel_spec: str | None = ..., use_horizons: bool = ...
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
     ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
-            kernel_spec: Optional path to SPICE kernel
+            spice_kernel: Optional path to SPICE kernel
             use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
@@ -1421,14 +1421,14 @@ class SPICEEphemeris(Ephemeris):
         ...
 
     def get_body(
-        self, body: str, kernel_spec: str | None = ..., use_horizons: bool = ...
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
     ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
-            kernel_spec: Optional path to SPICE kernel
+            spice_kernel: Optional path to SPICE kernel
             use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
@@ -1797,14 +1797,14 @@ class OEMEphemeris(Ephemeris):
         ...
 
     def get_body_pv(
-        self, body: str, kernel_spec: str | None = ..., use_horizons: bool = ...
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
     ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
-            kernel_spec: Optional path to SPICE kernel
+            spice_kernel: Optional path to SPICE kernel
             use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
@@ -1813,14 +1813,14 @@ class OEMEphemeris(Ephemeris):
         ...
 
     def get_body(
-        self, body: str, kernel_spec: str | None = ..., use_horizons: bool = ...
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
     ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
-            kernel_spec: Optional path to SPICE kernel
+            spice_kernel: Optional path to SPICE kernel
             use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
@@ -2187,14 +2187,14 @@ class GroundEphemeris(Ephemeris):
         ...
 
     def get_body_pv(
-        self, body: str, kernel_spec: str | None = ..., use_horizons: bool = ...
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
     ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
-            kernel_spec: Optional path to SPICE kernel
+            spice_kernel: Optional path to SPICE kernel
             use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
@@ -2203,14 +2203,14 @@ class GroundEphemeris(Ephemeris):
         ...
 
     def get_body(
-        self, body: str, kernel_spec: str | None = ..., use_horizons: bool = ...
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
     ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
-            kernel_spec: Optional path to SPICE kernel
+            spice_kernel: Optional path to SPICE kernel
             use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:

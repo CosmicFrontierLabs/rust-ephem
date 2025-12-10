@@ -354,14 +354,14 @@ pub fn calculate_body_positions_spice_result(
     times: &[DateTime<Utc>],
     target_id: i32,
     center_id: i32,
-    kernel_spec: Option<&str>,
+    spice_kernel: Option<&str>,
 ) -> Result<Array2<f64>, String> {
     use crate::ephemeris::spice_manager;
     use anise::prelude::*;
     use hifitime::Epoch as HifiEpoch;
 
     // If a kernel is specified, initialize from it (URL or path). Otherwise use cache/defaults.
-    if let Some(spec) = kernel_spec {
+    if let Some(spec) = spice_kernel {
         spice_manager::ensure_planetary_ephemeris_spec(spec)
             .map_err(|e| format!("Failed to initialize planetary ephemeris from '{spec}': {e}"))?;
     }
@@ -758,7 +758,7 @@ pub fn calculate_body_by_id_or_name(
     times: &[DateTime<Utc>],
     body_identifier: &str,
     observer_id: i32,
-    kernel_spec: Option<&str>,
+    spice_kernel: Option<&str>,
     use_horizons: bool,
 ) -> Result<Array2<f64>, String> {
     use crate::naif_ids::parse_body_identifier;
@@ -768,7 +768,7 @@ pub fn calculate_body_by_id_or_name(
     if let Some(target_id) = parse_body_identifier(body_identifier) {
         // Try SPICE first
         let spice_result =
-            calculate_body_positions_spice_result(times, target_id, observer_id, kernel_spec);
+            calculate_body_positions_spice_result(times, target_id, observer_id, spice_kernel);
 
         // If SPICE fails and use_horizons is enabled, try JPL Horizons
         if spice_result.is_err() && use_horizons {

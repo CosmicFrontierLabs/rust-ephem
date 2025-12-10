@@ -96,7 +96,7 @@ class RustConstraintMixin(BaseModel):
         times: datetime | list[datetime] | None = None,
         body: str | int | None = None,
         use_horizons: bool = False,
-        kernel_spec: str | None = None,
+        spice_kernel: str | None = None,
     ) -> MovingVisibilityResult:
         """
         Evaluate constraint for a moving body (varying RA/Dec over time).
