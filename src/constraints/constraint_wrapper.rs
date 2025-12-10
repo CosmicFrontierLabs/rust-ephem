@@ -1712,7 +1712,8 @@ impl ConstraintEvaluator for AndEvaluator {
         }
 
         let times = ephemeris.get_times()?;
-        let n_times = times.len();
+        // Use filtered time count if time_indices provided, otherwise full times
+        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
 
         // Evaluate all sub-constraints in batch
         let results: Result<Vec<_>, _> = self
@@ -1836,7 +1837,8 @@ impl ConstraintEvaluator for OrEvaluator {
         }
 
         let times = ephemeris.get_times()?;
-        let n_times = times.len();
+        // Use filtered time count if time_indices provided, otherwise full times
+        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
 
         // Evaluate all sub-constraints in batch
         let results: Result<Vec<_>, _> = self
@@ -1969,7 +1971,8 @@ impl ConstraintEvaluator for NotEvaluator {
         )?;
 
         let n_targets = target_ras.len();
-        let n_times = times.len();
+        // Use filtered time count if time_indices provided, otherwise full times
+        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
         let mut result = Array2::from_elem((n_targets, n_times), false);
 
         // NOT logic: invert all values
@@ -2087,7 +2090,8 @@ impl ConstraintEvaluator for XorEvaluator {
         }
 
         let times = ephemeris.get_times()?;
-        let n_times = times.len();
+        // Use filtered time count if time_indices provided, otherwise full times
+        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
 
         // Evaluate all sub-constraints in batch
         let results: Result<Vec<_>, _> = self
