@@ -580,6 +580,7 @@ class Constraint:
         times: datetime | list[datetime] | None = None,
         body: str | None = None,
         use_horizons: bool = False,
+        kernel_spec: str | None = None,
     ) -> MovingBodyResult:
         """
         Evaluate constraint for a moving body (varying RA/Dec over time).
@@ -599,6 +600,7 @@ class Constraint:
             times: Specific times to evaluate (must match ras/decs length)
             body: Body identifier (NAIF ID or name like "Jupiter", "90004910")
             use_horizons: If True, query JPL Horizons for body positions (default: False)
+            kernel_spec: Path or URL to a SPICE kernel file for body positions.
 
         Returns:
             MovingBodyResult containing:

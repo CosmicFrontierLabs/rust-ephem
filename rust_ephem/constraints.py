@@ -271,6 +271,7 @@ class RustConstraintMixin(BaseModel):
         times: datetime | list[datetime] | None = None,
         body: str | int | None = None,
         use_horizons: bool = False,
+        kernel_spec: str | None = None,
     ) -> MovingVisibilityResult:
         """Evaluate constraint for a moving body (varying RA/Dec over time).
 
@@ -289,6 +290,8 @@ class RustConstraintMixin(BaseModel):
             times: Specific times to evaluate (must match ras/decs length)
             body: Body identifier (NAIF ID or name like "Jupiter", "90004910")
             use_horizons: If True, query JPL Horizons for body positions (default: False)
+            kernel_spec: Path or URL to a SPICE kernel file for body positions.
+                Can be a local path or URL (e.g., from JPL Horizons SPK files).
 
         Returns:
             MovingVisibilityResult with per-timestamp violation flags, visibility flags,
@@ -299,6 +302,10 @@ class RustConstraintMixin(BaseModel):
             >>> result = constraint.evaluate_moving_body(ephem, body="Jupiter")
             >>> # Using explicit coordinates for a comet
             >>> result = constraint.evaluate_moving_body(ephem, target_ras=ras, target_decs=decs)
+            >>> # Using a SPICE kernel for an asteroid
+            >>> result = constraint.evaluate_moving_body(
+            ...     ephem, body="2000001", kernel_spec="/path/to/ceres.bsp"
+            ... )
         """
         if not hasattr(self, "_rust_constraint"):
             from rust_ephem import Constraint
@@ -322,6 +329,7 @@ class RustConstraintMixin(BaseModel):
             times,
             body_str,
             use_horizons,
+            kernel_spec,
         )
 
         # Convert Rust VisibilityWindow objects to VisibilityWindowResult

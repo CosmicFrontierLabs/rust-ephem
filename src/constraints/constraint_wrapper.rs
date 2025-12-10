@@ -24,7 +24,7 @@ use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use numpy::{PyArray2, PyArrayMethods};
 use pyo3::prelude::*;
-use pyo3::types::{IntoPyDict, PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
+use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
 
 /// Python-facing constraint evaluator
 ///
@@ -1377,7 +1377,7 @@ impl PyConstraint {
     ///     >>> # Using explicit coordinates for a comet
     ///     >>> result = constraint.evaluate_moving_body(ephem, target_ras=ras, target_decs=decs)
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (ephemeris, target_ras=None, target_decs=None, times=None, body=None, use_horizons=false))]
+    #[pyo3(signature = (ephemeris, target_ras=None, target_decs=None, times=None, body=None, use_horizons=false, kernel_spec=None))]
     fn evaluate_moving_body(
         &self,
         py: Python,
@@ -1387,6 +1387,7 @@ impl PyConstraint {
         times: Option<&Bound<PyAny>>,
         body: Option<&str>,
         use_horizons: bool,
+        kernel_spec: Option<&str>,
     ) -> PyResult<MovingBodyResult> {
         use crate::constraints::core::MovingBodyResult;
 
@@ -1396,11 +1397,13 @@ impl PyConstraint {
         let (ras, decs, timestamps): (Vec<f64>, Vec<f64>, Vec<DateTime<Utc>>) =
             if let Some(body_id) = body {
                 // Body lookup mode: get positions from ephemeris.get_body()
-                let skycoord = bound.call_method(
-                    "get_body",
-                    (body_id,),
-                    Some(&[("use_horizons", use_horizons)].into_py_dict(py)?),
-                )?;
+                // Build kwargs dict with use_horizons and optional kernel_spec
+                let kwargs = pyo3::types::PyDict::new(py);
+                kwargs.set_item("use_horizons", use_horizons)?;
+                if let Some(ks) = kernel_spec {
+                    kwargs.set_item("kernel_spec", ks)?;
+                }
+                let skycoord = bound.call_method("get_body", (body_id,), Some(&kwargs))?;
 
                 // Extract RA/Dec from SkyCoord
                 let ra_attr = skycoord.getattr("ra")?;
