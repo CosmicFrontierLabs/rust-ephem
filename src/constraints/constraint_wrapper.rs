@@ -24,7 +24,7 @@ use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use numpy::{PyArray2, PyArrayMethods};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
+use pyo3::types::{IntoPyDict, PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
 
 /// Python-facing constraint evaluator
 ///
@@ -48,6 +48,59 @@ impl PyConstraint {
         // Delegate to evaluator with new interface
         self.evaluator
             .evaluate(ephemeris, target_ra, target_dec, time_indices.as_deref())
+    }
+
+    /// Internal helper to evaluate in_constraint_batch for a single target at a single time index
+    fn eval_in_constraint_batch_single(
+        &self,
+        py: Python,
+        ephemeris: &Py<PyAny>,
+        target_ra: f64,
+        target_dec: f64,
+        time_idx: usize,
+    ) -> PyResult<bool> {
+        let bound = ephemeris.bind(py);
+
+        if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
+            let result = self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &[target_ra],
+                &[target_dec],
+                Some(&[time_idx]),
+            )?;
+            return Ok(result[[0, 0]]);
+        }
+        if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
+            let result = self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &[target_ra],
+                &[target_dec],
+                Some(&[time_idx]),
+            )?;
+            return Ok(result[[0, 0]]);
+        }
+        if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
+            let result = self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &[target_ra],
+                &[target_dec],
+                Some(&[time_idx]),
+            )?;
+            return Ok(result[[0, 0]]);
+        }
+        if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+            let result = self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &[target_ra],
+                &[target_dec],
+                Some(&[time_idx]),
+            )?;
+            return Ok(result[[0, 0]]);
+        }
+
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
+        ))
     }
 }
 
@@ -1287,6 +1340,239 @@ impl PyConstraint {
         } else {
             Ok(PyBool::new(py, results[0]).as_any().clone().unbind())
         }
+    }
+
+    /// Evaluate constraint for a moving body (varying RA/Dec over time)
+    ///
+    /// This method evaluates the constraint for a body whose position changes over time,
+    /// such as a comet, asteroid, or planet. It returns detailed results including
+    /// per-timestamp violation status, visibility windows, and the body's coordinates.
+    ///
+    /// There are two ways to specify the body's position:
+    /// 1. Explicit coordinates: Provide `target_ras`, `target_decs`, and optionally `times`
+    /// 2. Body lookup: Provide `body` name/ID and optionally `use_horizons` to query positions
+    ///
+    /// Args:
+    ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+    ///     target_ras (list[float], optional): Array of right ascensions in degrees (ICRS/J2000)
+    ///     target_decs (list[float], optional): Array of declinations in degrees (ICRS/J2000)
+    ///     times (datetime or list[datetime], optional): Specific times to evaluate (must match ras/decs length)
+    ///     body (str, optional): Body identifier (NAIF ID or name like "Jupiter", "90004910")
+    ///     use_horizons (bool): If True, query JPL Horizons for body positions (default: False)
+    ///
+    /// Returns:
+    ///     dict: Result dictionary containing:
+    ///         - timestamps: list of datetime objects
+    ///         - ras: list of right ascensions in degrees
+    ///         - decs: list of declinations in degrees
+    ///         - constraint_array: list of bools (True = violated)
+    ///         - visibility_flags: list of bools (True = visible, inverse of constraint_array)
+    ///         - visibility: list of visibility window dicts with start_time, end_time, duration_seconds
+    ///         - all_satisfied: bool indicating if constraint was never violated
+    ///         - constraint_name: string name of the constraint
+    ///
+    /// Example:
+    ///     >>> # Using body name (queries SPICE or Horizons for positions)
+    ///     >>> result = constraint.evaluate_moving_body(ephem, body="Jupiter")
+    ///     >>> # Using explicit coordinates for a comet
+    ///     >>> result = constraint.evaluate_moving_body(ephem, target_ras=ras, target_decs=decs)
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (ephemeris, target_ras=None, target_decs=None, times=None, body=None, use_horizons=false))]
+    fn evaluate_moving_body(
+        &self,
+        py: Python,
+        ephemeris: Py<PyAny>,
+        target_ras: Option<Vec<f64>>,
+        target_decs: Option<Vec<f64>>,
+        times: Option<&Bound<PyAny>>,
+        body: Option<&str>,
+        use_horizons: bool,
+    ) -> PyResult<MovingBodyResult> {
+        use crate::constraints::core::MovingBodyResult;
+
+        let bound = ephemeris.bind(py);
+
+        // Determine ras, decs, and timestamps based on input mode
+        let (ras, decs, timestamps): (Vec<f64>, Vec<f64>, Vec<DateTime<Utc>>) =
+            if let Some(body_id) = body {
+                // Body lookup mode: get positions from ephemeris.get_body()
+                let skycoord = bound.call_method(
+                    "get_body",
+                    (body_id,),
+                    Some(&[("use_horizons", use_horizons)].into_py_dict(py)?),
+                )?;
+
+                // Extract RA/Dec from SkyCoord
+                let ra_attr = skycoord.getattr("ra")?;
+                let dec_attr = skycoord.getattr("dec")?;
+                let ra_deg = ra_attr.getattr("deg")?;
+                let dec_deg = dec_attr.getattr("deg")?;
+
+                // Convert to Vec<f64>
+                let ras: Vec<f64> = ra_deg.extract()?;
+                let decs: Vec<f64> = dec_deg.extract()?;
+
+                // Get timestamps from ephemeris
+                let ts_attr = bound.getattr("timestamp")?;
+                let ts_list: Vec<DateTime<Utc>> = if let Ok(iter) =
+                    pyo3::types::PyIterator::from_object(&ts_attr)
+                {
+                    iter.map(|item| {
+                        let item = item?;
+                        let year: i32 = item.getattr("year")?.extract()?;
+                        let month: u32 = item.getattr("month")?.extract()?;
+                        let day: u32 = item.getattr("day")?.extract()?;
+                        let hour: u32 = item.getattr("hour")?.extract()?;
+                        let minute: u32 = item.getattr("minute")?.extract()?;
+                        let second: u32 = item.getattr("second")?.extract()?;
+                        let microsecond: u32 = item.getattr("microsecond")?.extract()?;
+
+                        chrono::NaiveDate::from_ymd_opt(year, month, day)
+                            .and_then(|d| d.and_hms_micro_opt(hour, minute, second, microsecond))
+                            .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
+                            .ok_or_else(|| {
+                                pyo3::exceptions::PyValueError::new_err("Invalid datetime")
+                            })
+                    })
+                    .collect::<PyResult<_>>()?
+                } else {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "Could not iterate ephemeris timestamps",
+                    ));
+                };
+
+                (ras, decs, ts_list)
+            } else {
+                // Explicit coordinates mode
+                let ras = target_ras.ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "Either 'body' or 'target_ras'/'target_decs' must be provided",
+                    )
+                })?;
+                let decs = target_decs.ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "target_decs must be provided when target_ras is specified",
+                    )
+                })?;
+
+                if ras.len() != decs.len() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "target_ras and target_decs must have the same length",
+                    ));
+                }
+
+                // Get timestamps - either from 'times' parameter or from ephemeris
+                let ts_list: Vec<DateTime<Utc>> = if let Some(times_arg) = times {
+                    // Parse times parameter
+                    if let Ok(iter) = pyo3::types::PyIterator::from_object(times_arg) {
+                        iter.map(|item| {
+                            let item = item?;
+                            let year: i32 = item.getattr("year")?.extract()?;
+                            let month: u32 = item.getattr("month")?.extract()?;
+                            let day: u32 = item.getattr("day")?.extract()?;
+                            let hour: u32 = item.getattr("hour")?.extract()?;
+                            let minute: u32 = item.getattr("minute")?.extract()?;
+                            let second: u32 = item.getattr("second")?.extract()?;
+                            let microsecond: u32 = item.getattr("microsecond")?.extract()?;
+
+                            chrono::NaiveDate::from_ymd_opt(year, month, day)
+                                .and_then(|d| {
+                                    d.and_hms_micro_opt(hour, minute, second, microsecond)
+                                })
+                                .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
+                                .ok_or_else(|| {
+                                    pyo3::exceptions::PyValueError::new_err("Invalid datetime")
+                                })
+                        })
+                        .collect::<PyResult<_>>()?
+                    } else {
+                        // Single datetime
+                        let year: i32 = times_arg.getattr("year")?.extract()?;
+                        let month: u32 = times_arg.getattr("month")?.extract()?;
+                        let day: u32 = times_arg.getattr("day")?.extract()?;
+                        let hour: u32 = times_arg.getattr("hour")?.extract()?;
+                        let minute: u32 = times_arg.getattr("minute")?.extract()?;
+                        let second: u32 = times_arg.getattr("second")?.extract()?;
+                        let microsecond: u32 = times_arg.getattr("microsecond")?.extract()?;
+
+                        let dt = chrono::NaiveDate::from_ymd_opt(year, month, day)
+                            .and_then(|d| d.and_hms_micro_opt(hour, minute, second, microsecond))
+                            .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
+                            .ok_or_else(|| {
+                                pyo3::exceptions::PyValueError::new_err("Invalid datetime")
+                            })?;
+
+                        vec![dt]
+                    }
+                } else {
+                    // Use ephemeris timestamps
+                    let ts_attr = bound.getattr("timestamp")?;
+                    if let Ok(iter) = pyo3::types::PyIterator::from_object(&ts_attr) {
+                        iter.map(|item| {
+                            let item = item?;
+                            let year: i32 = item.getattr("year")?.extract()?;
+                            let month: u32 = item.getattr("month")?.extract()?;
+                            let day: u32 = item.getattr("day")?.extract()?;
+                            let hour: u32 = item.getattr("hour")?.extract()?;
+                            let minute: u32 = item.getattr("minute")?.extract()?;
+                            let second: u32 = item.getattr("second")?.extract()?;
+                            let microsecond: u32 = item.getattr("microsecond")?.extract()?;
+
+                            chrono::NaiveDate::from_ymd_opt(year, month, day)
+                                .and_then(|d| {
+                                    d.and_hms_micro_opt(hour, minute, second, microsecond)
+                                })
+                                .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
+                                .ok_or_else(|| {
+                                    pyo3::exceptions::PyValueError::new_err("Invalid datetime")
+                                })
+                        })
+                        .collect::<PyResult<_>>()?
+                    } else {
+                        return Err(pyo3::exceptions::PyValueError::new_err(
+                            "Could not iterate ephemeris timestamps",
+                        ));
+                    }
+                };
+
+                if ts_list.len() != ras.len() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "timestamps length must match target_ras/target_decs length",
+                    ));
+                }
+
+                (ras, decs, ts_list)
+            };
+
+        // Evaluate constraint at each timestamp with corresponding RA/Dec
+        // For moving bodies, each time has a different RA/Dec, so we evaluate one at a time
+        let mut constraint_vec: Vec<bool> = Vec::with_capacity(timestamps.len());
+
+        for (idx, (ra, dec)) in ras.iter().zip(decs.iter()).enumerate() {
+            // Use in_constraint_batch with single target at single time index
+            let result_array =
+                self.eval_in_constraint_batch_single(py, &ephemeris, *ra, *dec, idx)?;
+            constraint_vec.push(result_array);
+        }
+
+        // Build violation windows from constraint_vec
+        let violations = track_violations(
+            &timestamps,
+            |i| (constraint_vec[i], if constraint_vec[i] { 1.0 } else { 0.0 }),
+            |_i, _is_open| self.evaluator.name(),
+        );
+
+        let all_satisfied = !constraint_vec.iter().any(|&v| v);
+
+        Ok(MovingBodyResult::new(
+            violations,
+            all_satisfied,
+            self.evaluator.name(),
+            timestamps,
+            ras,
+            decs,
+            constraint_vec,
+        ))
     }
 
     /// Get constraint configuration as JSON string

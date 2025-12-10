@@ -62,6 +62,91 @@ class VisibilityWindow:
         """Duration of the visibility window in seconds"""
         ...
 
+class ConstraintViolation:
+    """A time window when a constraint was violated."""
+
+    start_time: datetime
+    end_time: datetime
+    max_severity: float
+    description: str
+
+    def __repr__(self) -> str: ...
+    @property
+    def duration_seconds(self) -> float:
+        """Duration of the violation window in seconds."""
+        ...
+
+class MovingBodyResult:
+    """Result from evaluating a constraint against a moving body.
+
+    Contains the constraint evaluation results along with the body's
+    RA/Dec coordinates at each timestamp.
+    """
+
+    @property
+    def violations(self) -> list["ConstraintViolation"]:
+        """List of time windows when constraint was violated."""
+        ...
+
+    @property
+    def all_satisfied(self) -> bool:
+        """True if constraint was satisfied at all timestamps."""
+        ...
+
+    @property
+    def constraint_name(self) -> str:
+        """Name/description of the constraint."""
+        ...
+
+    @property
+    def timestamp(self) -> list[datetime]:
+        """List of timestamps that were evaluated."""
+        ...
+
+    @property
+    def ras(self) -> list[float]:
+        """Right ascensions in degrees at each timestamp."""
+        ...
+
+    @property
+    def decs(self) -> list[float]:
+        """Declinations in degrees at each timestamp."""
+        ...
+
+    @property
+    def constraint_array(self) -> list[bool]:
+        """Boolean array where True indicates constraint violation at that timestamp."""
+        ...
+
+    @property
+    def visibility(self) -> list[VisibilityWindow]:
+        """List of time windows when constraint was satisfied (target was visible)."""
+        ...
+
+    def in_constraint(self, time: datetime) -> bool:
+        """Check if constraint was violated at a specific time.
+
+        Args:
+            time: The time to check (must exist in timestamps).
+
+        Returns:
+            True if constraint was violated at the given time.
+
+        Raises:
+            ValueError: If time is not found in timestamps.
+        """
+        ...
+
+    def total_violation_duration(self) -> float:
+        """Get total duration of all constraint violations in seconds.
+
+        Returns:
+            Sum of all violation window durations in seconds.
+        """
+        ...
+
+    def __repr__(self) -> str: ...
+
 class Constraint:
     """Wrapper for constraint evaluation with ephemeris data"""
 
@@ -483,6 +568,51 @@ class Constraint:
 
         Raises:
             ValueError: If time is not found in ephemeris timestamps
+            TypeError: If ephemeris type is not supported
+        """
+        ...
+
+    def evaluate_moving_body(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: list[float] | None = None,
+        target_decs: list[float] | None = None,
+        times: datetime | list[datetime] | None = None,
+        body: str | None = None,
+        use_horizons: bool = False,
+    ) -> MovingBodyResult:
+        """
+        Evaluate constraint for a moving body (varying RA/Dec over time).
+
+        This method evaluates the constraint for a body whose position changes over time,
+        such as a comet, asteroid, or planet. It returns detailed results including
+        per-timestamp violation status, visibility windows, and the body's coordinates.
+
+        There are two ways to specify the body's position:
+        1. Explicit coordinates: Provide `target_ras`, `target_decs`, and optionally `times`
+        2. Body lookup: Provide `body` name/ID and optionally `use_horizons` to query positions
+
+        Args:
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+            target_ras: Array of right ascensions in degrees (ICRS/J2000)
+            target_decs: Array of declinations in degrees (ICRS/J2000)
+            times: Specific times to evaluate (must match ras/decs length)
+            body: Body identifier (NAIF ID or name like "Jupiter", "90004910")
+            use_horizons: If True, query JPL Horizons for body positions (default: False)
+
+        Returns:
+            MovingBodyResult containing:
+                - violations: List of ConstraintViolation windows
+                - all_satisfied: bool indicating if constraint was never violated
+                - constraint_name: string name of the constraint
+                - timestamp: list of datetime objects
+                - ras: list of right ascensions in degrees
+                - decs: list of declinations in degrees
+                - constraint_array: list of bools (True = violated)
+                - visibility: list of VisibilityWindow objects
+
+        Raises:
+            ValueError: If neither body nor target_ras/target_decs are provided
             TypeError: If ephemeris type is not supported
         """
         ...

@@ -8,7 +8,9 @@ pub use ephemeris::position_velocity::PositionVelocityData;
 pub use ephemeris::{GroundEphemeris, OEMEphemeris, SPICEEphemeris, TLEEphemeris};
 
 // Re-export constraint types
-pub use constraints::{ConstraintResult, ConstraintViolation, PyConstraint, VisibilityWindow};
+pub use constraints::{
+    ConstraintResult, ConstraintViolation, MovingBodyResult, PyConstraint, VisibilityWindow,
+};
 
 // Make certain utils modules public for external access
 pub use utils::{eop_provider, naif_ids, ut1_provider};
@@ -315,6 +317,7 @@ fn _rust_ephem(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ConstraintResult>()?;
     m.add_class::<ConstraintViolation>()?;
     m.add_class::<VisibilityWindow>()?;
+    m.add_class::<MovingBodyResult>()?;
     m.add_function(wrap_pyfunction!(init_planetary_ephemeris, m)?)?;
     m.add_function(wrap_pyfunction!(download_planetary_ephemeris, m)?)?;
     m.add_function(wrap_pyfunction!(ensure_planetary_ephemeris, m)?)?;

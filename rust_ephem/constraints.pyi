@@ -54,6 +54,8 @@ class VisibilityWindowResult(BaseModel):
 
 class MovingVisibilityResult(BaseModel):
     timestamps: list[datetime]
+    ras: list[float]
+    decs: list[float]
     constraint_array: list[bool]
     visibility_flags: list[bool]
     visibility: list[VisibilityWindowResult]
@@ -86,6 +88,15 @@ class RustConstraintMixin(BaseModel):
         target_ra: float,
         target_dec: float,
     ) -> bool | list[bool]: ...
+    def evaluate_moving_body(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: list[float] | npt.ArrayLike | None = None,
+        target_decs: list[float] | npt.ArrayLike | None = None,
+        times: datetime | list[datetime] | None = None,
+        body: str | int | None = None,
+        use_horizons: bool = False,
+    ) -> MovingVisibilityResult: ...
     def and_(self, other: ConstraintConfig) -> AndConstraint: ...
     def or_(self, other: ConstraintConfig) -> OrConstraint: ...
     def xor_(self, other: ConstraintConfig) -> XorConstraint: ...

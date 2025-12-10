@@ -263,6 +263,91 @@ class RustConstraintMixin(BaseModel):
             target_dec,
         )
 
+    def evaluate_moving_body(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: list[float] | npt.ArrayLike | None = None,
+        target_decs: list[float] | npt.ArrayLike | None = None,
+        times: datetime | list[datetime] | None = None,
+        body: str | int | None = None,
+        use_horizons: bool = False,
+    ) -> MovingVisibilityResult:
+        """Evaluate constraint for a moving body (varying RA/Dec over time).
+
+        This method evaluates the constraint for a body whose position changes over time,
+        such as a comet, asteroid, or planet. It returns detailed results including
+        per-timestamp violation status, visibility windows, and the body's coordinates.
+
+        There are two ways to specify the body's position:
+        1. Explicit coordinates: Provide `target_ras`, `target_decs`, and optionally `times`
+        2. Body lookup: Provide `body` name/ID and optionally `use_horizons` to query positions
+
+        Args:
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+            target_ras: Array of right ascensions in degrees (ICRS/J2000)
+            target_decs: Array of declinations in degrees (ICRS/J2000)
+            times: Specific times to evaluate (must match ras/decs length)
+            body: Body identifier (NAIF ID or name like "Jupiter", "90004910")
+            use_horizons: If True, query JPL Horizons for body positions (default: False)
+
+        Returns:
+            MovingVisibilityResult with per-timestamp violation flags, visibility flags,
+            RA/Dec coordinates, and merged visibility windows.
+
+        Example:
+            >>> # Using body name (queries SPICE or Horizons for positions)
+            >>> result = constraint.evaluate_moving_body(ephem, body="Jupiter")
+            >>> # Using explicit coordinates for a comet
+            >>> result = constraint.evaluate_moving_body(ephem, target_ras=ras, target_decs=decs)
+        """
+        if not hasattr(self, "_rust_constraint"):
+            from rust_ephem import Constraint
+
+            self._rust_constraint = Constraint.from_json(self.model_dump_json())
+
+        # Convert array-like to lists of floats if needed
+        ras_list: list[float] | None = None
+        decs_list: list[float] | None = None
+        if target_ras is not None:
+            ras_list = np.asarray(target_ras, dtype=float).tolist()
+        if target_decs is not None:
+            decs_list = np.asarray(target_decs, dtype=float).tolist()
+        body_str = str(body) if body is not None else None
+
+        # Call Rust implementation - returns MovingBodyResult object
+        rust_result = self._rust_constraint.evaluate_moving_body(
+            ephemeris,
+            ras_list,
+            decs_list,
+            times,
+            body_str,
+            use_horizons,
+        )
+
+        # Convert Rust VisibilityWindow objects to VisibilityWindowResult
+        visibility_windows = [
+            VisibilityWindowResult(
+                start_time=w.start_time,
+                end_time=w.end_time,
+                duration_seconds=w.duration_seconds,
+            )
+            for w in rust_result.visibility
+        ]
+
+        # Convert constraint_array (violations) to visibility_flags (satisfied)
+        visibility_flags = [not v for v in rust_result.constraint_array]
+
+        return MovingVisibilityResult(
+            timestamps=rust_result.timestamp,
+            ras=rust_result.ras,
+            decs=rust_result.decs,
+            constraint_array=rust_result.constraint_array,
+            visibility_flags=visibility_flags,
+            visibility=visibility_windows,
+            all_satisfied=rust_result.all_satisfied,
+            constraint_name=rust_result.constraint_name,
+        )
+
     def and_(self, other: ConstraintConfig) -> AndConstraint:
         """Combine this constraint with another using logical AND
 
@@ -911,25 +996,53 @@ def moving_body_visibility(
 def _build_visibility_windows(
     timestamps: list[datetime], visibility: list[bool]
 ) -> list[VisibilityWindowResult]:
-    """Merge consecutive visibility samples into windows."""
+    """Merge consecutive visibility samples into windows.
+
+    Matches the Rust implementation logic:
+    - Window end time is the last visible timestamp before a violation
+    - Single-point windows (start == end) are skipped
+    - Windows open at the end use the last timestamp as end time
+    """
     windows: list[VisibilityWindowResult] = []
     if not timestamps or not visibility:
         return windows
 
-    current_start: datetime | None = None
+    current_start_idx: int | None = None
+
     for idx, is_visible in enumerate(visibility):
-        if is_visible and current_start is None:
-            current_start = timestamps[idx]
-        if (not is_visible or idx == len(visibility) - 1) and current_start is not None:
-            end_idx = idx if not is_visible else idx
-            end_time = timestamps[end_idx]
-            duration = (end_time - current_start).total_seconds()
-            windows.append(
-                VisibilityWindowResult(
-                    start_time=current_start,
-                    end_time=end_time,
-                    duration_seconds=duration,
-                )
+        if is_visible:
+            # Start a new window if not already in one
+            if current_start_idx is None:
+                current_start_idx = idx
+        else:
+            # Close the current window if one is open
+            if current_start_idx is not None:
+                end_idx = idx - 1
+                # Only add window if it has non-zero duration (more than 1 point)
+                if end_idx != current_start_idx:
+                    start_time = timestamps[current_start_idx]
+                    end_time = timestamps[end_idx]
+                    duration = (end_time - start_time).total_seconds()
+                    windows.append(
+                        VisibilityWindowResult(
+                            start_time=start_time,
+                            end_time=end_time,
+                            duration_seconds=duration,
+                        )
+                    )
+                current_start_idx = None
+
+    # Close any window that's still open at the end
+    if current_start_idx is not None:
+        start_time = timestamps[current_start_idx]
+        end_time = timestamps[-1]
+        duration = (end_time - start_time).total_seconds()
+        windows.append(
+            VisibilityWindowResult(
+                start_time=start_time,
+                end_time=end_time,
+                duration_seconds=duration,
             )
-            current_start = None
+        )
+
     return windows
