@@ -439,7 +439,7 @@ Horizons support is seamlessly integrated into all constraint types:
     # Works with any Horizons-accessible body
     result = constraint.evaluate_moving_body(
         ephemeris=ephem,
-        body=\"2\",  # Pallas asteroid
+        body="2",  # Pallas asteroid
         use_horizons=True
     )
 
