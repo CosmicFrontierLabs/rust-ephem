@@ -1498,22 +1498,6 @@ impl PyConstraint {
     ///         - all_satisfied: bool indicating if constraint was never violated
     ///         - constraint_name: string name of the constraint
     ///
-    /// Performance:
-    ///     The constraint evaluation itself is highly optimized (~0.3 µs per timestamp).
-    ///     However, when using `body=`, each call fetches positions from SPICE which can
-    ///     take ~80ms for 10,000 timestamps. For best performance when evaluating multiple
-    ///     constraints against the same body, pre-fetch the coordinates once:
-    ///
-    ///     >>> # FAST: Pre-fetch coordinates once, reuse for multiple constraints
-    ///     >>> skycoord = ephem.get_body("Jupiter")
-    ///     >>> ras, decs = list(skycoord.ra.deg), list(skycoord.dec.deg)
-    ///     >>> result1 = sun_constraint.evaluate_moving_body(ephem, target_ras=ras, target_decs=decs)
-    ///     >>> result2 = moon_constraint.evaluate_moving_body(ephem, target_ras=ras, target_decs=decs)
-    ///
-    ///     >>> # SLOWER: Each call re-fetches positions from SPICE
-    ///     >>> result1 = sun_constraint.evaluate_moving_body(ephem, body="Jupiter")
-    ///     >>> result2 = moon_constraint.evaluate_moving_body(ephem, body="Jupiter")
-    ///
     /// Example:
     ///     >>> # Using body name (queries SPICE or Horizons for positions)
     ///     >>> result = constraint.evaluate_moving_body(ephem, body="Jupiter")
