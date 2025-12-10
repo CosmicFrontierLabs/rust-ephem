@@ -96,7 +96,27 @@ class RustConstraintMixin(BaseModel):
         times: datetime | list[datetime] | None = None,
         body: str | int | None = None,
         use_horizons: bool = False,
-    ) -> MovingVisibilityResult: ...
+        kernel_spec: str | None = None,
+    ) -> MovingVisibilityResult:
+        """
+        Evaluate constraint for a moving body (varying RA/Dec over time).
+
+        Performance:
+            The constraint evaluation itself is highly optimized (~0.3 µs per timestamp).
+            When using `body=`, each call fetches positions from SPICE (~80ms for 10k timestamps).
+            For best performance with multiple constraints, pre-fetch coordinates once::
+
+                # FAST: Pre-fetch once
+                skycoord = ephem.get_body("Jupiter")
+                ras, decs = list(skycoord.ra.deg), list(skycoord.dec.deg)
+                result1 = sun_c.evaluate_moving_body(ephem, target_ras=ras, target_decs=decs)
+                result2 = moon_c.evaluate_moving_body(ephem, target_ras=ras, target_decs=decs)
+
+                # SLOWER: Re-fetches each call
+                result1 = sun_c.evaluate_moving_body(ephem, body="Jupiter")
+                result2 = moon_c.evaluate_moving_body(ephem, body="Jupiter")
+        """
+        ...
     def and_(self, other: ConstraintConfig) -> AndConstraint: ...
     def or_(self, other: ConstraintConfig) -> OrConstraint: ...
     def xor_(self, other: ConstraintConfig) -> XorConstraint: ...
@@ -208,12 +228,3 @@ ConstraintConfig = (
     | NotConstraint
 )
 CombinedConstraintConfig: TypeAdapter[ConstraintConfig]
-
-def moving_body_visibility(
-    constraint: ConstraintConfig,
-    ephemeris: Ephemeris,
-    ras: npt.ArrayLike | None = ...,
-    decs: npt.ArrayLike | None = ...,
-    timestamps: npt.ArrayLike | None = ...,
-    body: str | int | None = ...,
-) -> MovingVisibilityResult: ...

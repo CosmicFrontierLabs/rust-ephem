@@ -51,6 +51,7 @@ impl PyConstraint {
     }
 
     /// Internal helper to evaluate in_constraint_batch for a single target at a single time index
+    #[allow(dead_code)]
     fn eval_in_constraint_batch_single(
         &self,
         py: Python,
@@ -101,6 +102,57 @@ impl PyConstraint {
         Err(pyo3::exceptions::PyTypeError::new_err(
             "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
         ))
+    }
+
+    /// Vectorized evaluation for moving bodies - evaluates all targets at their corresponding times
+    ///
+    /// For N targets at N times, this calls in_constraint_batch once with all N targets
+    /// Uses the efficient diagonal batch evaluation for moving bodies.
+    /// Each target_i is evaluated only at time_i, which is O(N) instead of O(N²).
+    fn eval_moving_body_batch_diagonal(
+        &self,
+        py: Python,
+        ephemeris: &Py<PyAny>,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<Vec<bool>> {
+        let n = target_ras.len();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+
+        let bound = ephemeris.bind(py);
+
+        // Use the efficient diagonal batch evaluation
+        if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
+            self.evaluator.in_constraint_batch_diagonal(
+                &*ephem as &dyn EphemerisBase,
+                target_ras,
+                target_decs,
+            )
+        } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
+            self.evaluator.in_constraint_batch_diagonal(
+                &*ephem as &dyn EphemerisBase,
+                target_ras,
+                target_decs,
+            )
+        } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
+            self.evaluator.in_constraint_batch_diagonal(
+                &*ephem as &dyn EphemerisBase,
+                target_ras,
+                target_decs,
+            )
+        } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+            self.evaluator.in_constraint_batch_diagonal(
+                &*ephem as &dyn EphemerisBase,
+                target_ras,
+                target_decs,
+            )
+        } else {
+            Err(pyo3::exceptions::PyTypeError::new_err(
+                "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
+            ))
+        }
     }
 }
 
@@ -887,6 +939,43 @@ impl PyConstraint {
         })
     }
 
+    /// Combine this constraint with others using logical AND (instance method)
+    ///
+    /// Args:
+    ///     *constraints: Variable number of Constraint objects to combine with self
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint that is violated only if ALL input constraints are violated
+    ///
+    /// Example:
+    ///     >>> combined = sun_constraint.combine_and(moon_constraint, saa_constraint)
+    #[pyo3(signature = (*constraints))]
+    fn combine_and(&self, constraints: Vec<PyRef<PyConstraint>>) -> PyResult<Self> {
+        // Start with self's config
+        let mut configs: Vec<serde_json::Value> =
+            vec![serde_json::from_str(&self.config_json).unwrap()];
+
+        // Add all other constraints
+        configs.extend(
+            constraints
+                .iter()
+                .map(|c| serde_json::from_str(&c.config_json).unwrap()),
+        );
+
+        let config_json = serde_json::json!({
+            "type": "and",
+            "constraints": configs
+        })
+        .to_string();
+
+        let evaluator = parse_constraint_json(&serde_json::from_str(&config_json).unwrap())?;
+
+        Ok(PyConstraint {
+            evaluator,
+            config_json,
+        })
+    }
+
     /// Combine constraints with logical OR
     ///
     /// Args:
@@ -907,6 +996,43 @@ impl PyConstraint {
             .iter()
             .map(|c| serde_json::from_str(&c.config_json).unwrap())
             .collect();
+
+        let config_json = serde_json::json!({
+            "type": "or",
+            "constraints": configs
+        })
+        .to_string();
+
+        let evaluator = parse_constraint_json(&serde_json::from_str(&config_json).unwrap())?;
+
+        Ok(PyConstraint {
+            evaluator,
+            config_json,
+        })
+    }
+
+    /// Combine this constraint with others using logical OR (instance method)
+    ///
+    /// Args:
+    ///     *constraints: Variable number of Constraint objects to combine with self
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint that is violated if ANY input constraint is violated
+    ///
+    /// Example:
+    ///     >>> combined = sun_constraint.combine_or(moon_constraint, saa_constraint)
+    #[pyo3(signature = (*constraints))]
+    fn combine_or(&self, constraints: Vec<PyRef<PyConstraint>>) -> PyResult<Self> {
+        // Start with self's config
+        let mut configs: Vec<serde_json::Value> =
+            vec![serde_json::from_str(&self.config_json).unwrap()];
+
+        // Add all other constraints
+        configs.extend(
+            constraints
+                .iter()
+                .map(|c| serde_json::from_str(&c.config_json).unwrap()),
+        );
 
         let config_json = serde_json::json!({
             "type": "or",
@@ -1359,9 +1485,10 @@ impl PyConstraint {
     ///     times (datetime or list[datetime], optional): Specific times to evaluate (must match ras/decs length)
     ///     body (str, optional): Body identifier (NAIF ID or name like "Jupiter", "90004910")
     ///     use_horizons (bool): If True, query JPL Horizons for body positions (default: False)
+    ///     kernel_spec (str, optional): SPICE kernel specification for body lookup
     ///
     /// Returns:
-    ///     dict: Result dictionary containing:
+    ///     MovingBodyResult: Result object containing:
     ///         - timestamps: list of datetime objects
     ///         - ras: list of right ascensions in degrees
     ///         - decs: list of declinations in degrees
@@ -1370,6 +1497,22 @@ impl PyConstraint {
     ///         - visibility: list of visibility window dicts with start_time, end_time, duration_seconds
     ///         - all_satisfied: bool indicating if constraint was never violated
     ///         - constraint_name: string name of the constraint
+    ///
+    /// Performance:
+    ///     The constraint evaluation itself is highly optimized (~0.3 µs per timestamp).
+    ///     However, when using `body=`, each call fetches positions from SPICE which can
+    ///     take ~80ms for 10,000 timestamps. For best performance when evaluating multiple
+    ///     constraints against the same body, pre-fetch the coordinates once:
+    ///
+    ///     >>> # FAST: Pre-fetch coordinates once, reuse for multiple constraints
+    ///     >>> skycoord = ephem.get_body("Jupiter")
+    ///     >>> ras, decs = list(skycoord.ra.deg), list(skycoord.dec.deg)
+    ///     >>> result1 = sun_constraint.evaluate_moving_body(ephem, target_ras=ras, target_decs=decs)
+    ///     >>> result2 = moon_constraint.evaluate_moving_body(ephem, target_ras=ras, target_decs=decs)
+    ///
+    ///     >>> # SLOWER: Each call re-fetches positions from SPICE
+    ///     >>> result1 = sun_constraint.evaluate_moving_body(ephem, body="Jupiter")
+    ///     >>> result2 = moon_constraint.evaluate_moving_body(ephem, body="Jupiter")
     ///
     /// Example:
     ///     >>> # Using body name (queries SPICE or Horizons for positions)
@@ -1548,15 +1691,8 @@ impl PyConstraint {
             };
 
         // Evaluate constraint at each timestamp with corresponding RA/Dec
-        // For moving bodies, each time has a different RA/Dec, so we evaluate one at a time
-        let mut constraint_vec: Vec<bool> = Vec::with_capacity(timestamps.len());
-
-        for (idx, (ra, dec)) in ras.iter().zip(decs.iter()).enumerate() {
-            // Use in_constraint_batch with single target at single time index
-            let result_array =
-                self.eval_in_constraint_batch_single(py, &ephemeris, *ra, *dec, idx)?;
-            constraint_vec.push(result_array);
-        }
+        // VECTORIZED: Use batch evaluation with diagonal extraction for speed
+        let constraint_vec = self.eval_moving_body_batch_diagonal(py, &ephemeris, &ras, &decs)?;
 
         // Build violation windows from constraint_vec
         let violations = track_violations(
@@ -2044,6 +2180,36 @@ impl ConstraintEvaluator for AndEvaluator {
         Ok(result)
     }
 
+    /// Optimized diagonal evaluation for AND - uses O(N) diagonal from each sub-constraint
+    fn in_constraint_batch_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<Vec<bool>> {
+        let n = target_ras.len();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Get diagonal results from each sub-constraint
+        let sub_results: Result<Vec<_>, _> = self
+            .constraints
+            .iter()
+            .map(|c| c.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs))
+            .collect();
+        let sub_results = sub_results?;
+
+        // AND logic: violated if ALL sub-constraints are violated at each time
+        let mut result = Vec::with_capacity(n);
+        for i in 0..n {
+            let all_violated = sub_results.iter().all(|r| r[i]);
+            result.push(all_violated);
+        }
+
+        Ok(result)
+    }
+
     fn name(&self) -> String {
         format!(
             "AND({})",
@@ -2188,6 +2354,36 @@ impl ConstraintEvaluator for OrEvaluator {
         Ok(result)
     }
 
+    /// Optimized diagonal evaluation for OR - uses O(N) diagonal from each sub-constraint
+    fn in_constraint_batch_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<Vec<bool>> {
+        let n = target_ras.len();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Get diagonal results from each sub-constraint
+        let sub_results: Result<Vec<_>, _> = self
+            .constraints
+            .iter()
+            .map(|c| c.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs))
+            .collect();
+        let sub_results = sub_results?;
+
+        // OR logic: violated if ANY sub-constraint is violated at each time
+        let mut result = Vec::with_capacity(n);
+        for i in 0..n {
+            let any_violated = sub_results.iter().any(|r| r[i]);
+            result.push(any_violated);
+        }
+
+        Ok(result)
+    }
+
     fn name(&self) -> String {
         format!(
             "OR({})",
@@ -2309,6 +2505,21 @@ impl ConstraintEvaluator for NotEvaluator {
         }
 
         Ok(result)
+    }
+
+    /// Optimized diagonal evaluation for NOT - uses O(N) diagonal from sub-constraint
+    fn in_constraint_batch_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<Vec<bool>> {
+        let sub_result =
+            self.constraint
+                .in_constraint_batch_diagonal(ephemeris, target_ras, target_decs)?;
+
+        // NOT logic: invert all values
+        Ok(sub_result.into_iter().map(|v| !v).collect())
     }
 
     fn name(&self) -> String {
@@ -2436,6 +2647,36 @@ impl ConstraintEvaluator for XorEvaluator {
                 let violation_count = results.iter().filter(|r| r[[i, j]]).count();
                 result[[i, j]] = violation_count == 1;
             }
+        }
+
+        Ok(result)
+    }
+
+    /// Optimized diagonal evaluation for XOR - uses O(N) diagonal from each sub-constraint
+    fn in_constraint_batch_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<Vec<bool>> {
+        let n = target_ras.len();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Get diagonal results from each sub-constraint
+        let sub_results: Result<Vec<_>, _> = self
+            .constraints
+            .iter()
+            .map(|c| c.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs))
+            .collect();
+        let sub_results = sub_results?;
+
+        // XOR logic: violated when EXACTLY ONE sub-constraint is violated at each time
+        let mut result = Vec::with_capacity(n);
+        for i in 0..n {
+            let violation_count = sub_results.iter().filter(|r| r[i]).count();
+            result.push(violation_count == 1);
         }
 
         Ok(result)

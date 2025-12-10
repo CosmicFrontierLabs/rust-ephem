@@ -129,6 +129,36 @@ impl ConstraintEvaluator for SAAEvaluator {
         Ok(result)
     }
 
+    /// Optimized diagonal evaluation for SAA - O(N) since SAA only depends on time
+    ///
+    /// SAA constraint doesn't depend on target position, only on spacecraft lat/lon.
+    /// So for diagonal evaluation, we just return the SAA status at each time.
+    fn in_constraint_batch_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        _target_decs: &[f64],
+    ) -> PyResult<Vec<bool>> {
+        let n = target_ras.len();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Get lat/lon for first n time indices
+        let time_indices: Vec<usize> = (0..n).collect();
+        let (_times_slice, lats_slice, lons_slice) =
+            extract_latlon_data!(ephemeris, Some(&time_indices[..]));
+
+        // Evaluate SAA at each time
+        let mut result = Vec::with_capacity(n);
+        for i in 0..n {
+            let in_saa = self.point_in_polygon(lons_slice[i], lats_slice[i]);
+            result.push(in_saa);
+        }
+
+        Ok(result)
+    }
+
     fn name(&self) -> String {
         self.format_name()
     }

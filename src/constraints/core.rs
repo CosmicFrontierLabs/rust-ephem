@@ -515,6 +515,35 @@ pub trait ConstraintEvaluator: Send + Sync {
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>>;
 
+    /// Evaluate constraint for moving body (diagonal evaluation)
+    ///
+    /// For moving bodies, we need to evaluate target_i at time_i only (diagonal).
+    /// This is much more efficient than computing the full M×N matrix and extracting diagonal.
+    ///
+    /// # Arguments
+    /// * `ephemeris` - Ephemeris object providing all positional data
+    /// * `target_ras` - Array of right ascensions in degrees (length N)
+    /// * `target_decs` - Array of declinations in degrees (length N)
+    ///
+    /// # Returns
+    /// 1D boolean array (N) where result[i] = in_constraint(target_i, time_i)
+    ///
+    /// Default implementation falls back to N×N batch with diagonal extraction.
+    /// Implementations can override for O(N) performance.
+    fn in_constraint_batch_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<Vec<bool>> {
+        // Default: compute full N×N and extract diagonal
+        let n = target_ras.len();
+        let time_indices: Vec<usize> = (0..n).collect();
+        let full =
+            self.in_constraint_batch(ephemeris, target_ras, target_decs, Some(&time_indices))?;
+        Ok((0..n).map(|i| full[[i, i]]).collect())
+    }
+
     /// Get constraint name
     fn name(&self) -> String;
 
