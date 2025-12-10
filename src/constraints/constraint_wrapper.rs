@@ -1917,11 +1917,15 @@ impl ConstraintEvaluator for AndEvaluator {
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
         let times = ephemeris.get_times()?;
-        let times_filtered = if let Some(indices) = time_indices {
-            indices.iter().map(|&i| times[i]).collect()
+
+        // Build the actual indices we'll iterate over
+        let indices: Vec<usize> = if let Some(idx) = time_indices {
+            idx.to_vec()
         } else {
-            times.to_vec()
+            (0..times.len()).collect()
         };
+
+        let times_filtered: Vec<_> = indices.iter().map(|&i| times[i]).collect();
 
         let violations = track_violations(
             &times_filtered,
@@ -1929,9 +1933,17 @@ impl ConstraintEvaluator for AndEvaluator {
                 let mut all_violated = true;
                 let mut min_severity = f64::MAX;
 
+                // Use the ORIGINAL index, not the loop index
+                let original_idx = indices[i];
+
                 // Check each constraint at this time
                 for constraint in &self.constraints {
-                    let result = constraint.evaluate(ephemeris, target_ra, target_dec, Some(&[i]));
+                    let result = constraint.evaluate(
+                        ephemeris,
+                        target_ra,
+                        target_dec,
+                        Some(&[original_idx]),
+                    );
                     if let Ok(ref res) = result {
                         if res.violations.is_empty() {
                             all_violated = false;
@@ -1956,10 +1968,16 @@ impl ConstraintEvaluator for AndEvaluator {
             },
             |i, _is_open| {
                 let mut descriptions = Vec::new();
+                let original_idx = indices[i];
 
                 // Get descriptions from all violated constraints at this time
                 for constraint in &self.constraints {
-                    let result = constraint.evaluate(ephemeris, target_ra, target_dec, Some(&[i]));
+                    let result = constraint.evaluate(
+                        ephemeris,
+                        target_ra,
+                        target_dec,
+                        Some(&[original_idx]),
+                    );
                     if let Ok(ref res) = result {
                         for violation in &res.violations {
                             descriptions.push(violation.description.clone());
@@ -2052,11 +2070,15 @@ impl ConstraintEvaluator for OrEvaluator {
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
         let times = ephemeris.get_times()?;
-        let times_filtered = if let Some(indices) = time_indices {
-            indices.iter().map(|&i| times[i]).collect()
+
+        // Build the actual indices we'll iterate over
+        let indices: Vec<usize> = if let Some(idx) = time_indices {
+            idx.to_vec()
         } else {
-            times.to_vec()
+            (0..times.len()).collect()
         };
+
+        let times_filtered: Vec<_> = indices.iter().map(|&i| times[i]).collect();
 
         let violations = track_violations(
             &times_filtered,
@@ -2064,9 +2086,18 @@ impl ConstraintEvaluator for OrEvaluator {
                 let mut any_violated = false;
                 let mut max_severity = 0.0f64;
 
-                // Check each constraint at this time
+                // Use the ORIGINAL index, not the loop index
+                let original_idx = indices[i];
+
+                // OR logic: violated if ANY sub-constraint is violated
+                // (if any constraint blocks observation, target is not visible)
                 for constraint in &self.constraints {
-                    let result = constraint.evaluate(ephemeris, target_ra, target_dec, Some(&[i]));
+                    let result = constraint.evaluate(
+                        ephemeris,
+                        target_ra,
+                        target_dec,
+                        Some(&[original_idx]),
+                    );
                     if let Ok(ref res) = result {
                         if !res.violations.is_empty() {
                             any_violated = true;
@@ -2081,10 +2112,16 @@ impl ConstraintEvaluator for OrEvaluator {
             },
             |i, _is_open| {
                 let mut descriptions = Vec::new();
+                let original_idx = indices[i];
 
                 // Get descriptions from all violated constraints at this time
                 for constraint in &self.constraints {
-                    let result = constraint.evaluate(ephemeris, target_ra, target_dec, Some(&[i]));
+                    let result = constraint.evaluate(
+                        ephemeris,
+                        target_ra,
+                        target_dec,
+                        Some(&[original_idx]),
+                    );
                     if let Ok(ref res) = result {
                         for violation in &res.violations {
                             descriptions.push(violation.description.clone());
