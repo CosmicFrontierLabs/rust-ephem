@@ -309,9 +309,13 @@ def test_build_visibility_windows_merges_ranges():
     visibility = [False, True, True, False, True]
 
     windows = _build_visibility_windows(timestamps, visibility)
+    # Window 1: indices 1,2 are True. End time is last visible (idx 2), not first False
+    # Window 2: index 4 is True until end
     assert len(windows) == 2
     assert windows[0].start_time == timestamps[1]
-    assert windows[0].end_time == timestamps[3]
+    assert (
+        windows[0].end_time == timestamps[2]
+    )  # Last visible timestamp, not first False
     assert windows[1].start_time == timestamps[4]
 
     assert _build_visibility_windows([], []) == []
