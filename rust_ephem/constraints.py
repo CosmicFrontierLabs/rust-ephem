@@ -19,12 +19,6 @@ import rust_ephem
 
 from .ephemeris import Ephemeris
 
-if TYPE_CHECKING:
-    import rust_ephem
-
-if TYPE_CHECKING:
-    pass
-
 
 class ConstraintViolation(BaseModel):
     """A time window where a constraint was violated."""

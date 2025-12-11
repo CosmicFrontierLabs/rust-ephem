@@ -5,10 +5,12 @@ import numpy as np
 import pytest
 
 import rust_ephem
-import rust_ephem.constraints as constraints
 from rust_ephem.constraints import (
     AirmassConstraint,
+    ConstraintResult,
+    ConstraintViolation,
     MoonPhaseConstraint,
+    MovingVisibilityResult,
     SunConstraint,
 )
 
@@ -152,16 +154,16 @@ def dummy_rust_result() -> DummyRustResult:
 @pytest.fixture
 def constraint_result_with_rust_ref(
     dummy_rust_result: DummyRustResult,
-) -> Tuple[constraints.ConstraintResult, DummyRustResult]:
-    result = constraints.ConstraintResult(
+) -> Tuple[ConstraintResult, DummyRustResult]:
+    result = ConstraintResult(
         violations=[
-            constraints.ConstraintViolation(
+            ConstraintViolation(
                 start_time=datetime(2024, 1, 1, 0, 0, 0),
                 end_time=datetime(2024, 1, 1, 0, 0, 5),
                 max_severity=1.0,
                 description="v1",
             ),
-            constraints.ConstraintViolation(
+            ConstraintViolation(
                 start_time=datetime(2024, 1, 1, 0, 0, 10),
                 end_time=datetime(2024, 1, 1, 0, 0, 15),
                 max_severity=1.0,
@@ -176,16 +178,16 @@ def constraint_result_with_rust_ref(
 
 
 @pytest.fixture
-def constraint_result_without_rust_ref() -> constraints.ConstraintResult:
-    result = constraints.ConstraintResult(
+def constraint_result_without_rust_ref() -> ConstraintResult:
+    result = ConstraintResult(
         violations=[
-            constraints.ConstraintViolation(
+            ConstraintViolation(
                 start_time=datetime(2024, 1, 1, 0, 0, 0),
                 end_time=datetime(2024, 1, 1, 0, 0, 5),
                 max_severity=1.0,
                 description="v1",
             ),
-            constraints.ConstraintViolation(
+            ConstraintViolation(
                 start_time=datetime(2024, 1, 1, 0, 0, 10),
                 end_time=datetime(2024, 1, 1, 0, 0, 15),
                 max_severity=1.0,
@@ -264,72 +266,62 @@ def mock_ephemeris_single() -> Any:
 class TestEvaluateMovingBody:
     def test_timestamps(
         self,
-        constraint_result_with_rust_ref: Tuple[
-            constraints.ConstraintResult, DummyRustResult
-        ],
+        constraint_result_with_rust_ref: Tuple[ConstraintResult, DummyRustResult],
     ) -> None:
         result, rust_result = constraint_result_with_rust_ref
         assert result.timestamps == rust_result.timestamp
 
     def test_constraint_array(
         self,
-        constraint_result_with_rust_ref: Tuple[
-            constraints.ConstraintResult, DummyRustResult
-        ],
+        constraint_result_with_rust_ref: Tuple[ConstraintResult, DummyRustResult],
     ) -> None:
         result, rust_result = constraint_result_with_rust_ref
         assert result.constraint_array == rust_result.constraint_array
 
     def test_visibility(
         self,
-        constraint_result_with_rust_ref: Tuple[
-            constraints.ConstraintResult, DummyRustResult
-        ],
+        constraint_result_with_rust_ref: Tuple[ConstraintResult, DummyRustResult],
     ) -> None:
         result, rust_result = constraint_result_with_rust_ref
         assert result.visibility == rust_result.visibility
 
     def test_in_constraint(
         self,
-        constraint_result_with_rust_ref: Tuple[
-            constraints.ConstraintResult, DummyRustResult
-        ],
+        constraint_result_with_rust_ref: Tuple[ConstraintResult, DummyRustResult],
     ) -> None:
         result, rust_result = constraint_result_with_rust_ref
         assert result.in_constraint(result.timestamps[0]) is True
 
     def test_total_violation_duration(
-        self, constraint_result_without_rust_ref: constraints.ConstraintResult
+        self, constraint_result_without_rust_ref: ConstraintResult
     ) -> None:
         result = constraint_result_without_rust_ref
         assert result.total_violation_duration() == 10.0
 
-    def test_repr(
-        self, constraint_result_without_rust_ref: constraints.ConstraintResult
-    ) -> None:
+    def test_repr(self, constraint_result_without_rust_ref: ConstraintResult) -> None:
         result = constraint_result_without_rust_ref
         assert "ConstraintResult" in repr(result)
 
     def test_without_rust_ref_timestamps(self) -> None:
-        result: constraints.ConstraintResult = constraints.ConstraintResult(
+        result: ConstraintResult = ConstraintResult(
             violations=[], all_satisfied=True, constraint_name="empty"
         )
         assert result.timestamps == []
 
     def test_without_rust_ref_constraint_array(self) -> None:
-        result: constraints.ConstraintResult = constraints.ConstraintResult(
+        result: ConstraintResult = ConstraintResult(
             violations=[], all_satisfied=True, constraint_name="empty"
         )
         assert result.constraint_array == []
 
     def test_without_rust_ref_visibility(self) -> None:
-        result: constraints.ConstraintResult = constraints.ConstraintResult(
+        result: ConstraintResult = ConstraintResult(
             violations=[], all_satisfied=True, constraint_name="empty"
         )
         assert result.visibility == []
 
     def test_without_rust_ref_in_constraint_raises(self) -> None:
-        result: constraints.ConstraintResult = constraints.ConstraintResult(
+        result: ConstraintResult = ConstraintResult(
             violations=[], all_satisfied=True, constraint_name="empty"
         )
         with pytest.raises(ValueError):
@@ -341,10 +333,10 @@ class TestRustConstraintMixin:
         self, patched_constraint: Type[DummyConstraintBackend], dummy_ephemeris: Any
     ) -> None:
         constraint: SunConstraint = SunConstraint(min_angle=10.0)
-        _: constraints.ConstraintResult = constraint.evaluate(
+        _: ConstraintResult = constraint.evaluate(
             dummy_ephemeris, target_ra=1.0, target_dec=2.0
         )
-        _: constraints.ConstraintResult = constraint.evaluate(
+        _: ConstraintResult = constraint.evaluate(
             dummy_ephemeris, target_ra=3.0, target_dec=4.0
         )
         assert DummyConstraintBackend.created == 1
@@ -353,19 +345,19 @@ class TestRustConstraintMixin:
         self, patched_constraint: Type[DummyConstraintBackend], dummy_ephemeris: Any
     ) -> None:
         constraint: SunConstraint = SunConstraint(min_angle=10.0)
-        first: constraints.ConstraintResult = constraint.evaluate(
+        first: ConstraintResult = constraint.evaluate(
             dummy_ephemeris, target_ra=1.0, target_dec=2.0
         )
-        assert isinstance(first, constraints.ConstraintResult)
+        assert isinstance(first, ConstraintResult)
 
     def test_evaluate_creates_backend_once_second_result_type(
         self, patched_constraint: Type[DummyConstraintBackend], dummy_ephemeris: Any
     ) -> None:
         constraint: SunConstraint = SunConstraint(min_angle=10.0)
-        second: constraints.ConstraintResult = constraint.evaluate(
+        second: ConstraintResult = constraint.evaluate(
             dummy_ephemeris, target_ra=3.0, target_dec=4.0
         )
-        assert isinstance(second, constraints.ConstraintResult)
+        assert isinstance(second, ConstraintResult)
 
     def test_evaluate_creates_backend_once_evaluate_calls_length(
         self, patched_constraint: Type[DummyConstraintBackend], dummy_ephemeris: Any
@@ -380,14 +372,14 @@ class TestRustConstraintMixin:
         self, patched_constraint: Type[DummyConstraintBackend], dummy_ephemeris: Any
     ) -> None:
         constraint: SunConstraint = SunConstraint(min_angle=5.0)
-        _: np.ndarray = constraint.in_constraint_batch(
+        _ = constraint.in_constraint_batch(
             dummy_ephemeris,
             target_ras=[1.0, 2.0],
             target_decs=[3.0, 4.0],
             times=[datetime(2024, 1, 1)],
             indices=None,
         )
-        _dog = constraint.in_constraint(
+        _ = constraint.in_constraint(
             time=datetime(2024, 1, 1),
             ephemeris=dummy_ephemeris,
             target_ra=1.0,
@@ -642,7 +634,7 @@ class TestEvaluateMovingBodyMethod:
         constraint = SunConstraint(min_angle=10.0)
         result = constraint.evaluate_moving_body(mock_ephemeris_with_body, body=499)
 
-        assert isinstance(result, constraints.MovingVisibilityResult)
+        assert isinstance(result, MovingVisibilityResult)
 
     def test_with_explicit_coords_calls_backend_once(
         self,
@@ -711,4 +703,4 @@ class TestEvaluateMovingBodyMethod:
             mock_ephemeris_simple, target_ras=ras, target_decs=decs
         )
 
-        assert isinstance(result, constraints.MovingVisibilityResult)
+        assert isinstance(result, MovingVisibilityResult)
