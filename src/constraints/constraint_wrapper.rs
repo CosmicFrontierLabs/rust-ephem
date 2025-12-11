@@ -66,6 +66,7 @@ impl PyConstraint {
         };
 
         // Extract the boolean array for our single target (first row)
+        // Note: in_constraint_batch now consistently returns true when VIOLATED (matches track_violations)
         let violated: Vec<bool> = (0..violation_array.ncols())
             .map(|i| violation_array[[0, i]])
             .collect();
@@ -1221,7 +1222,7 @@ impl PyConstraint {
     ///
     /// Returns:
     ///     numpy.ndarray: 2D boolean array of shape (n_targets, n_times) where True
-    ///                    indicates the constraint is violated for that target at that time
+    ///                    indicates the constraint is VIOLATED (target not allowed) at that time
     ///
     /// Example:
     ///     >>> ras = [10.0, 20.0, 30.0]  # Three targets

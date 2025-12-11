@@ -348,7 +348,7 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
                     }
                 }
 
-                result[[j, i]] = !violated;
+                result[[j, i]] = violated;
             }
         }
 
