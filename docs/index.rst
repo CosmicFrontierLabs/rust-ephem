@@ -130,6 +130,7 @@ Documentation Contents
    ephemeris_oem
    ephemeris_skycoord
    ephemeris_get_body
+   ephemeris_horizons
 
 .. toctree::
    :maxdepth: 2
@@ -145,6 +146,12 @@ Documentation Contents
    api
    constraints_api
    planetary_ephemeris
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Developer Guide
+
+   horizons_implementation
 
 Indices and Tables
 ------------------

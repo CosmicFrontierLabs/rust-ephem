@@ -62,6 +62,91 @@ class VisibilityWindow:
         """Duration of the visibility window in seconds"""
         ...
 
+class ConstraintViolation:
+    """A time window when a constraint was violated."""
+
+    start_time: datetime
+    end_time: datetime
+    max_severity: float
+    description: str
+
+    def __repr__(self) -> str: ...
+    @property
+    def duration_seconds(self) -> float:
+        """Duration of the violation window in seconds."""
+        ...
+
+class MovingBodyResult:
+    """Result from evaluating a constraint against a moving body.
+
+    Contains the constraint evaluation results along with the body's
+    RA/Dec coordinates at each timestamp.
+    """
+
+    @property
+    def violations(self) -> list["ConstraintViolation"]:
+        """List of time windows when constraint was violated."""
+        ...
+
+    @property
+    def all_satisfied(self) -> bool:
+        """True if constraint was satisfied at all timestamps."""
+        ...
+
+    @property
+    def constraint_name(self) -> str:
+        """Name/description of the constraint."""
+        ...
+
+    @property
+    def timestamp(self) -> list[datetime]:
+        """List of timestamps that were evaluated."""
+        ...
+
+    @property
+    def ras(self) -> list[float]:
+        """Right ascensions in degrees at each timestamp."""
+        ...
+
+    @property
+    def decs(self) -> list[float]:
+        """Declinations in degrees at each timestamp."""
+        ...
+
+    @property
+    def constraint_array(self) -> list[bool]:
+        """Boolean array where True indicates constraint violation at that timestamp."""
+        ...
+
+    @property
+    def visibility(self) -> list[VisibilityWindow]:
+        """List of time windows when constraint was satisfied (target was visible)."""
+        ...
+
+    def in_constraint(self, time: datetime) -> bool:
+        """Check if constraint was violated at a specific time.
+
+        Args:
+            time: The time to check (must exist in timestamps).
+
+        Returns:
+            True if constraint was violated at the given time.
+
+        Raises:
+            ValueError: If time is not found in timestamps.
+        """
+        ...
+
+    def total_violation_duration(self) -> float:
+        """Get total duration of all constraint violations in seconds.
+
+        Returns:
+            Sum of all violation window durations in seconds.
+        """
+        ...
+
+    def __repr__(self) -> str: ...
+
 class Constraint:
     """Wrapper for constraint evaluation with ephemeris data"""
 
@@ -487,6 +572,69 @@ class Constraint:
         """
         ...
 
+    def evaluate_moving_body(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: list[float] | None = None,
+        target_decs: list[float] | None = None,
+        times: datetime | list[datetime] | None = None,
+        body: str | None = None,
+        use_horizons: bool = False,
+        spice_kernel: str | None = None,
+    ) -> MovingBodyResult:
+        """
+        Evaluate constraint for a moving body (varying RA/Dec over time).
+
+        This method evaluates the constraint for a body whose position changes over time,
+        such as a comet, asteroid, or planet. It returns detailed results including
+        per-timestamp violation status, visibility windows, and the body's coordinates.
+
+        There are two ways to specify the body's position:
+        1. Explicit coordinates: Provide `target_ras`, `target_decs`, and optionally `times`
+        2. Body lookup: Provide `body` name/ID and optionally `use_horizons` to query positions
+
+        Args:
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+            target_ras: Array of right ascensions in degrees (ICRS/J2000)
+            target_decs: Array of declinations in degrees (ICRS/J2000)
+            times: Specific times to evaluate (must match ras/decs length)
+            body: Body identifier (NAIF ID or name like "Jupiter", "90004910")
+            use_horizons: If True, query JPL Horizons for body positions (default: False)
+            spice_kernel: Path or URL to a SPICE kernel file for body positions.
+
+        Returns:
+            MovingBodyResult containing:
+                - violations: List of ConstraintViolation windows
+                - all_satisfied: bool indicating if constraint was never violated
+                - constraint_name: string name of the constraint
+                - timestamp: list of datetime objects
+                - ras: list of right ascensions in degrees
+                - decs: list of declinations in degrees
+                - constraint_array: list of bools (True = violated)
+                - visibility: list of VisibilityWindow objects
+
+        Performance:
+            The constraint evaluation itself is highly optimized (~0.3 µs per timestamp).
+            However, when using `body=`, each call fetches positions from SPICE which can
+            take ~80ms for 10,000 timestamps. For best performance when evaluating multiple
+            constraints against the same body, pre-fetch the coordinates once::
+
+                # FAST: Pre-fetch coordinates once, reuse for multiple constraints
+                skycoord = ephem.get_body("Jupiter")
+                ras, decs = list(skycoord.ra.deg), list(skycoord.dec.deg)
+                result1 = sun_constraint.evaluate_moving_body(ephem, target_ras=ras, target_decs=decs)
+                result2 = moon_constraint.evaluate_moving_body(ephem, target_ras=ras, target_decs=decs)
+
+                # SLOWER: Each call re-fetches positions from SPICE
+                result1 = sun_constraint.evaluate_moving_body(ephem, body="Jupiter")
+                result2 = moon_constraint.evaluate_moving_body(ephem, body="Jupiter")
+
+        Raises:
+            ValueError: If neither body nor target_ras/target_decs are provided
+            TypeError: If ephemeris type is not supported
+        """
+        ...
+
     def to_json(self) -> str:
         """
         Get constraint configuration as JSON string.
@@ -805,24 +953,32 @@ class TLEEphemeris(Ephemeris):
         """
         ...
 
-    def get_body_pv(self, body: str) -> PositionVelocityData:
+    def get_body_pv(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
             Position and velocity data for the requested body
         """
         ...
 
-    def get_body(self, body: str) -> Any:  # Returns astropy.coordinates.SkyCoord
+    def get_body(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
             astropy.coordinates.SkyCoord object
@@ -1248,24 +1404,32 @@ class SPICEEphemeris(Ephemeris):
         """
         ...
 
-    def get_body_pv(self, body: str) -> PositionVelocityData:
+    def get_body_pv(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
             Position and velocity data for the requested body
         """
         ...
 
-    def get_body(self, body: str) -> Any:  # Returns astropy.coordinates.SkyCoord
+    def get_body(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
             astropy.coordinates.SkyCoord object
@@ -1632,24 +1796,32 @@ class OEMEphemeris(Ephemeris):
         """
         ...
 
-    def get_body_pv(self, body: str) -> PositionVelocityData:
+    def get_body_pv(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
             Position and velocity data for the requested body
         """
         ...
 
-    def get_body(self, body: str) -> Any:  # Returns astropy.coordinates.SkyCoord
+    def get_body(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
             astropy.coordinates.SkyCoord object
@@ -2014,24 +2186,32 @@ class GroundEphemeris(Ephemeris):
         """
         ...
 
-    def get_body_pv(self, body: str) -> PositionVelocityData:
+    def get_body_pv(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
             Position and velocity data for the requested body
         """
         ...
 
-    def get_body(self, body: str) -> Any:  # Returns astropy.coordinates.SkyCoord
+    def get_body(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
             astropy.coordinates.SkyCoord object

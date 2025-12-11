@@ -22,12 +22,10 @@ use std::sync::OnceLock;
 #[pyclass(name = "ConstraintViolation")]
 #[derive(Clone, Debug)]
 pub struct ConstraintViolation {
-    /// Start time of the violation window
-    #[pyo3(get)]
-    pub start_time: String, // ISO 8601 format
-    /// End time of the violation window
-    #[pyo3(get)]
-    pub end_time: String, // ISO 8601 format
+    /// Start time of the violation window (internal storage)
+    pub start_time_internal: DateTime<Utc>,
+    /// End time of the violation window (internal storage)
+    pub end_time_internal: DateTime<Utc>,
     /// Maximum severity of violation in this window (0.0 = just violated, 1.0+ = severe)
     #[pyo3(get)]
     pub max_severity: f64,
@@ -38,10 +36,23 @@ pub struct ConstraintViolation {
 
 #[pymethods]
 impl ConstraintViolation {
+    #[getter]
+    fn start_time(&self, py: Python) -> PyResult<Py<PyAny>> {
+        utc_to_python_datetime(py, &self.start_time_internal)
+    }
+
+    #[getter]
+    fn end_time(&self, py: Python) -> PyResult<Py<PyAny>> {
+        utc_to_python_datetime(py, &self.end_time_internal)
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "ConstraintViolation(start='{}', end='{}', max_severity={:.3}, description='{}')",
-            self.start_time, self.end_time, self.max_severity, self.description
+            self.start_time_internal.to_rfc3339(),
+            self.end_time_internal.to_rfc3339(),
+            self.max_severity,
+            self.description
         )
     }
 }
@@ -131,16 +142,8 @@ impl ConstraintResult {
     fn total_violation_duration(&self) -> PyResult<f64> {
         let mut total_seconds = 0.0;
         for violation in &self.violations {
-            let start = DateTime::parse_from_rfc3339(&violation.start_time)
-                .map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("Invalid start time: {e}"))
-                })?
-                .with_timezone(&Utc);
-            let end = DateTime::parse_from_rfc3339(&violation.end_time)
-                .map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("Invalid end time: {e}"))
-                })?
-                .with_timezone(&Utc);
+            let start = violation.start_time_internal;
+            let end = violation.end_time_internal;
             total_seconds += (end - start).num_seconds() as f64;
         }
         Ok(total_seconds)
@@ -168,14 +171,12 @@ impl ConstraintResult {
 
         // Mark violated times - violations are already sorted by time
         for (i, t) in self.times.iter().enumerate() {
-            let t_str = t.to_rfc3339();
             // Binary search could be used here, but violation count is typically small
-            // and the string comparison overhead dominates
             for v in &self.violations {
-                if t_str < v.start_time {
+                if t < &v.start_time_internal {
                     break; // Violations are sorted, no need to check further
                 }
-                if v.start_time <= t_str && t_str <= v.end_time {
+                if &v.start_time_internal <= t && t <= &v.end_time_internal {
                     violated[i] = true;
                     break;
                 }
@@ -246,9 +247,8 @@ impl ConstraintResult {
         // Find matching time in our array
         if let Some(_idx) = self.times.iter().position(|t| t == &dt) {
             // Check if this time falls within any violation window
-            let t_str = dt.to_rfc3339();
             for v in &self.violations {
-                if v.start_time <= t_str && t_str <= v.end_time {
+                if v.start_time_internal <= dt && dt <= v.end_time_internal {
                     // Time is in a violation window, so in-constraint (violated)
                     return Ok(true);
                 }
@@ -309,6 +309,156 @@ impl ConstraintResult {
     }
 }
 
+/// Result of constraint evaluation for a moving body
+///
+/// Extends ConstraintResult with RA/Dec arrays for the moving body's position
+/// at each evaluation time.
+#[pyclass(name = "MovingBodyResult")]
+pub struct MovingBodyResult {
+    /// List of time windows where the constraint was violated
+    #[pyo3(get)]
+    pub violations: Vec<ConstraintViolation>,
+    /// Whether the constraint was satisfied for the entire time range
+    #[pyo3(get)]
+    pub all_satisfied: bool,
+    /// Constraint name/description
+    #[pyo3(get)]
+    pub constraint_name: String,
+    /// Right ascensions in degrees for each timestamp
+    #[pyo3(get)]
+    pub ras: Vec<f64>,
+    /// Declinations in degrees for each timestamp
+    #[pyo3(get)]
+    pub decs: Vec<f64>,
+    /// Evaluation times as Rust DateTime<Utc>, not directly exposed to Python
+    pub times: Vec<DateTime<Utc>>,
+    /// Boolean array indicating constraint violation at each time (True = violated)
+    constraint_vec: Vec<bool>,
+}
+
+impl MovingBodyResult {
+    /// Create a new MovingBodyResult
+    pub fn new(
+        violations: Vec<ConstraintViolation>,
+        all_satisfied: bool,
+        constraint_name: String,
+        times: Vec<DateTime<Utc>>,
+        ras: Vec<f64>,
+        decs: Vec<f64>,
+        constraint_vec: Vec<bool>,
+    ) -> Self {
+        Self {
+            violations,
+            all_satisfied,
+            constraint_name,
+            ras,
+            decs,
+            times,
+            constraint_vec,
+        }
+    }
+}
+
+#[pymethods]
+impl MovingBodyResult {
+    fn __repr__(&self) -> String {
+        format!(
+            "MovingBodyResult(constraint='{}', violations={}, all_satisfied={}, n_times={})",
+            self.constraint_name,
+            self.violations.len(),
+            self.all_satisfied,
+            self.times.len()
+        )
+    }
+
+    /// Get the total duration of violations in seconds
+    fn total_violation_duration(&self) -> PyResult<f64> {
+        let mut total_seconds = 0.0;
+        for violation in &self.violations {
+            let start = violation.start_time_internal;
+            let end = violation.end_time_internal;
+            total_seconds += (end - start).num_seconds() as f64;
+        }
+        Ok(total_seconds)
+    }
+
+    /// Property: array of booleans for each timestamp where True means constraint violated
+    #[getter]
+    fn constraint_array(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let py_list = pyo3::types::PyList::empty(py);
+        for b in &self.constraint_vec {
+            py_list.append(pyo3::types::PyBool::new(py, *b))?;
+        }
+        Ok(py_list.into())
+    }
+
+    /// Property: array of Python datetime objects for each evaluation time (as numpy array)
+    #[getter]
+    fn timestamp(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let np = pyo3::types::PyModule::import(py, "numpy")
+            .map_err(|_| pyo3::exceptions::PyImportError::new_err("numpy is required"))?;
+
+        let py_list = pyo3::types::PyList::empty(py);
+        for dt in &self.times {
+            let py_dt = utc_to_python_datetime(py, dt)?;
+            py_list.append(py_dt)?;
+        }
+
+        let np_array = np.getattr("array")?.call1((py_list,))?;
+        Ok(np_array.into())
+    }
+
+    /// Check if the target is in-constraint at a given time.
+    fn in_constraint(&self, _py: Python, time: &Bound<PyAny>) -> PyResult<bool> {
+        let dt = python_datetime_to_utc(time)?;
+
+        if let Some(idx) = self.times.iter().position(|t| t == &dt) {
+            Ok(self.constraint_vec[idx])
+        } else {
+            Err(pyo3::exceptions::PyValueError::new_err(
+                "time not found in evaluated timestamps",
+            ))
+        }
+    }
+
+    /// Property: array of visibility windows when target is not constrained
+    #[getter]
+    fn visibility(&self, py: Python) -> PyResult<Vec<VisibilityWindow>> {
+        if self.times.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut windows = Vec::new();
+        let mut current_window_start: Option<usize> = None;
+
+        for (i, &is_violated) in self.constraint_vec.iter().enumerate() {
+            let is_satisfied = !is_violated;
+            if is_satisfied {
+                if current_window_start.is_none() {
+                    current_window_start = Some(i);
+                }
+            } else if let Some(start_idx) = current_window_start {
+                if i - 1 != start_idx {
+                    windows.push(VisibilityWindow {
+                        start_time: utc_to_python_datetime(py, &self.times[start_idx])?,
+                        end_time: utc_to_python_datetime(py, &self.times[i - 1])?,
+                    });
+                }
+                current_window_start = None;
+            }
+        }
+
+        if let Some(start_idx) = current_window_start {
+            windows.push(VisibilityWindow {
+                start_time: utc_to_python_datetime(py, &self.times[start_idx])?,
+                end_time: utc_to_python_datetime(py, &self.times[self.times.len() - 1])?,
+            });
+        }
+
+        Ok(windows)
+    }
+}
+
 /// Configuration for constraint evaluation
 ///
 /// This is the base trait that all constraint configurations must implement.
@@ -331,6 +481,7 @@ pub trait ConstraintEvaluator: Send + Sync {
     ///
     /// # Returns
     /// Result containing violation windows
+    #[allow(dead_code)]
     fn evaluate(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -357,6 +508,35 @@ pub trait ConstraintEvaluator: Send + Sync {
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>>;
 
+    /// Evaluate constraint for moving body (diagonal evaluation)
+    ///
+    /// For moving bodies, we need to evaluate target_i at time_i only (diagonal).
+    /// This is much more efficient than computing the full M×N matrix and extracting diagonal.
+    ///
+    /// # Arguments
+    /// * `ephemeris` - Ephemeris object providing all positional data
+    /// * `target_ras` - Array of right ascensions in degrees (length N)
+    /// * `target_decs` - Array of declinations in degrees (length N)
+    ///
+    /// # Returns
+    /// 1D boolean array (N) where result[i] = in_constraint(target_i, time_i)
+    ///
+    /// Default implementation falls back to N×N batch with diagonal extraction.
+    /// Implementations can override for O(N) performance.
+    fn in_constraint_batch_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<Vec<bool>> {
+        // Default: compute full N×N and extract diagonal
+        let n = target_ras.len();
+        let time_indices: Vec<usize> = (0..n).collect();
+        let full =
+            self.in_constraint_batch(ephemeris, target_ras, target_decs, Some(&time_indices))?;
+        Ok((0..n).map(|i| full[[i, i]]).collect())
+    }
+
     /// Get constraint name
     fn name(&self) -> String;
 
@@ -370,6 +550,7 @@ pub trait ConstraintEvaluator: Send + Sync {
 macro_rules! impl_proximity_evaluator {
     ($evaluator:ty, $body_name:expr, $friendly_name:expr, $positions:ident) => {
         impl $evaluator {
+            #[allow(dead_code)]
             fn evaluate_common(
                 &self,
                 times: &[DateTime<Utc>],
@@ -456,8 +637,8 @@ where
             }
         } else if let Some((start_idx, max_severity)) = current_violation {
             violations.push(ConstraintViolation {
-                start_time: times[start_idx].to_rfc3339(),
-                end_time: times[i - 1].to_rfc3339(),
+                start_time_internal: times[start_idx],
+                end_time_internal: times[i - 1],
                 max_severity,
                 description: get_description(start_idx, false),
             });
@@ -468,8 +649,8 @@ where
     // Close any open violation at the end
     if let Some((start_idx, max_severity)) = current_violation {
         violations.push(ConstraintViolation {
-            start_time: times[start_idx].to_rfc3339(),
-            end_time: times[times.len() - 1].to_rfc3339(),
+            start_time_internal: times[start_idx],
+            end_time_internal: times[times.len() - 1],
             max_severity,
             description: get_description(start_idx, true),
         });

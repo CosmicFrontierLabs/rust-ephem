@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use anise::prelude::*;
 use once_cell::sync::OnceCell;
+use url::Url;
 
 /// Global almanac for planetary ephemeris (Moon, Sun, planets) loaded from DE440/DE440s SPK files.
 /// This is NOT used for spacecraft-specific ephemeris.
@@ -62,6 +63,39 @@ pub fn download_planetary_ephemeris(
     let mut file = std::fs::File::create(dest_path)?;
     std::io::copy(&mut reader, &mut file)?;
     Ok(())
+}
+
+/// Ensure planetary ephemeris is initialized from a specific SPK path or URL.
+/// If a URL is provided, the file is cached under the rust_ephem cache directory.
+pub fn ensure_planetary_ephemeris_spec(
+    spec: &str,
+) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    use crate::utils::config::CACHE_DIR;
+
+    // Determine if spec is a URL
+    let parsed = Url::parse(spec);
+    let spk_path = if let Ok(url) = parsed {
+        let filename = url
+            .path_segments()
+            .and_then(|mut s| s.next_back())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| format!("URL '{spec}' does not contain a filename"))?;
+        let dest = CACHE_DIR.join(filename);
+        if !dest.exists() {
+            download_planetary_ephemeris(spec, &dest)?;
+        }
+        dest
+    } else {
+        // Treat as local path
+        let p = std::path::PathBuf::from(spec);
+        if !p.exists() {
+            return Err(format!("SPK file not found at '{}'.", p.display()).into());
+        }
+        p
+    };
+
+    init_planetary_ephemeris(&spk_path)?;
+    Ok(spk_path)
 }
 
 /// Ensure the planetary ephemeris SPK (e.g., de440.bsp or de440s.bsp) is present and initialize the

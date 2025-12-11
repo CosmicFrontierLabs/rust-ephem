@@ -160,6 +160,7 @@ pub struct EphemerisData {
     pub moon_angular_radius_rad_cache: OnceLock<Py<PyAny>>,
     pub earth_angular_radius_rad_cache: OnceLock<Py<PyAny>>,
     /// Cached Sun altitude angles (in degrees) for all times
+    #[allow(dead_code)]
     pub sun_altitudes_cache: OnceLock<Array1<f64>>,
 }
 
@@ -892,7 +893,13 @@ pub trait EphemerisBase {
     /// jupiter = eph.get_body("Jupiter")  # By name
     /// mars = eph.get_body("499")  # By NAIF ID
     /// ```
-    fn get_body_pv(&self, py: Python, body_identifier: &str) -> PyResult<Py<PositionVelocityData>> {
+    fn get_body_pv(
+        &self,
+        py: Python,
+        body_identifier: &str,
+        spice_kernel: Option<&str>,
+        use_horizons: bool,
+    ) -> PyResult<Py<PositionVelocityData>> {
         use crate::utils::celestial::calculate_body_by_id_or_name;
         use crate::utils::config::EARTH_NAIF_ID;
 
@@ -903,8 +910,14 @@ pub trait EphemerisBase {
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available."))?;
 
         // Calculate body position relative to Earth center
-        let body_geocentric = calculate_body_by_id_or_name(times, body_identifier, EARTH_NAIF_ID)
-            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        let body_geocentric = calculate_body_by_id_or_name(
+            times,
+            body_identifier,
+            EARTH_NAIF_ID,
+            spice_kernel,
+            use_horizons,
+        )
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
 
         // Get observer's geocentric position
         let observer_geocentric = self.data().gcrs.as_ref().ok_or_else(|| {
@@ -943,6 +956,8 @@ pub trait EphemerisBase {
         py: Python,
         modules: &AstropyModules,
         body_identifier: &str,
+        spice_kernel: Option<&str>,
+        use_horizons: bool,
     ) -> PyResult<Py<PyAny>> {
         use crate::utils::celestial::calculate_body_by_id_or_name;
         use crate::utils::config::EARTH_NAIF_ID;
@@ -954,8 +969,14 @@ pub trait EphemerisBase {
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available."))?;
 
         // Calculate body position relative to Earth center
-        let body_geocentric = calculate_body_by_id_or_name(times, body_identifier, EARTH_NAIF_ID)
-            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        let body_geocentric = calculate_body_by_id_or_name(
+            times,
+            body_identifier,
+            EARTH_NAIF_ID,
+            spice_kernel,
+            use_horizons,
+        )
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
 
         // Get observer's geocentric position
         let observer_geocentric = self.data().gcrs.as_ref().ok_or_else(|| {

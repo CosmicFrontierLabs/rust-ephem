@@ -129,8 +129,8 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
                 }
             } else if let Some((start_idx, max_severity)) = current_violation {
                 violations.push(ConstraintViolation {
-                    start_time: times_filtered[start_idx].to_rfc3339(),
-                    end_time: times_filtered[i - 1].to_rfc3339(),
+                    start_time_internal: times_filtered[start_idx],
+                    end_time_internal: times_filtered[i - 1],
                     max_severity,
                     description: match self.max_angle_deg {
                         Some(max) => format!(
@@ -171,8 +171,8 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
             let threshold_deg = earth_ang_radius_deg + self.min_angle_deg + horizon_dip_correction;
 
             violations.push(ConstraintViolation {
-                start_time: times_filtered[start_idx].to_rfc3339(),
-                end_time: times_filtered[times_filtered.len() - 1].to_rfc3339(),
+                start_time_internal: times_filtered[start_idx],
+                end_time_internal: times_filtered[times_filtered.len() - 1],
                 max_severity,
                 description: match self.max_angle_deg {
                     Some(max) => format!(

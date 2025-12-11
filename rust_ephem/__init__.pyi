@@ -8,6 +8,9 @@ from rust_ephem._rust_ephem import (
     GroundEphemeris as GroundEphemeris,
 )
 from rust_ephem._rust_ephem import (
+    MovingBodyResult as MovingBodyResult,
+)
+from rust_ephem._rust_ephem import (
     OEMEphemeris as OEMEphemeris,
 )
 from rust_ephem._rust_ephem import (
@@ -156,6 +159,7 @@ __all__ = [
     "Constraint",
     "ConstraintResult",
     "ConstraintViolation",
+    "MovingBodyResult",
     "VisibilityWindow",
     "init_planetary_ephemeris",
     "download_planetary_ephemeris",

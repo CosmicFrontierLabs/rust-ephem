@@ -115,3 +115,33 @@ Calculating Separations
     sun = ephem.get_body("Sun")
     sun_sep = target.separation(sun)
     print(f"Target-Sun separation: {sun_sep[0].to(u.deg):.2f}")
+
+JPL Horizons Fallback
+---------------------
+
+For solar system bodies not in your SPICE kernel (asteroids, comets, spacecraft),
+enable JPL Horizons with ``use_horizons=True``:
+
+.. code-block:: python
+
+    # Query asteroid Ceres (not in default DE440S kernel)
+    ceres = ephem.get_body("1", use_horizons=True)
+    print(f"Ceres RA/Dec: {ceres[0].ra}, {ceres[0].dec}")
+
+    # Or by name
+    apophis = ephem.get_body("Apophis", use_horizons=True)
+
+    # Get position/velocity data
+    ceres_pv = ephem.get_body_pv("1", use_horizons=True)
+    print(f"Distance: {np.linalg.norm(ceres_pv.position[0]):.0f} km")
+
+Horizons is automatically queried only when:
+
+1. The body is not found in SPICE kernels
+2. ``use_horizons=True`` is explicitly set
+3. An internet connection is available
+
+This provides the best of both worlds: fast SPICE lookups when available, with
+automatic fallback to Horizons for broader body coverage. For a comprehensive
+guide to Horizons usage including asteroid tracking, constraint integration, and
+troubleshooting, see :doc:`ephemeris_horizons`.

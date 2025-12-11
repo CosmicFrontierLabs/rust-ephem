@@ -255,6 +255,7 @@ impl ConstraintEvaluator for AltAzEvaluator {
 
 impl AltAzEvaluator {
     /// Format a description of the violation based on altitude and azimuth
+    #[allow(dead_code)]
     fn format_violation_description(&self, altitude_deg: f64, azimuth_deg: f64) -> String {
         let mut reasons = Vec::new();
 

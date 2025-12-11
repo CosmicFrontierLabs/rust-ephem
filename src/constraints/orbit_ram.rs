@@ -217,7 +217,7 @@ impl ConstraintEvaluator for OrbitRamEvaluator {
                     }
                 }
 
-                result[[j, i]] = !violated;
+                result[[j, i]] = violated;
             }
         }
 

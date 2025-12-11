@@ -326,6 +326,7 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
 
 impl MoonPhaseEvaluator {
     /// Get descriptive name for moon phase based on illumination
+    #[allow(dead_code)]
     fn get_moon_phase_name(&self, illumination: f64) -> &'static str {
         if illumination < 0.02 {
             "New Moon"

@@ -15,10 +15,9 @@ import numpy as np
 import numpy.typing as npt
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
-from .ephemeris import Ephemeris
+import rust_ephem
 
-if TYPE_CHECKING:
-    pass
+from .ephemeris import Ephemeris
 
 
 class ConstraintViolation(BaseModel):
@@ -78,14 +77,12 @@ class ConstraintResult(BaseModel):
         return []
 
     @property
-    def visibility(self) -> list[bool]:
-        """Visibility windows - inverse of constraint violations.
-
-        Returns an array where True indicates the constraint is satisfied
-        (target is visible), opposite of constraint_array semantics.
-        """
+    def visibility(self) -> list["rust_ephem.VisibilityWindow"]:
+        """Visibility windows when the constraint is satisfied (target visible)."""
         if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
-            return cast(list[bool], self._rust_result_ref.visibility)
+            return cast(
+                list["rust_ephem.VisibilityWindow"], self._rust_result_ref.visibility
+            )
         return []
 
     def total_violation_duration(self) -> float:
@@ -166,14 +163,12 @@ class RustConstraintMixin(BaseModel):
             indices,
         )
 
-        # Convert to Pydantic model, parsing ISO 8601 timestamps to datetime objects
+        # Convert to Pydantic model - Rust now returns datetime objects directly
         return ConstraintResult(
             violations=[
                 ConstraintViolation(
-                    start_time=datetime.fromisoformat(
-                        v.start_time.replace("Z", "+00:00")
-                    ),
-                    end_time=datetime.fromisoformat(v.end_time.replace("Z", "+00:00")),
+                    start_time=v.start_time,
+                    end_time=v.end_time,
                     max_severity=v.max_severity,
                     description=v.description,
                 )
@@ -258,6 +253,99 @@ class RustConstraintMixin(BaseModel):
             ephemeris,
             target_ra,
             target_dec,
+        )
+
+    def evaluate_moving_body(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: list[float] | npt.ArrayLike | None = None,
+        target_decs: list[float] | npt.ArrayLike | None = None,
+        times: datetime | list[datetime] | None = None,
+        body: str | int | None = None,
+        use_horizons: bool = False,
+        spice_kernel: str | None = None,
+    ) -> MovingVisibilityResult:
+        """Evaluate constraint for a moving body (varying RA/Dec over time).
+
+        This method evaluates the constraint for a body whose position changes over time,
+        such as a comet, asteroid, or planet. It returns detailed results including
+        per-timestamp violation status, visibility windows, and the body's coordinates.
+
+        There are two ways to specify the body's position:
+        1. Explicit coordinates: Provide `target_ras`, `target_decs`, and optionally `times`
+        2. Body lookup: Provide `body` name/ID and optionally `use_horizons` to query positions
+
+        Args:
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+            target_ras: Array of right ascensions in degrees (ICRS/J2000)
+            target_decs: Array of declinations in degrees (ICRS/J2000)
+            times: Specific times to evaluate (must match ras/decs length)
+            body: Body identifier (NAIF ID or name like "Jupiter", "90004910")
+            use_horizons: If True, query JPL Horizons for body positions (default: False)
+            spice_kernel: Path or URL to a SPICE kernel file for body positions.
+                Can be a local path or URL (e.g., from JPL Horizons SPK files).
+
+        Returns:
+            MovingVisibilityResult with per-timestamp violation flags, visibility flags,
+            RA/Dec coordinates, and merged visibility windows.
+
+        Example:
+            >>> # Using body name (queries SPICE or Horizons for positions)
+            >>> result = constraint.evaluate_moving_body(ephem, body="Jupiter")
+            >>> # Using explicit coordinates for a comet
+            >>> result = constraint.evaluate_moving_body(ephem, target_ras=ras, target_decs=decs)
+            >>> # Using a SPICE kernel for an asteroid
+            >>> result = constraint.evaluate_moving_body(
+            ...     ephem, body="2000001", spice_kernel="/path/to/ceres.bsp"
+            ... )
+        """
+        if not hasattr(self, "_rust_constraint"):
+            from rust_ephem import Constraint
+
+            self._rust_constraint = Constraint.from_json(self.model_dump_json())
+
+        # Convert array-like to lists of floats if needed
+        ras_list: list[float] | None = None
+        decs_list: list[float] | None = None
+        if target_ras is not None:
+            ras_list = np.asarray(target_ras, dtype=float).tolist()
+        if target_decs is not None:
+            decs_list = np.asarray(target_decs, dtype=float).tolist()
+        body_str = str(body) if body is not None else None
+
+        # Call Rust implementation - returns MovingBodyResult object
+        rust_result = self._rust_constraint.evaluate_moving_body(
+            ephemeris,
+            ras_list,
+            decs_list,
+            times,
+            body_str,
+            use_horizons,
+            spice_kernel,
+        )
+
+        # Convert Rust VisibilityWindow objects to VisibilityWindowResult
+        visibility_windows = [
+            VisibilityWindowResult(
+                start_time=w.start_time,
+                end_time=w.end_time,
+                duration_seconds=w.duration_seconds,
+            )
+            for w in rust_result.visibility
+        ]
+
+        # Convert constraint_array (violations) to visibility_flags (satisfied)
+        visibility_flags = [not v for v in rust_result.constraint_array]
+
+        return MovingVisibilityResult(
+            timestamps=rust_result.timestamp,
+            ras=rust_result.ras,
+            decs=rust_result.decs,
+            constraint_array=rust_result.constraint_array,
+            visibility_flags=visibility_flags,
+            visibility=visibility_windows,
+            all_satisfied=rust_result.all_satisfied,
+            constraint_name=rust_result.constraint_name,
         )
 
     def and_(self, other: ConstraintConfig) -> AndConstraint:
@@ -784,3 +872,24 @@ NotConstraint.model_rebuild()
 
 # Type adapter for ConstraintConfig union
 CombinedConstraintConfig: TypeAdapter[ConstraintConfig] = TypeAdapter(ConstraintConfig)
+
+
+class VisibilityWindowResult(BaseModel):
+    """Visibility window for a moving target."""
+
+    start_time: datetime
+    end_time: datetime
+    duration_seconds: float
+
+
+class MovingVisibilityResult(BaseModel):
+    """Result for moving target visibility evaluation."""
+
+    timestamps: list[datetime]
+    ras: list[float]  # Right ascension in degrees for each timestamp
+    decs: list[float]  # Declination in degrees for each timestamp
+    constraint_array: list[bool]
+    visibility_flags: list[bool]
+    visibility: list[VisibilityWindowResult]
+    all_satisfied: bool
+    constraint_name: str

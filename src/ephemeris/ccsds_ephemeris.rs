@@ -30,6 +30,7 @@ use crate::ephemeris::position_velocity::PositionVelocityData;
 use crate::utils::conversions;
 use crate::utils::interpolation::hermite_interpolate;
 use crate::utils::time_utils::python_datetime_to_utc;
+use crate::utils::to_skycoord::AstropyModules;
 
 /// A simple OEM state vector record
 #[derive(Debug, Clone)]
@@ -346,13 +347,34 @@ impl OEMEphemeris {
         self.find_closest_index(time)
     }
 
-    fn get_body_pv(&self, py: Python, body: &str) -> PyResult<Py<PositionVelocityData>> {
-        <Self as EphemerisBase>::get_body_pv(self, py, body)
+    #[pyo3(signature = (body, spice_kernel=None, use_horizons=false))]
+    fn get_body_pv(
+        &self,
+        py: Python,
+        body: &str,
+        spice_kernel: Option<String>,
+        use_horizons: bool,
+    ) -> PyResult<Py<PositionVelocityData>> {
+        <Self as EphemerisBase>::get_body_pv(self, py, body, spice_kernel.as_deref(), use_horizons)
     }
 
-    fn get_body(&self, py: Python, body: &str) -> PyResult<Py<PyAny>> {
-        let modules = crate::utils::to_skycoord::AstropyModules::import(py)?;
-        <Self as EphemerisBase>::get_body(self, py, &modules, body)
+    #[pyo3(signature = (body, spice_kernel=None, use_horizons=false))]
+    fn get_body(
+        &self,
+        py: Python,
+        body: &str,
+        spice_kernel: Option<String>,
+        use_horizons: bool,
+    ) -> PyResult<Py<PyAny>> {
+        let modules = AstropyModules::import(py)?;
+        <Self as EphemerisBase>::get_body(
+            self,
+            py,
+            &modules,
+            body,
+            spice_kernel.as_deref(),
+            use_horizons,
+        )
     }
 
     /// Convert RA/Dec to Altitude/Azimuth for this OEM ephemeris

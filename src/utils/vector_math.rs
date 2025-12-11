@@ -11,6 +11,7 @@
 ///
 /// # Returns
 /// Unit vector [x, y, z] in ICRS/J2000 frame
+#[allow(dead_code)]
 pub fn radec_to_unit_vector(ra_deg: f64, dec_deg: f64) -> [f64; 3] {
     let ra_rad = ra_deg.to_radians();
     let dec_rad = dec_deg.to_radians();
@@ -73,6 +74,7 @@ pub fn vector_magnitude(v: &[f64; 3]) -> f64 {
 ///
 /// # Returns
 /// Angular separation in degrees
+#[allow(dead_code)]
 pub fn calculate_angular_separation(
     target_vec: &[f64; 3],
     body_position: &[f64; 3],

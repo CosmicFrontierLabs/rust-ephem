@@ -177,7 +177,7 @@ impl ConstraintEvaluator for AirmassEvaluator {
                     }
                 }
 
-                result[[j, i]] = !violated;
+                result[[j, i]] = violated;
             }
         }
 

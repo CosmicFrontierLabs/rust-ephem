@@ -576,6 +576,130 @@ Plan observations over multiple days:
                      f"({w.duration_seconds/60:.0f} min)")
 
 
+Moving Target Visibility
+------------------------
+
+For targets that move across the sky (asteroids, comets, spacecraft), use the
+``Constraint.evaluate_moving_body()`` method with JPL Horizons support:
+
+Basic Moving Target Tracking
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Track any solar system body by name or NAIF ID:
+
+.. code-block:: python
+
+    # Define constraint
+    constraint = SunConstraint(min_angle=30) & MoonConstraint(min_angle=15)
+
+    # Track Mars (using SPICE kernel)
+    result = constraint.evaluate_moving_body(
+        ephemeris=ephem,
+        body="Mars"
+    )
+
+    print(f"Mars visibility windows: {len(result.visibility)}")
+    for window in result.visibility:
+        print(f"  {window.start_time} to {window.end_time}")
+
+Using JPL Horizons for Extended Coverage
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Enable JPL Horizons to access asteroids, comets, and spacecraft beyond SPICE kernels:
+
+.. code-block:: python
+
+    # Track Ceres asteroid
+    result = constraint.evaluate_moving_body(
+        ephemeris=ephem,
+        body="1",  # Ceres NAIF ID
+        use_horizons=True  # ← Enable Horizons fallback
+    )
+
+    # Track Apophis asteroid
+    result = constraint.evaluate_moving_body(
+        ephemeris=ephem,
+        body="99942",  # Apophis
+        use_horizons=True
+    )
+
+    # Track by name (also works with Horizons)
+    result = constraint.evaluate_moving_body(
+        ephemeris=ephem,
+        body="Apophis",
+        use_horizons=True
+    )
+
+**How Horizons Integration Works:**
+
+1. **SPICE first** — Checks local SPICE kernels for the body
+2. **Horizons fallback** — If not in SPICE and ``use_horizons=True``, queries NASA's JPL Horizons
+3. **Frame conversion** — Horizons returns heliocentric coordinates; automatically converted to observer-relative
+4. **Constraint evaluation** — Body position evaluated against all constraints over the time range
+
+Custom RA/Dec Arrays
+^^^^^^^^^^^^^^^^^^^^^
+
+For custom target paths (non-solar system objects), provide explicit RA/Dec arrays:
+
+.. code-block:: python
+
+    import numpy as np
+
+    # Define moving target path
+    times = ephem.timestamp
+    ras = np.linspace(100, 110, len(times))      # RA moves from 100° to 110°
+    decs = np.linspace(10, 20, len(times))       # Dec moves from 10° to 20°
+
+    result = constraint.evaluate_moving_body(
+        ephemeris=ephem,
+        target_ras=list(ras),
+        target_decs=list(decs),
+    )
+
+    print(f"Visibility windows: {len(result.visibility)}")
+
+Asteroid Close Approach Monitoring
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Monitor visibility during an asteroid's close approach:
+
+.. code-block:: python
+
+    from datetime import datetime, timedelta, timezone
+
+    # Apophis close approach period (April 2029)
+    begin = datetime(2029, 4, 1, tzinfo=timezone.utc)
+    end = datetime(2029, 4, 14, tzinfo=timezone.utc)
+
+    # Ground observation site
+    obs = rust_ephem.GroundEphemeris(
+        latitude=40.0,    # Your observatory
+        longitude=-105.0,
+        height=1600,
+        begin=begin,
+        end=end,
+        step_size=3600  # Hourly resolution
+    )
+
+    # Stringent constraints for close approach observation
+    constraint = (
+        SunConstraint(min_angle=10) &  # Not too close to Sun
+        MoonConstraint(min_angle=20) &  # Away from Moon
+        EarthLimbConstraint(min_angle=5)  # Clear of Earth limb
+    )
+
+    result = constraint.evaluate_moving_body(
+        ephemeris=obs,
+        body="99942",  # Apophis
+        use_horizons=True
+    )
+
+    print(f"Apophis observable for {len(result.visibility)} period(s)")
+    for window in result.visibility:
+        hours = window.duration_seconds / 3600
+        print(f"  {window.start_time} → {window.end_time} ({hours:.1f} hours)")
+
 Performance Tips
 ----------------
 

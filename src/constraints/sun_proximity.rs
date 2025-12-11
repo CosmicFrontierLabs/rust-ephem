@@ -34,6 +34,7 @@ struct SunProximityEvaluator {
 impl_proximity_evaluator!(SunProximityEvaluator, "Sun", "Sun", sun_positions);
 
 impl SunProximityEvaluator {
+    #[allow(dead_code)]
     fn default_final_violation_description(&self) -> String {
         match self.max_angle_deg {
             Some(max) => format!(
@@ -47,6 +48,7 @@ impl SunProximityEvaluator {
         }
     }
 
+    #[allow(dead_code)]
     fn default_intermediate_violation_description(&self) -> String {
         "Target violates Sun proximity constraint".to_string()
     }
@@ -157,6 +159,89 @@ impl ConstraintEvaluator for SunProximityEvaluator {
 
                 result[[target_idx, t]] = is_violated;
             }
+        }
+
+        Ok(result)
+    }
+
+    /// Optimized diagonal evaluation for moving bodies - O(N) instead of O(N²)
+    ///
+    /// For moving bodies, we only need target_i at time_i (diagonal of M×N matrix).
+    /// This avoids allocating and computing the full N×N matrix.
+    fn in_constraint_batch_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<Vec<bool>> {
+        let n = target_ras.len();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Get ephemeris data
+        let sun_positions = ephemeris.get_sun_positions()?;
+        let observer_positions = ephemeris.get_gcrs_positions()?;
+
+        // Ensure we have enough time steps
+        if sun_positions.nrows() < n || observer_positions.nrows() < n {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Not enough ephemeris time steps for diagonal evaluation",
+            ));
+        }
+
+        // Convert all target RA/Dec to unit vectors
+        let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
+
+        // Evaluate only diagonal elements: target_i at time_i
+        let mut result = Vec::with_capacity(n);
+
+        for i in 0..n {
+            let sun_pos = [
+                sun_positions[[i, 0]],
+                sun_positions[[i, 1]],
+                sun_positions[[i, 2]],
+            ];
+            let obs_pos = [
+                observer_positions[[i, 0]],
+                observer_positions[[i, 1]],
+                observer_positions[[i, 2]],
+            ];
+
+            // Compute relative sun position from observer
+            let sun_rel = [
+                sun_pos[0] - obs_pos[0],
+                sun_pos[1] - obs_pos[1],
+                sun_pos[2] - obs_pos[2],
+            ];
+            let sun_dist =
+                (sun_rel[0] * sun_rel[0] + sun_rel[1] * sun_rel[1] + sun_rel[2] * sun_rel[2])
+                    .sqrt();
+            let sun_unit = [
+                sun_rel[0] / sun_dist,
+                sun_rel[1] / sun_dist,
+                sun_rel[2] / sun_dist,
+            ];
+
+            // Get target vector at this index
+            let target_vec = [
+                target_vectors[[i, 0]],
+                target_vectors[[i, 1]],
+                target_vectors[[i, 2]],
+            ];
+
+            // Calculate angle between target and sun
+            let dot = target_vec[0] * sun_unit[0]
+                + target_vec[1] * sun_unit[1]
+                + target_vec[2] * sun_unit[2];
+            let dot_clamped = dot.clamp(-1.0, 1.0);
+            let angle_deg = dot_clamped.acos().to_degrees();
+
+            // Check if violated
+            let is_violated = angle_deg < self.min_angle_deg
+                || self.max_angle_deg.is_some_and(|max| angle_deg > max);
+
+            result.push(is_violated);
         }
 
         Ok(result)
