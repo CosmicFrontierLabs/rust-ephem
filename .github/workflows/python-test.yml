@@ -34,8 +34,8 @@ jobs:
           sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
           rm Cargo.toml.bak
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - name: Install uv and set the Python ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@v7
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -49,15 +49,15 @@ jobs:
           # Optional: additional cache key prefix for manual cache invalidation
           prefix-key: "v1-rust"
       - name: Install maturin
-        run: pip install maturin
+        run: uv pip install maturin
 
       - name: Install test dependencies
-        run: pip install pytest numpy astropy pydantic
+        run: uv pip install pytest numpy astropy pydantic
 
       - name: Build and install rust-ephem
         run: |
           maturin build --release
-          pip install target/wheels/*.whl --force-reinstall --no-deps
+          uv pip install target/wheels/*.whl --force-reinstall --no-deps
 
       - name: Run cargo test
         run: cargo test --verbose
