@@ -101,7 +101,7 @@ class TestAirmassConstraint:
         result = constraint.in_constraint_batch(
             ground_ephemeris, target_ras, target_decs
         )
-        assert np.all(result[0, :])
+        assert np.all(~result[0, :])  # All False = all satisfied (not violated)
 
     # def test_airmass_constraint_batch_target1_satisfied(
     #     self, ground_ephemeris: rust_ephem.GroundEphemeris
@@ -125,7 +125,7 @@ class TestAirmassConstraint:
         result = constraint.in_constraint_batch(
             ground_ephemeris, target_ras, target_decs
         )
-        assert np.any(~result[2, :])
+        assert np.any(result[2, :])  # Some True = some violated
 
 
 class TestDaytimeConstraint:
