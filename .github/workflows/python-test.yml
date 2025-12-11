@@ -20,7 +20,7 @@ jobs:
         python-version: ["3.10"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -37,6 +37,7 @@ jobs:
       - name: Install uv and set the Python ${{ matrix.python-version }}
         uses: astral-sh/setup-uv@v7
         with:
+          activate-environment: true
           python-version: ${{ matrix.python-version }}
 
       - uses: actions-rs/toolchain@v1
@@ -48,6 +49,7 @@ jobs:
         with:
           # Optional: additional cache key prefix for manual cache invalidation
           prefix-key: "v1-rust"
+
       - name: Install maturin
         run: uv pip install maturin
 
