@@ -57,11 +57,14 @@ impl OMMEphemeris {
             credentials,
             enforce_source.as_deref(),
         )
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        .map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("fetch_omm_unified failed: {}", e))
+        })?;
 
         // Convert OMM to SGP4 Elements directly
-        omm_to_elements(&fetched.data)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        omm_to_elements(&fetched.data).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("omm_to_elements failed: {}", e))
+        })?;
 
         // Check that begin and end are provided
         let begin = begin.ok_or_else(|| {
@@ -71,7 +74,12 @@ impl OMMEphemeris {
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("end parameter is required"))?;
 
         // Use common timestamp generation logic
-        let times = generate_timestamps(begin, end, step_size)?;
+        let times = generate_timestamps(begin, end, step_size).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "generate_timestamps failed (begin/end/step_size): {}",
+                e
+            ))
+        })?;
 
         let omm_data = fetched.data;
 
@@ -86,10 +94,18 @@ impl OMMEphemeris {
         };
 
         // Pre-compute all frames
-        ephemeris.propagate_to_teme()?;
-        ephemeris.teme_to_itrs()?;
-        ephemeris.teme_to_gcrs()?;
-        ephemeris.calculate_sun_moon()?;
+        ephemeris.propagate_to_teme().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("propagate_to_teme failed: {}", e))
+        })?;
+        ephemeris.teme_to_itrs().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("teme_to_itrs failed: {}", e))
+        })?;
+        ephemeris.teme_to_gcrs().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("teme_to_gcrs failed: {}", e))
+        })?;
+        ephemeris.calculate_sun_moon().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("calculate_sun_moon failed: {}", e))
+        })?;
 
         // Note: SkyCoords are now created lazily on first access
 

@@ -86,3 +86,6 @@ pub const DEFAULT_EPOCH_TOLERANCE_DAYS: f64 = 4.0;
 
 /// TTL for cached TLE downloads (24 hours)
 pub const TLE_CACHE_TTL: u64 = 86_400;
+
+/// TTL for cached OMM downloads (24 hours)
+pub const OMM_CACHE_TTL: u64 = 86_400;

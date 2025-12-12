@@ -6,10 +6,15 @@
 //! - Converting OMM to SGP4-compatible TLE format
 
 use crate::utils::config::{
-    DEFAULT_EPOCH_TOLERANCE_DAYS, SPACETRACK_API_BASE, SPACETRACK_USERNAME_ENV,
+    CACHE_DIR, DEFAULT_EPOCH_TOLERANCE_DAYS, OMM_CACHE_TTL, SPACETRACK_API_BASE,
+    SPACETRACK_USERNAME_ENV,
 };
 use chrono::{DateTime, Utc};
 use std::error::Error;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 /// OMM data structure containing mean orbital elements
 #[derive(Debug, Clone)]
@@ -28,7 +33,7 @@ pub struct OMMData {
     pub classification_type: Option<String>,
     pub norad_cat_id_str: String,
     pub element_set_no: u32,
-    pub rev_at_epoch: f64,
+    pub rev_at_epoch: u64,
     pub bstar: f64,
     pub mean_motion_dot: f64,
     pub mean_motion_ddot: f64,
@@ -44,7 +49,8 @@ pub struct FetchedOMM {
     pub data: OMMData,
 }
 
-/// Parse OMM data from a string in CCSDS OMM format
+/// Parse OMM data from a string in CCSDS OMM format (key-value pairs)
+#[allow(dead_code)]
 pub fn parse_omm_string(content: &str) -> Result<OMMData, Box<dyn Error>> {
     let lines = content.lines();
 
@@ -61,7 +67,7 @@ pub fn parse_omm_string(content: &str) -> Result<OMMData, Box<dyn Error>> {
     let mut classification_type = None;
     let mut norad_cat_id_str = None;
     let mut element_set_no = None;
-    let mut rev_at_epoch = None;
+    let mut rev_at_epoch: Option<u64> = None;
     let mut bstar = None;
     let mut mean_motion_dot = None;
     let mut mean_motion_ddot = None;
@@ -149,14 +155,229 @@ pub fn parse_omm_string(content: &str) -> Result<OMMData, Box<dyn Error>> {
     })
 }
 
+/// Parse OMM data from Celestrak/Space-Track JSON format
+pub fn parse_omm_json(content: &str) -> Result<OMMData, Box<dyn Error>> {
+    use serde_json::Value;
+
+    let content = content.trim();
+    #[cfg(debug_assertions)]
+    {
+        eprintln!("DEBUG: About to parse JSON, length: {}", content.len());
+        eprintln!(
+            "DEBUG: First 100 chars: {:?}",
+            &content[..content.len().min(100)]
+        );
+    }
+    let json: Value = serde_json::from_str(content).map_err(|e| {
+        let err_msg = format!(
+            "JSON parse error at position {}: {} (content length: {})",
+            e.column(),
+            e,
+            content.len()
+        );
+        #[cfg(debug_assertions)]
+        eprintln!("DEBUG: {}", err_msg);
+        err_msg
+    })?;
+
+    #[cfg(debug_assertions)]
+    eprintln!("DEBUG: JSON parsed successfully!");
+
+    // Celestrak returns an array with one object
+    let obj = json
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|obj| obj.as_object())
+        .ok_or_else(|| {
+            format!(
+                "Invalid JSON format: expected array with object, got: {:?}",
+                json
+            )
+        })?;
+
+    #[cfg(debug_assertions)]
+    eprintln!("DEBUG: Extracted object from array");
+
+    // Helper function to get f64 values (handles both numbers and strings)
+    let get_f64 = |key: &str| -> Result<f64, Box<dyn Error>> {
+        match obj.get(key) {
+            Some(value) => {
+                // Try as number first, then as string
+                if let Some(num) = value.as_f64() {
+                    Ok(num)
+                } else if let Some(s) = value.as_str() {
+                    s.parse::<f64>().map_err(|e| {
+                        format!(
+                            "Field {} cannot be parsed as f64: {} (value: {:?})",
+                            key, e, s
+                        )
+                        .into()
+                    })
+                } else {
+                    Err(format!("Field {} is not a number or string: {:?}", key, value).into())
+                }
+            }
+            None => Err(format!("Missing {} field", key).into()),
+        }
+    };
+
+    // Helper function to get u32 values (handles both numbers and strings)
+    let get_u32 = |key: &str| -> Result<u32, Box<dyn Error>> {
+        match obj.get(key) {
+            Some(value) => {
+                // Try as number first, then as string
+                if let Some(num) = value.as_u64() {
+                    Ok(num as u32)
+                } else if let Some(s) = value.as_str() {
+                    s.parse::<u32>().map_err(|e| {
+                        format!(
+                            "Field {} cannot be parsed as u32: {} (value: {:?})",
+                            key, e, s
+                        )
+                        .into()
+                    })
+                } else {
+                    Err(format!("Field {} is not a number or string: {:?}", key, value).into())
+                }
+            }
+            None => Err(format!(
+                "Missing {} field. Available keys: {:?}",
+                key,
+                obj.keys().collect::<Vec<_>>()
+            )
+            .into()),
+        }
+    };
+
+    // Helper function to get u64 values (handles both numbers and strings)
+    let get_u64 = |key: &str| -> Result<u64, Box<dyn Error>> {
+        match obj.get(key) {
+            Some(value) => {
+                if let Some(num) = value.as_u64() {
+                    Ok(num)
+                } else if let Some(s) = value.as_str() {
+                    s.parse::<u64>().map_err(|e| {
+                        format!(
+                            "Field {} cannot be parsed as u64: {} (value: {:?})",
+                            key, e, s
+                        )
+                        .into()
+                    })
+                } else {
+                    Err(format!("Field {} is not a number or string: {:?}", key, value).into())
+                }
+            }
+            None => Err(format!("Missing {} field", key).into()),
+        }
+    };
+
+    // Helper function to get optional f64 values (handles both numbers and strings)
+    let get_opt_f64 = |key: &str| -> Option<f64> {
+        obj.get(key).and_then(|v| {
+            v.as_f64()
+                .or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
+        })
+    };
+
+    // Helper function to get string values
+    let get_string = |key: &str| -> Result<String, Box<dyn Error>> {
+        obj.get(key)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| format!("Missing or invalid {} field", key).into())
+    };
+
+    // Helper function to get optional string values
+    let get_opt_string = |key: &str| -> Option<String> {
+        obj.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+    };
+
+    let norad_cat_id = get_u32("NORAD_CAT_ID")?;
+    #[cfg(debug_assertions)]
+    eprintln!("DEBUG: Got NORAD_CAT_ID: {}", norad_cat_id);
+    let epoch_raw = get_string("EPOCH")?;
+    let epoch_str = epoch_raw.trim();
+    #[cfg(debug_assertions)]
+    {
+        eprintln!("DEBUG: Got EPOCH raw: {:?}", epoch_raw);
+        eprintln!("DEBUG: Got EPOCH trimmed: {:?}", epoch_str);
+    }
+
+    // Parse epoch - handle both formats: with and without timezone.
+    // Some sources omit timezone (e.g. "2025-12-12T03:41:57.165504"). Treat those as UTC.
+    let epoch = if epoch_str.ends_with('Z')
+        || epoch_str.contains('+')
+        || (epoch_str.matches('-').count() > 2)
+    {
+        // Has explicit timezone (has more than 2 dashes, meaning a timezone offset like -05:00)
+        DateTime::parse_from_rfc3339(epoch_str)
+            .map_err(|e| {
+                format!(
+                    "Failed to parse EPOCH (timezone) as RFC3339: {:?} (bytes: {:02X?}): {}",
+                    epoch_str,
+                    epoch_str.as_bytes(),
+                    e
+                )
+            })?
+            .with_timezone(&Utc)
+    } else {
+        // No timezone, assume UTC by appending 'Z' and parsing as RFC3339.
+        let epoch_rfc3339 = format!("{}Z", epoch_str);
+        #[cfg(debug_assertions)]
+        eprintln!("DEBUG: EPOCH assumed-UTC RFC3339: {:?}", epoch_rfc3339);
+        DateTime::parse_from_rfc3339(&epoch_rfc3339)
+            .map_err(|e| {
+                format!(
+                    "Failed to parse EPOCH (assumed UTC) as RFC3339: {:?} (bytes: {:02X?}): {}",
+                    epoch_rfc3339,
+                    epoch_rfc3339.as_bytes(),
+                    e
+                )
+            })?
+            .with_timezone(&Utc)
+    };
+
+    Ok(OMMData {
+        norad_cat_id,
+        object_name: get_opt_string("OBJECT_NAME"),
+        epoch,
+        mean_motion: get_f64("MEAN_MOTION")?,
+        eccentricity: get_f64("ECCENTRICITY")?,
+        inclination: get_f64("INCLINATION")?,
+        ra_of_asc_node: get_f64("RA_OF_ASC_NODE")?,
+        arg_of_pericenter: get_f64("ARG_OF_PERICENTER")?,
+        mean_anomaly: get_f64("MEAN_ANOMALY")?,
+        ephemeris_type: get_u32("EPHEMERIS_TYPE")?,
+        classification_type: get_opt_string("CLASSIFICATION_TYPE"),
+        norad_cat_id_str: norad_cat_id.to_string(),
+        element_set_no: get_u32("ELEMENT_SET_NO")?,
+        rev_at_epoch: get_u64("REV_AT_EPOCH")?,
+        bstar: get_f64("BSTAR")?,
+        mean_motion_dot: get_f64("MEAN_MOTION_DOT")?,
+        mean_motion_ddot: get_f64("MEAN_MOTION_DDOT")?,
+        semimajor_axis: get_opt_f64("SEMIMAJOR_AXIS"),
+        period: get_opt_f64("PERIOD"),
+        apoapsis: get_opt_f64("APOAPSIS"),
+        periapsis: get_opt_f64("PERIAPSIS"),
+    })
+}
+
 /// Convert OMM data to SGP4 Elements for direct propagation
 pub fn omm_to_elements(omm: &OMMData) -> Result<sgp4::Elements, Box<dyn Error>> {
     use serde_json::json;
 
+    // sgp4 deserializes OMM EPOCH into chrono::NaiveDateTime (no timezone).
+    // If we include a timezone suffix ("Z" or "+00:00"), chrono will error with "trailing input".
+    let epoch_omm = omm
+        .epoch
+        .naive_utc()
+        .format("%Y-%m-%dT%H:%M:%S%.f")
+        .to_string();
+
     let elements_json = json!({
         "OBJECT_NAME": omm.object_name,
         "OBJECT_ID": omm.norad_cat_id_str,
-        "EPOCH": omm.epoch.to_rfc3339(),
+        "EPOCH": epoch_omm,
         "MEAN_MOTION": omm.mean_motion,
         "ECCENTRICITY": omm.eccentricity,
         "INCLINATION": omm.inclination,
@@ -177,18 +398,124 @@ pub fn omm_to_elements(omm: &OMMData) -> Result<sgp4::Elements, Box<dyn Error>> 
     Ok(elements)
 }
 
-/// Fetch OMM data from Celestrak by NORAD ID
-/// Note: Celestrak does not provide OMM format, only TLE. This function returns an error.
-pub fn fetch_omm_from_celestrak(_norad_id: u32) -> Result<FetchedOMM, Box<dyn Error>> {
-    Err("Celestrak does not provide OMM data format. Use Space-Track.org for OMM data.".into())
+/// Get cache path for OMM data by NORAD ID and source
+fn get_omm_cache_path(norad_id: u32, source: &str) -> PathBuf {
+    let mut path = CACHE_DIR.clone();
+    path.push("omm_cache");
+    path.push(format!("{}_{}.json", norad_id, source));
+    path
 }
 
-/// Fetch OMM data from Space-Track.org by NORAD ID
+/// Try to read OMM data from cache if it's fresh
+fn try_read_fresh_omm_cache(path: &Path, ttl: Duration) -> Option<String> {
+    let meta = fs::metadata(path).ok()?;
+    if let Ok(modified) = meta.modified() {
+        if let Ok(age) = SystemTime::now().duration_since(modified) {
+            if age <= ttl {
+                if let Ok(content) = fs::read_to_string(path) {
+                    // Only print debug info in debug builds
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "OMM loaded from cache: {} (age: {}s)",
+                        path.display(),
+                        age.as_secs()
+                    );
+                    return Some(content);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Save OMM content to cache
+fn save_omm_to_cache(path: &Path, content: &str) {
+    if let Some(parent) = path.parent() {
+        if let Err(_e) = fs::create_dir_all(parent) {
+            // Log error but don't fail - caching is optional
+            #[cfg(debug_assertions)]
+            eprintln!("Warning: Failed to create OMM cache directory: {}", _e);
+            return;
+        }
+    }
+    if let Err(_e) = fs::File::create(path).and_then(|mut f| f.write_all(content.as_bytes())) {
+        // Log error but don't fail - caching is optional
+        #[cfg(debug_assertions)]
+        eprintln!("Warning: Failed to write OMM to cache: {}", _e);
+    }
+}
+
+/// Fetch OMM data from Celestrak by NORAD ID with caching
+pub fn fetch_omm_from_celestrak(norad_id: u32) -> Result<FetchedOMM, Box<dyn Error>> {
+    let cache_path = get_omm_cache_path(norad_id, "celestrak");
+    let ttl = Duration::from_secs(OMM_CACHE_TTL);
+
+    // Try to use cached version
+    if let Some(content) = try_read_fresh_omm_cache(&cache_path, ttl) {
+        return parse_omm_json(&content).map(|data| FetchedOMM { data });
+    }
+
+    // Download fresh OMM data
+    let url = format!(
+        "https://celestrak.org/NORAD/elements/gp.php?CATNR={}&FORMAT=JSON",
+        norad_id
+    );
+
+    let mut response = ureq::get(&url)
+        .call()
+        .map_err(|e| format!("Failed to fetch OMM data from Celestrak: {}", e))?;
+
+    if response.status() != 200 {
+        return Err(format!("Celestrak query failed with status: {}", response.status()).into());
+    }
+
+    let body = response
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| format!("Failed to read Celestrak response body: {}", e))?;
+
+    #[cfg(debug_assertions)]
+    eprintln!("Celestrak response body length: {}", body.len());
+
+    // Always log the actual content for debugging
+    eprintln!("DEBUG: Celestrak body: {:?}", &body[..body.len().min(200)]);
+    eprintln!(
+        "DEBUG: Celestrak body end: {:?}",
+        &body[body.len().saturating_sub(50)..]
+    );
+
+    if body.trim().is_empty() || body.contains("No GP data found") {
+        return Err(format!("No OMM data found for NORAD ID {} on Celestrak", norad_id).into());
+    }
+
+    // Cache the successful response
+    save_omm_to_cache(&cache_path, &body);
+
+    let omm_data = parse_omm_json(&body)?;
+    Ok(FetchedOMM { data: omm_data })
+}
+
+/// Fetch OMM data from Space-Track.org by NORAD ID with caching
 pub fn fetch_omm_from_spacetrack(
     norad_id: u32,
     target_epoch: Option<&DateTime<Utc>>,
     credentials: Option<crate::utils::tle_utils::SpaceTrackCredentials>,
 ) -> Result<FetchedOMM, Box<dyn Error>> {
+    // Create cache key that includes epoch information
+    let cache_key = if let Some(epoch) = target_epoch {
+        format!("spacetrack_{}_epoch_{}", norad_id, epoch.format("%Y%m%d"))
+    } else {
+        format!("spacetrack_{}_latest", norad_id)
+    };
+    let cache_path = get_omm_cache_path(norad_id, &cache_key);
+    let ttl = Duration::from_secs(OMM_CACHE_TTL);
+
+    // Try to use cached version
+    if let Some(content) = try_read_fresh_omm_cache(&cache_path, ttl) {
+        return parse_omm_json(&content).map(|data| FetchedOMM { data });
+    }
+
+    // Download fresh OMM data
     let creds = credentials
         .map(Ok)
         .unwrap_or_else(|| crate::utils::tle_utils::SpaceTrackCredentials::from_env())?;
@@ -196,7 +523,7 @@ pub fn fetch_omm_from_spacetrack(
     let agent = crate::utils::tle_utils::create_spacetrack_agent(&creds)?;
 
     let query_url = if let Some(epoch) = target_epoch {
-        // Query for OMM data near the target epoch
+        // Query for OMM data near the target epoch in JSON format
         let start_epoch = *epoch - chrono::Duration::days(DEFAULT_EPOCH_TOLERANCE_DAYS as i64);
         let end_epoch = *epoch + chrono::Duration::days(DEFAULT_EPOCH_TOLERANCE_DAYS as i64);
 
@@ -204,13 +531,13 @@ pub fn fetch_omm_from_spacetrack(
         let end_str = end_epoch.format("%Y-%m-%d").to_string();
 
         format!(
-            "{}/basicspacedata/query/class/omm/NORAD_CAT_ID/{}/EPOCH/{}--{}/orderby/EPOCH%20desc/format/omm",
+            "{}/basicspacedata/query/class/gp/NORAD_CAT_ID/{}/EPOCH/{}--{}/orderby/EPOCH%20desc/limit/1/format/json",
             SPACETRACK_API_BASE, norad_id, start_str, end_str
         )
     } else {
-        // Query for latest OMM data
+        // Query for latest OMM data in JSON format
         format!(
-            "{}/basicspacedata/query/class/omm/NORAD_CAT_ID/{}/orderby/EPOCH%20desc/limit/1/format/omm",
+            "{}/basicspacedata/query/class/gp/NORAD_CAT_ID/{}/orderby/EPOCH%20desc/limit/1/format/json",
             SPACETRACK_API_BASE, norad_id
         )
     };
@@ -233,7 +560,10 @@ pub fn fetch_omm_from_spacetrack(
         .into());
     }
 
-    let omm_data = parse_omm_string(&body)?;
+    // Cache the successful response
+    save_omm_to_cache(&cache_path, &body);
+
+    let omm_data = parse_omm_json(&body)?;
     Ok(FetchedOMM { data: omm_data })
 }
 
@@ -265,17 +595,25 @@ pub fn fetch_omm_unified(
         None => {} // Try both sources
     }
 
-    // Try Space-Track first if credentials are available or norad_id is provided
+    // Try Space-Track first if credentials are available, then fall back to Celestrak
     if let Some(nid) = norad_id {
         if spacetrack_credentials.is_some() || std::env::var(SPACETRACK_USERNAME_ENV).is_ok() {
             match fetch_omm_from_spacetrack(nid, target_epoch, spacetrack_credentials.clone()) {
                 Ok(result) => return Ok(result),
-                Err(e) => {
-                    return Err(format!("Space-Track.org OMM fetch failed: {}. OMM data requires Space-Track.org access.", e).into());
+                Err(spacetrack_error) => {
+                    // Fall back to Celestrak if Space-Track fails
+                    match fetch_omm_from_celestrak(nid) {
+                        Ok(result) => return Ok(result),
+                        Err(celestrak_error) => {
+                            return Err(format!("Both Space-Track.org and Celestrak OMM fetch failed. Space-Track error: {}. Celestrak error: {}",
+                                spacetrack_error, celestrak_error).into());
+                        }
+                    }
                 }
             }
         } else {
-            return Err("OMM data requires Space-Track.org credentials. Set SPACETRACK_USERNAME and SPACETRACK_PASSWORD environment variables or provide spacetrack_username/spacetrack_password parameters.".into());
+            // No Space-Track credentials, try Celestrak directly
+            return fetch_omm_from_celestrak(nid);
         }
     }
 
