@@ -43,7 +43,7 @@ Quick Start
    )
 
    # Create combined constraint using operators
-   constraint = SunConstraint(min_angle=45.0) & MoonConstraint(min_angle=10.0)
+   constraint = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=10.0)
 
    # Evaluate for a target (Crab Nebula)
    result = constraint.evaluate(ephem, target_ra=83.63, target_dec=22.01)
@@ -1242,8 +1242,8 @@ composition:
 
    # Build complex constraint with operators
    constraint = (
-       SunConstraint(min_angle=45.0) &
-       MoonConstraint(min_angle=10.0) &
+       SunConstraint(min_angle=45.0) |
+       MoonConstraint(min_angle=10.0) |
        ~EclipseConstraint(umbra_only=True)
    )
 
@@ -1256,7 +1256,7 @@ composition:
 
    # Chain multiple operators
    complex_constraint = (
-       (SunConstraint(min_angle=45.0) & MoonConstraint(min_angle=10.0)) |
+       (SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=10.0)) |
        EarthLimbConstraint(min_angle=28.0)
    )
 
@@ -1579,7 +1579,7 @@ All Pydantic constraint models can be serialized to/from JSON:
    from rust_ephem.constraints import SunConstraint, MoonConstraint
 
    # Create constraint
-   constraint = SunConstraint(min_angle=45.0) & MoonConstraint(min_angle=10.0)
+   constraint = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=10.0)
 
    # Serialize to JSON
    json_str = constraint.model_dump_json()

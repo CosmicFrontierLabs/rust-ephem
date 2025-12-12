@@ -119,18 +119,23 @@ Python operators.
 Using the AND Operator (&)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-All constraints must be satisfied:
+All constraints must be satisfied. This is a somewhat uncommon use case, as
+combining constraints with AND means that a target is in constraint only when
+it satisifies every condition. So if you define the combined constraint as
+being about being 45 degrees from the Sun and 10 degrees from the Moon, then
+the target is in the region of sky where those constraints overlap:
+
+Important take away here, we are defining *constraints* not *visibility*.
+However, given that here is a use case for AND.
 
 .. code-block:: python
 
    # Target must satisfy ALL of these:
    # - At least 45° from Sun
-   # - At least 10° from Moon
    # - Not in eclipse
 
    constraint = (
        SunConstraint(min_angle=45.0) &
-       MoonConstraint(min_angle=10.0) &
        ~EclipseConstraint()  # ~ means NOT (require NOT in eclipse)
    )
 
@@ -140,24 +145,35 @@ All constraints must be satisfied:
    for window in result.visibility:
        print(f"  {window.start_time} to {window.end_time}")
 
+The reason why the AND operator is useful here is that it means the Sun
+constraint is only enforced when the spacecraft is not in eclipse. I.e. when
+the Sun is behind the Earth, we don't care how close the target is to the Sun.
+
 Using the OR Operator (|)
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-At least one constraint must be satisfied:
+At least one constraint must be satisfied. This is the most common way to
+combine constraints for visibility calculations, as it defines when a target is
+not visible (i.e., when ANY of the constraints are violated).:
 
 .. code-block:: python
 
    # Observation is blocked if EITHER:
    # - Too close to Sun OR
-   # - In eclipse
+   # - Too close to the Moon OR
+   # - Too close to the Earth limb
 
    blocking_constraint = (
-       ~SunConstraint(min_angle=45.0) |  # Violated when < 45° from Sun
-       EclipseConstraint()                # Violated when in eclipse
+       SunConstraint(min_angle=45.0) |  # Violated when < 45° from Sun
+       MoonConstraint(min_angle=10.0) |  # Violated when < 10° from Moon
+       EarthLimbConstraint(min_angle=20.0)  # Violated when < 20° from Earth limb
    )
 
-   # Invert to get visibility (when NOT blocked)
-   visibility_constraint = ~blocking_constraint
+   result = constraint.evaluate(ephem, target_ra, target_dec)
+
+   print(f"Combined visibility windows: {len(result.visibility)}")
+   for window in result.visibility:
+       print(f"  {window.start_time} to {window.end_time}")
 
 Using the NOT Operator (~)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -178,7 +194,8 @@ Invert any constraint:
 Using the XOR Operator (^)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Exclusive OR - violated when exactly one sub-constraint is violated:
+Exclusive OR - violated when exactly one sub-constraint is violated. This is
+included for completeness, but it's not obvious how this would be used in practice.:
 
 .. code-block:: python
 
@@ -213,13 +230,10 @@ For spacecraft like Hubble or JWST, you typically need comprehensive constraints
            Combined constraint for spacecraft observations
        """
        constraint = (
-           SunConstraint(min_angle=sun_angle) &
-           MoonConstraint(min_angle=moon_angle) &
+           SunConstraint(min_angle=sun_angle) |
+           MoonConstraint(min_angle=moon_angle) |
            EarthLimbConstraint(min_angle=earth_limb_angle)
        )
-
-       if avoid_eclipse:
-           constraint = constraint & ~EclipseConstraint()
 
        return constraint
 
@@ -228,7 +242,6 @@ For spacecraft like Hubble or JWST, you typically need comprehensive constraints
        sun_angle=50.0,
        moon_angle=15.0,
        earth_limb_angle=25.0,
-       avoid_eclipse=True
    )
 
    # Evaluate for target
@@ -266,9 +279,9 @@ horizon elevation:
    # - Moon avoidance (less strict for ground)
 
    ground_constraint = (
-       SunConstraint(min_angle=90.0) &              # Sun below horizon
-       EarthLimbConstraint(min_angle=20.0) &        # Target > 20° elevation
+       DaytimeConstraint(twilight='astronomical').  # Sun below -18°
        MoonConstraint(min_angle=5.0)                # Minimal moon avoidance
+       AirmassConstraint(max_airmass=2.0)            # Target above ~30° elevation
    )
 
    result = ground_constraint.evaluate(ground, target_ra, target_dec)
@@ -287,17 +300,16 @@ Use ``BodyConstraint`` to avoid bright planets:
 
    # Avoid Mars, Jupiter, and Saturn
    planet_avoidance = (
-       BodyConstraint(body="Mars", min_angle=10.0) &
-       BodyConstraint(body="Jupiter barycenter", min_angle=15.0) &
+       BodyConstraint(body="Mars", min_angle=10.0) |
+       BodyConstraint(body="Jupiter barycenter", min_angle=15.0) |
        BodyConstraint(body="Saturn barycenter", min_angle=15.0)
    )
 
    # Combine with other constraints
    full_constraint = (
-       SunConstraint(min_angle=45.0) &
-       MoonConstraint(min_angle=10.0) &
-       planet_avoidance &
-       ~EclipseConstraint()
+       SunConstraint(min_angle=45.0) |
+       MoonConstraint(min_angle=10.0) |
+       planet_avoidance
    )
 
    result = full_constraint.evaluate(ephem, target_ra, target_dec)
@@ -332,9 +344,9 @@ For survey observations or target selection, evaluate many targets efficiently:
 
    # Create constraint
    constraint = (
-       SunConstraint(min_angle=45.0) &
-       MoonConstraint(min_angle=10.0) &
-       ~EclipseConstraint()
+       SunConstraint(min_angle=45.0) |
+       MoonConstraint(min_angle=10.0) |
+       EarthLimbConstraint(min_angle=20.0)
    )
 
    # Batch evaluation (much faster than loop)
@@ -446,10 +458,9 @@ Constraints can be serialized to JSON for storage or configuration:
 
    # Create a complex constraint
    constraint = (
-       SunConstraint(min_angle=45.0) &
-       MoonConstraint(min_angle=10.0) &
-       EarthLimbConstraint(min_angle=25.0) &
-       ~EclipseConstraint()
+       SunConstraint(min_angle=45.0) |
+       MoonConstraint(min_angle=10.0) |
+       EarthLimbConstraint(min_angle=25.0) |
    )
 
    # Serialize to JSON
@@ -486,23 +497,23 @@ Define reusable constraint templates for different observation modes:
 
    # Template for UV observations (strict Sun/Moon avoidance)
    UV_OBSERVATION = (
-       SunConstraint(min_angle=70.0) &      # Very strict Sun avoidance
-       MoonConstraint(min_angle=30.0) &     # Strict Moon avoidance
-       EarthLimbConstraint(min_angle=20.0) &
+       SunConstraint(min_angle=70.0) |      # Very strict Sun avoidance
+       MoonConstraint(min_angle=30.0) |     # Strict Moon avoidance
+       EarthLimbConstraint(min_angle=20.0) |
        ~EclipseConstraint()
    )
 
    # Template for infrared observations (less strict)
    IR_OBSERVATION = (
-       SunConstraint(min_angle=45.0) &
-       MoonConstraint(min_angle=10.0) &
+       SunConstraint(min_angle=45.0) |
+       MoonConstraint(min_angle=10.0) |
        EarthLimbConstraint(min_angle=15.0)
        # Eclipse OK for IR
    )
 
    # Template for radio observations (minimal constraints)
    RADIO_OBSERVATION = (
-       SunConstraint(min_angle=20.0) &
+       SunConstraint(min_angle=20.0) |
        EarthLimbConstraint(min_angle=10.0)
    )
 
@@ -544,9 +555,9 @@ Plan observations over multiple days:
    ]
 
    constraint = (
-       SunConstraint(min_angle=45.0) &
-       MoonConstraint(min_angle=10.0) &
-       EarthLimbConstraint(min_angle=20.0) &
+       SunConstraint(min_angle=45.0) |
+       MoonConstraint(min_angle=10.0) |
+       EarthLimbConstraint(min_angle=20.0) |
        ~EclipseConstraint()
    )
 
@@ -590,7 +601,7 @@ Track any solar system body by name or NAIF ID:
 .. code-block:: python
 
     # Define constraint
-    constraint = SunConstraint(min_angle=30) & MoonConstraint(min_angle=15)
+    constraint = SunConstraint(min_angle=30) | MoonConstraint(min_angle=15)
 
     # Track Mars (using SPICE kernel)
     result = constraint.evaluate_moving_body(
@@ -684,8 +695,8 @@ Monitor visibility during an asteroid's close approach:
 
     # Stringent constraints for close approach observation
     constraint = (
-        SunConstraint(min_angle=10) &  # Not too close to Sun
-        MoonConstraint(min_angle=20) &  # Away from Moon
+        SunConstraint(min_angle=10) |  # Not too close to Sun
+        MoonConstraint(min_angle=20) |  # Away from Moon
         EarthLimbConstraint(min_angle=5)  # Clear of Earth limb
     )
 
