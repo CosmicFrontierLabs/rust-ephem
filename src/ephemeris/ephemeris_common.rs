@@ -1403,3 +1403,125 @@ pub trait EphemerisBase {
         }
     }
 }
+
+/// Base struct for SGP4-based ephemerides (TLE and OMM)
+/// Contains common fields and methods shared between TLEEphemeris and OMMEphemeris
+pub struct SGP4EphemerisBase {
+    pub teme: Option<Array2<f64>>,
+    pub itrs: Option<Array2<f64>>,
+    pub itrs_skycoord: OnceLock<Py<PyAny>>, // Lazy-initialized cached SkyCoord object for ITRS
+    pub polar_motion: bool,                 // Whether to apply polar motion correction
+    pub common_data: EphemerisData,
+}
+
+impl SGP4EphemerisBase {
+    pub fn new(polar_motion: bool) -> Self {
+        Self {
+            teme: None,
+            itrs: None,
+            itrs_skycoord: OnceLock::new(),
+            polar_motion,
+            common_data: EphemerisData::new(),
+        }
+    }
+
+    /// Propagate using SGP4 with the provided elements
+    pub fn propagate_to_teme(&mut self, elements: &sgp4::Elements) -> PyResult<()> {
+        let times = self
+            .common_data
+            .times
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("No times available"))?;
+
+        // Create SGP4 constants from elements
+        let constants = sgp4::Constants::from_elements(elements).map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("SGP4 constants error: {e:?}"))
+        })?;
+
+        // Create output array for positions and velocities
+        let n_times = times.len();
+        let mut pv_data = Vec::with_capacity(n_times * 6);
+
+        // Propagate for each timestamp
+        for time in times {
+            // Convert to NaiveDateTime for sgp4 compatibility
+            let naive_dt = time.naive_utc();
+
+            // Calculate minutes since epoch
+            let minutes_since_epoch = elements
+                .datetime_to_minutes_since_epoch(&naive_dt)
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("Time conversion error: {e}"))
+                })?;
+
+            let result = constants.propagate(minutes_since_epoch).map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("SGP4 propagation failed: {e}"))
+            })?;
+
+            // SGP4 returns position in km and velocity in km/s
+            pv_data.extend_from_slice(&[
+                result.position[0],
+                result.position[1],
+                result.position[2],
+                result.velocity[0],
+                result.velocity[1],
+                result.velocity[2],
+            ]);
+        }
+
+        // Convert to ndarray
+        let pv_array = Array2::from_shape_vec((n_times, 6), pv_data).map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("Array creation failed: {e}"))
+        })?;
+
+        self.teme = Some(pv_array);
+        Ok(())
+    }
+
+    /// Convert TEME to ITRS coordinates
+    pub fn teme_to_itrs(&mut self) -> PyResult<()> {
+        if let Some(teme) = &self.teme {
+            let times =
+                self.common_data.times.as_ref().ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("No times available")
+                })?;
+
+            let itrs = convert_frames(teme, times, Frame::TEME, Frame::ITRS, self.polar_motion);
+            self.itrs = Some(itrs);
+        }
+        Ok(())
+    }
+
+    /// Convert TEME to GCRS coordinates and calculate celestial bodies
+    pub fn teme_to_gcrs(&mut self) -> PyResult<()> {
+        if let Some(teme) = &self.teme {
+            let times =
+                self.common_data.times.as_ref().ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("No times available")
+                })?;
+
+            let gcrs = convert_frames(teme, times, Frame::TEME, Frame::GCRS, self.polar_motion);
+            self.common_data.gcrs = Some(gcrs);
+        }
+        Ok(())
+    }
+
+    /// Calculate sun and moon positions
+    pub fn calculate_sun_moon(&mut self) -> PyResult<()> {
+        let times = self
+            .common_data
+            .times
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("No times available"))?;
+
+        // Calculate sun positions
+        let sun_gcrs = calculate_sun_positions(times);
+        self.common_data.sun_gcrs = Some(sun_gcrs);
+
+        // Calculate moon positions
+        let moon_gcrs = calculate_moon_positions(times);
+        self.common_data.moon_gcrs = Some(moon_gcrs);
+
+        Ok(())
+    }
+}

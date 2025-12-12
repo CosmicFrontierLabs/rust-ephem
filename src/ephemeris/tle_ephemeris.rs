@@ -2,14 +2,12 @@ use chrono::{Datelike, Timelike};
 use ndarray::Array2;
 use numpy::IntoPyArray;
 use pyo3::{prelude::*, types::PyDateTime};
-use sgp4::{parse_2les, Constants};
-use std::sync::OnceLock;
+use sgp4::parse_2les;
 
 use crate::ephemeris::ephemeris_common::{
-    generate_timestamps, split_pos_vel, EphemerisBase, EphemerisData,
+    generate_timestamps, split_pos_vel, EphemerisBase, EphemerisData, SGP4EphemerisBase,
 };
 use crate::ephemeris::position_velocity::PositionVelocityData;
-use crate::utils::conversions;
 use crate::utils::tle_utils;
 use crate::utils::to_skycoord::AstropyModules;
 
@@ -18,12 +16,7 @@ pub struct TLEEphemeris {
     tle1: String,
     tle2: String,
     tle_epoch: chrono::DateTime<chrono::Utc>, // TLE epoch timestamp
-    teme: Option<Array2<f64>>,
-    itrs: Option<Array2<f64>>,
-    itrs_skycoord: OnceLock<Py<PyAny>>, // Lazy-initialized cached SkyCoord object for ITRS
-    polar_motion: bool,                 // Whether to apply polar motion correction
-    // Common ephemeris data
-    common_data: EphemerisData,
+    base: SGP4EphemerisBase,                  // Common SGP4 ephemeris functionality
 }
 
 #[pymethods]
@@ -133,14 +126,10 @@ impl TLEEphemeris {
             tle1: fetched.line1,
             tle2: fetched.line2,
             tle_epoch: fetched.epoch,
-            teme: None,
-            itrs: None,
-            itrs_skycoord: OnceLock::new(),
-            polar_motion,
-            common_data: {
-                let mut data = EphemerisData::new();
-                data.times = Some(times);
-                data
+            base: {
+                let mut base = SGP4EphemerisBase::new(polar_motion);
+                base.common_data.times = Some(times);
+                base
             },
         };
 
@@ -199,30 +188,31 @@ impl TLEEphemeris {
     /// Get the start time of the ephemeris
     #[getter]
     fn begin(&self, py: Python) -> PyResult<Py<PyAny>> {
-        crate::ephemeris::ephemeris_common::get_begin_time(&self.common_data.times, py)
+        crate::ephemeris::ephemeris_common::get_begin_time(&self.base.common_data.times, py)
     }
 
     /// Get the end time of the ephemeris
     #[getter]
     fn end(&self, py: Python) -> PyResult<Py<PyAny>> {
-        crate::ephemeris::ephemeris_common::get_end_time(&self.common_data.times, py)
+        crate::ephemeris::ephemeris_common::get_end_time(&self.base.common_data.times, py)
     }
 
     /// Get the time step size in seconds
     #[getter]
     fn step_size(&self) -> PyResult<i64> {
-        crate::ephemeris::ephemeris_common::get_step_size(&self.common_data.times)
+        crate::ephemeris::ephemeris_common::get_step_size(&self.base.common_data.times)
     }
 
     /// Get whether polar motion correction is applied
     #[getter]
     fn polar_motion(&self) -> bool {
-        self.polar_motion
+        self.base.polar_motion
     }
 
     #[getter]
     fn teme_pv(&self, py: Python) -> Option<Py<PositionVelocityData>> {
-        self.teme
+        self.base
+            .teme
             .as_ref()
             .map(|arr| Py::new(py, split_pos_vel(arr)).unwrap())
     }
@@ -478,14 +468,7 @@ impl TLEEphemeris {
     /// Propagates the satellite to the times specified during initialization.
     /// Returns [x,y,z,vx,vy,vz] in TEME coordinates (km, km/s).
     fn propagate_to_teme(&mut self) -> PyResult<()> {
-        // Get the internally stored times
-        let times = self.common_data.times.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(
-                "TLEEphemeris object was not properly initialized. Please create a new TLEEphemeris instance with begin, end, and step_size parameters.",
-            )
-        })?;
-
-        // Parse TLE - concatenate with newlines (parse_2les expects newline-separated format)
+        // Parse TLE to get elements
         let tle_string = format!("{}\n{}", self.tle1, self.tle2);
         let elements_vec = parse_2les(&tle_string).map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("TLE parse error: {e:?}"))
@@ -498,41 +481,8 @@ impl TLEEphemeris {
         }
         let elements = elements_vec.into_iter().next().unwrap();
 
-        // Create SGP4 constants
-        let constants = Constants::from_elements(&elements).map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("SGP4 constants error: {e:?}"))
-        })?;
-
-        // Prepare output array
-        let n = times.len();
-        let mut out = Array2::<f64>::zeros((n, 6));
-
-        for (i, dt) in times.iter().enumerate() {
-            // Convert to NaiveDateTime for sgp4 compatibility
-            let naive_dt = dt.naive_utc();
-
-            // Calculate minutes since epoch
-            // Use unwrap() since time conversions should always succeed for valid timestamps
-            let minutes_since_epoch = elements.datetime_to_minutes_since_epoch(&naive_dt).unwrap();
-
-            // Propagate to get position and velocity in TEME
-            let pred = constants.propagate(minutes_since_epoch).map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!("Propagation error: {e:?}"))
-            })?;
-
-            // Store results - use direct assignment for better performance
-            let mut row = out.row_mut(i);
-            row[0] = pred.position[0];
-            row[1] = pred.position[1];
-            row[2] = pred.position[2];
-            row[3] = pred.velocity[0];
-            row[4] = pred.velocity[1];
-            row[5] = pred.velocity[2];
-        }
-
-        // Store results
-        self.teme = Some(out);
-        Ok(())
+        // Use the base implementation
+        self.base.propagate_to_teme(&elements)
     }
 
     /// teme_to_itrs() -> np.ndarray
@@ -541,36 +491,7 @@ impl TLEEphemeris {
     /// Returns [x,y,z,vx,vy,vz] in ITRS frame (km, km/s).
     /// Requires propagate_to_teme to be called first.
     fn teme_to_itrs(&mut self) -> PyResult<()> {
-        // Access stored TEME data
-        let teme_data = self.teme.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(
-                "No TEME data available. Call propagate_to_teme first.",
-            )
-        })?;
-        // Use stored times
-        let times = self.common_data.times.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(
-                "No times available. Call propagate_to_teme first.",
-            )
-        })?;
-
-        // Check lengths match
-        if teme_data.nrows() != times.len() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "Number of times must match number of TEME rows",
-            ));
-        }
-
-        // Use the generic conversion function
-        let itrs_result = conversions::convert_frames(
-            teme_data,
-            times,
-            conversions::Frame::TEME,
-            conversions::Frame::ITRS,
-            self.polar_motion,
-        );
-        self.itrs = Some(itrs_result);
-        Ok(())
+        self.base.teme_to_itrs()
     }
 
     /// teme_to_gcrs() -> np.ndarray
@@ -580,58 +501,30 @@ impl TLEEphemeris {
     /// Returns [x,y,z,vx,vy,vz] in GCRS (km, km/s).
     /// Requires propagate_to_teme to be called first.
     fn teme_to_gcrs(&mut self) -> PyResult<()> {
-        let teme_data = self.teme.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(
-                "No TEME data available. Call propagate_to_teme first.",
-            )
-        })?;
-
-        // Use stored times
-        let times = self.common_data.times.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(
-                "No times available. Call propagate_to_teme first.",
-            )
-        })?;
-
-        if teme_data.nrows() != times.len() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "Number of times must match number of TEME rows",
-            ));
-        }
-
-        // Use the generic conversion function
-        let gcrs_result = conversions::convert_frames(
-            teme_data,
-            times,
-            conversions::Frame::TEME,
-            conversions::Frame::GCRS,
-            self.polar_motion,
-        );
-        self.common_data.gcrs = Some(gcrs_result);
-        Ok(())
+        self.base.teme_to_gcrs()
     }
 }
 
 // Implement the EphemerisBase trait for TLEEphemeris
 impl EphemerisBase for TLEEphemeris {
     fn data(&self) -> &EphemerisData {
-        &self.common_data
+        &self.base.common_data
     }
 
     fn data_mut(&mut self) -> &mut EphemerisData {
-        &mut self.common_data
+        &mut self.base.common_data
     }
 
     fn get_itrs_data(&self) -> Option<&Array2<f64>> {
-        self.itrs.as_ref()
+        self.base.itrs.as_ref()
     }
 
     fn get_itrs_skycoord_ref(&self) -> Option<&Py<PyAny>> {
-        self.itrs_skycoord.get()
+        self.base.itrs_skycoord.get()
     }
 
     fn set_itrs_skycoord_cache(&self, skycoord: Py<PyAny>) -> Result<(), Py<PyAny>> {
-        self.itrs_skycoord.set(skycoord)
+        self.base.itrs_skycoord.set(skycoord)
     }
 
     fn radec_to_altaz(

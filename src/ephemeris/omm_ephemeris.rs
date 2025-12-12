@@ -7,24 +7,17 @@ use chrono::{Datelike, Timelike};
 use ndarray::Array2;
 use numpy::IntoPyArray;
 use pyo3::{prelude::*, types::PyDateTime};
-use sgp4::Constants;
-use std::sync::OnceLock;
 
-use crate::ephemeris::ephemeris_common::{generate_timestamps, EphemerisBase, EphemerisData};
+use crate::ephemeris::ephemeris_common::{
+    generate_timestamps, EphemerisBase, EphemerisData, SGP4EphemerisBase,
+};
 use crate::ephemeris::position_velocity::PositionVelocityData;
-use crate::utils::conversions;
 use crate::utils::omm_utils::{fetch_omm_unified, omm_to_elements, FetchedOMM};
 
 #[pyclass]
 pub struct OMMEphemeris {
     omm_data: crate::utils::omm_utils::OMMData,
-    elements: sgp4::Elements, // SGP4 elements for direct propagation
-    teme: Option<Array2<f64>>,
-    itrs: Option<Array2<f64>>,
-    itrs_skycoord: OnceLock<Py<PyAny>>, // Lazy-initialized cached SkyCoord object for ITRS
-    polar_motion: bool,                 // Whether to apply polar motion correction
-    // Common ephemeris data
-    common_data: EphemerisData,
+    base: SGP4EphemerisBase, // Common SGP4 ephemeris functionality
 }
 
 #[pymethods]
@@ -67,7 +60,7 @@ impl OMMEphemeris {
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
         // Convert OMM to SGP4 Elements directly
-        let elements = omm_to_elements(&fetched.data)
+        omm_to_elements(&fetched.data)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
         // Check that begin and end are provided
@@ -85,15 +78,10 @@ impl OMMEphemeris {
         // Create the OMMEphemeris object
         let mut ephemeris: OMMEphemeris = OMMEphemeris {
             omm_data,
-            elements,
-            teme: None,
-            itrs: None,
-            itrs_skycoord: OnceLock::new(),
-            polar_motion,
-            common_data: {
-                let mut data = EphemerisData::new();
-                data.times = Some(times);
-                data
+            base: {
+                let mut base = SGP4EphemerisBase::new(polar_motion);
+                base.common_data.times = Some(times);
+                base
             },
         };
 
@@ -218,19 +206,19 @@ impl OMMEphemeris {
     /// Get the start time of the ephemeris
     #[getter]
     fn begin_time(&self, py: Python) -> PyResult<Py<PyAny>> {
-        crate::ephemeris::ephemeris_common::get_begin_time(&self.common_data.times, py)
+        crate::ephemeris::ephemeris_common::get_begin_time(&self.base.common_data.times, py)
     }
 
     /// Get the end time of the ephemeris
     #[getter]
     fn end_time(&self, py: Python) -> PyResult<Py<PyAny>> {
-        crate::ephemeris::ephemeris_common::get_end_time(&self.common_data.times, py)
+        crate::ephemeris::ephemeris_common::get_end_time(&self.base.common_data.times, py)
     }
 
     /// Get the step size in seconds
     #[getter]
     fn step_size(&self) -> PyResult<i64> {
-        crate::ephemeris::ephemeris_common::get_step_size(&self.common_data.times)
+        crate::ephemeris::ephemeris_common::get_step_size(&self.base.common_data.times)
     }
 
     /// Get the timestamp array
@@ -350,111 +338,31 @@ impl OMMEphemeris {
 impl OMMEphemeris {
     /// Propagate the OMM data using SGP4 to generate TEME positions and velocities
     fn propagate_to_teme(&mut self) -> PyResult<()> {
-        let times = self
-            .common_data
-            .times
-            .as_ref()
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("No times available"))?;
-
-        // Create SGP4 constants directly from elements
-        let constants = Constants::from_elements(&self.elements).map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("SGP4 constants error: {e:?}"))
+        // Convert OMM data to SGP4 elements
+        let elements = omm_to_elements(&self.omm_data).map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "OMM to elements conversion failed: {}",
+                e
+            ))
         })?;
 
-        // Create output array for positions and velocities
-        let n_times = times.len();
-        let mut pv_data = Vec::with_capacity(n_times * 6);
-
-        // Propagate for each timestamp
-        for time in times {
-            // Convert to NaiveDateTime for sgp4 compatibility
-            let naive_dt = time.naive_utc();
-
-            // Calculate minutes since epoch
-            // Use unwrap() since time conversions should always succeed for valid timestamps
-            let minutes_since_epoch = self
-                .elements
-                .datetime_to_minutes_since_epoch(&naive_dt)
-                .unwrap();
-
-            let result = constants.propagate(minutes_since_epoch).map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!("SGP4 propagation failed: {}", e))
-            })?;
-
-            // SGP4 returns position in km and velocity in km/s
-            pv_data.extend_from_slice(&[
-                result.position[0],
-                result.position[1],
-                result.position[2],
-                result.velocity[0],
-                result.velocity[1],
-                result.velocity[2],
-            ]);
-        }
-
-        // Convert to ndarray
-        let pv_array = Array2::from_shape_vec((n_times, 6), pv_data).map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("Array creation failed: {}", e))
-        })?;
-
-        self.teme = Some(pv_array);
-        Ok(())
+        // Use the base implementation
+        self.base.propagate_to_teme(&elements)
     }
 
     /// Convert TEME to ITRS coordinates
     fn teme_to_itrs(&mut self) -> PyResult<()> {
-        if let Some(teme) = &self.teme {
-            let times =
-                self.common_data.times.as_ref().ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err("No times available")
-                })?;
-
-            let itrs = conversions::convert_frames(
-                teme,
-                times,
-                conversions::Frame::TEME,
-                conversions::Frame::ITRS,
-                self.polar_motion,
-            );
-            self.itrs = Some(itrs);
-        }
-        Ok(())
+        self.base.teme_to_itrs()
     }
 
     /// Convert TEME to GCRS coordinates
     fn teme_to_gcrs(&mut self) -> PyResult<()> {
-        if let Some(teme) = &self.teme {
-            let times =
-                self.common_data.times.as_ref().ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err("No times available")
-                })?;
-
-            let gcrs = conversions::convert_frames(
-                teme,
-                times,
-                conversions::Frame::TEME,
-                conversions::Frame::GCRS,
-                false,
-            );
-            self.common_data.gcrs = Some(gcrs);
-        }
-        Ok(())
+        self.base.teme_to_gcrs()
     }
 
     /// Calculate Sun and Moon positions
     fn calculate_sun_moon(&mut self) -> PyResult<()> {
-        let times = self
-            .common_data
-            .times
-            .as_ref()
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("No times available"))?;
-
-        let sun_gcrs = crate::utils::celestial::calculate_sun_positions(times);
-        let moon_gcrs = crate::utils::celestial::calculate_moon_positions(times);
-        self.common_data.sun_gcrs = Some(sun_gcrs);
-        self.common_data.moon_gcrs = Some(moon_gcrs);
-
-        Ok(())
+        self.base.calculate_sun_moon()
     }
 }
 
@@ -462,23 +370,23 @@ impl OMMEphemeris {
 
 impl EphemerisBase for OMMEphemeris {
     fn data(&self) -> &EphemerisData {
-        &self.common_data
+        &self.base.common_data
     }
 
     fn data_mut(&mut self) -> &mut EphemerisData {
-        &mut self.common_data
+        &mut self.base.common_data
     }
 
     fn get_itrs_data(&self) -> Option<&Array2<f64>> {
-        self.itrs.as_ref()
+        self.base.itrs.as_ref()
     }
 
     fn get_itrs_skycoord_ref(&self) -> Option<&Py<PyAny>> {
-        self.itrs_skycoord.get()
+        self.base.itrs_skycoord.get()
     }
 
     fn set_itrs_skycoord_cache(&self, skycoord: Py<PyAny>) -> Result<(), Py<PyAny>> {
-        self.itrs_skycoord.set(skycoord)
+        self.base.itrs_skycoord.set(skycoord)
     }
 
     fn radec_to_altaz(
