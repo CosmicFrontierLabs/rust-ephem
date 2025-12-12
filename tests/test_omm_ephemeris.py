@@ -62,7 +62,7 @@ class TestOMMEphemeris:
             end=end_time,
             step_size=step_size,
             enforce_source="celestrak",
-            _test_omm_json=mock_omm_json,  # type: ignore
+            omm=mock_omm_json,  # type: ignore
         )
 
         assert isinstance(eph, OMMEphemeris)
@@ -84,7 +84,7 @@ class TestOMMEphemeris:
             begin=begin_time,
             end=end_time,
             step_size=step_size,
-            _test_omm_json=mock_omm_json,  # type: ignore
+            omm=mock_omm_json,  # type: ignore
         )
 
         assert isinstance(eph, OMMEphemeris)
@@ -107,7 +107,7 @@ class TestOMMEphemeris:
             end=end_time,
             step_size=step_size,
             enforce_source="celestrak",
-            _test_omm_json=mock_omm_json,  # type: ignore
+            omm=mock_omm_json,  # type: ignore
         )
 
         # Test basic properties
@@ -126,14 +126,14 @@ class TestOMMEphemeris:
         self, begin_time: datetime, end_time: datetime, step_size: int
     ) -> None:
         """Test OMMEphemeris with invalid NORAD ID."""
-        with pytest.raises(ValueError, match="No OMM data found"):
+        with pytest.raises(ValueError, match="parse_omm_json failed"):
             OMMEphemeris(
                 norad_id=999999,  # Invalid NORAD ID
                 begin=begin_time,
                 end=end_time,
                 step_size=step_size,
                 enforce_source="celestrak",
-                _test_omm_json="No GP data found",  # type: ignore
+                omm="{invalid json",  # type: ignore
             )
 
     def test_omm_ephemeris_missing_begin(
@@ -200,7 +200,7 @@ class TestOMMEphemeris:
             step_size=step_size,
             polar_motion=False,
             enforce_source="celestrak",
-            _test_omm_json=mock_omm_json,  # type: ignore
+            omm=mock_omm_json,  # type: ignore
         )
 
         eph_with_polar = OMMEphemeris(
@@ -210,7 +210,7 @@ class TestOMMEphemeris:
             step_size=step_size,
             polar_motion=True,
             enforce_source="celestrak",
-            _test_omm_json=mock_omm_json,  # type: ignore
+            omm=mock_omm_json,  # type: ignore
         )
 
         assert eph_no_polar.polar_motion is False
@@ -231,8 +231,70 @@ class TestOMMEphemeris:
             end=end_time,
             step_size=step_size,
             enforce_source="celestrak",
-            _test_omm_json=mock_omm_json,  # type: ignore
+            omm=mock_omm_json,  # type: ignore
         )
 
         assert eph.step_size == step_size
         assert isinstance(eph, OMMEphemeris)
+
+    def test_omm_ephemeris_from_file(
+        self,
+        begin_time: datetime,
+        end_time: datetime,
+        step_size: int,
+        mock_omm_json: str,
+    ) -> None:
+        """Test OMMEphemeris creation from OMM file."""
+        import os
+        import tempfile
+
+        # Create a temporary file with OMM data
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            f.write(mock_omm_json)
+            temp_file = f.name
+
+        try:
+            eph = OMMEphemeris(
+                begin=begin_time, end=end_time, step_size=step_size, omm=temp_file
+            )
+
+            assert isinstance(eph, OMMEphemeris)
+            assert eph.begin == begin_time
+            assert eph.end == end_time
+            assert eph.step_size == step_size
+            assert eph.norad_cat_id == 25544
+        finally:
+            os.unlink(temp_file)
+
+    def test_omm_ephemeris_from_url(
+        self, begin_time: datetime, end_time: datetime, step_size: int
+    ) -> None:
+        """Test OMMEphemeris creation from OMM URL."""
+        # Use Celestrak URL for testing
+        url = "https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=JSON"
+
+        eph = OMMEphemeris(begin=begin_time, end=end_time, step_size=step_size, omm=url)
+
+        assert isinstance(eph, OMMEphemeris)
+        assert eph.begin == begin_time
+        assert eph.end == end_time
+        assert eph.step_size == step_size
+        assert eph.norad_cat_id == 25544
+
+    def test_omm_ephemeris_from_json_string(
+        self,
+        begin_time: datetime,
+        end_time: datetime,
+        step_size: int,
+        mock_omm_json: str,
+    ) -> None:
+        """Test OMMEphemeris creation from direct JSON string."""
+        eph = OMMEphemeris(
+            begin=begin_time, end=end_time, step_size=step_size, omm=mock_omm_json
+        )
+
+        assert isinstance(eph, OMMEphemeris)
+        assert eph.begin == begin_time
+        assert eph.end == end_time
+        assert eph.step_size == step_size
+        assert eph.norad_cat_id == 25544

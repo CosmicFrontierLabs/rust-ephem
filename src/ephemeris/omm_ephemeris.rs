@@ -23,7 +23,7 @@ pub struct OMMEphemeris {
 #[pymethods]
 impl OMMEphemeris {
     #[new]
-    #[pyo3(signature = (norad_id=None, norad_name=None, begin=None, end=None, step_size=60, *, polar_motion=false, spacetrack_username=None, spacetrack_password=None, _epoch_tolerance_days=None, enforce_source=None, _test_omm_json=None))]
+    #[pyo3(signature = (norad_id=None, norad_name=None, begin=None, end=None, step_size=60, *, polar_motion=false, spacetrack_username=None, spacetrack_password=None, _epoch_tolerance_days=None, enforce_source=None, omm=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         _py: Python,
@@ -37,7 +37,7 @@ impl OMMEphemeris {
         spacetrack_password: Option<String>,
         _epoch_tolerance_days: Option<f64>,
         enforce_source: Option<String>,
-        _test_omm_json: Option<String>,
+        omm: Option<String>,
     ) -> PyResult<Self> {
         // Build credentials using helper function
         let credentials = crate::utils::tle_utils::build_credentials(
@@ -50,19 +50,44 @@ impl OMMEphemeris {
         let target_epoch =
             begin.and_then(|b| crate::utils::time_utils::python_datetime_to_utc(b).ok());
 
-        // Fetch OMM data or use test data
-        let fetched: FetchedOMM = if let Some(test_json) = _test_omm_json {
-            // Check for test error conditions
-            if test_json.contains("No GP data found") {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "No OMM data found for NORAD ID {} on Celestrak",
-                    norad_id.unwrap_or(0)
-                )));
-            }
-            // Use test JSON data instead of fetching
-            let data = crate::utils::omm_utils::parse_omm_json(&test_json).map_err(|e| {
+        // Fetch OMM data or use provided OMM data
+        let fetched: FetchedOMM = if let Some(omm_source) = omm {
+            // Check if omm_source is JSON data (starts with [ or {)
+            let json_content =
+                if omm_source.trim().starts_with('[') || omm_source.trim().starts_with('{') {
+                    // Direct JSON data
+                    omm_source.clone()
+                } else if omm_source.starts_with("http://") || omm_source.starts_with("https://") {
+                    // Fetch from URL
+                    ureq::get(&omm_source)
+                        .call()
+                        .map_err(|e| {
+                            pyo3::exceptions::PyValueError::new_err(format!(
+                                "Failed to fetch OMM data from URL: {}",
+                                e
+                            ))
+                        })?
+                        .body_mut()
+                        .read_to_string()
+                        .map_err(|e| {
+                            pyo3::exceptions::PyValueError::new_err(format!(
+                                "Failed to read response body: {}",
+                                e
+                            ))
+                        })?
+                } else {
+                    // Read from file
+                    std::fs::read_to_string(&omm_source).map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to read OMM file '{}': {}",
+                            omm_source, e
+                        ))
+                    })?
+                };
+
+            let data = crate::utils::omm_utils::parse_omm_json(&json_content).map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!(
-                    "parse_omm_json failed for test data: {}",
+                    "parse_omm_json failed for OMM data: {}",
                     e
                 ))
             })?;

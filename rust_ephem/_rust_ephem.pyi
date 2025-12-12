@@ -1844,6 +1844,7 @@ class OMMEphemeris(Ephemeris):
         spacetrack_password: str | None = None,
         epoch_tolerance_days: float | None = None,
         enforce_source: str | None = None,
+        omm: str | None = None,
     ) -> None:
         """
         Initialize OMM ephemeris from Space-Track.org or Celestrak.
@@ -1862,6 +1863,9 @@ class OMMEphemeris(Ephemeris):
             spacetrack_password: Space-Track.org password (or set SPACETRACK_PASSWORD env var)
             epoch_tolerance_days: How many days OMM epoch can differ from target epoch (default: 4.0)
             enforce_source: Force use of specific source ('spacetrack' or 'celestrak')
+            omm: OMM JSON data, URL, or file path. If JSON string provided, uses it directly.
+                If URL (http/https), fetches from URL. If file path, reads from file.
+                Overrides automatic fetching when provided.
 
         Note:
             Must provide exactly one of: norad_id or norad_name.
