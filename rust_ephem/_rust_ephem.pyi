@@ -50,16 +50,6 @@ class PositionVelocityData:
         """Unit for velocity (always 'km/s')"""
         ...
 
-class ConstraintViolation:
-    """A single violation of a constraint within a time window"""
-
-    start_time: str
-    end_time: str
-    max_severity: float
-    description: str
-
-    def __repr__(self) -> str: ...
-
 class VisibilityWindow:
     """A time window when the target is not constrained (visible)"""
 
@@ -72,56 +62,90 @@ class VisibilityWindow:
         """Duration of the visibility window in seconds"""
         ...
 
-class ConstraintResult:
-    """Result of constraint evaluation containing all violations"""
+class ConstraintViolation:
+    """A time window when a constraint was violated."""
 
-    violations: list[ConstraintViolation]
-    all_satisfied: bool
-    constraint_name: str
+    start_time: datetime
+    end_time: datetime
+    max_severity: float
+    description: str
 
     def __repr__(self) -> str: ...
-    def total_violation_duration(self) -> float:
-        """Get the total duration of violations in seconds"""
+    @property
+    def duration_seconds(self) -> float:
+        """Duration of the violation window in seconds."""
+        ...
+
+class MovingBodyResult:
+    """Result from evaluating a constraint against a moving body.
+
+    Contains the constraint evaluation results along with the body's
+    RA/Dec coordinates at each timestamp.
+    """
+
+    @property
+    def violations(self) -> list["ConstraintViolation"]:
+        """List of time windows when constraint was violated."""
         ...
 
     @property
-    def constraint_array(self) -> npt.NDArray[np.bool_]:
-        """
-        Array of booleans for each timestamp where True means constraint satisfied.
-
-        This property is cached for performance - repeated access is ~90x faster.
-        """
+    def all_satisfied(self) -> bool:
+        """True if constraint was satisfied at all timestamps."""
         ...
 
     @property
-    def timestamp(self) -> npt.NDArray[np.object_]:
-        """
-        Array of Python datetime objects for each evaluation time.
+    def constraint_name(self) -> str:
+        """Name/description of the constraint."""
+        ...
 
-        Returns a NumPy array (not a list) for efficient indexing.
-        This property is cached for performance - repeated access is ~90x faster.
-        """
+    @property
+    def timestamp(self) -> list[datetime]:
+        """List of timestamps that were evaluated."""
+        ...
+
+    @property
+    def ras(self) -> list[float]:
+        """Right ascensions in degrees at each timestamp."""
+        ...
+
+    @property
+    def decs(self) -> list[float]:
+        """Declinations in degrees at each timestamp."""
+        ...
+
+    @property
+    def constraint_array(self) -> list[bool]:
+        """Boolean array where True indicates constraint violation at that timestamp."""
         ...
 
     @property
     def visibility(self) -> list[VisibilityWindow]:
-        """Array of visibility windows when target is not constrained"""
+        """List of time windows when constraint was satisfied (target was visible)."""
         ...
 
     def in_constraint(self, time: datetime) -> bool:
-        """
-        Check if the target is in-constraint at a given time.
+        """Check if constraint was violated at a specific time.
 
         Args:
-            time: A Python datetime object (naive datetimes are treated as UTC)
+            time: The time to check (must exist in timestamps).
 
         Returns:
-            True if constraint is satisfied at the given time
+            True if constraint was violated at the given time.
 
         Raises:
-            ValueError: If time is not in the evaluated timestamps
+            ValueError: If time is not found in timestamps.
         """
         ...
+
+    def total_violation_duration(self) -> float:
+        """Get total duration of all constraint violations in seconds.
+
+        Returns:
+            Sum of all violation window durations in seconds.
+        """
+        ...
+
+    def __repr__(self) -> str: ...
 
 class Constraint:
     """Wrapper for constraint evaluation with ephemeris data"""
@@ -214,6 +238,146 @@ class Constraint:
         ...
 
     @staticmethod
+    def daytime(twilight: str = "civil") -> Constraint:
+        """
+        Create a daytime visibility constraint.
+
+        Args:
+            twilight: Twilight definition ("civil", "nautical", "astronomical", "none")
+
+        Returns:
+            A new Constraint instance
+        """
+        ...
+
+    @staticmethod
+    def airmass(
+        min_airmass: float | None = None, max_airmass: float | None = None
+    ) -> Constraint:
+        """
+        Create an airmass constraint.
+
+        Args:
+            min_airmass: Minimum allowed airmass (≥1.0), optional
+            max_airmass: Maximum allowed airmass (>0.0)
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If airmass values are invalid
+        """
+        ...
+
+    @staticmethod
+    def moon_phase(
+        min_illumination: float | None = None,
+        max_illumination: float | None = None,
+        min_distance: float | None = None,
+        max_distance: float | None = None,
+        enforce_when_below_horizon: bool = False,
+        moon_visibility: str = "full",
+    ) -> Constraint:
+        """
+        Create a Moon phase constraint.
+
+        Args:
+            min_illumination: Minimum allowed illumination fraction (0.0-1.0), optional
+            max_illumination: Maximum allowed illumination fraction (0.0-1.0)
+            min_distance: Minimum allowed Moon distance in degrees from target, optional
+            max_distance: Maximum allowed Moon distance in degrees from target, optional
+            enforce_when_below_horizon: Whether to enforce constraint when Moon is below horizon
+            moon_visibility: Moon visibility requirement ("full" or "partial")
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If illumination or distance values are invalid
+        """
+        ...
+
+    @staticmethod
+    def saa(polygon: list[tuple[float, float]]) -> Constraint:
+        """
+        Create a South Atlantic Anomaly (SAA) constraint.
+
+        Args:
+            polygon: List of (longitude, latitude) pairs defining the region boundary in degrees
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If polygon has fewer than 3 vertices
+        """
+        ...
+
+    @staticmethod
+    def alt_az(
+        min_altitude: float | None = None,
+        max_altitude: float | None = None,
+        min_azimuth: float | None = None,
+        max_azimuth: float | None = None,
+        polygon: list[tuple[float, float]] | None = None,
+    ) -> Constraint:
+        """
+        Create an altitude/azimuth constraint.
+
+        Args:
+            min_altitude: Minimum allowed altitude in degrees (0-90), optional
+            max_altitude: Maximum allowed altitude in degrees (0-90), optional
+            min_azimuth: Minimum allowed azimuth in degrees (0-360), optional
+            max_azimuth: Maximum allowed azimuth in degrees (0-360), optional
+            polygon: List of (altitude, azimuth) pairs in degrees defining allowed region, optional.
+                     If provided, the target must be inside this polygon to satisfy the constraint.
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If angles are out of valid range or polygon has fewer than 3 vertices
+        """
+        ...
+
+    @staticmethod
+    def orbit_ram(min_angle: float, max_angle: float | None = None) -> Constraint:
+        """
+        Create an orbit RAM direction constraint.
+
+        Args:
+            min_angle: Minimum allowed angular separation from spacecraft velocity vector in degrees (0-180)
+            max_angle: Maximum allowed angular separation from spacecraft velocity vector in degrees (optional)
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If angles are out of valid range
+        """
+        ...
+
+    @staticmethod
+    def orbit_pole(
+        min_angle: float, max_angle: float | None = None, earth_limb_pole: bool = False
+    ) -> Constraint:
+        """
+        Create an orbit pole direction constraint.
+
+        Args:
+            min_angle: Minimum allowed angular separation from orbital poles in degrees (0-180)
+            max_angle: Maximum allowed angular separation from orbital poles in degrees (optional)
+            earth_limb_pole: If True, pole avoidance angle is earth_radius_deg + min_angle - 90
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If angles are out of valid range
+        """
+        ...
+
+    @staticmethod
     def and_(*constraints: Constraint) -> Constraint:
         """
         Combine constraints with logical AND.
@@ -292,6 +456,13 @@ class Constraint:
             {"type": "sun", "min_angle": 45.0}
             {"type": "moon", "min_angle": 10.0}
             {"type": "eclipse", "umbra_only": true}
+            {"type": "earth_limb", "min_angle": 10.0}
+            {"type": "body", "body": "Mars", "min_angle": 45.0}
+            {"type": "daytime", "twilight": "civil"}
+            {"type": "airmass", "max_airmass": 2.0}
+            {"type": "moon_phase", "max_illumination": 0.5}
+            {"type": "saa", "polygon": [[-60, -20], [-30, -60], [0, -60], [0, -20]]}
+            {"type": "alt_az", "min_altitude": 10.0}
             {"type": "and", "constraints": [ ... ]}
             {"type": "or", "constraints": [ ... ]}
             {"type": "xor", "constraints": [ ... ]}
@@ -306,7 +477,7 @@ class Constraint:
         target_dec: float,
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-    ) -> ConstraintResult:
+    ) -> Any:
         """
         Evaluate constraint against ephemeris data.
 
@@ -397,6 +568,69 @@ class Constraint:
 
         Raises:
             ValueError: If time is not found in ephemeris timestamps
+            TypeError: If ephemeris type is not supported
+        """
+        ...
+
+    def evaluate_moving_body(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: list[float] | None = None,
+        target_decs: list[float] | None = None,
+        times: datetime | list[datetime] | None = None,
+        body: str | None = None,
+        use_horizons: bool = False,
+        spice_kernel: str | None = None,
+    ) -> MovingBodyResult:
+        """
+        Evaluate constraint for a moving body (varying RA/Dec over time).
+
+        This method evaluates the constraint for a body whose position changes over time,
+        such as a comet, asteroid, or planet. It returns detailed results including
+        per-timestamp violation status, visibility windows, and the body's coordinates.
+
+        There are two ways to specify the body's position:
+        1. Explicit coordinates: Provide `target_ras`, `target_decs`, and optionally `times`
+        2. Body lookup: Provide `body` name/ID and optionally `use_horizons` to query positions
+
+        Args:
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+            target_ras: Array of right ascensions in degrees (ICRS/J2000)
+            target_decs: Array of declinations in degrees (ICRS/J2000)
+            times: Specific times to evaluate (must match ras/decs length)
+            body: Body identifier (NAIF ID or name like "Jupiter", "90004910")
+            use_horizons: If True, query JPL Horizons for body positions (default: False)
+            spice_kernel: Path or URL to a SPICE kernel file for body positions.
+
+        Returns:
+            MovingBodyResult containing:
+                - violations: List of ConstraintViolation windows
+                - all_satisfied: bool indicating if constraint was never violated
+                - constraint_name: string name of the constraint
+                - timestamp: list of datetime objects
+                - ras: list of right ascensions in degrees
+                - decs: list of declinations in degrees
+                - constraint_array: list of bools (True = violated)
+                - visibility: list of VisibilityWindow objects
+
+        Performance:
+            The constraint evaluation itself is highly optimized (~0.3 µs per timestamp).
+            However, when using `body=`, each call fetches positions from SPICE which can
+            take ~80ms for 10,000 timestamps. For best performance when evaluating multiple
+            constraints against the same body, pre-fetch the coordinates once::
+
+                # FAST: Pre-fetch coordinates once, reuse for multiple constraints
+                skycoord = ephem.get_body("Jupiter")
+                ras, decs = list(skycoord.ra.deg), list(skycoord.dec.deg)
+                result1 = sun_constraint.evaluate_moving_body(ephem, target_ras=ras, target_decs=decs)
+                result2 = moon_constraint.evaluate_moving_body(ephem, target_ras=ras, target_decs=decs)
+
+                # SLOWER: Each call re-fetches positions from SPICE
+                result1 = sun_constraint.evaluate_moving_body(ephem, body="Jupiter")
+                result2 = moon_constraint.evaluate_moving_body(ephem, body="Jupiter")
+
+        Raises:
+            ValueError: If neither body nor target_ras/target_decs are provided
             TypeError: If ephemeris type is not supported
         """
         ...
@@ -719,24 +953,32 @@ class TLEEphemeris(Ephemeris):
         """
         ...
 
-    def get_body_pv(self, body: str) -> PositionVelocityData:
+    def get_body_pv(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
             Position and velocity data for the requested body
         """
         ...
 
-    def get_body(self, body: str) -> Any:  # Returns astropy.coordinates.SkyCoord
+    def get_body(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
 
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
 
         Returns:
             astropy.coordinates.SkyCoord object
@@ -768,6 +1010,21 @@ class TLEEphemeris(Ephemeris):
         """
         ...
 
+    def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
+        """
+        Calculate Moon illumination fraction for all ephemeris times.
+
+        Returns the fraction of the Moon's illuminated surface as seen from the
+        spacecraft observer (0.0 = new moon, 1.0 = full moon).
+
+        Args:
+            time_indices: Optional indices into ephemeris times (default: all times)
+
+        Returns:
+            List of Moon illumination fractions
+        """
+        ...
+
     @property
     def obsgeoloc(
         self,
@@ -791,6 +1048,19 @@ class TLEEphemeris(Ephemeris):
         time_indices: list[int] | None = None,
     ) -> npt.NDArray[np.float64]:
         """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
+        ...
+
+    def calculate_airmass(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> list[float]:
+        """Calculate airmass for given RA/Dec (deg) at selected times.
+
+        Returns airmass values (1.0 at zenith, ~2.0 at 30° altitude, infinity below horizon).
+        Accounts for observer height using atmospheric scale height correction.
+        """
         ...
 
 class SPICEEphemeris(Ephemeris):
@@ -985,6 +1255,19 @@ class SPICEEphemeris(Ephemeris):
         """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
         ...
 
+    def calculate_airmass(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> list[float]:
+        """Calculate airmass for given RA/Dec (deg) at selected times.
+
+        Returns airmass values (1.0 at zenith, ~2.0 at 30° altitude, infinity below horizon).
+        Accounts for observer height using atmospheric scale height correction.
+        """
+        ...
+
     @property
     def sun_radius(self) -> Any:  # Returns astropy.units.Quantity
         """
@@ -1103,6 +1386,53 @@ class SPICEEphemeris(Ephemeris):
             >>> target_time = datetime(2024, 1, 15, 12, 0, 0)
             >>> idx = eph.index(target_time)
             >>> position = eph.gcrs_pv.position[idx]
+        """
+        ...
+
+    def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
+        """
+        Calculate Moon illumination fraction for all ephemeris times.
+
+        Returns the fraction of the Moon's illuminated surface as seen from the
+        spacecraft observer (0.0 = new moon, 1.0 = full moon).
+
+        Args:
+            time_indices: Optional indices into ephemeris times (default: all times)
+
+        Returns:
+            List of Moon illumination fractions
+        """
+        ...
+
+    def get_body_pv(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> PositionVelocityData:
+        """
+        Get position and velocity of a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+
+        Returns:
+            Position and velocity data for the requested body
+        """
+        ...
+
+    def get_body(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """
+        Get SkyCoord for a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+
+        Returns:
+            astropy.coordinates.SkyCoord object
         """
         ...
 
@@ -1317,6 +1647,19 @@ class OEMEphemeris(Ephemeris):
         """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
         ...
 
+    def calculate_airmass(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> list[float]:
+        """Calculate airmass for given RA/Dec (deg) at selected times.
+
+        Returns airmass values (1.0 at zenith, ~2.0 at 30° altitude, infinity below horizon).
+        Accounts for observer height using atmospheric scale height correction.
+        """
+        ...
+
     @property
     def sun_radius(self) -> Any:  # Returns astropy.units.Quantity
         """
@@ -1438,6 +1781,53 @@ class OEMEphemeris(Ephemeris):
         """
         ...
 
+    def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
+        """
+        Calculate Moon illumination fraction for all ephemeris times.
+
+        Returns the fraction of the Moon's illuminated surface as seen from the
+        spacecraft observer (0.0 = new moon, 1.0 = full moon).
+
+        Args:
+            time_indices: Optional indices into ephemeris times (default: all times)
+
+        Returns:
+            List of Moon illumination fractions
+        """
+        ...
+
+    def get_body_pv(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> PositionVelocityData:
+        """
+        Get position and velocity of a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+
+        Returns:
+            Position and velocity data for the requested body
+        """
+        ...
+
+    def get_body(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """
+        Get SkyCoord for a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+
+        Returns:
+            astropy.coordinates.SkyCoord object
+        """
+        ...
+
 class GroundEphemeris(Ephemeris):
     """Ephemeris for a fixed ground location"""
 
@@ -1528,6 +1918,19 @@ class GroundEphemeris(Ephemeris):
         time_indices: list[int] | None = None,
     ) -> npt.NDArray[np.float64]:
         """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
+        ...
+
+    def calculate_airmass(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> list[float]:
+        """Calculate airmass for given RA/Dec (deg) at selected times.
+
+        Returns airmass values (1.0 at zenith, ~2.0 at 30° altitude, infinity below horizon).
+        Accounts for observer height using atmospheric scale height correction.
+        """
         ...
 
     @property
@@ -1765,6 +2168,53 @@ class GroundEphemeris(Ephemeris):
             >>> target_time = datetime(2024, 1, 15, 12, 0, 0)
             >>> idx = eph.index(target_time)
             >>> sun_position = eph.sun_pv.position[idx]
+        """
+        ...
+
+    def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
+        """
+        Calculate Moon illumination fraction for all ephemeris times.
+
+        Returns the fraction of the Moon's illuminated surface as seen from the
+        spacecraft observer (0.0 = new moon, 1.0 = full moon).
+
+        Args:
+            time_indices: Optional indices into ephemeris times (default: all times)
+
+        Returns:
+            List of Moon illumination fractions
+        """
+        ...
+
+    def get_body_pv(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> PositionVelocityData:
+        """
+        Get position and velocity of a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+
+        Returns:
+            Position and velocity data for the requested body
+        """
+        ...
+
+    def get_body(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """
+        Get SkyCoord for a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+
+        Returns:
+            astropy.coordinates.SkyCoord object
         """
         ...
 

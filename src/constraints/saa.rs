@@ -1,5 +1,6 @@
 /// South Atlantic Anomaly constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
+use crate::utils::polygon;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
@@ -33,29 +34,13 @@ impl SAAEvaluator {
     /// Check if a point is inside the polygon using the winding number algorithm
     /// This is more robust than ray casting for complex polygons
     fn point_in_polygon(&self, lon: f64, lat: f64) -> bool {
-        let mut winding_number = 0.0;
-        let n = self.polygon.len();
-
-        for i in 0..n {
-            let j = (i + 1) % n;
-            let (x1, y1) = self.polygon[i];
-            let (x2, y2) = self.polygon[j];
-
-            if y1 <= lat {
-                if y2 > lat && (x2 - x1) * (lat - y1) - (lon - x1) * (y2 - y1) > 0.0 {
-                    winding_number += 1.0;
-                }
-            } else if y2 <= lat && (x2 - x1) * (lat - y1) - (lon - x1) * (y2 - y1) < 0.0 {
-                winding_number -= 1.0;
-            }
-        }
-
-        winding_number != 0.0
+        polygon::point_in_polygon(&self.polygon, lon, lat)
     }
 }
 
 impl SAAEvaluator {
     /// Evaluate the constraint with pre-computed lat/lon arrays
+    #[allow(dead_code)]
     pub fn evaluate_with_latlon(
         &self,
         times: &[DateTime<Utc>],
@@ -105,7 +90,7 @@ impl SAAEvaluator {
             let lat = lats[i];
             let lon = lons[i];
             let in_saa = self.point_in_polygon(lon, lat);
-            let satisfied = !in_saa;
+            let satisfied = in_saa;
 
             for target_idx in 0..n_targets {
                 result[[target_idx, i]] = satisfied;
@@ -142,6 +127,36 @@ impl ConstraintEvaluator for SAAEvaluator {
         let (_times_slice, lats_slice, lons_slice) = extract_latlon_data!(ephemeris, time_indices);
 
         let result = self.in_constraint_batch_with_latlon(target_ras, &lats_slice, &lons_slice);
+        Ok(result)
+    }
+
+    /// Optimized diagonal evaluation for SAA - O(N) since SAA only depends on time
+    ///
+    /// SAA constraint doesn't depend on target position, only on spacecraft lat/lon.
+    /// So for diagonal evaluation, we just return the SAA status at each time.
+    fn in_constraint_batch_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        _target_decs: &[f64],
+    ) -> PyResult<Vec<bool>> {
+        let n = target_ras.len();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Get lat/lon for first n time indices
+        let time_indices: Vec<usize> = (0..n).collect();
+        let (_times_slice, lats_slice, lons_slice) =
+            extract_latlon_data!(ephemeris, Some(&time_indices[..]));
+
+        // Evaluate SAA at each time
+        let mut result = Vec::with_capacity(n);
+        for i in 0..n {
+            let in_saa = self.point_in_polygon(lons_slice[i], lats_slice[i]);
+            result.push(in_saa);
+        }
+
         Ok(result)
     }
 

@@ -2,7 +2,7 @@ use chrono::{DateTime, Datelike, Timelike, Utc};
 use erfa::earth::position_velocity_00;
 use erfa::prenut::precession_matrix_06;
 use erfa::vectors_and_matrices::mat_mul_pvec;
-use ndarray::{s, Array2};
+use ndarray::{s, Array1, Array2};
 use sofars::astro::atco13;
 use std::sync::Arc;
 
@@ -354,10 +354,17 @@ pub fn calculate_body_positions_spice_result(
     times: &[DateTime<Utc>],
     target_id: i32,
     center_id: i32,
+    spice_kernel: Option<&str>,
 ) -> Result<Array2<f64>, String> {
     use crate::ephemeris::spice_manager;
     use anise::prelude::*;
     use hifitime::Epoch as HifiEpoch;
+
+    // If a kernel is specified, initialize from it (URL or path). Otherwise use cache/defaults.
+    if let Some(spec) = spice_kernel {
+        spice_manager::ensure_planetary_ephemeris_spec(spec)
+            .map_err(|e| format!("Failed to initialize planetary ephemeris from '{spec}': {e}"))?;
+    }
 
     let almanac = if let Some(almanac) = spice_manager::get_planetary_ephemeris() {
         almanac
@@ -428,7 +435,7 @@ pub fn calculate_body_positions_spice_result(
 ///
 /// # Arguments
 /// * `ra_deg` - Right ascension in degrees
-/// * `dec_deg` - Declination in degrees  
+/// * `dec_deg` - Declination in degrees
 /// * `ephemeris` - Ephemeris containing observer positions and times
 /// * `time_indices` - Optional indices into ephemeris times to evaluate (default: all times)
 ///
@@ -438,6 +445,58 @@ pub fn calculate_body_positions_spice_result(
 ///
 /// # Panics
 /// Panics if the ephemeris has no GCRS position data
+/// Calculate airmass from altitude angle and observer height above sea level
+///
+/// Airmass represents the relative path length through Earth's atmosphere compared to
+/// zenith observation. Lower airmass values indicate better observing conditions.
+///
+/// # Arguments
+/// * `altitude_deg` - Altitude angle in degrees (0° = horizon, 90° = zenith)
+/// * `height_km` - Observer height above sea level in kilometers
+///
+/// # Returns
+/// Airmass value:
+/// - 1.0 at zenith (directly overhead)
+/// - ~2.0 at 30° altitude
+/// - ~5.8 at 10° altitude
+/// - Infinity for targets below horizon
+///
+/// # Implementation
+/// - For altitude < 10°: Uses Rozenberg approximation for low elevations
+/// - For altitude ≥ 10°: Uses simple secant approximation (1 / sin(altitude))
+/// - Corrects for observer height using exponential atmospheric scale height (8.5 km)
+///
+/// # Example
+/// ```rust,ignore
+/// let airmass_zenith = altitude_to_airmass(90.0, 0.0);  // 1.0 at sea level
+/// let airmass_30deg = altitude_to_airmass(30.0, 0.0);   // ~2.0
+/// let airmass_high_altitude = altitude_to_airmass(90.0, 2.0);  // <1.0 (less atmosphere above)
+/// ```
+pub fn altitude_to_airmass(altitude_deg: f64, height_km: f64) -> f64 {
+    let alt_rad = altitude_deg.to_radians();
+    let scale_height_km = 8.5; // Atmospheric scale height in km
+
+    let airmass_sea_level = if alt_rad <= 0.0 {
+        // Target below horizon - infinite airmass
+        f64::INFINITY
+    } else if alt_rad < 0.174533 {
+        // 10 degrees
+        // Use Rozenberg approximation for low elevations
+        1.0 / (alt_rad.sin() + 0.025 * (alt_rad + 0.15 * alt_rad.powi(2)).exp().ln())
+    } else {
+        // Simple secant approximation: airmass ≈ 1 / sin(altitude)
+        1.0 / alt_rad.sin()
+    };
+
+    // Correct for observer height above sea level
+    // At higher altitudes, there's less atmosphere above, so airmass is reduced
+    if airmass_sea_level.is_finite() {
+        airmass_sea_level * (-height_km / scale_height_km).exp()
+    } else {
+        airmass_sea_level
+    }
+}
+
 pub fn radec_to_altaz(
     ra_deg: f64,
     dec_deg: f64,
@@ -512,6 +571,110 @@ pub fn radec_to_altaz(
     result
 }
 
+/// Calculate Sun altitudes for all ephemeris times (vectorized for daytime constraints)
+///
+/// This function calculates the Sun's altitude above the horizon for all times in the ephemeris,
+/// which is needed for daytime constraint evaluation.
+///
+/// # Arguments
+/// * `ephemeris` - Ephemeris object containing Sun positions and observer positions
+/// * `time_indices` - Optional indices into ephemeris times (default: all times)
+///
+/// # Returns
+/// Array1 containing Sun altitude in degrees for each time
+///
+/// # Performance
+/// Calculate Sun altitude angles - FAST approximation version
+/// This is suitable for daytime/twilight constraints where we don't need
+/// topocentric accuracy (sub-degree is fine).
+///
+/// This version avoids expensive frame conversions and SOFA calls by using
+/// a simpler geocentric approximation, which is typically within 0.5-1.0 degrees
+/// of the true topocentric value for ground-based observers.
+pub fn calculate_sun_altitudes_batch_fast(
+    ephemeris: &dyn EphemerisBase,
+    time_indices: Option<&[usize]>,
+) -> Array1<f64> {
+    // Get Sun positions in GCRS frame
+    let sun_positions = ephemeris
+        .data()
+        .sun_gcrs
+        .as_ref()
+        .expect("Ephemeris must have Sun data");
+
+    // Get observer positions in GCRS frame
+    let obs_positions = ephemeris
+        .data()
+        .gcrs
+        .as_ref()
+        .expect("Ephemeris must have GCRS data");
+
+    // Get times
+    let times = ephemeris.get_times().expect("Ephemeris must have times");
+
+    // Filter data if indices provided
+    let (sun_filtered, obs_filtered, times_filtered) = if let Some(indices) = time_indices {
+        let sun_filtered = sun_positions.select(ndarray::Axis(0), indices);
+        let obs_filtered = obs_positions.select(ndarray::Axis(0), indices);
+        let times_filtered: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+        (sun_filtered, obs_filtered, times_filtered)
+    } else {
+        (sun_positions.clone(), obs_positions.clone(), times.to_vec())
+    };
+
+    let n_times = times_filtered.len();
+    let mut result = Array1::<f64>::zeros(n_times);
+
+    // Use simple geocentric approximation:
+    // 1. Calculate relative Sun position (Sun as seen from observer)
+    // 2. Convert to altitude using observer's latitude/longitude from geocentric position
+    // 3. This avoids expensive frame conversions and is good enough for twilight
+
+    for i in 0..n_times {
+        // Get positions
+        let sun_x = sun_filtered[[i, 0]];
+        let sun_y = sun_filtered[[i, 1]];
+        let sun_z = sun_filtered[[i, 2]];
+
+        let obs_x = obs_filtered[[i, 0]];
+        let obs_y = obs_filtered[[i, 1]];
+        let obs_z = obs_filtered[[i, 2]];
+
+        // Relative Sun position from observer
+        let rel_x = sun_x - obs_x;
+        let rel_y = sun_y - obs_y;
+        let rel_z = sun_z - obs_z;
+
+        // Observer's geocentric latitude and longitude (from GCRS position)
+        let obs_lat = obs_z.atan2((obs_x * obs_x + obs_y * obs_y).sqrt());
+        let obs_lon = obs_y.atan2(obs_x);
+
+        // Convert Sun's relative position to RA/Dec
+        let sun_dist = (rel_x * rel_x + rel_y * rel_y + rel_z * rel_z).sqrt();
+        if sun_dist == 0.0 {
+            result[i] = -90.0; // Sun at observer position
+            continue;
+        }
+
+        let sun_dec = (rel_z / sun_dist).asin();
+        let sun_ra = rel_y.atan2(rel_x);
+
+        // Calculate Hour Angle (HA = LST - RA)
+        // For simplicity, approximate LST ≈ observer_longitude (geocentric)
+        // In GCRS, the x-axis points to vernal equinox, so longitude ≈ atan2(y, x)
+        let lst_approx = obs_lon;
+        let ha = lst_approx - sun_ra;
+
+        // Simple altitude formula (good enough for daytime constraint):
+        // sin(alt) = sin(dec) * sin(lat) + cos(dec) * cos(lat) * cos(HA)
+        let sin_alt = sun_dec.sin() * obs_lat.sin() + sun_dec.cos() * obs_lat.cos() * ha.cos();
+        let alt_rad = sin_alt.asin();
+        result[i] = alt_rad.to_degrees();
+    }
+
+    result
+}
+
 /// Convert CIRS RA/Dec to horizontal coordinates (altitude/azimuth)
 ///
 /// # Arguments
@@ -564,7 +727,7 @@ pub fn calculate_sun_positions(times: &[DateTime<Utc>]) -> Array2<f64> {
 ///
 /// # Arguments
 /// * `times` - Vector of timestamps for which to calculate positions
-/// * `body_identifier` - NAIF ID or body name (e.g., "Jupiter", "mars", "301" for Moon)
+/// * `body_identifier` - NAIF ID or body name (e.g., "Jupiter", "mars", "301" for Moon, "Halley" for comet)
 /// * `observer_id` - NAIF ID of the observer/center body (default: 399 for Earth)
 ///
 /// # Returns
@@ -583,17 +746,93 @@ pub fn calculate_sun_positions(times: &[DateTime<Utc>]) -> Array2<f64> {
 /// let mars = calculate_body_by_id_or_name(&times, "499", 399).unwrap();
 ///
 /// // By name (case insensitive)
-/// let moon = calculate_body_by_id_or_name(&times, "moon", 399).unwrap();
+/// let moon = calculate_body_by_id_or_name(&times, "moon", 399, None, false).unwrap();
+///
+/// // Comet by name (requires use_horizons=true)
+/// let halley = calculate_body_by_id_or_name(&times, "Halley", 399, None, true).unwrap();
+///
+/// // Or use JPL Horizons as fallback when SPICE data unavailable
+/// let asteroid = calculate_body_by_id_or_name(&times, "433", 399, None, true).unwrap();
 /// ```
 pub fn calculate_body_by_id_or_name(
     times: &[DateTime<Utc>],
     body_identifier: &str,
     observer_id: i32,
+    spice_kernel: Option<&str>,
+    use_horizons: bool,
 ) -> Result<Array2<f64>, String> {
     use crate::naif_ids::parse_body_identifier;
+    use crate::utils::horizons::query_horizons_body;
 
-    let target_id = parse_body_identifier(body_identifier)
-        .ok_or_else(|| format!("Unknown body identifier: '{body_identifier}'. Provide a valid NAIF ID or body name (e.g., 'Jupiter', 'Mars', '301' for Moon)."))?;
+    // First, try to parse as a known NAIF ID/name
+    if let Some(target_id) = parse_body_identifier(body_identifier) {
+        // Try SPICE first
+        let spice_result =
+            calculate_body_positions_spice_result(times, target_id, observer_id, spice_kernel);
 
-    calculate_body_positions_spice_result(times, target_id, observer_id)
+        // If SPICE fails and use_horizons is enabled, try JPL Horizons
+        if spice_result.is_err() && use_horizons {
+            return query_and_convert_horizons(times, target_id, observer_id, &query_horizons_body);
+        }
+
+        return spice_result;
+    }
+
+    // If not a recognized NAIF ID/name and use_horizons is enabled, try as a comet or object name
+    if use_horizons {
+        // Treat as a comet/object name
+        return query_and_convert_horizons_by_name(times, body_identifier, observer_id);
+    }
+
+    // Neither NAIF ID/name nor Horizons
+    Err(format!(
+        "Unknown body identifier: '{}'. Provide a valid NAIF ID, body name (e.g., 'Jupiter', 'Mars', '301' for Moon), or enable use_horizons=True for comet/asteroid names.",
+        body_identifier
+    ))
+}
+
+/// Helper function to query Horizons by ID and convert coordinates
+#[allow(clippy::type_complexity)]
+fn query_and_convert_horizons(
+    times: &[DateTime<Utc>],
+    target_id: i32,
+    observer_id: i32,
+    query_fn: &dyn Fn(&[DateTime<Utc>], i32) -> Result<Array2<f64>, String>,
+) -> Result<Array2<f64>, String> {
+    // Horizons fallback only works for Earth-centered observers (NAIF ID 399)
+    // For satellite observers, use SPICE kernels instead
+    if observer_id != EARTH_NAIF_ID {
+        return Err(format!(
+            "Horizons fallback only supports Earth-centered observer (NAIF ID {}). \
+            For satellite/spacecraft observers, ensure SPICE kernels are available. Got observer_id={}",
+            EARTH_NAIF_ID, observer_id
+        ));
+    }
+
+    // Query Horizons for geocentric position (CENTER='@399' in the API)
+    // The Horizons API already returns Earth-centered ICRF coordinates
+    query_fn(times, target_id)
+}
+
+/// Helper function to query Horizons by name and convert coordinates
+fn query_and_convert_horizons_by_name(
+    times: &[DateTime<Utc>],
+    body_name: &str,
+    observer_id: i32,
+) -> Result<Array2<f64>, String> {
+    use crate::utils::horizons::query_horizons_body_by_name;
+
+    // Horizons fallback only works for Earth-centered observers (NAIF ID 399)
+    // For satellite observers, use SPICE kernels instead
+    if observer_id != EARTH_NAIF_ID {
+        return Err(format!(
+            "Horizons fallback only supports Earth-centered observer (NAIF ID {}). \
+            For satellite/spacecraft observers, ensure SPICE kernels are available. Got observer_id={}",
+            EARTH_NAIF_ID, observer_id
+        ));
+    }
+
+    // Query Horizons for geocentric position by name (CENTER='@399' in the API)
+    // The Horizons API already returns Earth-centered ICRF coordinates
+    query_horizons_body_by_name(times, body_name)
 }

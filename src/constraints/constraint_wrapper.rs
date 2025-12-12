@@ -11,6 +11,8 @@ use crate::constraints::earth_limb::EarthLimbConfig;
 use crate::constraints::eclipse::EclipseConfig;
 use crate::constraints::moon_phase::MoonPhaseConfig;
 use crate::constraints::moon_proximity::MoonProximityConfig;
+use crate::constraints::orbit_pole::OrbitPoleConfig;
+use crate::constraints::orbit_ram::OrbitRamConfig;
 use crate::constraints::saa::SAAConfig;
 use crate::constraints::sun_proximity::SunProximityConfig;
 use crate::ephemeris::ephemeris_common::EphemerisBase;
@@ -43,9 +45,151 @@ impl PyConstraint {
         target_dec: f64,
         time_indices: Option<Vec<usize>>,
     ) -> PyResult<ConstraintResult> {
-        // Delegate to evaluator with new interface
-        self.evaluator
-            .evaluate(ephemeris, target_ra, target_dec, time_indices.as_deref())
+        // PERFORMANCE OPTIMIZATION: Use fast batch path internally
+        // Instead of the slow evaluate() that tracks violations step-by-step,
+        // use in_constraint_batch() which is 1700x faster, then construct violations from the result
+
+        // Call the fast batch evaluation for single target
+        let violation_array = self.evaluator.in_constraint_batch(
+            ephemeris,
+            &[target_ra],
+            &[target_dec],
+            time_indices.as_deref(),
+        )?;
+
+        // Get the times we evaluated
+        let all_times = ephemeris.get_times()?;
+        let times: Vec<_> = if let Some(ref indices) = time_indices {
+            indices.iter().map(|&i| all_times[i]).collect()
+        } else {
+            all_times.to_vec()
+        };
+
+        // Extract the boolean array for our single target (first row)
+        // Note: in_constraint_batch now consistently returns true when VIOLATED (matches track_violations)
+        let violated: Vec<bool> = (0..violation_array.ncols())
+            .map(|i| violation_array[[0, i]])
+            .collect();
+
+        // Track violations using the same helper function
+        let violations = crate::constraints::core::track_violations(
+            &times,
+            |i| (violated[i], if violated[i] { 1.0 } else { 0.0 }),
+            |_i, _is_open| self.evaluator.name(),
+        );
+
+        let all_satisfied = violations.is_empty();
+        Ok(ConstraintResult::new(
+            violations,
+            all_satisfied,
+            self.evaluator.name(),
+            times,
+        ))
+    }
+
+    /// Internal helper to evaluate in_constraint_batch for a single target at a single time index
+    #[allow(dead_code)]
+    fn eval_in_constraint_batch_single(
+        &self,
+        py: Python,
+        ephemeris: &Py<PyAny>,
+        target_ra: f64,
+        target_dec: f64,
+        time_idx: usize,
+    ) -> PyResult<bool> {
+        let bound = ephemeris.bind(py);
+
+        if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
+            let result = self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &[target_ra],
+                &[target_dec],
+                Some(&[time_idx]),
+            )?;
+            return Ok(result[[0, 0]]);
+        }
+        if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
+            let result = self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &[target_ra],
+                &[target_dec],
+                Some(&[time_idx]),
+            )?;
+            return Ok(result[[0, 0]]);
+        }
+        if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
+            let result = self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &[target_ra],
+                &[target_dec],
+                Some(&[time_idx]),
+            )?;
+            return Ok(result[[0, 0]]);
+        }
+        if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+            let result = self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &[target_ra],
+                &[target_dec],
+                Some(&[time_idx]),
+            )?;
+            return Ok(result[[0, 0]]);
+        }
+
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
+        ))
+    }
+
+    /// Vectorized evaluation for moving bodies - evaluates all targets at their corresponding times
+    ///
+    /// For N targets at N times, this calls in_constraint_batch once with all N targets
+    /// Uses the efficient diagonal batch evaluation for moving bodies.
+    /// Each target_i is evaluated only at time_i, which is O(N) instead of O(N²).
+    fn eval_moving_body_batch_diagonal(
+        &self,
+        py: Python,
+        ephemeris: &Py<PyAny>,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<Vec<bool>> {
+        let n = target_ras.len();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+
+        let bound = ephemeris.bind(py);
+
+        // Use the efficient diagonal batch evaluation
+        if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
+            self.evaluator.in_constraint_batch_diagonal(
+                &*ephem as &dyn EphemerisBase,
+                target_ras,
+                target_decs,
+            )
+        } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
+            self.evaluator.in_constraint_batch_diagonal(
+                &*ephem as &dyn EphemerisBase,
+                target_ras,
+                target_decs,
+            )
+        } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
+            self.evaluator.in_constraint_batch_diagonal(
+                &*ephem as &dyn EphemerisBase,
+                target_ras,
+                target_decs,
+            )
+        } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+            self.evaluator.in_constraint_batch_diagonal(
+                &*ephem as &dyn EphemerisBase,
+                target_ras,
+                target_decs,
+            )
+        } else {
+            Err(pyo3::exceptions::PyTypeError::new_err(
+                "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
+            ))
+        }
     }
 }
 
@@ -486,13 +630,130 @@ impl PyConstraint {
         })
     }
 
+    /// Create an Orbit RAM direction constraint
+    ///
+    /// Ensures target maintains minimum angular separation from the spacecraft's
+    /// velocity vector (RAM direction). Useful for instruments that need to sample
+    /// the atmosphere or for thermal management.
+    ///
+    /// Args:
+    ///     min_angle (float): Minimum allowed angular separation from RAM direction in degrees
+    ///     max_angle (float, optional): Maximum allowed angular separation from RAM direction in degrees
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint object
+    #[pyo3(signature=(min_angle, max_angle=None))]
+    #[staticmethod]
+    fn orbit_ram(min_angle: f64, max_angle: Option<f64>) -> PyResult<Self> {
+        if !(0.0..=180.0).contains(&min_angle) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "min_angle must be between 0 and 180 degrees",
+            ));
+        }
+
+        if let Some(max) = max_angle {
+            if !(0.0..=180.0).contains(&max) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_angle must be between 0 and 180 degrees",
+                ));
+            }
+            if max <= min_angle {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_angle must be greater than min_angle",
+                ));
+            }
+        }
+
+        let config = OrbitRamConfig {
+            min_angle,
+            max_angle,
+        };
+        let mut json_obj = serde_json::json!({
+            "type": "orbit_ram",
+            "min_angle": min_angle
+        });
+        if let Some(max) = max_angle {
+            json_obj["max_angle"] = serde_json::json!(max);
+        }
+        let config_json = json_obj.to_string();
+
+        Ok(PyConstraint {
+            evaluator: config.to_evaluator(),
+            config_json,
+        })
+    }
+
+    /// Create an Orbit pole direction constraint
+    ///
+    /// Ensures target maintains minimum angular separation from both the north and south
+    /// orbital poles (directions perpendicular to the orbital plane). Useful for maintaining
+    /// specific orientations relative to the spacecraft's orbit.
+    ///
+    /// Args:
+    ///     min_angle (float): Minimum allowed angular separation from both orbital poles in degrees
+    ///     max_angle (float, optional): Maximum allowed angular separation from both orbital poles in degrees
+    ///     earth_limb_pole (bool, optional): If True, pole avoidance angle is earth_radius_deg + min_angle - 90.
+    ///                                       Used for NASA's Neil Gehrels Swift Observatory.
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint object
+    #[pyo3(signature=(min_angle, max_angle=None, earth_limb_pole=false))]
+    #[staticmethod]
+    fn orbit_pole(
+        min_angle: f64,
+        max_angle: Option<f64>,
+        earth_limb_pole: Option<bool>,
+    ) -> PyResult<Self> {
+        if !(0.0..=180.0).contains(&min_angle) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "min_angle must be between 0 and 180 degrees",
+            ));
+        }
+
+        if let Some(max) = max_angle {
+            if !(0.0..=180.0).contains(&max) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_angle must be between 0 and 180 degrees",
+                ));
+            }
+            if max <= min_angle {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "max_angle must be greater than min_angle",
+                ));
+            }
+        }
+
+        let earth_limb_pole = earth_limb_pole.unwrap_or(false);
+
+        let config = OrbitPoleConfig {
+            min_angle,
+            max_angle,
+            earth_limb_pole,
+        };
+        let mut json_obj = serde_json::json!({
+            "type": "orbit_pole",
+            "min_angle": min_angle,
+            "earth_limb_pole": earth_limb_pole
+        });
+        if let Some(max) = max_angle {
+            json_obj["max_angle"] = serde_json::json!(max);
+        }
+        let config_json = json_obj.to_string();
+
+        Ok(PyConstraint {
+            evaluator: config.to_evaluator(),
+            config_json,
+        })
+    }
+
     /// Create an Altitude/Azimuth constraint
     ///
     /// Args:
-    ///     min_altitude (float): Minimum allowed altitude in degrees (0 = horizon, 90 = zenith)
+    ///     min_altitude (float, optional): Minimum allowed altitude in degrees (0 = horizon, 90 = zenith)
     ///     max_altitude (float, optional): Maximum allowed altitude in degrees
     ///     min_azimuth (float, optional): Minimum allowed azimuth in degrees (0 = North, 90 = East)
     ///     max_azimuth (float, optional): Maximum allowed azimuth in degrees
+    ///     polygon (list of tuples, optional): List of (altitude, azimuth) pairs defining allowed region
     ///
     /// Returns:
     ///     Constraint: A new constraint object
@@ -502,18 +763,22 @@ impl PyConstraint {
     /// - Azimuth: Angular distance from North, measured eastward (0° = North, 90° = East, etc.)
     ///
     /// For azimuth ranges that cross North (e.g., 330° to 30°), specify min_azimuth > max_azimuth.
-    #[pyo3(signature=(min_altitude, max_altitude=None, min_azimuth=None, max_azimuth=None))]
+    /// If polygon is provided, the target must be inside this polygon to satisfy the constraint.
+    #[pyo3(signature=(min_altitude=None, max_altitude=None, min_azimuth=None, max_azimuth=None, polygon=None))]
     #[staticmethod]
     fn alt_az(
-        min_altitude: f64,
+        min_altitude: Option<f64>,
         max_altitude: Option<f64>,
         min_azimuth: Option<f64>,
         max_azimuth: Option<f64>,
+        polygon: Option<Vec<(f64, f64)>>,
     ) -> PyResult<Self> {
-        if !(0.0..=90.0).contains(&min_altitude) {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "min_altitude must be between 0 and 90 degrees",
-            ));
+        if let Some(min_alt) = min_altitude {
+            if !(0.0..=90.0).contains(&min_alt) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "min_altitude must be between 0 and 90 degrees",
+                ));
+            }
         }
 
         if let Some(max_alt) = max_altitude {
@@ -522,7 +787,10 @@ impl PyConstraint {
                     "max_altitude must be between 0 and 90 degrees",
                 ));
             }
-            if max_alt <= min_altitude {
+        }
+
+        if let (Some(min_alt), Some(max_alt)) = (min_altitude, max_altitude) {
+            if max_alt <= min_alt {
                 return Err(pyo3::exceptions::PyValueError::new_err(
                     "max_altitude must be greater than min_altitude",
                 ));
@@ -545,17 +813,29 @@ impl PyConstraint {
             }
         }
 
+        // Validate polygon if provided
+        if let Some(ref poly) = polygon {
+            if poly.len() < 3 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "polygon must have at least 3 vertices",
+                ));
+            }
+        }
+
         let config = AltAzConfig {
             min_altitude,
             max_altitude,
             min_azimuth,
             max_azimuth,
+            polygon: polygon.clone(),
         };
 
         let mut json_obj = serde_json::json!({
-            "type": "alt_az",
-            "min_altitude": min_altitude
+            "type": "alt_az"
         });
+        if let Some(min_alt) = min_altitude {
+            json_obj["min_altitude"] = serde_json::json!(min_alt);
+        }
         if let Some(max_alt) = max_altitude {
             json_obj["max_altitude"] = serde_json::json!(max_alt);
         }
@@ -564,6 +844,9 @@ impl PyConstraint {
         }
         if let Some(max_az) = max_azimuth {
             json_obj["max_azimuth"] = serde_json::json!(max_az);
+        }
+        if let Some(poly) = polygon {
+            json_obj["polygon"] = serde_json::json!(poly);
         }
         let config_json = json_obj.to_string();
 
@@ -693,6 +976,43 @@ impl PyConstraint {
         })
     }
 
+    /// Combine this constraint with others using logical AND (instance method)
+    ///
+    /// Args:
+    ///     *constraints: Variable number of Constraint objects to combine with self
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint that is violated only if ALL input constraints are violated
+    ///
+    /// Example:
+    ///     >>> combined = sun_constraint.combine_and(moon_constraint, saa_constraint)
+    #[pyo3(signature = (*constraints))]
+    fn combine_and(&self, constraints: Vec<PyRef<PyConstraint>>) -> PyResult<Self> {
+        // Start with self's config
+        let mut configs: Vec<serde_json::Value> =
+            vec![serde_json::from_str(&self.config_json).unwrap()];
+
+        // Add all other constraints
+        configs.extend(
+            constraints
+                .iter()
+                .map(|c| serde_json::from_str(&c.config_json).unwrap()),
+        );
+
+        let config_json = serde_json::json!({
+            "type": "and",
+            "constraints": configs
+        })
+        .to_string();
+
+        let evaluator = parse_constraint_json(&serde_json::from_str(&config_json).unwrap())?;
+
+        Ok(PyConstraint {
+            evaluator,
+            config_json,
+        })
+    }
+
     /// Combine constraints with logical OR
     ///
     /// Args:
@@ -713,6 +1033,43 @@ impl PyConstraint {
             .iter()
             .map(|c| serde_json::from_str(&c.config_json).unwrap())
             .collect();
+
+        let config_json = serde_json::json!({
+            "type": "or",
+            "constraints": configs
+        })
+        .to_string();
+
+        let evaluator = parse_constraint_json(&serde_json::from_str(&config_json).unwrap())?;
+
+        Ok(PyConstraint {
+            evaluator,
+            config_json,
+        })
+    }
+
+    /// Combine this constraint with others using logical OR (instance method)
+    ///
+    /// Args:
+    ///     *constraints: Variable number of Constraint objects to combine with self
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint that is violated if ANY input constraint is violated
+    ///
+    /// Example:
+    ///     >>> combined = sun_constraint.combine_or(moon_constraint, saa_constraint)
+    #[pyo3(signature = (*constraints))]
+    fn combine_or(&self, constraints: Vec<PyRef<PyConstraint>>) -> PyResult<Self> {
+        // Start with self's config
+        let mut configs: Vec<serde_json::Value> =
+            vec![serde_json::from_str(&self.config_json).unwrap()];
+
+        // Add all other constraints
+        configs.extend(
+            constraints
+                .iter()
+                .map(|c| serde_json::from_str(&c.config_json).unwrap()),
+        );
 
         let config_json = serde_json::json!({
             "type": "or",
@@ -865,7 +1222,7 @@ impl PyConstraint {
     ///
     /// Returns:
     ///     numpy.ndarray: 2D boolean array of shape (n_targets, n_times) where True
-    ///                    indicates the constraint is violated for that target at that time
+    ///                    indicates the constraint is VIOLATED (target not allowed) at that time
     ///
     /// Example:
     ///     >>> ras = [10.0, 20.0, 30.0]  # Three targets
@@ -1148,6 +1505,236 @@ impl PyConstraint {
         }
     }
 
+    /// Evaluate constraint for a moving body (varying RA/Dec over time)
+    ///
+    /// This method evaluates the constraint for a body whose position changes over time,
+    /// such as a comet, asteroid, or planet. It returns detailed results including
+    /// per-timestamp violation status, visibility windows, and the body's coordinates.
+    ///
+    /// There are two ways to specify the body's position:
+    /// 1. Explicit coordinates: Provide `target_ras`, `target_decs`, and optionally `times`
+    /// 2. Body lookup: Provide `body` name/ID and optionally `use_horizons` to query positions
+    ///
+    /// Args:
+    ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+    ///     target_ras (list[float], optional): Array of right ascensions in degrees (ICRS/J2000)
+    ///     target_decs (list[float], optional): Array of declinations in degrees (ICRS/J2000)
+    ///     times (datetime or list[datetime], optional): Specific times to evaluate (must match ras/decs length)
+    ///     body (str, optional): Body identifier (NAIF ID or name like "Jupiter", "90004910")
+    ///     use_horizons (bool): If True, query JPL Horizons for body positions (default: False)
+    ///     spice_kernel (str, optional): SPICE kernel specification for body lookup
+    ///
+    /// Returns:
+    ///     MovingBodyResult: Result object containing:
+    ///         - timestamps: list of datetime objects
+    ///         - ras: list of right ascensions in degrees
+    ///         - decs: list of declinations in degrees
+    ///         - constraint_array: list of bools (True = violated)
+    ///         - visibility_flags: list of bools (True = visible, inverse of constraint_array)
+    ///         - visibility: list of visibility window dicts with start_time, end_time, duration_seconds
+    ///         - all_satisfied: bool indicating if constraint was never violated
+    ///         - constraint_name: string name of the constraint
+    ///
+    /// Example:
+    ///     >>> # Using body name (queries SPICE or Horizons for positions)
+    ///     >>> result = constraint.evaluate_moving_body(ephem, body="Jupiter")
+    ///     >>> # Using explicit coordinates for a comet
+    ///     >>> result = constraint.evaluate_moving_body(ephem, target_ras=ras, target_decs=decs)
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (ephemeris, target_ras=None, target_decs=None, times=None, body=None, use_horizons=false, spice_kernel=None))]
+    fn evaluate_moving_body(
+        &self,
+        py: Python,
+        ephemeris: Py<PyAny>,
+        target_ras: Option<Vec<f64>>,
+        target_decs: Option<Vec<f64>>,
+        times: Option<&Bound<PyAny>>,
+        body: Option<&str>,
+        use_horizons: bool,
+        spice_kernel: Option<&str>,
+    ) -> PyResult<MovingBodyResult> {
+        use crate::constraints::core::MovingBodyResult;
+
+        let bound = ephemeris.bind(py);
+
+        // Determine ras, decs, and timestamps based on input mode
+        let (ras, decs, timestamps): (Vec<f64>, Vec<f64>, Vec<DateTime<Utc>>) =
+            if let Some(body_id) = body {
+                // Body lookup mode: get positions from ephemeris.get_body()
+                // Build kwargs dict with use_horizons and optional spice_kernel
+                let kwargs = pyo3::types::PyDict::new(py);
+                kwargs.set_item("use_horizons", use_horizons)?;
+                if let Some(ks) = spice_kernel {
+                    kwargs.set_item("spice_kernel", ks)?;
+                }
+                let skycoord = bound.call_method("get_body", (body_id,), Some(&kwargs))?;
+
+                // Extract RA/Dec from SkyCoord
+                let ra_attr = skycoord.getattr("ra")?;
+                let dec_attr = skycoord.getattr("dec")?;
+                let ra_deg = ra_attr.getattr("deg")?;
+                let dec_deg = dec_attr.getattr("deg")?;
+
+                // Convert to Vec<f64>
+                let ras: Vec<f64> = ra_deg.extract()?;
+                let decs: Vec<f64> = dec_deg.extract()?;
+
+                // Get timestamps from ephemeris
+                let ts_attr = bound.getattr("timestamp")?;
+                let ts_list: Vec<DateTime<Utc>> = if let Ok(iter) =
+                    pyo3::types::PyIterator::from_object(&ts_attr)
+                {
+                    iter.map(|item| {
+                        let item = item?;
+                        let year: i32 = item.getattr("year")?.extract()?;
+                        let month: u32 = item.getattr("month")?.extract()?;
+                        let day: u32 = item.getattr("day")?.extract()?;
+                        let hour: u32 = item.getattr("hour")?.extract()?;
+                        let minute: u32 = item.getattr("minute")?.extract()?;
+                        let second: u32 = item.getattr("second")?.extract()?;
+                        let microsecond: u32 = item.getattr("microsecond")?.extract()?;
+
+                        chrono::NaiveDate::from_ymd_opt(year, month, day)
+                            .and_then(|d| d.and_hms_micro_opt(hour, minute, second, microsecond))
+                            .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
+                            .ok_or_else(|| {
+                                pyo3::exceptions::PyValueError::new_err("Invalid datetime")
+                            })
+                    })
+                    .collect::<PyResult<_>>()?
+                } else {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "Could not iterate ephemeris timestamps",
+                    ));
+                };
+
+                (ras, decs, ts_list)
+            } else {
+                // Explicit coordinates mode
+                let ras = target_ras.ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "Either 'body' or 'target_ras'/'target_decs' must be provided",
+                    )
+                })?;
+                let decs = target_decs.ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "target_decs must be provided when target_ras is specified",
+                    )
+                })?;
+
+                if ras.len() != decs.len() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "target_ras and target_decs must have the same length",
+                    ));
+                }
+
+                // Get timestamps - either from 'times' parameter or from ephemeris
+                let ts_list: Vec<DateTime<Utc>> = if let Some(times_arg) = times {
+                    // Parse times parameter
+                    if let Ok(iter) = pyo3::types::PyIterator::from_object(times_arg) {
+                        iter.map(|item| {
+                            let item = item?;
+                            let year: i32 = item.getattr("year")?.extract()?;
+                            let month: u32 = item.getattr("month")?.extract()?;
+                            let day: u32 = item.getattr("day")?.extract()?;
+                            let hour: u32 = item.getattr("hour")?.extract()?;
+                            let minute: u32 = item.getattr("minute")?.extract()?;
+                            let second: u32 = item.getattr("second")?.extract()?;
+                            let microsecond: u32 = item.getattr("microsecond")?.extract()?;
+
+                            chrono::NaiveDate::from_ymd_opt(year, month, day)
+                                .and_then(|d| {
+                                    d.and_hms_micro_opt(hour, minute, second, microsecond)
+                                })
+                                .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
+                                .ok_or_else(|| {
+                                    pyo3::exceptions::PyValueError::new_err("Invalid datetime")
+                                })
+                        })
+                        .collect::<PyResult<_>>()?
+                    } else {
+                        // Single datetime
+                        let year: i32 = times_arg.getattr("year")?.extract()?;
+                        let month: u32 = times_arg.getattr("month")?.extract()?;
+                        let day: u32 = times_arg.getattr("day")?.extract()?;
+                        let hour: u32 = times_arg.getattr("hour")?.extract()?;
+                        let minute: u32 = times_arg.getattr("minute")?.extract()?;
+                        let second: u32 = times_arg.getattr("second")?.extract()?;
+                        let microsecond: u32 = times_arg.getattr("microsecond")?.extract()?;
+
+                        let dt = chrono::NaiveDate::from_ymd_opt(year, month, day)
+                            .and_then(|d| d.and_hms_micro_opt(hour, minute, second, microsecond))
+                            .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
+                            .ok_or_else(|| {
+                                pyo3::exceptions::PyValueError::new_err("Invalid datetime")
+                            })?;
+
+                        vec![dt]
+                    }
+                } else {
+                    // Use ephemeris timestamps
+                    let ts_attr = bound.getattr("timestamp")?;
+                    if let Ok(iter) = pyo3::types::PyIterator::from_object(&ts_attr) {
+                        iter.map(|item| {
+                            let item = item?;
+                            let year: i32 = item.getattr("year")?.extract()?;
+                            let month: u32 = item.getattr("month")?.extract()?;
+                            let day: u32 = item.getattr("day")?.extract()?;
+                            let hour: u32 = item.getattr("hour")?.extract()?;
+                            let minute: u32 = item.getattr("minute")?.extract()?;
+                            let second: u32 = item.getattr("second")?.extract()?;
+                            let microsecond: u32 = item.getattr("microsecond")?.extract()?;
+
+                            chrono::NaiveDate::from_ymd_opt(year, month, day)
+                                .and_then(|d| {
+                                    d.and_hms_micro_opt(hour, minute, second, microsecond)
+                                })
+                                .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
+                                .ok_or_else(|| {
+                                    pyo3::exceptions::PyValueError::new_err("Invalid datetime")
+                                })
+                        })
+                        .collect::<PyResult<_>>()?
+                    } else {
+                        return Err(pyo3::exceptions::PyValueError::new_err(
+                            "Could not iterate ephemeris timestamps",
+                        ));
+                    }
+                };
+
+                if ts_list.len() != ras.len() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "timestamps length must match target_ras/target_decs length",
+                    ));
+                }
+
+                (ras, decs, ts_list)
+            };
+
+        // Evaluate constraint at each timestamp with corresponding RA/Dec
+        // VECTORIZED: Use batch evaluation with diagonal extraction for speed
+        let constraint_vec = self.eval_moving_body_batch_diagonal(py, &ephemeris, &ras, &decs)?;
+
+        // Build violation windows from constraint_vec
+        let violations = track_violations(
+            &timestamps,
+            |i| (constraint_vec[i], if constraint_vec[i] { 1.0 } else { 0.0 }),
+            |_i, _is_open| self.evaluator.name(),
+        );
+
+        let all_satisfied = !constraint_vec.iter().any(|&v| v);
+
+        Ok(MovingBodyResult::new(
+            violations,
+            all_satisfied,
+            self.evaluator.name(),
+            timestamps,
+            ras,
+            decs,
+            constraint_vec,
+        ))
+    }
+
     /// Get constraint configuration as JSON string
     fn to_json(&self) -> String {
         self.config_json.clone()
@@ -1344,20 +1931,43 @@ fn parse_constraint_json(value: &serde_json::Value) -> PyResult<Box<dyn Constrai
             Ok(config.to_evaluator())
         }
         "alt_az" => {
-            let min_altitude = value
-                .get("min_altitude")
-                .and_then(|v| v.as_f64())
-                .ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err("Missing 'min_altitude' field")
-                })?;
+            let min_altitude = value.get("min_altitude").and_then(|v| v.as_f64());
             let max_altitude = value.get("max_altitude").and_then(|v| v.as_f64());
             let min_azimuth = value.get("min_azimuth").and_then(|v| v.as_f64());
             let max_azimuth = value.get("max_azimuth").and_then(|v| v.as_f64());
+            let polygon = value
+                .get("polygon")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .map(|point| {
+                            let p = point.as_array().ok_or_else(|| {
+                                pyo3::exceptions::PyValueError::new_err(
+                                    "Polygon points must be arrays",
+                                )
+                            })?;
+                            if p.len() != 2 {
+                                return Err(pyo3::exceptions::PyValueError::new_err(
+                                    "Polygon points must be [alt, az] pairs",
+                                ));
+                            }
+                            let alt = p[0].as_f64().ok_or_else(|| {
+                                pyo3::exceptions::PyValueError::new_err("Altitude must be a number")
+                            })?;
+                            let az = p[1].as_f64().ok_or_else(|| {
+                                pyo3::exceptions::PyValueError::new_err("Azimuth must be a number")
+                            })?;
+                            Ok((alt, az))
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?;
             let config = AltAzConfig {
                 min_altitude,
                 max_altitude,
                 min_azimuth,
                 max_azimuth,
+                polygon,
             };
             Ok(config.to_evaluator())
         }
@@ -1414,6 +2024,39 @@ fn parse_constraint_json(value: &serde_json::Value) -> PyResult<Box<dyn Constrai
                 constraint: evaluator,
             }))
         }
+        "orbit_pole" => {
+            let min_angle = value
+                .get("min_angle")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("Missing 'min_angle' field")
+                })?;
+            let max_angle = value.get("max_angle").and_then(|v| v.as_f64());
+            let earth_limb_pole = value
+                .get("earth_limb_pole")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let config = OrbitPoleConfig {
+                min_angle,
+                max_angle,
+                earth_limb_pole,
+            };
+            Ok(config.to_evaluator())
+        }
+        "orbit_ram" => {
+            let min_angle = value
+                .get("min_angle")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("Missing 'min_angle' field")
+                })?;
+            let max_angle = value.get("max_angle").and_then(|v| v.as_f64());
+            let config = OrbitRamConfig {
+                min_angle,
+                max_angle,
+            };
+            Ok(config.to_evaluator())
+        }
         _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Unknown constraint type: {constraint_type}"
         ))),
@@ -1435,85 +2078,87 @@ impl ConstraintEvaluator for AndEvaluator {
     ) -> PyResult<ConstraintResult> {
         let times = ephemeris.get_times()?;
 
-        // Evaluate all constraints
-        let results: Vec<_> = self
-            .constraints
-            .iter()
-            .map(|c| c.evaluate(ephemeris, target_ra, target_dec, time_indices))
-            .collect::<PyResult<Vec<_>>>()?;
+        // Build the actual indices we'll iterate over
+        let indices: Vec<usize> = if let Some(idx) = time_indices {
+            idx.to_vec()
+        } else {
+            (0..times.len()).collect()
+        };
 
-        // Merge violations - a violation exists if ALL constraints are violated at that time
-        let mut merged_violations = Vec::new();
-        let mut current_violation: Option<(usize, f64, Vec<String>)> = None;
+        let times_filtered: Vec<_> = indices.iter().map(|&i| times[i]).collect();
 
-        for (i, time) in times.iter().enumerate() {
-            let time_str = time.to_rfc3339();
-            let mut all_violated = true;
-            let mut min_severity = f64::MAX;
-            let mut descriptions = Vec::new();
+        let violations = track_violations(
+            &times_filtered,
+            |i| {
+                let mut all_violated = true;
+                let mut min_severity = f64::MAX;
 
-            // Check if all constraints are violated at this time
-            for result in &results {
-                let mut this_violated = false;
-                for violation in &result.violations {
-                    if violation.start_time <= time_str && time_str <= violation.end_time {
-                        this_violated = true;
-                        min_severity = min_severity.min(violation.max_severity);
-                        descriptions.push(&violation.description);
-                        break;
-                    }
-                }
-                if !this_violated {
-                    all_violated = false;
-                    break;
-                }
-            }
+                // Use the ORIGINAL index, not the loop index
+                let original_idx = indices[i];
 
-            if all_violated {
-                match &mut current_violation {
-                    Some((_, sev, descs)) => {
-                        *sev = sev.max(min_severity);
-                        for desc in descriptions {
-                            // Only store string references, clone at the end
-                            if !descs.iter().any(|d| d == desc) {
-                                descs.push(desc.to_string());
+                // Check each constraint at this time
+                for constraint in &self.constraints {
+                    let result = constraint.evaluate(
+                        ephemeris,
+                        target_ra,
+                        target_dec,
+                        Some(&[original_idx]),
+                    );
+                    if let Ok(ref res) = result {
+                        if res.violations.is_empty() {
+                            all_violated = false;
+                        } else {
+                            for violation in &res.violations {
+                                min_severity = min_severity.min(violation.max_severity);
                             }
                         }
-                    }
-                    None => {
-                        current_violation = Some((
-                            i,
-                            min_severity,
-                            descriptions.iter().map(|s| s.to_string()).collect(),
-                        ));
+                    } else {
+                        all_violated = false;
                     }
                 }
-            } else if let Some((start_idx, severity, descs)) = current_violation.take() {
-                merged_violations.push(ConstraintViolation {
-                    start_time: times[start_idx].to_rfc3339(),
-                    end_time: times[i - 1].to_rfc3339(),
-                    max_severity: severity,
-                    description: format!("AND violation: {}", descs.join("; ")),
-                });
-            }
-        }
 
-        // Close any open violation
-        if let Some((start_idx, severity, descs)) = current_violation {
-            merged_violations.push(ConstraintViolation {
-                start_time: times[start_idx].to_rfc3339(),
-                end_time: times[times.len() - 1].to_rfc3339(),
-                max_severity: severity,
-                description: format!("AND violation: {}", descs.join("; ")),
-            });
-        }
+                (
+                    all_violated,
+                    if min_severity == f64::MAX {
+                        1.0
+                    } else {
+                        min_severity
+                    },
+                )
+            },
+            |i, _is_open| {
+                let mut descriptions = Vec::new();
+                let original_idx = indices[i];
 
-        let all_satisfied = merged_violations.is_empty();
+                // Get descriptions from all violated constraints at this time
+                for constraint in &self.constraints {
+                    let result = constraint.evaluate(
+                        ephemeris,
+                        target_ra,
+                        target_dec,
+                        Some(&[original_idx]),
+                    );
+                    if let Ok(ref res) = result {
+                        for violation in &res.violations {
+                            descriptions.push(violation.description.clone());
+                        }
+                    }
+                }
+
+                if descriptions.is_empty() {
+                    "AND violation".to_string()
+                } else {
+                    format!("AND violation: {}", descriptions.join("; "))
+                }
+            },
+        );
+
+        let all_satisfied = violations.is_empty();
         Ok(ConstraintResult::new(
-            merged_violations,
+            violations,
             all_satisfied,
             self.name(),
-            times.to_vec(),
+            times_filtered,
         ))
     }
 
@@ -1531,7 +2176,8 @@ impl ConstraintEvaluator for AndEvaluator {
         }
 
         let times = ephemeris.get_times()?;
-        let n_times = times.len();
+        // Use filtered time count if time_indices provided, otherwise full times
+        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
 
         // Evaluate all sub-constraints in batch
         let results: Result<Vec<_>, _> = self
@@ -1550,6 +2196,36 @@ impl ConstraintEvaluator for AndEvaluator {
                 let all_violated = results.iter().all(|r| r[[i, j]]);
                 result[[i, j]] = all_violated;
             }
+        }
+
+        Ok(result)
+    }
+
+    /// Optimized diagonal evaluation for AND - uses O(N) diagonal from each sub-constraint
+    fn in_constraint_batch_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<Vec<bool>> {
+        let n = target_ras.len();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Get diagonal results from each sub-constraint
+        let sub_results: Result<Vec<_>, _> = self
+            .constraints
+            .iter()
+            .map(|c| c.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs))
+            .collect();
+        let sub_results = sub_results?;
+
+        // AND logic: violated if ALL sub-constraints are violated at each time
+        let mut result = Vec::with_capacity(n);
+        for i in 0..n {
+            let all_violated = sub_results.iter().all(|r| r[i]);
+            result.push(all_violated);
         }
 
         Ok(result)
@@ -1585,81 +2261,78 @@ impl ConstraintEvaluator for OrEvaluator {
     ) -> PyResult<ConstraintResult> {
         let times = ephemeris.get_times()?;
 
-        // Evaluate all constraints
-        let results: Vec<_> = self
-            .constraints
-            .iter()
-            .map(|c| c.evaluate(ephemeris, target_ra, target_dec, time_indices))
-            .collect::<PyResult<Vec<_>>>()?;
+        // Build the actual indices we'll iterate over
+        let indices: Vec<usize> = if let Some(idx) = time_indices {
+            idx.to_vec()
+        } else {
+            (0..times.len()).collect()
+        };
 
-        // For OR, we violate when ANY constraint is violated
-        let mut merged_violations = Vec::new();
-        let mut current_violation: Option<(usize, f64, Vec<String>)> = None;
+        let times_filtered: Vec<_> = indices.iter().map(|&i| times[i]).collect();
 
-        for (i, time) in times.iter().enumerate() {
-            let time_str = time.to_rfc3339();
-            let mut any_violated = false;
-            let mut max_severity: f64 = 0.0;
-            let mut descriptions = Vec::new();
+        let violations = track_violations(
+            &times_filtered,
+            |i| {
+                let mut any_violated = false;
+                let mut max_severity = 0.0f64;
 
-            // Check if any constraint is violated at this time
-            for result in &results {
-                for violation in &result.violations {
-                    if violation.start_time <= time_str && time_str <= violation.end_time {
-                        any_violated = true;
-                        max_severity = max_severity.max(violation.max_severity);
-                        // Avoid cloning by using reference
-                        descriptions.push(&violation.description);
-                        break;
-                    }
-                }
-            }
+                // Use the ORIGINAL index, not the loop index
+                let original_idx = indices[i];
 
-            if any_violated {
-                match &mut current_violation {
-                    Some((_, sev, descs)) => {
-                        *sev = sev.max(max_severity);
-                        for desc in descriptions {
-                            // Only store string references, clone at the end
-                            if !descs.iter().any(|d| d == desc) {
-                                descs.push(desc.to_string());
+                // OR logic: violated if ANY sub-constraint is violated
+                // (if any constraint blocks observation, target is not visible)
+                for constraint in &self.constraints {
+                    let result = constraint.evaluate(
+                        ephemeris,
+                        target_ra,
+                        target_dec,
+                        Some(&[original_idx]),
+                    );
+                    if let Ok(ref res) = result {
+                        if !res.violations.is_empty() {
+                            any_violated = true;
+                            for violation in &res.violations {
+                                max_severity = max_severity.max(violation.max_severity);
                             }
                         }
                     }
-                    None => {
-                        current_violation = Some((
-                            i,
-                            max_severity,
-                            descriptions.iter().map(|s| s.to_string()).collect(),
-                        ));
+                }
+
+                (any_violated, max_severity)
+            },
+            |i, _is_open| {
+                let mut descriptions = Vec::new();
+                let original_idx = indices[i];
+
+                // Get descriptions from all violated constraints at this time
+                for constraint in &self.constraints {
+                    let result = constraint.evaluate(
+                        ephemeris,
+                        target_ra,
+                        target_dec,
+                        Some(&[original_idx]),
+                    );
+                    if let Ok(ref res) = result {
+                        for violation in &res.violations {
+                            descriptions.push(violation.description.clone());
+                        }
                     }
                 }
-            } else if let Some((start_idx, severity, descs)) = current_violation.take() {
-                merged_violations.push(ConstraintViolation {
-                    start_time: times[start_idx].to_rfc3339(),
-                    end_time: times[i - 1].to_rfc3339(),
-                    max_severity: severity,
-                    description: format!("OR violation: {}", descs.join("; ")),
-                });
-            }
-        }
 
-        // Close any open violation
-        if let Some((start_idx, severity, descs)) = current_violation {
-            merged_violations.push(ConstraintViolation {
-                start_time: times[start_idx].to_rfc3339(),
-                end_time: times[times.len() - 1].to_rfc3339(),
-                max_severity: severity,
-                description: format!("OR violation: {}", descs.join("; ")),
-            });
-        }
+                if descriptions.is_empty() {
+                    "OR violation".to_string()
+                } else {
+                    format!("OR violation: {}", descriptions.join("; "))
+                }
+            },
+        );
 
-        let all_satisfied = merged_violations.is_empty();
+        let all_satisfied = violations.is_empty();
         Ok(ConstraintResult::new(
-            merged_violations,
+            violations,
             all_satisfied,
             self.name(),
-            times.to_vec(),
+            times_filtered,
         ))
     }
 
@@ -1677,7 +2350,8 @@ impl ConstraintEvaluator for OrEvaluator {
         }
 
         let times = ephemeris.get_times()?;
-        let n_times = times.len();
+        // Use filtered time count if time_indices provided, otherwise full times
+        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
 
         // Evaluate all sub-constraints in batch
         let results: Result<Vec<_>, _> = self
@@ -1696,6 +2370,36 @@ impl ConstraintEvaluator for OrEvaluator {
                 let any_violated = results.iter().any(|r| r[[i, j]]);
                 result[[i, j]] = any_violated;
             }
+        }
+
+        Ok(result)
+    }
+
+    /// Optimized diagonal evaluation for OR - uses O(N) diagonal from each sub-constraint
+    fn in_constraint_batch_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<Vec<bool>> {
+        let n = target_ras.len();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Get diagonal results from each sub-constraint
+        let sub_results: Result<Vec<_>, _> = self
+            .constraints
+            .iter()
+            .map(|c| c.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs))
+            .collect();
+        let sub_results = sub_results?;
+
+        // OR logic: violated if ANY sub-constraint is violated at each time
+        let mut result = Vec::with_capacity(n);
+        for i in 0..n {
+            let any_violated = sub_results.iter().any(|r| r[i]);
+            result.push(any_violated);
         }
 
         Ok(result)
@@ -1741,8 +2445,8 @@ impl ConstraintEvaluator for NotEvaluator {
             // Everything was satisfied, so NOT means everything is violated
             if !times.is_empty() {
                 inverted_violations.push(ConstraintViolation {
-                    start_time: times[0].to_rfc3339(),
-                    end_time: times[times.len() - 1].to_rfc3339(),
+                    start_time_internal: times[0],
+                    end_time_internal: times[times.len() - 1],
                     max_severity: 1.0,
                     description: format!(
                         "NOT({}): inner constraint was satisfied",
@@ -1752,13 +2456,13 @@ impl ConstraintEvaluator for NotEvaluator {
             }
         } else {
             // Find gaps between violations (these become new violations)
-            let mut last_end = times[0].to_rfc3339();
+            let mut last_end = times[0];
 
             for violation in &result.violations {
-                if last_end < violation.start_time {
+                if last_end < violation.start_time_internal {
                     inverted_violations.push(ConstraintViolation {
-                        start_time: last_end,
-                        end_time: violation.start_time.clone(),
+                        start_time_internal: last_end,
+                        end_time_internal: violation.start_time_internal,
                         max_severity: 0.5,
                         description: format!(
                             "NOT({}): inner constraint was satisfied",
@@ -1766,15 +2470,15 @@ impl ConstraintEvaluator for NotEvaluator {
                         ),
                     });
                 }
-                last_end = violation.end_time.clone();
+                last_end = violation.end_time_internal;
             }
 
             // Check for gap after last violation
-            let final_time = times[times.len() - 1].to_rfc3339();
+            let final_time = times[times.len() - 1];
             if last_end < final_time {
                 inverted_violations.push(ConstraintViolation {
-                    start_time: last_end,
-                    end_time: final_time,
+                    start_time_internal: last_end,
+                    end_time_internal: final_time,
                     max_severity: 0.5,
                     description: format!(
                         "NOT({}): inner constraint was satisfied",
@@ -1810,7 +2514,8 @@ impl ConstraintEvaluator for NotEvaluator {
         )?;
 
         let n_targets = target_ras.len();
-        let n_times = times.len();
+        // Use filtered time count if time_indices provided, otherwise full times
+        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
         let mut result = Array2::from_elem((n_targets, n_times), false);
 
         // NOT logic: invert all values
@@ -1821,6 +2526,21 @@ impl ConstraintEvaluator for NotEvaluator {
         }
 
         Ok(result)
+    }
+
+    /// Optimized diagonal evaluation for NOT - uses O(N) diagonal from sub-constraint
+    fn in_constraint_batch_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<Vec<bool>> {
+        let sub_result =
+            self.constraint
+                .in_constraint_batch_diagonal(ephemeris, target_ras, target_decs)?;
+
+        // NOT logic: invert all values
+        Ok(sub_result.into_iter().map(|v| !v).collect())
     }
 
     fn name(&self) -> String {
@@ -1857,12 +2577,13 @@ impl ConstraintEvaluator for XorEvaluator {
         let mut current_violation: Option<(usize, f64, Vec<String>)> = None;
 
         for (i, time) in times.iter().enumerate() {
-            let time_str = time.to_rfc3339();
             let mut active: Vec<&ConstraintViolation> = Vec::new();
 
             for result in &results {
                 for violation in &result.violations {
-                    if violation.start_time <= time_str && time_str <= violation.end_time {
+                    if violation.start_time_internal <= *time
+                        && *time <= violation.end_time_internal
+                    {
                         active.push(violation);
                         break;
                     }
@@ -1888,8 +2609,8 @@ impl ConstraintEvaluator for XorEvaluator {
                 }
             } else if let Some((start_idx, severity, descs)) = current_violation.take() {
                 merged_violations.push(ConstraintViolation {
-                    start_time: times[start_idx].to_rfc3339(),
-                    end_time: times[i - 1].to_rfc3339(),
+                    start_time_internal: times[start_idx],
+                    end_time_internal: times[i - 1],
                     max_severity: severity,
                     description: format!("XOR violation: {}", descs.join("; ")),
                 });
@@ -1898,8 +2619,8 @@ impl ConstraintEvaluator for XorEvaluator {
 
         if let Some((start_idx, severity, descs)) = current_violation {
             merged_violations.push(ConstraintViolation {
-                start_time: times[start_idx].to_rfc3339(),
-                end_time: times[times.len() - 1].to_rfc3339(),
+                start_time_internal: times[start_idx],
+                end_time_internal: times[times.len() - 1],
                 max_severity: severity,
                 description: format!("XOR violation: {}", descs.join("; ")),
             });
@@ -1928,7 +2649,8 @@ impl ConstraintEvaluator for XorEvaluator {
         }
 
         let times = ephemeris.get_times()?;
-        let n_times = times.len();
+        // Use filtered time count if time_indices provided, otherwise full times
+        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
 
         // Evaluate all sub-constraints in batch
         let results: Result<Vec<_>, _> = self
@@ -1947,6 +2669,36 @@ impl ConstraintEvaluator for XorEvaluator {
                 let violation_count = results.iter().filter(|r| r[[i, j]]).count();
                 result[[i, j]] = violation_count == 1;
             }
+        }
+
+        Ok(result)
+    }
+
+    /// Optimized diagonal evaluation for XOR - uses O(N) diagonal from each sub-constraint
+    fn in_constraint_batch_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<Vec<bool>> {
+        let n = target_ras.len();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Get diagonal results from each sub-constraint
+        let sub_results: Result<Vec<_>, _> = self
+            .constraints
+            .iter()
+            .map(|c| c.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs))
+            .collect();
+        let sub_results = sub_results?;
+
+        // XOR logic: violated when EXACTLY ONE sub-constraint is violated at each time
+        let mut result = Vec::with_capacity(n);
+        for i in 0..n {
+            let violation_count = sub_results.iter().filter(|r| r[i]).count();
+            result.push(violation_count == 1);
         }
 
         Ok(result)

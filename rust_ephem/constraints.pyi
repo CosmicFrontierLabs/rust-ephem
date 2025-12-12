@@ -18,7 +18,49 @@ from pydantic import BaseModel, TypeAdapter
 from .ephemeris import Ephemeris
 
 if TYPE_CHECKING:
-    from rust_ephem import ConstraintResult
+    from rust_ephem import VisibilityWindow
+
+if TYPE_CHECKING:
+    pass
+
+class ConstraintViolation(BaseModel):
+    """A time window where a constraint was violated."""
+
+    start_time: datetime
+    end_time: datetime
+    max_severity: float
+    description: str
+
+class ConstraintResult(BaseModel):
+    """Result of constraint evaluation containing all violations."""
+
+    violations: list[ConstraintViolation]
+    all_satisfied: bool
+    constraint_name: str
+
+    @property
+    def timestamps(self) -> npt.NDArray[np.datetime64] | list[datetime]: ...
+    @property
+    def constraint_array(self) -> list[bool]: ...
+    @property
+    def visibility(self) -> list[VisibilityWindow]: ...
+    def total_violation_duration(self) -> float: ...
+    def in_constraint(self, time: datetime) -> bool: ...
+
+class VisibilityWindowResult(BaseModel):
+    start_time: datetime
+    end_time: datetime
+    duration_seconds: float
+
+class MovingVisibilityResult(BaseModel):
+    timestamps: list[datetime]
+    ras: list[float]
+    decs: list[float]
+    constraint_array: list[bool]
+    visibility_flags: list[bool]
+    visibility: list[VisibilityWindowResult]
+    all_satisfied: bool
+    constraint_name: str
 
 class RustConstraintMixin(BaseModel):
     """Base class for Rust constraint configurations"""
@@ -46,6 +88,35 @@ class RustConstraintMixin(BaseModel):
         target_ra: float,
         target_dec: float,
     ) -> bool | list[bool]: ...
+    def evaluate_moving_body(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: list[float] | npt.ArrayLike | None = None,
+        target_decs: list[float] | npt.ArrayLike | None = None,
+        times: datetime | list[datetime] | None = None,
+        body: str | int | None = None,
+        use_horizons: bool = False,
+        spice_kernel: str | None = None,
+    ) -> MovingVisibilityResult:
+        """
+        Evaluate constraint for a moving body (varying RA/Dec over time).
+
+        Performance:
+            The constraint evaluation itself is highly optimized (~0.3 µs per timestamp).
+            When using `body=`, each call fetches positions from SPICE (~80ms for 10k timestamps).
+            For best performance with multiple constraints, pre-fetch coordinates once::
+
+                # FAST: Pre-fetch once
+                skycoord = ephem.get_body("Jupiter")
+                ras, decs = list(skycoord.ra.deg), list(skycoord.dec.deg)
+                result1 = sun_c.evaluate_moving_body(ephem, target_ras=ras, target_decs=decs)
+                result2 = moon_c.evaluate_moving_body(ephem, target_ras=ras, target_decs=decs)
+
+                # SLOWER: Re-fetches each call
+                result1 = sun_c.evaluate_moving_body(ephem, body="Jupiter")
+                result2 = moon_c.evaluate_moving_body(ephem, body="Jupiter")
+        """
+        ...
     def and_(self, other: ConstraintConfig) -> AndConstraint: ...
     def or_(self, other: ConstraintConfig) -> OrConstraint: ...
     def xor_(self, other: ConstraintConfig) -> XorConstraint: ...
@@ -111,6 +182,17 @@ class AltAzConstraint(RustConstraintMixin):
     min_azimuth: float | None = None
     max_azimuth: float | None = None
 
+class OrbitRamConstraint(RustConstraintMixin):
+    type: Literal["orbit_ram"] = "orbit_ram"
+    min_angle: float
+    max_angle: float | None = None
+
+class OrbitPoleConstraint(RustConstraintMixin):
+    type: Literal["orbit_pole"] = "orbit_pole"
+    min_angle: float
+    max_angle: float | None = None
+    earth_limb_pole: bool = False
+
 class AndConstraint(RustConstraintMixin):
     type: Literal["and"] = "and"
     constraints: list[ConstraintConfig]
@@ -136,7 +218,10 @@ ConstraintConfig = (
     | DaytimeConstraint
     | AirmassConstraint
     | MoonPhaseConstraint
+    | SAAConstraint
     | AltAzConstraint
+    | OrbitRamConstraint
+    | OrbitPoleConstraint
     | AndConstraint
     | OrConstraint
     | XorConstraint

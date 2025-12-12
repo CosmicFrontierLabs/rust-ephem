@@ -18,7 +18,7 @@ determine when targets are actually observable. This requires checking multiple
 constraints:
 
 - **Sun avoidance**: Target must be far enough from the Sun
-- **Moon avoidance**: Target must be far enough from the Moon  
+- **Moon avoidance**: Target must be far enough from the Moon
 - **Earth limb**: Target must not be blocked by Earth (for spacecraft)
 - **Eclipse avoidance**: Spacecraft must not be in Earth's shadow
 - **Bright object avoidance**: Target must avoid planets or other bright objects
@@ -119,18 +119,23 @@ Python operators.
 Using the AND Operator (&)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-All constraints must be satisfied:
+All constraints must be satisfied. This is a somewhat uncommon use case, as
+combining constraints with AND means that a target is in constraint only when
+it satisifies every condition. So if you define the combined constraint as
+being about being 45 degrees from the Sun and 10 degrees from the Moon, then
+the target is in the region of sky where those constraints overlap:
+
+Important take away here, we are defining *constraints* not *visibility*.
+However, given that here is a use case for AND.
 
 .. code-block:: python
 
    # Target must satisfy ALL of these:
    # - At least 45° from Sun
-   # - At least 10° from Moon
    # - Not in eclipse
 
    constraint = (
        SunConstraint(min_angle=45.0) &
-       MoonConstraint(min_angle=10.0) &
        ~EclipseConstraint()  # ~ means NOT (require NOT in eclipse)
    )
 
@@ -140,24 +145,35 @@ All constraints must be satisfied:
    for window in result.visibility:
        print(f"  {window.start_time} to {window.end_time}")
 
+The reason why the AND operator is useful here is that it means the Sun
+constraint is only enforced when the spacecraft is not in eclipse. I.e. when
+the Sun is behind the Earth, we don't care how close the target is to the Sun.
+
 Using the OR Operator (|)
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-At least one constraint must be satisfied:
+At least one constraint must be satisfied. This is the most common way to
+combine constraints for visibility calculations, as it defines when a target is
+not visible (i.e., when ANY of the constraints are violated).:
 
 .. code-block:: python
 
    # Observation is blocked if EITHER:
    # - Too close to Sun OR
-   # - In eclipse
+   # - Too close to the Moon OR
+   # - Too close to the Earth limb
 
    blocking_constraint = (
-       ~SunConstraint(min_angle=45.0) |  # Violated when < 45° from Sun
-       EclipseConstraint()                # Violated when in eclipse
+       SunConstraint(min_angle=45.0) |  # Violated when < 45° from Sun
+       MoonConstraint(min_angle=10.0) |  # Violated when < 10° from Moon
+       EarthLimbConstraint(min_angle=20.0)  # Violated when < 20° from Earth limb
    )
 
-   # Invert to get visibility (when NOT blocked)
-   visibility_constraint = ~blocking_constraint
+   result = constraint.evaluate(ephem, target_ra, target_dec)
+
+   print(f"Combined visibility windows: {len(result.visibility)}")
+   for window in result.visibility:
+       print(f"  {window.start_time} to {window.end_time}")
 
 Using the NOT Operator (~)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -168,7 +184,7 @@ Invert any constraint:
 
    # EclipseConstraint is violated when IN eclipse
    # ~EclipseConstraint is violated when NOT in eclipse
-   
+
    eclipse = EclipseConstraint()
    not_eclipse = ~eclipse
 
@@ -178,7 +194,8 @@ Invert any constraint:
 Using the XOR Operator (^)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Exclusive OR - violated when exactly one sub-constraint is violated:
+Exclusive OR - violated when exactly one sub-constraint is violated. This is
+included for completeness, but it's not obvious how this would be used in practice.:
 
 .. code-block:: python
 
@@ -202,25 +219,22 @@ For spacecraft like Hubble or JWST, you typically need comprehensive constraints
        avoid_eclipse: bool = True,
    ):
        """Create a typical spacecraft observation constraint.
-       
+
        Args:
            sun_angle: Minimum angle from Sun (degrees)
            moon_angle: Minimum angle from Moon (degrees)
            earth_limb_angle: Minimum angle above Earth's limb (degrees)
            avoid_eclipse: If True, avoid observations during eclipse
-           
+
        Returns:
            Combined constraint for spacecraft observations
        """
        constraint = (
-           SunConstraint(min_angle=sun_angle) &
-           MoonConstraint(min_angle=moon_angle) &
+           SunConstraint(min_angle=sun_angle) |
+           MoonConstraint(min_angle=moon_angle) |
            EarthLimbConstraint(min_angle=earth_limb_angle)
        )
-       
-       if avoid_eclipse:
-           constraint = constraint & ~EclipseConstraint()
-       
+
        return constraint
 
    # Create constraint with typical values
@@ -228,7 +242,6 @@ For spacecraft like Hubble or JWST, you typically need comprehensive constraints
        sun_angle=50.0,
        moon_angle=15.0,
        earth_limb_angle=25.0,
-       avoid_eclipse=True
    )
 
    # Evaluate for target
@@ -253,7 +266,7 @@ horizon elevation:
    # Create ground station ephemeris (Mauna Kea Observatory)
    ground = rust_ephem.GroundEphemeris(
        latitude=19.8207,     # degrees N
-       longitude=-155.4681,  # degrees W  
+       longitude=-155.4681,  # degrees W
        height=4207,          # meters
        begin=begin,
        end=end,
@@ -266,9 +279,9 @@ horizon elevation:
    # - Moon avoidance (less strict for ground)
 
    ground_constraint = (
-       SunConstraint(min_angle=90.0) &              # Sun below horizon
-       EarthLimbConstraint(min_angle=20.0) &        # Target > 20° elevation
+       DaytimeConstraint(twilight='astronomical').  # Sun below -18°
        MoonConstraint(min_angle=5.0)                # Minimal moon avoidance
+       AirmassConstraint(max_airmass=2.0)            # Target above ~30° elevation
    )
 
    result = ground_constraint.evaluate(ground, target_ra, target_dec)
@@ -287,17 +300,16 @@ Use ``BodyConstraint`` to avoid bright planets:
 
    # Avoid Mars, Jupiter, and Saturn
    planet_avoidance = (
-       BodyConstraint(body="Mars", min_angle=10.0) &
-       BodyConstraint(body="Jupiter barycenter", min_angle=15.0) &
+       BodyConstraint(body="Mars", min_angle=10.0) |
+       BodyConstraint(body="Jupiter barycenter", min_angle=15.0) |
        BodyConstraint(body="Saturn barycenter", min_angle=15.0)
    )
 
    # Combine with other constraints
    full_constraint = (
-       SunConstraint(min_angle=45.0) &
-       MoonConstraint(min_angle=10.0) &
-       planet_avoidance &
-       ~EclipseConstraint()
+       SunConstraint(min_angle=45.0) |
+       MoonConstraint(min_angle=10.0) |
+       planet_avoidance
    )
 
    result = full_constraint.evaluate(ephem, target_ra, target_dec)
@@ -332,9 +344,9 @@ For survey observations or target selection, evaluate many targets efficiently:
 
    # Create constraint
    constraint = (
-       SunConstraint(min_angle=45.0) &
-       MoonConstraint(min_angle=10.0) &
-       ~EclipseConstraint()
+       SunConstraint(min_angle=45.0) |
+       MoonConstraint(min_angle=10.0) |
+       EarthLimbConstraint(min_angle=20.0)
    )
 
    # Batch evaluation (much faster than loop)
@@ -346,7 +358,7 @@ For survey observations or target selection, evaluate many targets efficiently:
        # Count satisfied timestamps
        satisfied = ~violations[i]  # Invert: True = satisfied
        visibility_fraction = satisfied.sum() / len(satisfied)
-       
+
        print(f"{target['name']}: {visibility_fraction*100:.1f}% observable")
 
 Large Target Catalogs
@@ -416,9 +428,9 @@ Calculate detailed statistics:
                "max_window_minutes": 0,
                "min_window_minutes": 0,
            }
-       
+
        durations = [w.duration_seconds for w in result.visibility]
-       
+
        return {
            "total_hours": sum(durations) / 3600,
            "window_count": len(durations),
@@ -428,7 +440,7 @@ Calculate detailed statistics:
        }
 
    stats = analyze_visibility(result)
-   
+
    print(f"Visibility Statistics:")
    print(f"  Total observable time: {stats['total_hours']:.2f} hours")
    print(f"  Number of windows: {stats['window_count']}")
@@ -446,10 +458,9 @@ Constraints can be serialized to JSON for storage or configuration:
 
    # Create a complex constraint
    constraint = (
-       SunConstraint(min_angle=45.0) &
-       MoonConstraint(min_angle=10.0) &
-       EarthLimbConstraint(min_angle=25.0) &
-       ~EclipseConstraint()
+       SunConstraint(min_angle=45.0) |
+       MoonConstraint(min_angle=10.0) |
+       EarthLimbConstraint(min_angle=25.0) |
    )
 
    # Serialize to JSON
@@ -486,23 +497,23 @@ Define reusable constraint templates for different observation modes:
 
    # Template for UV observations (strict Sun/Moon avoidance)
    UV_OBSERVATION = (
-       SunConstraint(min_angle=70.0) &      # Very strict Sun avoidance
-       MoonConstraint(min_angle=30.0) &     # Strict Moon avoidance
-       EarthLimbConstraint(min_angle=20.0) &
+       SunConstraint(min_angle=70.0) |      # Very strict Sun avoidance
+       MoonConstraint(min_angle=30.0) |     # Strict Moon avoidance
+       EarthLimbConstraint(min_angle=20.0) |
        ~EclipseConstraint()
    )
 
    # Template for infrared observations (less strict)
    IR_OBSERVATION = (
-       SunConstraint(min_angle=45.0) &
-       MoonConstraint(min_angle=10.0) &
+       SunConstraint(min_angle=45.0) |
+       MoonConstraint(min_angle=10.0) |
        EarthLimbConstraint(min_angle=15.0)
        # Eclipse OK for IR
    )
 
    # Template for radio observations (minimal constraints)
    RADIO_OBSERVATION = (
-       SunConstraint(min_angle=20.0) &
+       SunConstraint(min_angle=20.0) |
        EarthLimbConstraint(min_angle=10.0)
    )
 
@@ -544,9 +555,9 @@ Plan observations over multiple days:
    ]
 
    constraint = (
-       SunConstraint(min_angle=45.0) &
-       MoonConstraint(min_angle=10.0) &
-       EarthLimbConstraint(min_angle=20.0) &
+       SunConstraint(min_angle=45.0) |
+       MoonConstraint(min_angle=10.0) |
+       EarthLimbConstraint(min_angle=20.0) |
        ~EclipseConstraint()
    )
 
@@ -556,25 +567,149 @@ Plan observations over multiple days:
 
    for target in survey_targets:
        result = constraint.evaluate(ephem, target["ra"], target["dec"])
-       
+
        total_hours = sum(w.duration_seconds for w in result.visibility) / 3600
        avg_window = (total_hours * 60 / len(result.visibility)) if result.visibility else 0
-       
+
        print(f"\n{target['name']}:")
        print(f"  Total visibility: {total_hours:.1f} hours")
        print(f"  Windows: {len(result.visibility)}")
        print(f"  Avg window: {avg_window:.1f} minutes")
-       
+
        # Show best windows (longest 3)
        if result.visibility:
-           best_windows = sorted(result.visibility, 
-                                key=lambda w: w.duration_seconds, 
+           best_windows = sorted(result.visibility,
+                                key=lambda w: w.duration_seconds,
                                 reverse=True)[:3]
            print("  Best windows:")
            for w in best_windows:
                print(f"    {w.start_time.strftime('%Y-%m-%d %H:%M')} "
                      f"({w.duration_seconds/60:.0f} min)")
 
+
+Moving Target Visibility
+------------------------
+
+For targets that move across the sky (asteroids, comets, spacecraft), use the
+``Constraint.evaluate_moving_body()`` method with JPL Horizons support:
+
+Basic Moving Target Tracking
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Track any solar system body by name or NAIF ID:
+
+.. code-block:: python
+
+    # Define constraint
+    constraint = SunConstraint(min_angle=30) | MoonConstraint(min_angle=15)
+
+    # Track Mars (using SPICE kernel)
+    result = constraint.evaluate_moving_body(
+        ephemeris=ephem,
+        body="Mars"
+    )
+
+    print(f"Mars visibility windows: {len(result.visibility)}")
+    for window in result.visibility:
+        print(f"  {window.start_time} to {window.end_time}")
+
+Using JPL Horizons for Extended Coverage
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Enable JPL Horizons to access asteroids, comets, and spacecraft beyond SPICE kernels:
+
+.. code-block:: python
+
+    # Track Ceres asteroid
+    result = constraint.evaluate_moving_body(
+        ephemeris=ephem,
+        body="1",  # Ceres NAIF ID
+        use_horizons=True  # ← Enable Horizons fallback
+    )
+
+    # Track Apophis asteroid
+    result = constraint.evaluate_moving_body(
+        ephemeris=ephem,
+        body="99942",  # Apophis
+        use_horizons=True
+    )
+
+    # Track by name (also works with Horizons)
+    result = constraint.evaluate_moving_body(
+        ephemeris=ephem,
+        body="Apophis",
+        use_horizons=True
+    )
+
+**How Horizons Integration Works:**
+
+1. **SPICE first** — Checks local SPICE kernels for the body
+2. **Horizons fallback** — If not in SPICE and ``use_horizons=True``, queries NASA's JPL Horizons
+3. **Frame conversion** — Horizons returns heliocentric coordinates; automatically converted to observer-relative
+4. **Constraint evaluation** — Body position evaluated against all constraints over the time range
+
+Custom RA/Dec Arrays
+^^^^^^^^^^^^^^^^^^^^^
+
+For custom target paths (non-solar system objects), provide explicit RA/Dec arrays:
+
+.. code-block:: python
+
+    import numpy as np
+
+    # Define moving target path
+    times = ephem.timestamp
+    ras = np.linspace(100, 110, len(times))      # RA moves from 100° to 110°
+    decs = np.linspace(10, 20, len(times))       # Dec moves from 10° to 20°
+
+    result = constraint.evaluate_moving_body(
+        ephemeris=ephem,
+        target_ras=list(ras),
+        target_decs=list(decs),
+    )
+
+    print(f"Visibility windows: {len(result.visibility)}")
+
+Asteroid Close Approach Monitoring
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Monitor visibility during an asteroid's close approach:
+
+.. code-block:: python
+
+    from datetime import datetime, timedelta, timezone
+
+    # Apophis close approach period (April 2029)
+    begin = datetime(2029, 4, 1, tzinfo=timezone.utc)
+    end = datetime(2029, 4, 14, tzinfo=timezone.utc)
+
+    # Ground observation site
+    obs = rust_ephem.GroundEphemeris(
+        latitude=40.0,    # Your observatory
+        longitude=-105.0,
+        height=1600,
+        begin=begin,
+        end=end,
+        step_size=3600  # Hourly resolution
+    )
+
+    # Stringent constraints for close approach observation
+    constraint = (
+        SunConstraint(min_angle=10) |  # Not too close to Sun
+        MoonConstraint(min_angle=20) |  # Away from Moon
+        EarthLimbConstraint(min_angle=5)  # Clear of Earth limb
+    )
+
+    result = constraint.evaluate_moving_body(
+        ephemeris=obs,
+        body="99942",  # Apophis
+        use_horizons=True
+    )
+
+    print(f"Apophis observable for {len(result.visibility)} period(s)")
+    for window in result.visibility:
+        hours = window.duration_seconds / 3600
+        print(f"  {window.start_time} → {window.end_time} ({hours:.1f} hours)")
 
 Performance Tips
 ----------------
@@ -585,7 +720,7 @@ Performance Tips
 
       # FAST: Single batch call
       violations = constraint.in_constraint_batch(ephem, ras, decs)
-      
+
       # SLOW: Loop over targets
       for ra, dec in zip(ras, decs):
           result = constraint.evaluate(ephem, ra, dec)  # Avoid!
@@ -596,10 +731,10 @@ Performance Tips
 
       # Coarse: 5 minutes (good for week-long planning)
       ephem = rust_ephem.TLEEphemeris(..., step_size=300)
-      
+
       # Fine: 1 minute (good for precise scheduling)
       ephem = rust_ephem.TLEEphemeris(..., step_size=60)
-      
+
       # Very fine: 10 seconds (only if needed)
       ephem = rust_ephem.TLEEphemeris(..., step_size=10)
 
@@ -612,7 +747,7 @@ Performance Tips
           if satisfied:
               # Process visible time
               pass
-      
+
       # SLOW: Call method repeatedly
       for time in result.timestamp:
           if result.in_constraint(time):  # Lookups on each call
@@ -624,7 +759,7 @@ Performance Tips
 
       # Only evaluate specific indices
       result = constraint.evaluate(ephem, ra, dec, indices=[0, 100, 200])
-      
+
       # Only evaluate specific times
       specific_times = [datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)]
       result = constraint.evaluate(ephem, ra, dec, times=specific_times)

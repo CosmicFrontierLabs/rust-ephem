@@ -33,6 +33,7 @@ Core Capabilities
 - **SPICE kernel access** for spacecraft ephemeris from SPK files
 - **Ground observatory ephemeris** for fixed Earth locations
 - **OEM file support** for CCSDS Orbit Ephemeris Messages
+- **JPL Horizons integration** for asteroids, comets, and spacecraft
 - **Coordinate transformations** between TEME, ITRS, and GCRS frames
 - **Time system conversions** (TAI, UT1, UTC) with leap seconds
 - **Earth Orientation Parameters** (EOP) for polar motion corrections
@@ -44,10 +45,11 @@ Key Technologies
 - **Language**: `Rust (2021 edition) <https://www.rust-lang.org/>`_
 - **Python integration**: `PyO3 <https://pyo3.rs/>`_ with `maturin <https://www.maturin.rs>`_ wheels
 - **Astronomy libraries**:
-  
+
   - `ERFA <https://docs.rs/erfa/latest/erfa/index.html>`_ (IAU standards)
   - `SGP4 <https://github.com/neuromorphicsystems/sgp4>`_ (pure-Rust TLE propagation)
   - `ANISE <https://github.com/nyx-space/anise>`_ (SPICE kernel handling)
+  - `rhorizons <https://crates.io/crates/rhorizons>`_ (JPL Horizons API client)
   - `astropy <https://astropy.org>`_ (SkyCoord output)
 
 - **Time handling**: `hifitime <https://github.com/nyx-space/hifitime>`_ for high-precision time

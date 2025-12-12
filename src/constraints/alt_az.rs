@@ -1,16 +1,17 @@
 /// Altitude/Azimuth constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
+use crate::utils::polygon;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Configuration for Altitude/Azimuth constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AltAzConfig {
-    /// Minimum allowed altitude in degrees (0 = horizon, 90 = zenith)
-    pub min_altitude: f64,
+    /// Minimum allowed altitude in degrees (0 = horizon, 90 = zenith, optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_altitude: Option<f64>,
     /// Maximum allowed altitude in degrees (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_altitude: Option<f64>,
@@ -20,6 +21,10 @@ pub struct AltAzConfig {
     /// Maximum allowed azimuth in degrees (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_azimuth: Option<f64>,
+    /// Polygon defining an allowed region in Alt/Az space as (altitude, azimuth) pairs in degrees
+    /// If provided, the target must be inside this polygon (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub polygon: Option<Vec<(f64, f64)>>,
 }
 
 impl ConstraintConfig for AltAzConfig {
@@ -29,24 +34,27 @@ impl ConstraintConfig for AltAzConfig {
             max_altitude: self.max_altitude,
             min_azimuth: self.min_azimuth,
             max_azimuth: self.max_azimuth,
+            polygon: self.polygon.clone(),
         })
     }
 }
 
 /// Evaluator for Altitude/Azimuth constraint
 struct AltAzEvaluator {
-    min_altitude: f64,
+    min_altitude: Option<f64>,
     max_altitude: Option<f64>,
     min_azimuth: Option<f64>,
     max_azimuth: Option<f64>,
+    polygon: Option<Vec<(f64, f64)>>,
 }
 
 impl AltAzEvaluator {
     fn format_name(&self) -> String {
-        let mut parts = vec![format!(
-            "AltAzConstraint(min_alt={:.1}°)",
-            self.min_altitude
-        )];
+        let mut parts = vec![];
+
+        if let Some(min_alt) = self.min_altitude {
+            parts.push(format!("min_alt={:.1}°", min_alt));
+        }
 
         if let Some(max_alt) = self.max_altitude {
             parts.push(format!("max_alt={:.1}°", max_alt));
@@ -57,8 +65,15 @@ impl AltAzEvaluator {
         if let Some(max_az) = self.max_azimuth {
             parts.push(format!("max_az={:.1}°", max_az));
         }
+        if self.polygon.is_some() {
+            parts.push("polygon".to_string());
+        }
 
-        parts.join(", ")
+        if parts.is_empty() {
+            "AltAzConstraint".to_string()
+        } else {
+            format!("AltAzConstraint({})", parts.join(", "))
+        }
     }
 }
 
@@ -76,25 +91,27 @@ impl ConstraintEvaluator for AltAzEvaluator {
 
         // Compute alt/az for this target at selected times
         let altaz = ephemeris.radec_to_altaz(target_ra, target_dec, time_indices);
-        let altitude_vals: Vec<f64> = altaz.column(0).iter().copied().collect();
-        let azimuth_vals: Vec<f64> = altaz.column(1).iter().copied().collect();
-        let mut computed = HashMap::new();
-        computed.insert("altitude_deg".to_string(), altitude_vals.clone());
-        computed.insert("azimuth_deg".to_string(), azimuth_vals.clone());
 
         let violations = track_violations(
             &times_filtered,
             |i| {
-                let altitude_deg = altitude_vals[i];
-                let azimuth_deg = azimuth_vals[i];
+                let altitude_deg = altaz[[i, 0]];
+                let azimuth_deg = altaz[[i, 1]];
+
+                // Check polygon constraint first if defined
+                if polygon::polygon_violation(self.polygon.as_ref(), altitude_deg, azimuth_deg) {
+                    return (true, 1.0);
+                }
 
                 // Check altitude constraints
                 let mut violated = false;
                 let mut severity = 1.0;
 
-                if altitude_deg < self.min_altitude {
-                    violated = true;
-                    severity = (self.min_altitude - altitude_deg).min(1.0);
+                if let Some(min_alt) = self.min_altitude {
+                    if altitude_deg < min_alt {
+                        violated = true;
+                        severity = (min_alt - altitude_deg).min(1.0);
+                    }
                 }
 
                 if let Some(max_altitude) = self.max_altitude {
@@ -139,19 +156,18 @@ impl ConstraintEvaluator for AltAzEvaluator {
             },
             |_, _violated| {
                 // Use the first timestamp alt/az for the description
-                let altitude_deg = altitude_vals[0];
-                let azimuth_deg = azimuth_vals[0];
+                let altitude_deg = altaz[[0, 0]];
+                let azimuth_deg = altaz[[0, 1]];
                 self.format_violation_description(altitude_deg, azimuth_deg)
             },
         );
 
         let all_satisfied = violations.is_empty();
-        Ok(ConstraintResult::new_with_computed_values(
+        Ok(ConstraintResult::new(
             violations,
             all_satisfied,
             self.format_name(),
             times_filtered.to_vec(),
-            computed,
         ))
     }
 
@@ -180,13 +196,22 @@ impl ConstraintEvaluator for AltAzEvaluator {
 
                 let mut violated = false;
 
-                // Check altitude
-                if altitude_deg < self.min_altitude {
+                // Check polygon constraint first if defined
+                if polygon::polygon_violation(self.polygon.as_ref(), altitude_deg, azimuth_deg) {
                     violated = true;
                 }
-                if let Some(max_altitude) = self.max_altitude {
-                    if altitude_deg > max_altitude {
-                        violated = true;
+
+                if !violated {
+                    // Check altitude
+                    if let Some(min_alt) = self.min_altitude {
+                        if altitude_deg < min_alt {
+                            violated = true;
+                        }
+                    }
+                    if let Some(max_altitude) = self.max_altitude {
+                        if altitude_deg > max_altitude {
+                            violated = true;
+                        }
                     }
                 }
 
@@ -230,14 +255,25 @@ impl ConstraintEvaluator for AltAzEvaluator {
 
 impl AltAzEvaluator {
     /// Format a description of the violation based on altitude and azimuth
+    #[allow(dead_code)]
     fn format_violation_description(&self, altitude_deg: f64, azimuth_deg: f64) -> String {
         let mut reasons = Vec::new();
 
-        if altitude_deg < self.min_altitude {
+        // Check polygon violation first
+        if polygon::polygon_violation(self.polygon.as_ref(), altitude_deg, azimuth_deg) {
             reasons.push(format!(
-                "altitude {:.1}° < min {:.1}°",
-                altitude_deg, self.min_altitude
+                "outside allowed Alt/Az polygon (alt: {:.1}°, az: {:.1}°)",
+                altitude_deg, azimuth_deg
             ));
+        }
+
+        if let Some(min_alt) = self.min_altitude {
+            if altitude_deg < min_alt {
+                reasons.push(format!(
+                    "altitude {:.1}° < min {:.1}°",
+                    altitude_deg, min_alt
+                ));
+            }
         }
         if let Some(max_altitude) = self.max_altitude {
             if altitude_deg > max_altitude {

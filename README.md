@@ -10,7 +10,6 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg)](https://rust-ephem.readthedocs.io/en/latest/)
 
-
 **Fast ephemeris generation and target visibility calculations for space and ground-based telescopes.**
 
 `rust-ephem` is a Rust library with Python bindings for high-performance
@@ -52,9 +51,9 @@ ephemeris objects for efficient visibility and planning calculations.
 - **High Accuracy**: UT1-UTC and polar motion corrections using IERS EOP data
 - **Constraint System**: Calculate target visibility with Sun/Moon avoidance,
   Earth limb, eclipses with logical operators (`&`, `|`, `~`)
+- **JPL Horizons Fallback**: Automatically query NASA JPL Horizons for bodies not in SPICE kernels, including asteroids and comets
 - **Type Support**: strong type support for use with
   [mypy](https://mypy-lang.org), [pyright](https://github.com/microsoft/pyright) etc.
-
 
 ## Installation
 
@@ -153,6 +152,30 @@ result = constraint.evaluate(ephem, target_ra=83.63, target_dec=22.01)
 # Get visibility windows
 for window in result.visibility:
     print(f"{window.start_time} to {window.end_time}")
+```
+
+### JPL Horizons Fallback
+
+For bodies not available in SPICE kernels (asteroids, comets, spacecraft, etc.), enable JPL Horizons fallback with `use_horizons=True`:
+
+```python
+import rust_ephem
+
+eph = rust_ephem.TLEEphemeris(norad_id=25544, begin=begin, end=end)
+
+# Query Ceres (NAIF ID 1) using JPL Horizons
+result = eph.get_body("1", use_horizons=True)
+print(result)  # SkyCoord position
+
+# Also works with moving_body_visibility constraints
+from rust_ephem.constraints import moving_body_visibility, SunConstraint
+constraint = SunConstraint(min_angle=45)
+visibility = moving_body_visibility(
+    constraint=constraint,
+    ephemeris=eph,
+    body="2",  # Pallas
+    use_horizons=True
+)
 ```
 
 ## TLE Sources

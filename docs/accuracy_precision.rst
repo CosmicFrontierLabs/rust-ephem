@@ -52,12 +52,12 @@ Use the ``polar_motion`` parameter and initialize data providers:
     # Create ephemeris with polar motion correction
     begin = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
     end = datetime(2024, 1, 1, 1, 0, 0, tzinfo=timezone.utc)
-    
+
     ephem = rust_ephem.TLEEphemeris(
         tle1, tle2, begin, end, step_size=60,
         polar_motion=True  # Enable polar motion corrections
     )
-    
+
     # Now GCRS positions have ~10-20m accuracy
 
 Time Scale Accuracy
@@ -76,7 +76,7 @@ The library includes embedded leap second data:
 
     import rust_ephem
     from datetime import datetime, timezone
-    
+
     dt = datetime(2000, 1, 1, tzinfo=timezone.utc)
     tai_utc = rust_ephem.get_tai_utc_offset(dt)  # Returns 32.0 seconds
 
@@ -121,7 +121,7 @@ IERS data is automatically cached locally:
 - **Cache location**: ``$HOME/.cache/rust_ephem/latest_eop2.short``
 - **TTL**: 24 hours (configurable)
 - **Environment variables**:
-  
+
   - ``RUST_EPHEM_EOP_CACHE``: Custom cache directory
   - ``RUST_EPHEM_EOP_CACHE_TTL``: Cache time-to-live in seconds
 
@@ -148,7 +148,7 @@ Two methods with different accuracy levels:
 
     # Use high-precision SPICE-based Moon positions
     rust_ephem.ensure_planetary_ephemeris()  # Downloads DE440S if needed
-    
+
     ephem = rust_ephem.TLEEphemeris(tle1, tle2, begin, end, step_size)
     moon = ephem.moon  # Now uses SPICE if initialized
 

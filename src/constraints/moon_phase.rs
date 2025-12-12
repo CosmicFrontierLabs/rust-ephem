@@ -1,5 +1,6 @@
 /// Moon phase constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
+use crate::utils::moon::calculate_moon_illumination;
 use chrono::{DateTime, Timelike, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
@@ -84,20 +85,6 @@ impl MoonPhaseEvaluator {
         format!("MoonPhaseConstraint({})", parts.join(", "))
     }
 
-    /// Calculate Moon illumination fraction
-    /// This is a simplified calculation - in practice you'd use proper lunar phase algorithms
-    fn calculate_moon_illumination(&self, time: &DateTime<Utc>) -> f64 {
-        // Simplified: use a basic approximation based on time
-        // In practice, you'd calculate the phase angle between Sun, Earth, and Moon
-        // For now, return a dummy value that cycles roughly monthly
-        let days_since_epoch = time.timestamp() as f64 / 86400.0;
-        let phase = (days_since_epoch / 29.53) % 1.0; // Lunar cycle ~29.53 days
-
-        // Simple approximation: illumination = |sin(2π * phase)|
-        // This gives 0 at new moon, 1 at full moon
-        (2.0 * std::f64::consts::PI * phase).sin().abs()
-    }
-
     /// Calculate Moon distance in degrees from target
     /// This is a placeholder - in practice you'd calculate actual angular separation
     fn calculate_moon_distance(
@@ -140,11 +127,17 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
     ) -> PyResult<ConstraintResult> {
         // Extract and filter time data
         let (times_filtered,) = extract_time_data!(ephemeris, time_indices);
+
+        // Pre-compute all illumination values to avoid redundant ephemeris calculations
+        let illuminations: Vec<f64> = (0..times_filtered.len())
+            .map(|i| calculate_moon_illumination(ephemeris, i))
+            .collect();
+
         let violations = track_violations(
             &times_filtered,
             |i| {
                 let time = &times_filtered[i];
-                let illumination = self.calculate_moon_illumination(time);
+                let illumination = illuminations[i];
                 let moon_altitude = self.calculate_moon_altitude(time);
                 let moon_distance = self.calculate_moon_distance(time, target_ra, target_dec);
 
@@ -192,7 +185,7 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
                 }
 
                 let time = &times_filtered[i];
-                let illumination = self.calculate_moon_illumination(time);
+                let illumination = illuminations[i];
                 let moon_altitude = self.calculate_moon_altitude(time);
                 let moon_distance = self.calculate_moon_distance(time, target_ra, target_dec);
                 let phase_name = self.get_moon_phase_name(illumination);
@@ -271,7 +264,7 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
 
         for i in 0..n_times {
             let time = &times_filtered[i];
-            let illumination = self.calculate_moon_illumination(time);
+            let illumination = calculate_moon_illumination(ephemeris, i);
             let moon_altitude = self.calculate_moon_altitude(time);
 
             // Check if we should enforce constraint based on Moon visibility
@@ -333,6 +326,7 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
 
 impl MoonPhaseEvaluator {
     /// Get descriptive name for moon phase based on illumination
+    #[allow(dead_code)]
     fn get_moon_phase_name(&self, illumination: f64) -> &'static str {
         if illumination < 0.02 {
             "New Moon"

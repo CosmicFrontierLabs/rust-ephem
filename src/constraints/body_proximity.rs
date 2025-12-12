@@ -37,6 +37,7 @@ pub struct BodyProximityEvaluator {
 impl_proximity_evaluator!(BodyProximityEvaluator, "Body", "body", sun_positions);
 
 impl BodyProximityEvaluator {
+    #[allow(dead_code)]
     fn final_violation_description(&self) -> String {
         match self.max_angle_deg {
             Some(max) => format!(
@@ -50,6 +51,7 @@ impl BodyProximityEvaluator {
         }
     }
 
+    #[allow(dead_code)]
     fn intermediate_violation_description(&self) -> String {
         format!("Target violates {} proximity constraint", self.body)
     }

@@ -155,8 +155,8 @@ impl ConstraintEvaluator for EclipseEvaluator {
                 // Close any open violation
                 if let Some((start_idx, max_severity)) = current_violation {
                     violations.push(ConstraintViolation {
-                        start_time: times_filtered[start_idx].to_rfc3339(),
-                        end_time: times_filtered[i - 1].to_rfc3339(),
+                        start_time_internal: times_filtered[start_idx],
+                        end_time_internal: times_filtered[i - 1],
                         max_severity,
                         description: if self.umbra_only {
                             "Observer in umbra".to_string()
@@ -206,8 +206,8 @@ impl ConstraintEvaluator for EclipseEvaluator {
                 }
             } else if let Some((start_idx, max_severity)) = current_violation {
                 violations.push(ConstraintViolation {
-                    start_time: times_filtered[start_idx].to_rfc3339(),
-                    end_time: times_filtered[i - 1].to_rfc3339(),
+                    start_time_internal: times_filtered[start_idx],
+                    end_time_internal: times_filtered[i - 1],
                     max_severity,
                     description: if self.umbra_only {
                         "Observer in umbra".to_string()
@@ -222,8 +222,8 @@ impl ConstraintEvaluator for EclipseEvaluator {
         // Close any open violation at the end
         if let Some((start_idx, max_severity)) = current_violation {
             violations.push(ConstraintViolation {
-                start_time: times_filtered[start_idx].to_rfc3339(),
-                end_time: times_filtered[times_filtered.len() - 1].to_rfc3339(),
+                start_time_internal: times_filtered[start_idx],
+                end_time_internal: times_filtered[times_filtered.len() - 1],
                 max_severity,
                 description: if self.umbra_only {
                     "Observer in umbra".to_string()

@@ -95,15 +95,15 @@ Additional Time System Functions
     # Check initialization status
     if re.is_planetary_ephemeris_initialized():
         print("Planetary ephemeris ready")
-    
+
     # Initialize UT1 provider for better accuracy
     if re.init_ut1_provider():
         print("UT1 data loaded")
-    
+
     # Initialize EOP provider for polar motion
     if re.init_eop_provider():
         print("EOP data loaded")
-    
+
     # Get time system offsets
     when = dt.datetime(2024, 1, 1, tzinfo=dt.timezone.utc)
     tai_utc = re.get_tai_utc_offset(when)  # Leap seconds

@@ -218,6 +218,37 @@ impl SPICEEphemeris {
         Ok(arr.into_pyarray(py).into())
     }
 
+    /// Calculate airmass for a target at given RA/Dec
+    ///
+    /// Airmass represents the relative path length through Earth's atmosphere compared to
+    /// zenith observation. Lower values indicate better observing conditions.
+    ///
+    /// # Arguments
+    /// * `ra_deg` - Right ascension in degrees (ICRS/J2000)
+    /// * `dec_deg` - Declination in degrees (ICRS/J2000)
+    /// * `time_indices` - Optional indices into ephemeris times (default: all times)
+    ///
+    /// # Returns
+    /// List of airmass values:
+    /// - 1.0 at zenith (directly overhead)
+    /// - ~2.0 at 30° altitude
+    /// - ~5.8 at 10° altitude
+    /// - Infinity for targets below horizon
+    #[pyo3(signature = (ra_deg, dec_deg, time_indices=None))]
+    fn calculate_airmass(
+        &self,
+        ra_deg: f64,
+        dec_deg: f64,
+        time_indices: Option<Vec<usize>>,
+    ) -> PyResult<Vec<f64>> {
+        <Self as crate::ephemeris::ephemeris_common::EphemerisBase>::calculate_airmass(
+            self,
+            ra_deg,
+            dec_deg,
+            time_indices.as_deref(),
+        )
+    }
+
     #[getter]
     fn height(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         self.get_height(py)
@@ -278,17 +309,53 @@ impl SPICEEphemeris {
         self.get_earth_radius_rad(py)
     }
 
+    /// Calculate Moon illumination fraction for all ephemeris times
+    ///
+    /// Returns the fraction of the Moon's illuminated surface as seen from the
+    /// spacecraft observer (0.0 = new moon, 1.0 = full moon).
+    ///
+    /// # Arguments
+    /// * `time_indices` - Optional indices into ephemeris times (default: all times)
+    ///
+    /// # Returns
+    /// List of Moon illumination fractions
+    #[pyo3(signature = (time_indices=None))]
+    fn moon_illumination(&self, time_indices: Option<Vec<usize>>) -> PyResult<Vec<f64>> {
+        EphemerisBase::moon_illumination(self, time_indices.as_deref())
+    }
+
     fn index(&self, time: &Bound<'_, PyDateTime>) -> PyResult<usize> {
         self.find_closest_index(time)
     }
 
-    fn get_body_pv(&self, py: Python, body: &str) -> PyResult<Py<PositionVelocityData>> {
-        <Self as EphemerisBase>::get_body_pv(self, py, body)
+    #[pyo3(signature = (body, spice_kernel=None, use_horizons=false))]
+    fn get_body_pv(
+        &self,
+        py: Python,
+        body: &str,
+        spice_kernel: Option<String>,
+        use_horizons: bool,
+    ) -> PyResult<Py<PositionVelocityData>> {
+        <Self as EphemerisBase>::get_body_pv(self, py, body, spice_kernel.as_deref(), use_horizons)
     }
 
-    fn get_body(&self, py: Python, body: &str) -> PyResult<Py<PyAny>> {
+    #[pyo3(signature = (body, spice_kernel=None, use_horizons=false))]
+    fn get_body(
+        &self,
+        py: Python,
+        body: &str,
+        spice_kernel: Option<String>,
+        use_horizons: bool,
+    ) -> PyResult<Py<PyAny>> {
         let modules = AstropyModules::import(py)?;
-        <Self as EphemerisBase>::get_body(self, py, &modules, body)
+        <Self as EphemerisBase>::get_body(
+            self,
+            py,
+            &modules,
+            body,
+            spice_kernel.as_deref(),
+            use_horizons,
+        )
     }
 
     // ===== Type-specific methods =====

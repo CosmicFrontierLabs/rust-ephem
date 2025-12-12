@@ -5,9 +5,11 @@ repos:
       - id: fmt
       - id: cargo-check
       - id: clippy
-        args: ["--", "-D", "warnings"]
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
+        args:
+          - --
+          - -D
+          - warnings
+  - repo: builtin
     hooks:
       - id: no-commit-to-branch
         name: Prevent main branch commits
@@ -15,27 +17,35 @@ repos:
       - id: check-added-large-files
         name: Check for large files
         description: Prevent the user from committing very large files.
-        args: ["--maxkb=500"]
+        args:
+          - --maxkb=500
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: mixed-line-ending
   - repo: https://github.com/abravalheri/validate-pyproject
     rev: v0.24.1
     hooks:
       - id: validate-pyproject
         name: Validate pyproject.toml
         description: Verify that pyproject.toml adheres to the established schema.
-    # Verify that GitHub workflows are well formed
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    # Ruff version.
-    rev: v0.14.5
+    rev: v0.14.8
     hooks:
       - id: ruff-check
         name: Lint code using ruff; sort and organize imports
-        types_or: [python, pyi]
-        args: [--extend-select, "I", --fixable, "I,F", --fix]
+        types_or:
+          - python
+          - pyi
+        args:
+          - --extend-select
+          - I
+          - --fixable
+          - I,F
+          - --fix
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    # Ruff version.
-    rev: v0.14.5
+    rev: v0.14.8
     hooks:
-      # Run the linter.
       - id: ruff-format
   - repo: local
     hooks:
@@ -44,22 +54,34 @@ repos:
         entry: sphinx-build
         language: system
         always_run: true
-        exclude_types: [file, symlink]
-        args: [
-            "-M", # Run sphinx in make mode, so we can use -D flag later
-            # Note: -M requires next 3 args to be builder, source, output
-            "html", # Specify builder
-            "./docs", # Source directory of documents
-            "./_readthedocs", # Output directory for rendered documents
-            "-T", # Show full trace back on exception
-            "-E", # Don't use saved env; always read all files
-            "-d", # Flag for cached environment and doctrees
-            "./docs/_build/doctrees", # Directory
-            "-D", # Flag to override settings in conf.py
-            "exclude_patterns=notebooks/*", # Exclude our notebooks from pre-commit
-          ]
+        exclude_types:
+          - file
+          - symlink
+        args:
+          - -M
+          - html
+          - ./docs
+          - ./_readthedocs
+          - -T
+          - -E
+          - -d
+          - ./docs/_build/doctrees
+          - -D
+          - exclude_patterns=notebooks/*
   - repo: https://github.com/python-jsonschema/check-jsonschema
-    rev: 0.29.4
+    rev: 0.35.0
     hooks:
       - id: check-github-workflows
-        args: ["--verbose"]
+        args:
+          - --verbose
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (python files in rust_ephem only)
+        entry: mypy
+        language: system
+        types: [python]
+        files: ^(rust_ephem)/
+        args: [
+            "--strict", # Use mypy strict mode to enforce type hints
+          ]

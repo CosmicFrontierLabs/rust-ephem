@@ -159,6 +159,9 @@ pub struct EphemerisData {
     pub height_cache: OnceLock<Array1<f64>>,
     pub moon_angular_radius_rad_cache: OnceLock<Py<PyAny>>,
     pub earth_angular_radius_rad_cache: OnceLock<Py<PyAny>>,
+    /// Cached Sun altitude angles (in degrees) for all times
+    #[allow(dead_code)]
+    pub sun_altitudes_cache: OnceLock<Array1<f64>>,
 }
 
 impl EphemerisData {
@@ -189,6 +192,7 @@ impl EphemerisData {
             longitude_rad_cache: OnceLock::new(),
             height_km_cache: OnceLock::new(),
             height_cache: OnceLock::new(),
+            sun_altitudes_cache: OnceLock::new(),
         }
     }
 }
@@ -239,6 +243,68 @@ pub trait EphemerisBase {
         dec_deg: f64,
         time_indices: Option<&[usize]>,
     ) -> Array2<f64>;
+
+    /// Calculate airmass for a target at given RA/Dec
+    ///
+    /// Airmass represents the relative path length through Earth's atmosphere compared to
+    /// zenith observation. This is a convenience method that combines altitude calculation
+    /// with airmass computation, accounting for observer height above sea level.
+    ///
+    /// # Arguments
+    /// * `ra_deg` - Right ascension in degrees (ICRS/J2000)
+    /// * `dec_deg` - Declination in degrees (ICRS/J2000)
+    /// * `time_indices` - Optional indices into ephemeris times to evaluate (default: all times)
+    ///
+    /// # Returns
+    /// Vector of airmass values for each selected time:
+    /// - 1.0 at zenith (directly overhead)
+    /// - ~2.0 at 30° altitude
+    /// - ~5.8 at 10° altitude
+    /// - Infinity for targets below horizon
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let airmass = ephemeris.calculate_airmass(180.0, 45.0, None)?;
+    /// // Returns airmass for all ephemeris times
+    /// ```
+    fn calculate_airmass(
+        &self,
+        ra_deg: f64,
+        dec_deg: f64,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Vec<f64>> {
+        use crate::utils::celestial::altitude_to_airmass;
+
+        // Get altitudes
+        let altaz = self.radec_to_altaz(ra_deg, dec_deg, time_indices);
+
+        // Ensure latitude/longitude caches are computed
+        self.compute_latlon_caches()?;
+
+        // Get observer heights
+        let heights_km =
+            self.data().height_km_cache.get().ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("Height data not available")
+            })?;
+
+        // Filter heights by time indices if provided
+        let heights_filtered: Vec<f64> = if let Some(indices) = time_indices {
+            indices.iter().map(|&i| heights_km[i]).collect()
+        } else {
+            heights_km.to_vec()
+        };
+
+        // Calculate airmass for each time
+        let airmass: Vec<f64> = (0..altaz.nrows())
+            .map(|i| {
+                let altitude_deg = altaz[[i, 0]];
+                let height_km = heights_filtered[i];
+                altitude_to_airmass(altitude_deg, height_km)
+            })
+            .collect();
+
+        Ok(airmass)
+    }
 
     /// Get ITRS position and velocity in PositionVelocityData format
     fn get_itrs_pv(&self, py: Python) -> Option<Py<PositionVelocityData>> {
@@ -435,6 +501,35 @@ pub trait EphemerisBase {
 
         // Extract only positions (first 3 columns)
         Ok(moon_data.slice(s![.., 0..3]).to_owned())
+    }
+
+    /// Calculate Moon illumination fraction for all ephemeris times
+    ///
+    /// Returns the fraction of the Moon's illuminated surface as seen from the
+    /// spacecraft observer (0.0 = new moon, 1.0 = full moon).
+    ///
+    /// # Arguments
+    /// * `time_indices` - Optional indices into ephemeris times to evaluate (default: all times)
+    ///
+    /// # Returns
+    /// Vector of Moon illumination fractions for each selected time
+    fn moon_illumination(&self, time_indices: Option<&[usize]>) -> PyResult<Vec<f64>> {
+        use crate::utils::moon::calculate_moon_illumination;
+
+        // Get the indices to process
+        let indices: Vec<usize> = if let Some(indices) = time_indices {
+            indices.to_vec()
+        } else {
+            (0..self.get_times()?.len()).collect()
+        };
+
+        // Calculate illumination for each time index
+        let illuminations: Vec<f64> = indices
+            .iter()
+            .map(|&i| calculate_moon_illumination(self, i))
+            .collect();
+
+        Ok(illuminations)
     }
 
     /// Get observer (spacecraft/satellite) positions in GCRS (N x 3 array, km) for constraint evaluation
@@ -798,7 +893,13 @@ pub trait EphemerisBase {
     /// jupiter = eph.get_body("Jupiter")  # By name
     /// mars = eph.get_body("499")  # By NAIF ID
     /// ```
-    fn get_body_pv(&self, py: Python, body_identifier: &str) -> PyResult<Py<PositionVelocityData>> {
+    fn get_body_pv(
+        &self,
+        py: Python,
+        body_identifier: &str,
+        spice_kernel: Option<&str>,
+        use_horizons: bool,
+    ) -> PyResult<Py<PositionVelocityData>> {
         use crate::utils::celestial::calculate_body_by_id_or_name;
         use crate::utils::config::EARTH_NAIF_ID;
 
@@ -809,8 +910,14 @@ pub trait EphemerisBase {
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available."))?;
 
         // Calculate body position relative to Earth center
-        let body_geocentric = calculate_body_by_id_or_name(times, body_identifier, EARTH_NAIF_ID)
-            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        let body_geocentric = calculate_body_by_id_or_name(
+            times,
+            body_identifier,
+            EARTH_NAIF_ID,
+            spice_kernel,
+            use_horizons,
+        )
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
 
         // Get observer's geocentric position
         let observer_geocentric = self.data().gcrs.as_ref().ok_or_else(|| {
@@ -849,6 +956,8 @@ pub trait EphemerisBase {
         py: Python,
         modules: &AstropyModules,
         body_identifier: &str,
+        spice_kernel: Option<&str>,
+        use_horizons: bool,
     ) -> PyResult<Py<PyAny>> {
         use crate::utils::celestial::calculate_body_by_id_or_name;
         use crate::utils::config::EARTH_NAIF_ID;
@@ -860,8 +969,14 @@ pub trait EphemerisBase {
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available."))?;
 
         // Calculate body position relative to Earth center
-        let body_geocentric = calculate_body_by_id_or_name(times, body_identifier, EARTH_NAIF_ID)
-            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        let body_geocentric = calculate_body_by_id_or_name(
+            times,
+            body_identifier,
+            EARTH_NAIF_ID,
+            spice_kernel,
+            use_horizons,
+        )
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
 
         // Get observer's geocentric position
         let observer_geocentric = self.data().gcrs.as_ref().ok_or_else(|| {

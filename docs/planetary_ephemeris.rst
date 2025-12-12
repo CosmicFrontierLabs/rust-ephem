@@ -170,7 +170,7 @@ Error Handling
 
     # Accessing Sun/Moon without initialization raises an error
     ephem = re.TLEEphemeris(norad_id=25544, begin=begin, end=end)
-    
+
     if re.is_planetary_ephemeris_initialized():
         sun = ephem.sun  # Works
     else:
@@ -185,5 +185,3 @@ Performance Notes
 - DE440S is optimized for size while maintaining high accuracy
 
 See also: :doc:`ephemeris_get_body` for detailed examples of querying body positions.
-
-
