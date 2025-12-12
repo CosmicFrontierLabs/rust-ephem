@@ -1828,6 +1828,389 @@ class OEMEphemeris(Ephemeris):
         """
         ...
 
+class OMMEphemeris(Ephemeris):
+    """Ephemeris calculator using CCSDS Orbital Mean-Elements Message (OMM) data"""
+
+    def __init__(
+        self,
+        norad_id: int | None = None,
+        norad_name: str | None = None,
+        begin: datetime | None = None,
+        end: datetime | None = None,
+        step_size: int = 60,
+        *,
+        polar_motion: bool = False,
+        spacetrack_username: str | None = None,
+        spacetrack_password: str | None = None,
+        epoch_tolerance_days: float | None = None,
+        enforce_source: str | None = None,
+    ) -> None:
+        """
+        Initialize OMM ephemeris from Space-Track.org or Celestrak.
+
+        Args:
+            norad_id: NORAD catalog ID to fetch OMM data. If Space-Track.org credentials
+                are available (via parameters, environment variables, or .env file),
+                Space-Track.org is tried first with automatic failover to Celestrak.
+                Otherwise, Celestrak is used directly.
+            norad_name: Satellite name to fetch OMM from Celestrak
+            begin: Start time (naive datetime treated as UTC, required)
+            end: End time (naive datetime treated as UTC, required)
+            step_size: Time step in seconds (default: 60)
+            polar_motion: Whether to apply polar motion correction (default: False)
+            spacetrack_username: Space-Track.org username (or set SPACETRACK_USERNAME env var)
+            spacetrack_password: Space-Track.org password (or set SPACETRACK_PASSWORD env var)
+            epoch_tolerance_days: How many days OMM epoch can differ from target epoch (default: 4.0)
+            enforce_source: Force use of specific source ('spacetrack' or 'celestrak')
+
+        Note:
+            Must provide exactly one of: norad_id or norad_name.
+            begin and end parameters are required.
+
+            OMM data provides higher precision orbital elements than TLE format,
+            resulting in more accurate SGP4 propagation.
+
+        Raises:
+            ValueError: If OMM data cannot be fetched or parsed
+        """
+        ...
+
+    @property
+    def begin(self) -> datetime:
+        """Start time of the ephemeris"""
+        ...
+
+    @property
+    def end(self) -> datetime:
+        """End time of the ephemeris"""
+        ...
+
+    @property
+    def step_size(self) -> int:
+        """Time step in seconds"""
+        ...
+
+    @property
+    def polar_motion(self) -> bool:
+        """Whether polar motion correction is applied"""
+        ...
+
+    @property
+    def omm_epoch(self) -> datetime:
+        """Epoch timestamp from the OMM data (UTC datetime)"""
+        ...
+
+    @property
+    def teme_pv(self) -> PositionVelocityData:
+        """Position and velocity data in TEME frame"""
+        ...
+
+    @property
+    def itrs_pv(self) -> PositionVelocityData:
+        """Position and velocity data in ITRS (Earth-fixed) frame"""
+        ...
+
+    @property
+    def itrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord object in ITRS frame"""
+        ...
+
+    @property
+    def gcrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord object in GCRS frame"""
+        ...
+
+    @property
+    def earth(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord object for Earth position relative to satellite"""
+        ...
+
+    @property
+    def latitude(self) -> Any:  # Returns astropy.units.Quantity
+        """Geodetic latitude as an astropy Quantity array (degrees), one per timestamp"""
+        ...
+
+    @property
+    def latitude_deg(self) -> npt.NDArray[np.float64]:
+        """Geodetic latitude in degrees as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def latitude_rad(self) -> npt.NDArray[np.float64]:
+        """Geodetic latitude in radians as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def longitude(self) -> Any:  # Returns astropy.units.Quantity
+        """Geodetic longitude as an astropy Quantity array (degrees), one per timestamp"""
+        ...
+
+    @property
+    def longitude_deg(self) -> npt.NDArray[np.float64]:
+        """Geodetic longitude in degrees as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def longitude_rad(self) -> npt.NDArray[np.float64]:
+        """Geodetic longitude in radians as a raw NumPy array (one per timestamp)"""
+        ...
+
+    @property
+    def height(self) -> Any:  # Returns astropy.units.Quantity
+        """Geodetic height above the WGS84 ellipsoid as an astropy Quantity array (meters), one per timestamp"""
+        ...
+
+    @property
+    def height_m(self) -> npt.NDArray[np.float64]:
+        """Geodetic height above the WGS84 ellipsoid as a raw NumPy array in meters (one per timestamp)"""
+        ...
+
+    @property
+    def height_km(self) -> npt.NDArray[np.float64]:
+        """Geodetic height above the WGS84 ellipsoid as a raw NumPy array in kilometers (one per timestamp)"""
+        ...
+
+    @property
+    def sun(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord object for Sun position relative to satellite"""
+        ...
+
+    @property
+    def moon(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord object for Moon position relative to satellite"""
+        ...
+
+    @property
+    def gcrs_pv(self) -> PositionVelocityData:
+        """Position and velocity data in GCRS frame"""
+        ...
+
+    @property
+    def sun_pv(self) -> PositionVelocityData:
+        """Sun position and velocity in GCRS frame"""
+        ...
+
+    @property
+    def moon_pv(self) -> PositionVelocityData:
+        """Moon position and velocity in GCRS frame"""
+        ...
+
+    @property
+    def timestamp(self) -> npt.NDArray[np.datetime64]:
+        """
+        Array of timestamps for the ephemeris.
+
+        Returns a NumPy array of datetime objects (not a list) for efficient indexing.
+        This property is cached for performance - repeated access is ~90x faster.
+        """
+        ...
+
+    @property
+    def sun_radius(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Sun with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_radius_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Sun as seen from the spacecraft (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_radius(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Moon with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_radius_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Moon as seen from the spacecraft (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_radius(self) -> Any:  # Returns astropy.units.Quantity
+        """
+        Angular radius of the Earth with astropy units (degrees).
+
+        Returns an astropy Quantity with units of degrees.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_radius_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Earth as seen from the spacecraft (in degrees).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Sun as seen from the spacecraft (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Moon as seen from the spacecraft (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_radius_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Angular radius of the Earth as seen from the spacecraft (in radians).
+
+        Returns a NumPy array of angular radii for each timestamp.
+        Angular radius = arcsin(physical_radius / distance)
+        This property is cached for performance.
+        """
+        ...
+
+    def get_body_pv(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> PositionVelocityData:
+        """
+        Get position and velocity of a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+
+        Returns:
+            Position and velocity data for the requested body
+        """
+        ...
+
+    def get_body(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """
+        Get SkyCoord for a celestial body.
+
+        Args:
+            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+
+        Returns:
+            astropy.coordinates.SkyCoord object
+        """
+        ...
+
+    def index(self, time: datetime) -> int:
+        """
+        Find the index of the closest timestamp to the given datetime.
+
+        Returns the index in the ephemeris timestamp array that is closest to the provided time.
+        This can be used to index into any of the ephemeris arrays (positions, velocities, etc.)
+
+        Args:
+            time: Python datetime object to find the closest match for
+
+        Returns:
+            Index of the closest timestamp
+
+        Raises:
+            ValueError: If no timestamps are available in the ephemeris
+
+        Example:
+            >>> from datetime import datetime
+            >>> eph = OMMEphemeris(...)
+            >>> target_time = datetime(2024, 1, 15, 12, 0, 0)
+            >>> idx = eph.index(target_time)
+            >>> position = eph.gcrs_pv.position[idx]
+        """
+        ...
+
+    def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
+        """
+        Calculate Moon illumination fraction for all ephemeris times.
+
+        Returns the fraction of the Moon's illuminated surface as seen from the
+        spacecraft observer (0.0 = new moon, 1.0 = full moon).
+
+        Args:
+            time_indices: Optional indices into ephemeris times (default: all times)
+
+        Returns:
+            List of Moon illumination fractions
+        """
+        ...
+
+    @property
+    def obsgeoloc(
+        self,
+    ) -> npt.NDArray[np.float64]:  # Returns NumPy array or None if unavailable
+        """
+        Observer geocentric location (GCRS position).
+
+        Returns position in km, compatible with astropy's GCRS frame obsgeoloc parameter.
+        """
+        ...
+
+    @property
+    def obsgeovel(self) -> npt.NDArray[np.float64]:  # Returns astropy quantity array
+        """Observer geocentric velocity (alias for GCRS velocity)"""
+        ...
+
+    def radec_to_altaz(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> npt.NDArray[np.float64]:
+        """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
+        ...
+
+    def calculate_airmass(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> list[float]:
+        """Calculate airmass for given RA/Dec (deg) at selected times.
+
+        Returns airmass values (1.0 at zenith, ~2.0 at 30° altitude, infinity below horizon).
+        Accounts for observer height using atmospheric scale height correction.
+        """
+        ...
+
 class GroundEphemeris(Ephemeris):
     """Ephemeris for a fixed ground location"""
 

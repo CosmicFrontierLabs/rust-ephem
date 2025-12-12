@@ -14,6 +14,9 @@ from rust_ephem._rust_ephem import (
     OEMEphemeris as OEMEphemeris,
 )
 from rust_ephem._rust_ephem import (
+    OMMEphemeris as OMMEphemeris,
+)
+from rust_ephem._rust_ephem import (
     PositionVelocityData as PositionVelocityData,
 )
 from rust_ephem._rust_ephem import (

@@ -15,6 +15,7 @@ pub mod interpolation;
 pub mod math_utils;
 pub mod moon;
 pub mod naif_ids;
+pub mod omm_utils;
 pub mod polygon;
 pub mod time_utils;
 pub mod tle_utils;

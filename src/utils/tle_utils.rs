@@ -344,7 +344,7 @@ fn save_to_spacetrack_cache(path: &Path, content: &str) {
 /// Authenticate with Space-Track.org and create an authenticated agent
 ///
 /// Space-Track uses cookie-based session authentication.
-fn create_spacetrack_agent(
+pub fn create_spacetrack_agent(
     credentials: &SpaceTrackCredentials,
 ) -> Result<ureq::Agent, Box<dyn Error>> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
