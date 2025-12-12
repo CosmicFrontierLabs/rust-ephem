@@ -23,7 +23,7 @@ pub struct OMMEphemeris {
 #[pymethods]
 impl OMMEphemeris {
     #[new]
-    #[pyo3(signature = (norad_id=None, norad_name=None, begin=None, end=None, step_size=60, *, polar_motion=false, spacetrack_username=None, spacetrack_password=None, _epoch_tolerance_days=None, enforce_source=None))]
+    #[pyo3(signature = (norad_id=None, norad_name=None, begin=None, end=None, step_size=60, *, polar_motion=false, spacetrack_username=None, spacetrack_password=None, _epoch_tolerance_days=None, enforce_source=None, _test_omm_json=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         _py: Python,
@@ -37,6 +37,7 @@ impl OMMEphemeris {
         spacetrack_password: Option<String>,
         _epoch_tolerance_days: Option<f64>,
         enforce_source: Option<String>,
+        _test_omm_json: Option<String>,
     ) -> PyResult<Self> {
         // Build credentials using helper function
         let credentials = crate::utils::tle_utils::build_credentials(
@@ -49,17 +50,35 @@ impl OMMEphemeris {
         let target_epoch =
             begin.and_then(|b| crate::utils::time_utils::python_datetime_to_utc(b).ok());
 
-        // Fetch OMM data
-        let fetched: FetchedOMM = fetch_omm_unified(
-            norad_id,
-            norad_name.as_deref(),
-            target_epoch.as_ref(),
-            credentials,
-            enforce_source.as_deref(),
-        )
-        .map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("fetch_omm_unified failed: {}", e))
-        })?;
+        // Fetch OMM data or use test data
+        let fetched: FetchedOMM = if let Some(test_json) = _test_omm_json {
+            // Check for test error conditions
+            if test_json.contains("No GP data found") {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "No OMM data found for NORAD ID {} on Celestrak",
+                    norad_id.unwrap_or(0)
+                )));
+            }
+            // Use test JSON data instead of fetching
+            let data = crate::utils::omm_utils::parse_omm_json(&test_json).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "parse_omm_json failed for test data: {}",
+                    e
+                ))
+            })?;
+            FetchedOMM { data }
+        } else {
+            fetch_omm_unified(
+                norad_id,
+                norad_name.as_deref(),
+                target_epoch.as_ref(),
+                credentials,
+                enforce_source.as_deref(),
+            )
+            .map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("fetch_omm_unified failed: {}", e))
+            })?
+        };
 
         // Convert OMM to SGP4 Elements directly
         omm_to_elements(&fetched.data).map_err(|e| {
@@ -221,13 +240,13 @@ impl OMMEphemeris {
 
     /// Get the start time of the ephemeris
     #[getter]
-    fn begin_time(&self, py: Python) -> PyResult<Py<PyAny>> {
+    fn begin(&self, py: Python) -> PyResult<Py<PyAny>> {
         crate::ephemeris::ephemeris_common::get_begin_time(&self.base.common_data.times, py)
     }
 
     /// Get the end time of the ephemeris
     #[getter]
-    fn end_time(&self, py: Python) -> PyResult<Py<PyAny>> {
+    fn end(&self, py: Python) -> PyResult<Py<PyAny>> {
         crate::ephemeris::ephemeris_common::get_end_time(&self.base.common_data.times, py)
     }
 
@@ -235,6 +254,40 @@ impl OMMEphemeris {
     #[getter]
     fn step_size(&self) -> PyResult<i64> {
         crate::ephemeris::ephemeris_common::get_step_size(&self.base.common_data.times)
+    }
+
+    /// Get the epoch of the OMM as a Python datetime object
+    #[getter]
+    fn omm_epoch(&self, py: Python) -> PyResult<Py<PyAny>> {
+        // Convert chrono::DateTime<Utc> to Python datetime with UTC timezone
+        let epoch = self.omm_data.epoch;
+
+        let dt = pyo3::types::PyDateTime::new(
+            py,
+            epoch.year(),
+            epoch.month() as u8,
+            epoch.day() as u8,
+            epoch.hour() as u8,
+            epoch.minute() as u8,
+            epoch.second() as u8,
+            epoch.timestamp_subsec_micros(),
+            None,
+        )?;
+
+        // Get UTC timezone and replace
+        let datetime_mod = py.import("datetime")?;
+        let utc_tz = datetime_mod.getattr("timezone")?.getattr("utc")?;
+        let kwargs = pyo3::types::PyDict::new(py);
+        kwargs.set_item("tzinfo", utc_tz)?;
+        let dt_with_tz = dt.call_method("replace", (), Some(&kwargs))?;
+
+        Ok(dt_with_tz.into())
+    }
+
+    /// Get whether polar motion correction is applied
+    #[getter]
+    fn polar_motion(&self) -> bool {
+        self.base.polar_motion
     }
 
     /// Get the timestamp array

@@ -2,6 +2,7 @@
 
 import os
 from datetime import datetime, timezone
+from typing import Any
 
 import pytest
 
@@ -16,7 +17,7 @@ END_TIME = datetime(2024, 1, 1, 2, 0, 0, tzinfo=timezone.utc)
 STEP_SIZE = 120  # 2 minutes
 
 
-def pytest_configure(config):
+def pytest_configure(config: Any) -> None:
     """Configure pytest with custom markers."""
     config.addinivalue_line(
         "markers", "requires_astropy: Tests that require astropy library"
@@ -26,7 +27,7 @@ def pytest_configure(config):
     )
 
 
-def pytest_collection_modifyitems(config, items):
+def pytest_collection_modifyitems(config: Any, items: list[Any]) -> None:
     """Skip tests that require optional dependencies if they're not available."""
     # Check for astropy
     try:
@@ -52,7 +53,7 @@ def pytest_collection_modifyitems(config, items):
 
 
 @pytest.fixture
-def sample_oem_file(tmp_path):
+def sample_oem_file(tmp_path: Any) -> str:
     """Create a minimal OEM file for testing."""
     oem_path = tmp_path / "test_satellite.oem"
     oem_content = """CCSDS_OEM_VERS = 2.0
@@ -81,7 +82,7 @@ DATA_STOP
 
 
 @pytest.fixture
-def spk_path():
+def spk_path() -> str:
     path = "test_data/de440s.bsp"
     if not os.path.exists(path):
         pytest.skip(f"SPICE kernel not found at {path}")
@@ -89,7 +90,7 @@ def spk_path():
 
 
 @pytest.fixture
-def ground_ephemeris():
+def ground_ephemeris() -> GroundEphemeris:
     return GroundEphemeris(
         latitude=34.0,
         longitude=-118.0,
@@ -101,7 +102,7 @@ def ground_ephemeris():
 
 
 @pytest.fixture
-def tle_ephemeris():
+def tle_ephemeris() -> TLEEphemeris:
     return TLEEphemeris(
         tle1=VALID_TLE1,
         tle2=VALID_TLE2,
