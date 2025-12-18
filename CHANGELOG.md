@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.2.0...v0.2.1) (2025-12-18)
+
+
+### Bug Fixes
+
+* don't include name of repo in tag ([#95](https://github.com/CosmicFrontierLabs/rust-ephem/issues/95)) ([ea24511](https://github.com/CosmicFrontierLabs/rust-ephem/commit/ea24511edac5b49f7969f88418e6208f57d33870))
+
 ## [0.2.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/rust_ephem-v0.1.15...rust_ephem-v0.2.0) (2025-12-18)
 
 
