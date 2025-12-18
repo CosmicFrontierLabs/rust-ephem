@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.2.1...v0.2.2) (2025-12-18)
+
+
+### Bug Fixes
+
+* add dependabot for actions ([#97](https://github.com/CosmicFrontierLabs/rust-ephem/issues/97)) ([fd394c6](https://github.com/CosmicFrontierLabs/rust-ephem/commit/fd394c6f5be16187915ddf83ac1152a0c9c36f0a))
+
 ## [0.2.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.2.0...v0.2.1) (2025-12-18)
 
 
