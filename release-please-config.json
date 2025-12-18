@@ -3,9 +3,8 @@
     ".": {
       "changelog-path": "CHANGELOG.md",
       "release-type": "rust",
-      "extra-files": [
-        "pyproject.toml"
-      ]
+      "include-v-in-tag": true,
+      "extra-files": ["pyproject.toml"]
     }
   },
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json"
