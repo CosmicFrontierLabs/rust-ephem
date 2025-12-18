@@ -1,4 +1,4 @@
-# Run this workflow only on merged release-please PRs
+# Runs Release Please to create/update release PRs and create releases when they're merged
 name: Release PR Merged
 on:
   push:
