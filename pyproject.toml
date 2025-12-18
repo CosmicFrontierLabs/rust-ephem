@@ -71,7 +71,7 @@ Repository = "https://github.com/CosmicFrontierLabs/rust-ephem"
 Documentation = "https://rust-ephem.readthedocs.io"
 "Bug Tracker" = "https://github.com/CosmicFrontierLabs/rust-ephem/issues"
 "Source Code" = "https://github.com/CosmicFrontierLabs/rust-ephem"
-Changelog = "https://github.com/CosmicFrontierLabs/rust-ephem/releases"
+Changelog = "https://github.com/CosmicFrontierLabs/rust-ephem/blob/main/CHANGELOG.md"
 
 [tool.maturin]
 module-name = "rust_ephem._rust_ephem"

@@ -7,25 +7,276 @@
 
 * don't include name of repo in tag ([#95](https://github.com/CosmicFrontierLabs/rust-ephem/issues/95)) ([ea24511](https://github.com/CosmicFrontierLabs/rust-ephem/commit/ea24511edac5b49f7969f88418e6208f57d33870))
 
-## [0.2.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/rust_ephem-v0.1.15...rust_ephem-v0.2.0) (2025-12-18)
+[Changes][v0.2.1]
 
 
-### Features
+<a id="v0.2.0"></a>
+## [v0.2.0: Add release-please](https://github.com/CosmicFrontierLabs/rust-ephem/releases/tag/v0.2.0) - 2025-12-18
 
-* add `release-please` versioning ([#92](https://github.com/CosmicFrontierLabs/rust-ephem/issues/92)) ([6d70389](https://github.com/CosmicFrontierLabs/rust-ephem/commit/6d70389e7277de375e60ed5b21699d1450078915))
-* add github CI actions ([#6](https://github.com/CosmicFrontierLabs/rust-ephem/issues/6)) ([b7d1e40](https://github.com/CosmicFrontierLabs/rust-ephem/commit/b7d1e40cc6b4c7663c61b91d6a43a94aeb9e1aaa))
-* add index method to ephemeris ([#29](https://github.com/CosmicFrontierLabs/rust-ephem/issues/29)) ([a46ea1a](https://github.com/CosmicFrontierLabs/rust-ephem/commit/a46ea1a232e568d707f84ac02ff27dc97c98eb8e))
-* add pre-commit to repo ([#5](https://github.com/CosmicFrontierLabs/rust-ephem/issues/5)) ([9131087](https://github.com/CosmicFrontierLabs/rust-ephem/commit/91310874a84d5dbc8b7359fae4f68fc56760f22d))
-* add support for CCDSD EOM files ([#40](https://github.com/CosmicFrontierLabs/rust-ephem/issues/40)) ([3a2e6e1](https://github.com/CosmicFrontierLabs/rust-ephem/commit/3a2e6e15d8e40e68456c5f085832db6803c2e30f))
-* add typing support to python package ([#10](https://github.com/CosmicFrontierLabs/rust-ephem/issues/10)) ([e0cd30e](https://github.com/CosmicFrontierLabs/rust-ephem/commit/e0cd30e644d868d5276ffd588ab72392b20c05af))
+### What's Changed
+* Fix docs errors by [@jak574](https://github.com/jak574) in [#90](https://github.com/CosmicFrontierLabs/rust-ephem/pull/90)
+* feat: add `release-please` versioning by [@jak574](https://github.com/jak574) in [#92](https://github.com/CosmicFrontierLabs/rust-ephem/pull/92)
+* fix: use v in tag name by [@jak574](https://github.com/jak574) in [#94](https://github.com/CosmicFrontierLabs/rust-ephem/pull/94)
+* chore(main): release rust_ephem 0.2.0 by [@jak574](https://github.com/jak574) in [#93](https://github.com/CosmicFrontierLabs/rust-ephem/pull/93)
 
 
-### Bug Fixes
+**Full Changelog**: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.15...v0.2.0
 
-* fix issues with `ConstraintResult` `in_constraint` and `timestamp` ([#8](https://github.com/CosmicFrontierLabs/rust-ephem/issues/8)) ([c62e1ce](https://github.com/CosmicFrontierLabs/rust-ephem/commit/c62e1ce0d0ffd45998956cb0526c38b82a780da2))
-* missing entries in pyi files ([#51](https://github.com/CosmicFrontierLabs/rust-ephem/issues/51)) ([2ab4d7d](https://github.com/CosmicFrontierLabs/rust-ephem/commit/2ab4d7d237feee8776411babb0e6d062059be4d7))
-* **types:** fix mismatched types in _rust_ephem.pyi ([#68](https://github.com/CosmicFrontierLabs/rust-ephem/issues/68)) ([1f30e3d](https://github.com/CosmicFrontierLabs/rust-ephem/commit/1f30e3dced846901b454455564a990fae3a23127))
-* typing issue ([#81](https://github.com/CosmicFrontierLabs/rust-ephem/issues/81)) ([4707c58](https://github.com/CosmicFrontierLabs/rust-ephem/commit/4707c587b9c2e7e09eba23b84b382944aaae7d61))
-* update README.md ([8e50e81](https://github.com/CosmicFrontierLabs/rust-ephem/commit/8e50e8175afdcf1af1492b7417457a5619daa1f3))
-* Update README.md ([05d0029](https://github.com/CosmicFrontierLabs/rust-ephem/commit/05d002926c4d44765330be78c8d90c1b693f407d))
-* use v in tag name ([#94](https://github.com/CosmicFrontierLabs/rust-ephem/issues/94)) ([61a3a7c](https://github.com/CosmicFrontierLabs/rust-ephem/commit/61a3a7ccccd6f0395333db4a8cbf696595b99fa4))
+[Changes][v0.2.0]
+
+
+<a id="v0.1.15"></a>
+## [v0.1.15: additional constraints and solar system body tracking](https://github.com/CosmicFrontierLabs/rust-ephem/releases/tag/v0.1.15) - 2025-12-11
+
+### What's Changed
+* Add more constraints by [@jak574](https://github.com/jak574) in [#87](https://github.com/CosmicFrontierLabs/rust-ephem/pull/87)
+* Make `ConstraintResult` a Pydantic model by [@jak574](https://github.com/jak574) in [#88](https://github.com/CosmicFrontierLabs/rust-ephem/pull/88)
+* Solar system body visibility by [@jak574](https://github.com/jak574) in [#89](https://github.com/CosmicFrontierLabs/rust-ephem/pull/89)
+
+
+**Full Changelog**: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.14...v0.1.15
+
+[Changes][v0.1.15]
+
+
+<a id="v0.1.14"></a>
+## [v0.1.14: Refactors and re-orgs](https://github.com/CosmicFrontierLabs/rust-ephem/releases/tag/v0.1.14) - 2025-12-07
+
+### What's Changed
+* Docs fixes by [@jak574](https://github.com/jak574) in [#69](https://github.com/CosmicFrontierLabs/rust-ephem/pull/69)
+* Build(deps): Bump urllib3 from 2.5.0 to 2.6.0 by [@dependabot](https://github.com/dependabot)[bot] in [#71](https://github.com/CosmicFrontierLabs/rust-ephem/pull/71)
+* Revamp of TLE handling by [@jak574](https://github.com/jak574) in [#73](https://github.com/CosmicFrontierLabs/rust-ephem/pull/73)
+* Reduce boilerplate by [@jak574](https://github.com/jak574) in [#76](https://github.com/CosmicFrontierLabs/rust-ephem/pull/76)
+* `hifitime` refactor by [@jak574](https://github.com/jak574) in [#70](https://github.com/CosmicFrontierLabs/rust-ephem/pull/70)
+* Add API documentation for `fetch_tle()` by [@jak574](https://github.com/jak574) in [#79](https://github.com/CosmicFrontierLabs/rust-ephem/pull/79)
+* Fix typing issue on `fetch_tle` `enforce_source` argument by [@jak574](https://github.com/jak574) in [#81](https://github.com/CosmicFrontierLabs/rust-ephem/pull/81)
+* Reduce length and scope of README.md by [@jak574](https://github.com/jak574) in [#82](https://github.com/CosmicFrontierLabs/rust-ephem/pull/82)
+* Add local multi platform build scripts by [@jak574](https://github.com/jak574) in [#75](https://github.com/CosmicFrontierLabs/rust-ephem/pull/75)
+* Change tagline, get rid of broken `pre-commit` hook by [@jak574](https://github.com/jak574) in [#83](https://github.com/CosmicFrontierLabs/rust-ephem/pull/83)
+* Remove deprecated `evaluate_batch` method. Allow in_constraint to take time arrays. by [@jak574](https://github.com/jak574) in [#85](https://github.com/CosmicFrontierLabs/rust-ephem/pull/85)
+
+## New Contributors
+* [@dependabot](https://github.com/dependabot)[bot] made their first contribution in [#71](https://github.com/CosmicFrontierLabs/rust-ephem/pull/71)
+
+**Full Changelog**: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.13...v0.1.14
+
+[Changes][v0.1.14]
+
+
+<a id="v0.1.13"></a>
+## [v0.1.13: Documentation updates, plus type fixes](https://github.com/CosmicFrontierLabs/rust-ephem/releases/tag/v0.1.13) - 2025-12-04
+
+### What's Changed
+* Read the Docs config plus Docs update by [@jak574](https://github.com/jak574) in [#63](https://github.com/CosmicFrontierLabs/rust-ephem/pull/63)
+* Add missing requirements.txt for docs build by [@jak574](https://github.com/jak574) in [#64](https://github.com/CosmicFrontierLabs/rust-ephem/pull/64)
+* More docs updates by [@jak574](https://github.com/jak574) in [#65](https://github.com/CosmicFrontierLabs/rust-ephem/pull/65)
+* More docs updates by [@jak574](https://github.com/jak574) in [#66](https://github.com/CosmicFrontierLabs/rust-ephem/pull/66)
+* fix(types): fix mismatched types in _rust_ephem.pyi by [@jak574](https://github.com/jak574) in [#68](https://github.com/CosmicFrontierLabs/rust-ephem/pull/68)
+
+
+**Full Changelog**: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.12...v0.1.13
+
+[Changes][v0.1.13]
+
+
+<a id="v0.1.12"></a>
+## [v0.1.12: Bug fix on type hint](https://github.com/CosmicFrontierLabs/rust-ephem/releases/tag/v0.1.12) - 2025-12-03
+
+### What's Changed
+* Fix `step_size` hinting by [@jak574](https://github.com/jak574) in [#62](https://github.com/CosmicFrontierLabs/rust-ephem/pull/62)
+
+
+**Full Changelog**: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.11...v0.1.12
+
+[Changes][v0.1.12]
+
+
+<a id="v0.1.11"></a>
+## [v0.1.11: Fix type hinting issues](https://github.com/CosmicFrontierLabs/rust-ephem/releases/tag/v0.1.11) - 2025-12-03
+
+### What's Changed
+* Fix type hinting issues by [@jak574](https://github.com/jak574) in [#61](https://github.com/CosmicFrontierLabs/rust-ephem/pull/61)
+
+
+**Full Changelog**: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.10...v0.1.11
+
+[Changes][v0.1.11]
+
+
+<a id="v0.1.10"></a>
+## [v0.1.10: Update to Typing Support](https://github.com/CosmicFrontierLabs/rust-ephem/releases/tag/v0.1.10) - 2025-12-01
+
+### What's Changed
+* Add generic `Ephemeris` type for type checking by [@jak574](https://github.com/jak574) in [#59](https://github.com/CosmicFrontierLabs/rust-ephem/pull/59)
+
+
+**Full Changelog**: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.9...v0.1.10
+
+[Changes][v0.1.10]
+
+
+<a id="v0.1.9"></a>
+## [v0.1.9: More optimizations and API name change](https://github.com/CosmicFrontierLabs/rust-ephem/releases/tag/v0.1.9) - 2025-11-26
+
+### What's Changed
+* Improve vectorization and update API naming scheme by [@jak574](https://github.com/jak574) in [#57](https://github.com/CosmicFrontierLabs/rust-ephem/pull/57)
+
+
+**Full Changelog**: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.8...v0.1.9
+
+[Changes][v0.1.9]
+
+
+<a id="v0.1.8"></a>
+## [v0.1.8: Vectorized constraint calculations](https://github.com/CosmicFrontierLabs/rust-ephem/releases/tag/v0.1.8) - 2025-11-26
+
+### What's Changed
+* Potential fix for code scanning alert no. 1: Workflow does not contain permissions by [@jak574](https://github.com/jak574) in [#54](https://github.com/CosmicFrontierLabs/rust-ephem/pull/54)
+* Add vectorized constraint evaluation by [@jak574](https://github.com/jak574) in [#56](https://github.com/CosmicFrontierLabs/rust-ephem/pull/56)
+
+
+**Full Changelog**: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.7...v0.1.8
+
+[Changes][v0.1.8]
+
+
+<a id="v0.1.7"></a>
+## [v0.1.7: Reflect parameters back in Ephemeris objects](https://github.com/CosmicFrontierLabs/rust-ephem/releases/tag/v0.1.7) - 2025-11-21
+
+### What's Changed
+* Reflect Ephemeris Parameters back to user in objects by [@jak574](https://github.com/jak574) in [#53](https://github.com/CosmicFrontierLabs/rust-ephem/pull/53)
+
+
+**Full Changelog**: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.6...v0.1.7
+
+[Changes][v0.1.7]
+
+
+<a id="v0.1.6"></a>
+## [v0.1.6: Simplify TLE ingest](https://github.com/CosmicFrontierLabs/rust-ephem/releases/tag/v0.1.6) - 2025-11-21
+
+### What's Changed
+* Simplify TLE reading in TLEEphemeris with file, URL, and Celestrak support by [@Copilot](https://github.com/Copilot) in [#49](https://github.com/CosmicFrontierLabs/rust-ephem/pull/49)
+* fix: missing entries in pyi files by [@jak574](https://github.com/jak574) in [#51](https://github.com/CosmicFrontierLabs/rust-ephem/pull/51)
+
+
+**Full Changelog**: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.5...v0.1.6
+
+[Changes][v0.1.6]
+
+
+<a id="v0.1.5"></a>
+## [v0.1.5: Add latitude / longitude / height values to Ephemeris](https://github.com/CosmicFrontierLabs/rust-ephem/releases/tag/v0.1.5) - 2025-11-20
+
+### What's Changed
+* Add latitude / longitude / height to all Ephemeris types by [@jak574](https://github.com/jak574) in [#46](https://github.com/CosmicFrontierLabs/rust-ephem/pull/46)
+
+
+**Full Changelog**: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.4...v0.1.5
+
+[Changes][v0.1.5]
+
+
+<a id="v0.1.4"></a>
+## [v0.1.4: Add OEM support](https://github.com/CosmicFrontierLabs/rust-ephem/releases/tag/v0.1.4) - 2025-11-18
+
+### What's Changed
+* bugfix: update types on Ephemeris properties by [@jak574](https://github.com/jak574) in [#38](https://github.com/CosmicFrontierLabs/rust-ephem/pull/38)
+* feat: add support for CCDSD EOM files by [@jak574](https://github.com/jak574) in [#40](https://github.com/CosmicFrontierLabs/rust-ephem/pull/40)
+* Add support for xor for constraints by [@jak574](https://github.com/jak574) in [#44](https://github.com/CosmicFrontierLabs/rust-ephem/pull/44)
+* bugfix: add in missing OEMEphemeris definition in __init__.py by [@jak574](https://github.com/jak574) in [#42](https://github.com/CosmicFrontierLabs/rust-ephem/pull/42)
+
+
+**Full Changelog**: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.3...v0.1.4
+
+[Changes][v0.1.4]
+
+
+<a id="v0.1.3"></a>
+## [v0.1.3: Bug fix in constraint / visibility calculations](https://github.com/CosmicFrontierLabs/rust-ephem/releases/tag/v0.1.3) - 2025-11-17
+
+### What's Changed
+* feat: add index method to ephemeris by [@jak574](https://github.com/jak574) in [#29](https://github.com/CosmicFrontierLabs/rust-ephem/pull/29)
+* Binary search for `index()` by [@jak574](https://github.com/jak574) in [#31](https://github.com/CosmicFrontierLabs/rust-ephem/pull/31)
+* Don't let earth radius go to infinity by [@jak574](https://github.com/jak574) in [#33](https://github.com/CosmicFrontierLabs/rust-ephem/pull/33)
+* bugfix: fix inverted constraints by [@jak574](https://github.com/jak574) in [#35](https://github.com/CosmicFrontierLabs/rust-ephem/pull/35)
+
+
+**Full Changelog**: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.2...v0.1.3
+
+[Changes][v0.1.3]
+
+
+<a id="v0.1.2"></a>
+## [v0.1.2: Fix versioning. Add  Earth/Sun/Moon angular size](https://github.com/CosmicFrontierLabs/rust-ephem/releases/tag/v0.1.2) - 2025-11-16
+
+### What's Changed
+* Add properties for Earth, Sun, Moon angular radii by [@jak574](https://github.com/jak574) in [#27](https://github.com/CosmicFrontierLabs/rust-ephem/pull/27)
+* Fix version extraction from git tags in build workflow by [@Copilot](https://github.com/Copilot) in [#25](https://github.com/CosmicFrontierLabs/rust-ephem/pull/25)
+
+## New Contributors
+* [@Copilot](https://github.com/Copilot) made their first contribution in [#25](https://github.com/CosmicFrontierLabs/rust-ephem/pull/25)
+
+**Full Changelog**: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.1...v0.1.2
+
+[Changes][v0.1.2]
+
+
+<a id="v0.1.1"></a>
+## [v0.1.1: Refactors, optimizations, new methods, github CI](https://github.com/CosmicFrontierLabs/rust-ephem/releases/tag/v0.1.1) - 2025-11-16
+
+### What's Changed
+* feat: add pre-commit to repo by [@jak574](https://github.com/jak574) in [#5](https://github.com/CosmicFrontierLabs/rust-ephem/pull/5)
+* feat: add github CI actions by [@jak574](https://github.com/jak574) in [#6](https://github.com/CosmicFrontierLabs/rust-ephem/pull/6)
+* feat: add typing support to python package by [@jak574](https://github.com/jak574) in [#10](https://github.com/CosmicFrontierLabs/rust-ephem/pull/10)
+* fix: fix issues with `ConstraintResult` `in_constraint` and `timestamp` by [@jak574](https://github.com/jak574) in [#8](https://github.com/CosmicFrontierLabs/rust-ephem/pull/8)
+* Refactor code and directory structure by [@jak574](https://github.com/jak574) in [#12](https://github.com/CosmicFrontierLabs/rust-ephem/pull/12)
+* Optimizations and improvements to calculating whether a target is constraint at a given time. by [@jak574](https://github.com/jak574) in [#14](https://github.com/CosmicFrontierLabs/rust-ephem/pull/14)
+* Make `SkyCoord` generation lazy to make initial `Ephemeris` generation quicker. by [@jak574](https://github.com/jak574) in [#16](https://github.com/CosmicFrontierLabs/rust-ephem/pull/16)
+* Put in place infrastructure to publish to PyPI by [@jak574](https://github.com/jak574) in [#18](https://github.com/CosmicFrontierLabs/rust-ephem/pull/18)
+* More github action work by [@jak574](https://github.com/jak574) in [#19](https://github.com/CosmicFrontierLabs/rust-ephem/pull/19)
+* More Actions Work by [@jak574](https://github.com/jak574) in [#20](https://github.com/CosmicFrontierLabs/rust-ephem/pull/20)
+* More actions work...sigh by [@jak574](https://github.com/jak574) in [#21](https://github.com/CosmicFrontierLabs/rust-ephem/pull/21)
+* Try maturin default build CI by [@jak574](https://github.com/jak574) in [#22](https://github.com/CosmicFrontierLabs/rust-ephem/pull/22)
+* Final build CI updates.... by [@jak574](https://github.com/jak574) in [#23](https://github.com/CosmicFrontierLabs/rust-ephem/pull/23)
+
+
+**Full Changelog**: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.0...v0.1.1
+
+[Changes][v0.1.1]
+
+
+<a id="v0.1.0"></a>
+## [v0.1.0: First release](https://github.com/CosmicFrontierLabs/rust-ephem/releases/tag/v0.1.0) - 2025-11-14
+
+### What's Changed
+* release: commit v0.1.0 of rust-ephem by [@jak574](https://github.com/jak574) in [#2](https://github.com/CosmicFrontierLabs/rust-ephem/pull/2)
+
+## New Contributors
+* [@jak574](https://github.com/jak574) made their first contribution in [#2](https://github.com/CosmicFrontierLabs/rust-ephem/pull/2)
+
+**Full Changelog**: https://github.com/CosmicFrontierLabs/rust-ephem/commits/v0.1.0
+
+[Changes][v0.1.0]
+
+
+[v0.2.1]: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.2.0...v0.2.1
+[v0.2.0]: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.15...v0.2.0
+[v0.1.15]: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.14...v0.1.15
+[v0.1.14]: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.13...v0.1.14
+[v0.1.13]: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.12...v0.1.13
+[v0.1.12]: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.11...v0.1.12
+[v0.1.11]: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.10...v0.1.11
+[v0.1.10]: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.9...v0.1.10
+[v0.1.9]: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.8...v0.1.9
+[v0.1.8]: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.7...v0.1.8
+[v0.1.7]: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.6...v0.1.7
+[v0.1.6]: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.5...v0.1.6
+[v0.1.5]: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.4...v0.1.5
+[v0.1.4]: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.3...v0.1.4
+[v0.1.3]: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.2...v0.1.3
+[v0.1.2]: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.1...v0.1.2
+[v0.1.1]: https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.1.0...v0.1.1
+[v0.1.0]: https://github.com/CosmicFrontierLabs/rust-ephem/tree/v0.1.0
+
+<!-- Generated by https://github.com/rhysd/changelog-from-release v3.9.1 -->
