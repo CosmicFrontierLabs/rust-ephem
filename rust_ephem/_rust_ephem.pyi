@@ -953,6 +953,66 @@ class TLEEphemeris(Ephemeris):
         """
         ...
 
+    @property
+    def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Sun in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Moon in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Earth in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Sun in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Moon in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Earth in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
     def get_body_pv(
         self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
     ) -> PositionVelocityData:
@@ -1364,6 +1424,66 @@ class SPICEEphemeris(Ephemeris):
         """
         ...
 
+    @property
+    def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Sun in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Moon in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Earth in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Sun in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Moon in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Earth in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
     def index(self, time: datetime) -> int:
         """
         Find the index of the closest timestamp to the given datetime.
@@ -1756,6 +1876,66 @@ class OEMEphemeris(Ephemeris):
         """
         ...
 
+    @property
+    def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Sun in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Moon in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Earth in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Sun in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Moon in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Earth in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
     def index(self, time: datetime) -> int:
         """
         Find the index of the closest timestamp to the given datetime.
@@ -2143,6 +2323,66 @@ class GroundEphemeris(Ephemeris):
 
         Returns:
             NumPy array of angular radii in radians
+        """
+        ...
+
+    @property
+    def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Sun in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Moon in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Earth in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Sun in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Moon in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Earth in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
         """
         ...
 

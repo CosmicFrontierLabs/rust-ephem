@@ -229,6 +229,60 @@ class Ephemeris(abc.ABC):
         """Whether polar motion corrections are applied."""
         ...
 
+    @property
+    @abc.abstractmethod
+    def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension and Declination of the Sun in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        """
+        ...
+
+    @property
+    @abc.abstractmethod
+    def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension and Declination of the Moon in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        """
+        ...
+
+    @property
+    @abc.abstractmethod
+    def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension and Declination of the Earth in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        """
+        ...
+
+    @property
+    @abc.abstractmethod
+    def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension and Declination of the Sun in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        """
+        ...
+
+    @property
+    @abc.abstractmethod
+    def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension and Declination of the Moon in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        """
+        ...
+
+    @property
+    @abc.abstractmethod
+    def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension and Declination of the Earth in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        """
+        ...
+
 
 # Register all concrete ephemeris classes as virtual subclasses
 Ephemeris.register(TLEEphemeris)
