@@ -953,6 +953,233 @@ class TLEEphemeris(Ephemeris):
         """
         ...
 
+    @property
+    def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Sun in degrees.
+
+        Convenient property that extracts RA/Dec from the sun SkyCoord and combines
+        them into a single Nx2 NumPy array for efficient numerical operations.
+
+        Returns:
+            Nx2 NumPy array where:
+                - Column 0: Right Ascension in degrees [0, 360)
+                - Column 1: Declination in degrees [-90, 90]
+                - N is the number of timestamps in the ephemeris
+
+        Note:
+            This property is cached for performance. The coordinates are in the
+            GCRS (Geocentric Celestial Reference System) frame relative to the
+            spacecraft position.
+
+        Example:
+            >>> eph = TLEEphemeris(...)
+            >>> sun_coords = eph.sun_ra_dec_deg
+            >>> sun_ra = sun_coords[:, 0]   # All RA values
+            >>> sun_dec = sun_coords[:, 1]  # All Dec values
+            >>> # Find when Sun is above horizon (Dec > 0)
+            >>> above_horizon = sun_dec > 0
+        """
+        ...
+
+    @property
+    def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Moon in degrees.
+
+        Convenient property that extracts RA/Dec from the moon SkyCoord and combines
+        them into a single Nx2 NumPy array for efficient numerical operations.
+
+        Returns:
+            Nx2 NumPy array where:
+                - Column 0: Right Ascension in degrees [0, 360)
+                - Column 1: Declination in degrees [-90, 90]
+                - N is the number of timestamps in the ephemeris
+
+        Note:
+            This property is cached for performance. The coordinates are in the
+            GCRS (Geocentric Celestial Reference System) frame relative to the
+            spacecraft position.
+
+        Example:
+            >>> eph = TLEEphemeris(...)
+            >>> moon_coords = eph.moon_ra_dec_deg
+            >>> moon_ra = moon_coords[:, 0]   # All RA values
+            >>> moon_dec = moon_coords[:, 1]  # All Dec values
+        """
+        ...
+
+    @property
+    def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Earth in degrees.
+
+        Convenient property that extracts RA/Dec from the earth SkyCoord and combines
+        them into a single Nx2 NumPy array for efficient numerical operations.
+
+        Returns:
+            Nx2 NumPy array where:
+                - Column 0: Right Ascension in degrees [0, 360)
+                - Column 1: Declination in degrees [-90, 90]
+                - N is the number of timestamps in the ephemeris
+
+        Note:
+            This property is cached for performance. The coordinates are in the
+            GCRS (Geocentric Celestial Reference System) frame and represent
+            Earth's position relative to the spacecraft.
+
+        Example:
+            >>> eph = TLEEphemeris(...)
+            >>> earth_coords = eph.earth_ra_dec_deg
+            >>> earth_ra = earth_coords[:, 0]   # All RA values
+            >>> earth_dec = earth_coords[:, 1]  # All Dec values
+        """
+        ...
+
+    @property
+    def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Sun in radians.
+
+        Convenient property that extracts RA/Dec from the sun SkyCoord and combines
+        them into a single Nx2 NumPy array for efficient numerical operations.
+
+        Returns:
+            Nx2 NumPy array where:
+                - Column 0: Right Ascension in radians [0, 2π)
+                - Column 1: Declination in radians [-π/2, π/2]
+                - N is the number of timestamps in the ephemeris
+
+        Note:
+            This property is cached for performance. The coordinates are in the
+            GCRS (Geocentric Celestial Reference System) frame relative to the
+            spacecraft position.
+
+        Example:
+            >>> import numpy as np
+            >>> eph = TLEEphemeris(...)
+            >>> sun_coords = eph.sun_ra_dec_rad
+            >>> sun_ra = sun_coords[:, 0]   # All RA values in radians
+            >>> sun_dec = sun_coords[:, 1]  # All Dec values in radians
+            >>> # Convert to degrees if needed
+            >>> sun_ra_deg = np.degrees(sun_ra)
+        """
+        ...
+
+    @property
+    def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Moon in radians.
+
+        Convenient property that extracts RA/Dec from the moon SkyCoord and combines
+        them into a single Nx2 NumPy array for efficient numerical operations.
+
+        Returns:
+            Nx2 NumPy array where:
+                - Column 0: Right Ascension in radians [0, 2π)
+                - Column 1: Declination in radians [-π/2, π/2]
+                - N is the number of timestamps in the ephemeris
+
+        Note:
+            This property is cached for performance. The coordinates are in the
+            GCRS (Geocentric Celestial Reference System) frame relative to the
+            spacecraft position.
+
+        Example:
+            >>> eph = TLEEphemeris(...)
+            >>> moon_coords = eph.moon_ra_dec_rad
+            >>> moon_ra = moon_coords[:, 0]   # All RA values in radians
+            >>> moon_dec = moon_coords[:, 1]  # All Dec values in radians
+        """
+        ...
+
+    @property
+    def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Earth in radians.
+
+        Convenient property that extracts RA/Dec from the earth SkyCoord and combines
+        them into a single Nx2 NumPy array for efficient numerical operations.
+
+        Returns:
+            Nx2 NumPy array where:
+                - Column 0: Right Ascension in radians [0, 2π)
+                - Column 1: Declination in radians [-π/2, π/2]
+                - N is the number of timestamps in the ephemeris
+
+        Note:
+            This property is cached for performance. The coordinates are in the
+            GCRS (Geocentric Celestial Reference System) frame and represent
+            Earth's position relative to the spacecraft.
+
+        Example:
+            >>> eph = TLEEphemeris(...)
+            >>> earth_coords = eph.earth_ra_dec_rad
+            >>> earth_ra = earth_coords[:, 0]   # All RA values in radians
+            >>> earth_dec = earth_coords[:, 1]  # All Dec values in radians
+        """
+        ...
+
+    @property
+    def sun_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in degrees. Extracts column 0 from sun_ra_dec_deg."""
+        ...
+
+    @property
+    def sun_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in degrees. Extracts column 1 from sun_ra_dec_deg."""
+        ...
+
+    @property
+    def moon_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in degrees. Extracts column 0 from moon_ra_dec_deg."""
+        ...
+
+    @property
+    def moon_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in degrees. Extracts column 1 from moon_ra_dec_deg."""
+        ...
+
+    @property
+    def earth_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in degrees. Extracts column 0 from earth_ra_dec_deg."""
+        ...
+
+    @property
+    def earth_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in degrees. Extracts column 1 from earth_ra_dec_deg."""
+        ...
+
+    @property
+    def sun_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in radians. Extracts column 0 from sun_ra_dec_rad."""
+        ...
+
+    @property
+    def sun_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in radians. Extracts column 1 from sun_ra_dec_rad."""
+        ...
+
+    @property
+    def moon_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in radians. Extracts column 0 from moon_ra_dec_rad."""
+        ...
+
+    @property
+    def moon_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in radians. Extracts column 1 from moon_ra_dec_rad."""
+        ...
+
+    @property
+    def earth_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in radians. Extracts column 0 from earth_ra_dec_rad."""
+        ...
+
+    @property
+    def earth_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in radians. Extracts column 1 from earth_ra_dec_rad."""
+        ...
+
     def get_body_pv(
         self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
     ) -> PositionVelocityData:
@@ -1364,6 +1591,126 @@ class SPICEEphemeris(Ephemeris):
         """
         ...
 
+    @property
+    def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Sun in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Moon in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Earth in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Sun in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Moon in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Earth in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in degrees. Extracts column 0 from sun_ra_dec_deg."""
+        ...
+
+    @property
+    def sun_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in degrees. Extracts column 1 from sun_ra_dec_deg."""
+        ...
+
+    @property
+    def moon_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in degrees. Extracts column 0 from moon_ra_dec_deg."""
+        ...
+
+    @property
+    def moon_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in degrees. Extracts column 1 from moon_ra_dec_deg."""
+        ...
+
+    @property
+    def earth_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in degrees. Extracts column 0 from earth_ra_dec_deg."""
+        ...
+
+    @property
+    def earth_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in degrees. Extracts column 1 from earth_ra_dec_deg."""
+        ...
+
+    @property
+    def sun_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in radians. Extracts column 0 from sun_ra_dec_rad."""
+        ...
+
+    @property
+    def sun_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in radians. Extracts column 1 from sun_ra_dec_rad."""
+        ...
+
+    @property
+    def moon_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in radians. Extracts column 0 from moon_ra_dec_rad."""
+        ...
+
+    @property
+    def moon_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in radians. Extracts column 1 from moon_ra_dec_rad."""
+        ...
+
+    @property
+    def earth_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in radians. Extracts column 0 from earth_ra_dec_rad."""
+        ...
+
+    @property
+    def earth_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in radians. Extracts column 1 from earth_ra_dec_rad."""
+        ...
+
     def index(self, time: datetime) -> int:
         """
         Find the index of the closest timestamp to the given datetime.
@@ -1756,6 +2103,126 @@ class OEMEphemeris(Ephemeris):
         """
         ...
 
+    @property
+    def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Sun in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Moon in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Earth in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Sun in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Moon in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Earth in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in degrees. Extracts column 0 from sun_ra_dec_deg."""
+        ...
+
+    @property
+    def sun_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in degrees. Extracts column 1 from sun_ra_dec_deg."""
+        ...
+
+    @property
+    def moon_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in degrees. Extracts column 0 from moon_ra_dec_deg."""
+        ...
+
+    @property
+    def moon_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in degrees. Extracts column 1 from moon_ra_dec_deg."""
+        ...
+
+    @property
+    def earth_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in degrees. Extracts column 0 from earth_ra_dec_deg."""
+        ...
+
+    @property
+    def earth_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in degrees. Extracts column 1 from earth_ra_dec_deg."""
+        ...
+
+    @property
+    def sun_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in radians. Extracts column 0 from sun_ra_dec_rad."""
+        ...
+
+    @property
+    def sun_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in radians. Extracts column 1 from sun_ra_dec_rad."""
+        ...
+
+    @property
+    def moon_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in radians. Extracts column 0 from moon_ra_dec_rad."""
+        ...
+
+    @property
+    def moon_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in radians. Extracts column 1 from moon_ra_dec_rad."""
+        ...
+
+    @property
+    def earth_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in radians. Extracts column 0 from earth_ra_dec_rad."""
+        ...
+
+    @property
+    def earth_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in radians. Extracts column 1 from earth_ra_dec_rad."""
+        ...
+
     def index(self, time: datetime) -> int:
         """
         Find the index of the closest timestamp to the given datetime.
@@ -2144,6 +2611,126 @@ class GroundEphemeris(Ephemeris):
         Returns:
             NumPy array of angular radii in radians
         """
+        ...
+
+    @property
+    def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Sun in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Moon in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Earth in degrees.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Sun in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Moon in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """
+        Right Ascension and Declination of the Earth in radians.
+
+        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        This property is cached for performance.
+        """
+        ...
+
+    @property
+    def sun_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in degrees. Extracts column 0 from sun_ra_dec_deg."""
+        ...
+
+    @property
+    def sun_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in degrees. Extracts column 1 from sun_ra_dec_deg."""
+        ...
+
+    @property
+    def moon_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in degrees. Extracts column 0 from moon_ra_dec_deg."""
+        ...
+
+    @property
+    def moon_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in degrees. Extracts column 1 from moon_ra_dec_deg."""
+        ...
+
+    @property
+    def earth_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in degrees. Extracts column 0 from earth_ra_dec_deg."""
+        ...
+
+    @property
+    def earth_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in degrees. Extracts column 1 from earth_ra_dec_deg."""
+        ...
+
+    @property
+    def sun_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in radians. Extracts column 0 from sun_ra_dec_rad."""
+        ...
+
+    @property
+    def sun_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in radians. Extracts column 1 from sun_ra_dec_rad."""
+        ...
+
+    @property
+    def moon_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in radians. Extracts column 0 from moon_ra_dec_rad."""
+        ...
+
+    @property
+    def moon_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in radians. Extracts column 1 from moon_ra_dec_rad."""
+        ...
+
+    @property
+    def earth_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in radians. Extracts column 0 from earth_ra_dec_rad."""
+        ...
+
+    @property
+    def earth_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in radians. Extracts column 1 from earth_ra_dec_rad."""
         ...
 
     def index(self, time: datetime) -> int:

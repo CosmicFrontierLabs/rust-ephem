@@ -42,6 +42,8 @@ Classes
     * ``obsgeoloc``, ``obsgeovel`` — Observer location/velocity in GCRS
     * ``latitude_deg``, ``longitude_deg``, ``height_m`` — Geodetic coordinates
     * ``sun_radius_deg``, ``moon_radius_deg``, ``earth_radius_deg`` — Angular radii
+    * ``sun_ra_dec_deg``, ``moon_ra_dec_deg``, ``earth_ra_dec_deg`` — RA/Dec as Nx2 arrays (cached)
+    * ``sun_ra_deg``, ``sun_dec_deg``, etc. — Individual RA or Dec as 1D arrays
     * ``begin``, ``end``, ``step_size``, ``polar_motion`` — Time range properties
 
   **Common Methods:**
@@ -115,6 +117,18 @@ Classes
     * ``earth_radius`` — Earth angular radius as astropy Quantity (degrees)
     * ``earth_radius_deg`` — Earth angular radius as NumPy array (degrees)
     * ``earth_radius_rad`` — Earth angular radius as NumPy array (radians)
+    * ``sun_ra_dec_deg`` — Sun RA/Dec as Nx2 NumPy array (degrees), cached
+    * ``sun_ra_dec_rad`` — Sun RA/Dec as Nx2 NumPy array (radians), cached
+    * ``moon_ra_dec_deg`` — Moon RA/Dec as Nx2 NumPy array (degrees), cached
+    * ``moon_ra_dec_rad`` — Moon RA/Dec as Nx2 NumPy array (radians), cached
+    * ``earth_ra_dec_deg`` — Earth RA/Dec as Nx2 NumPy array (degrees), cached
+    * ``earth_ra_dec_rad`` — Earth RA/Dec as Nx2 NumPy array (radians), cached
+    * ``sun_ra_deg``, ``sun_dec_deg`` — Sun RA and Dec as separate 1D arrays (degrees)
+    * ``sun_ra_rad``, ``sun_dec_rad`` — Sun RA and Dec as separate 1D arrays (radians)
+    * ``moon_ra_deg``, ``moon_dec_deg`` — Moon RA and Dec as separate 1D arrays (degrees)
+    * ``moon_ra_rad``, ``moon_dec_rad`` — Moon RA and Dec as separate 1D arrays (radians)
+    * ``earth_ra_deg``, ``earth_dec_deg`` — Earth RA and Dec as separate 1D arrays (degrees)
+    * ``earth_ra_rad``, ``earth_dec_rad`` — Earth RA and Dec as separate 1D arrays (radians)
 
   **Methods:**
     * ``index(time)`` — Find the index of the closest timestamp to the given datetime
@@ -177,6 +191,18 @@ Classes
     * ``earth_radius`` — Earth angular radius as astropy Quantity (degrees)
     * ``earth_radius_deg`` — Earth angular radius as NumPy array (degrees)
     * ``earth_radius_rad`` — Earth angular radius as NumPy array (radians)
+    * ``sun_ra_dec_deg`` — Sun RA/Dec as Nx2 NumPy array (degrees), cached
+    * ``sun_ra_dec_rad`` — Sun RA/Dec as Nx2 NumPy array (radians), cached
+    * ``moon_ra_dec_deg`` — Moon RA/Dec as Nx2 NumPy array (degrees), cached
+    * ``moon_ra_dec_rad`` — Moon RA/Dec as Nx2 NumPy array (radians), cached
+    * ``earth_ra_dec_deg`` — Earth RA/Dec as Nx2 NumPy array (degrees), cached
+    * ``earth_ra_dec_rad`` — Earth RA/Dec as Nx2 NumPy array (radians), cached
+    * ``sun_ra_deg``, ``sun_dec_deg`` — Sun RA and Dec as separate 1D arrays (degrees)
+    * ``sun_ra_rad``, ``sun_dec_rad`` — Sun RA and Dec as separate 1D arrays (radians)
+    * ``moon_ra_deg``, ``moon_dec_deg`` — Moon RA and Dec as separate 1D arrays (degrees)
+    * ``moon_ra_rad``, ``moon_dec_rad`` — Moon RA and Dec as separate 1D arrays (radians)
+    * ``earth_ra_deg``, ``earth_dec_deg`` — Earth RA and Dec as separate 1D arrays (degrees)
+    * ``earth_ra_rad``, ``earth_dec_rad`` — Earth RA and Dec as separate 1D arrays (radians)
 
   **Methods:**
     * ``index(time)`` — Find the index of the closest timestamp to the given datetime
@@ -240,6 +266,18 @@ Classes
     * ``earth_radius`` — Earth angular radius as astropy Quantity (degrees)
     * ``earth_radius_deg`` — Earth angular radius as NumPy array (degrees)
     * ``earth_radius_rad`` — Earth angular radius as NumPy array (radians)
+    * ``sun_ra_dec_deg`` — Sun RA/Dec as Nx2 NumPy array (degrees), cached
+    * ``sun_ra_dec_rad`` — Sun RA/Dec as Nx2 NumPy array (radians), cached
+    * ``moon_ra_dec_deg`` — Moon RA/Dec as Nx2 NumPy array (degrees), cached
+    * ``moon_ra_dec_rad`` — Moon RA/Dec as Nx2 NumPy array (radians), cached
+    * ``earth_ra_dec_deg`` — Earth RA/Dec as Nx2 NumPy array (degrees), cached
+    * ``earth_ra_dec_rad`` — Earth RA/Dec as Nx2 NumPy array (radians), cached
+    * ``sun_ra_deg``, ``sun_dec_deg`` — Sun RA and Dec as separate 1D arrays (degrees)
+    * ``sun_ra_rad``, ``sun_dec_rad`` — Sun RA and Dec as separate 1D arrays (radians)
+    * ``moon_ra_deg``, ``moon_dec_deg`` — Moon RA and Dec as separate 1D arrays (degrees)
+    * ``moon_ra_rad``, ``moon_dec_rad`` — Moon RA and Dec as separate 1D arrays (radians)
+    * ``earth_ra_deg``, ``earth_dec_deg`` — Earth RA and Dec as separate 1D arrays (degrees)
+    * ``earth_ra_rad``, ``earth_dec_rad`` — Earth RA and Dec as separate 1D arrays (radians)
 
   **Methods:**
     * ``index(time)`` — Find the index of the closest timestamp to the given datetime
@@ -310,6 +348,18 @@ Classes
     * ``earth_radius`` — Earth angular radius as astropy Quantity (degrees)
     * ``earth_radius_deg`` — Earth angular radius as NumPy array (degrees)
     * ``earth_radius_rad`` — Earth angular radius as NumPy array (radians)
+    * ``sun_ra_dec_deg`` — Sun RA/Dec as Nx2 NumPy array (degrees), cached
+    * ``sun_ra_dec_rad`` — Sun RA/Dec as Nx2 NumPy array (radians), cached
+    * ``moon_ra_dec_deg`` — Moon RA/Dec as Nx2 NumPy array (degrees), cached
+    * ``moon_ra_dec_rad`` — Moon RA/Dec as Nx2 NumPy array (radians), cached
+    * ``earth_ra_dec_deg`` — Earth RA/Dec as Nx2 NumPy array (degrees), cached
+    * ``earth_ra_dec_rad`` — Earth RA/Dec as Nx2 NumPy array (radians), cached
+    * ``sun_ra_deg``, ``sun_dec_deg`` — Sun RA and Dec as separate 1D arrays (degrees)
+    * ``sun_ra_rad``, ``sun_dec_rad`` — Sun RA and Dec as separate 1D arrays (radians)
+    * ``moon_ra_deg``, ``moon_dec_deg`` — Moon RA and Dec as separate 1D arrays (degrees)
+    * ``moon_ra_rad``, ``moon_dec_rad`` — Moon RA and Dec as separate 1D arrays (radians)
+    * ``earth_ra_deg``, ``earth_dec_deg`` — Earth RA and Dec as separate 1D arrays (degrees)
+    * ``earth_ra_rad``, ``earth_dec_rad`` — Earth RA and Dec as separate 1D arrays (radians)
 
   **Methods:**
     * ``index(time)`` — Find the index of the closest timestamp to the given datetime
