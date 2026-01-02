@@ -381,6 +381,150 @@ class Ephemeris(abc.ABC):
         """
         ...
 
+    @property
+    @abc.abstractmethod
+    def sun_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in degrees.
+
+        Convenience property that extracts just the RA column from sun_ra_dec_deg.
+
+        Returns:
+            1D NumPy array of Right Ascension values in degrees [0, 360)
+        """
+        ...
+
+    @property
+    @abc.abstractmethod
+    def sun_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in degrees.
+
+        Convenience property that extracts just the Dec column from sun_ra_dec_deg.
+
+        Returns:
+            1D NumPy array of Declination values in degrees [-90, 90]
+        """
+        ...
+
+    @property
+    @abc.abstractmethod
+    def moon_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in degrees.
+
+        Convenience property that extracts just the RA column from moon_ra_dec_deg.
+
+        Returns:
+            1D NumPy array of Right Ascension values in degrees [0, 360)
+        """
+        ...
+
+    @property
+    @abc.abstractmethod
+    def moon_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in degrees.
+
+        Convenience property that extracts just the Dec column from moon_ra_dec_deg.
+
+        Returns:
+            1D NumPy array of Declination values in degrees [-90, 90]
+        """
+        ...
+
+    @property
+    @abc.abstractmethod
+    def earth_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in degrees.
+
+        Convenience property that extracts just the RA column from earth_ra_dec_deg.
+
+        Returns:
+            1D NumPy array of Right Ascension values in degrees [0, 360)
+        """
+        ...
+
+    @property
+    @abc.abstractmethod
+    def earth_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in degrees.
+
+        Convenience property that extracts just the Dec column from earth_ra_dec_deg.
+
+        Returns:
+            1D NumPy array of Declination values in degrees [-90, 90]
+        """
+        ...
+
+    @property
+    @abc.abstractmethod
+    def sun_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in radians.
+
+        Convenience property that extracts just the RA column from sun_ra_dec_rad.
+
+        Returns:
+            1D NumPy array of Right Ascension values in radians [0, 2π)
+        """
+        ...
+
+    @property
+    @abc.abstractmethod
+    def sun_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in radians.
+
+        Convenience property that extracts just the Dec column from sun_ra_dec_rad.
+
+        Returns:
+            1D NumPy array of Declination values in radians [-π/2, π/2]
+        """
+        ...
+
+    @property
+    @abc.abstractmethod
+    def moon_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in radians.
+
+        Convenience property that extracts just the RA column from moon_ra_dec_rad.
+
+        Returns:
+            1D NumPy array of Right Ascension values in radians [0, 2π)
+        """
+        ...
+
+    @property
+    @abc.abstractmethod
+    def moon_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in radians.
+
+        Convenience property that extracts just the Dec column from moon_ra_dec_rad.
+
+        Returns:
+            1D NumPy array of Declination values in radians [-π/2, π/2]
+        """
+        ...
+
+    @property
+    @abc.abstractmethod
+    def earth_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in radians.
+
+        Convenience property that extracts just the RA column from earth_ra_dec_rad.
+
+        Returns:
+            1D NumPy array of Right Ascension values in radians [0, 2π)
+        """
+        ...
+
+    @property
+    @abc.abstractmethod
+    def earth_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in radians.
+
+        Convenience property that extracts just the Dec column from earth_ra_dec_rad.
+
+        Returns:
+            1D NumPy array of Declination values in radians [-π/2, π/2]
+        """
+        ...
+
 
 # Register all concrete ephemeris classes as virtual subclasses
 Ephemeris.register(TLEEphemeris)

@@ -1583,6 +1583,174 @@ pub trait EphemerisBase {
         Ok(result_py)
     }
 
+    /// Get RA of the Sun in degrees as a 1D array
+    ///
+    /// Convenience method that extracts just the RA column from sun_ra_dec_deg.
+    ///
+    /// # Returns
+    /// NumPy array of shape (N,) with RA in degrees
+    fn get_sun_ra_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let ra_dec = self.get_sun_ra_dec_deg(py)?;
+        // Extract column 0 using [:, 0]
+        let ra_dec_bound = ra_dec.bind(py);
+        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 0),))?;
+        Ok(result.into())
+    }
+
+    /// Get Dec of the Sun in degrees as a 1D array
+    ///
+    /// Convenience method that extracts just the Dec column from sun_ra_dec_deg.
+    ///
+    /// # Returns
+    /// NumPy array of shape (N,) with Dec in degrees
+    fn get_sun_dec_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let ra_dec = self.get_sun_ra_dec_deg(py)?;
+        // Extract column 1 using [:, 1]
+        let ra_dec_bound = ra_dec.bind(py);
+        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 1),))?;
+        Ok(result.into())
+    }
+
+    /// Get RA of the Moon in degrees as a 1D array
+    ///
+    /// Convenience method that extracts just the RA column from moon_ra_dec_deg.
+    ///
+    /// # Returns
+    /// NumPy array of shape (N,) with RA in degrees
+    fn get_moon_ra_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let ra_dec = self.get_moon_ra_dec_deg(py)?;
+        // Extract column 0 using [:, 0]
+        let ra_dec_bound = ra_dec.bind(py);
+        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 0),))?;
+        Ok(result.into())
+    }
+
+    /// Get Dec of the Moon in degrees as a 1D array
+    ///
+    /// Convenience method that extracts just the Dec column from moon_ra_dec_deg.
+    ///
+    /// # Returns
+    /// NumPy array of shape (N,) with Dec in degrees
+    fn get_moon_dec_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let ra_dec = self.get_moon_ra_dec_deg(py)?;
+        // Extract column 1 using [:, 1]
+        let ra_dec_bound = ra_dec.bind(py);
+        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 1),))?;
+        Ok(result.into())
+    }
+
+    /// Get RA of the Earth in degrees as a 1D array
+    ///
+    /// Convenience method that extracts just the RA column from earth_ra_dec_deg.
+    ///
+    /// # Returns
+    /// NumPy array of shape (N,) with RA in degrees
+    fn get_earth_ra_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let ra_dec = self.get_earth_ra_dec_deg(py)?;
+        // Extract column 0 using [:, 0]
+        let ra_dec_bound = ra_dec.bind(py);
+        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 0),))?;
+        Ok(result.into())
+    }
+
+    /// Get Dec of the Earth in degrees as a 1D array
+    ///
+    /// Convenience method that extracts just the Dec column from earth_ra_dec_deg.
+    ///
+    /// # Returns
+    /// NumPy array of shape (N,) with Dec in degrees
+    fn get_earth_dec_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let ra_dec = self.get_earth_ra_dec_deg(py)?;
+        // Extract column 1 using [:, 1]
+        let ra_dec_bound = ra_dec.bind(py);
+        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 1),))?;
+        Ok(result.into())
+    }
+
+    /// Get RA of the Sun in radians as a 1D array
+    ///
+    /// Convenience method that extracts just the RA column from sun_ra_dec_rad.
+    ///
+    /// # Returns
+    /// NumPy array of shape (N,) with RA in radians
+    fn get_sun_ra_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let ra_dec = self.get_sun_ra_dec_rad(py)?;
+        // Extract column 0 using [:, 0]
+        let ra_dec_bound = ra_dec.bind(py);
+        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 0),))?;
+        Ok(result.into())
+    }
+
+    /// Get Dec of the Sun in radians as a 1D array
+    ///
+    /// Convenience method that extracts just the Dec column from sun_ra_dec_rad.
+    ///
+    /// # Returns
+    /// NumPy array of shape (N,) with Dec in radians
+    fn get_sun_dec_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let ra_dec = self.get_sun_ra_dec_rad(py)?;
+        // Extract column 1 using [:, 1]
+        let ra_dec_bound = ra_dec.bind(py);
+        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 1),))?;
+        Ok(result.into())
+    }
+
+    /// Get RA of the Moon in radians as a 1D array
+    ///
+    /// Convenience method that extracts just the RA column from moon_ra_dec_rad.
+    ///
+    /// # Returns
+    /// NumPy array of shape (N,) with RA in radians
+    fn get_moon_ra_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let ra_dec = self.get_moon_ra_dec_rad(py)?;
+        // Extract column 0 using [:, 0]
+        let ra_dec_bound = ra_dec.bind(py);
+        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 0),))?;
+        Ok(result.into())
+    }
+
+    /// Get Dec of the Moon in radians as a 1D array
+    ///
+    /// Convenience method that extracts just the Dec column from moon_ra_dec_rad.
+    ///
+    /// # Returns
+    /// NumPy array of shape (N,) with Dec in radians
+    fn get_moon_dec_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let ra_dec = self.get_moon_ra_dec_rad(py)?;
+        // Extract column 1 using [:, 1]
+        let ra_dec_bound = ra_dec.bind(py);
+        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 1),))?;
+        Ok(result.into())
+    }
+
+    /// Get RA of the Earth in radians as a 1D array
+    ///
+    /// Convenience method that extracts just the RA column from earth_ra_dec_rad.
+    ///
+    /// # Returns
+    /// NumPy array of shape (N,) with RA in radians
+    fn get_earth_ra_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let ra_dec = self.get_earth_ra_dec_rad(py)?;
+        // Extract column 0 using [:, 0]
+        let ra_dec_bound = ra_dec.bind(py);
+        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 0),))?;
+        Ok(result.into())
+    }
+
+    /// Get Dec of the Earth in radians as a 1D array
+    ///
+    /// Convenience method that extracts just the Dec column from earth_ra_dec_rad.
+    ///
+    /// # Returns
+    /// NumPy array of shape (N,) with Dec in radians
+    fn get_earth_dec_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let ra_dec = self.get_earth_ra_dec_rad(py)?;
+        // Extract column 1 using [:, 1]
+        let ra_dec_bound = ra_dec.bind(py);
+        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 1),))?;
+        Ok(result.into())
+    }
+
     /// Find the index of the closest timestamp to the given datetime
     ///
     /// Returns the index in the ephemeris timestamp array that is closest to the provided time.

@@ -1120,6 +1120,66 @@ class TLEEphemeris(Ephemeris):
         """
         ...
 
+    @property
+    def sun_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in degrees. Extracts column 0 from sun_ra_dec_deg."""
+        ...
+
+    @property
+    def sun_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in degrees. Extracts column 1 from sun_ra_dec_deg."""
+        ...
+
+    @property
+    def moon_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in degrees. Extracts column 0 from moon_ra_dec_deg."""
+        ...
+
+    @property
+    def moon_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in degrees. Extracts column 1 from moon_ra_dec_deg."""
+        ...
+
+    @property
+    def earth_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in degrees. Extracts column 0 from earth_ra_dec_deg."""
+        ...
+
+    @property
+    def earth_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in degrees. Extracts column 1 from earth_ra_dec_deg."""
+        ...
+
+    @property
+    def sun_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in radians. Extracts column 0 from sun_ra_dec_rad."""
+        ...
+
+    @property
+    def sun_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in radians. Extracts column 1 from sun_ra_dec_rad."""
+        ...
+
+    @property
+    def moon_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in radians. Extracts column 0 from moon_ra_dec_rad."""
+        ...
+
+    @property
+    def moon_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in radians. Extracts column 1 from moon_ra_dec_rad."""
+        ...
+
+    @property
+    def earth_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in radians. Extracts column 0 from earth_ra_dec_rad."""
+        ...
+
+    @property
+    def earth_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in radians. Extracts column 1 from earth_ra_dec_rad."""
+        ...
+
     def get_body_pv(
         self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
     ) -> PositionVelocityData:
@@ -1591,6 +1651,66 @@ class SPICEEphemeris(Ephemeris):
         """
         ...
 
+    @property
+    def sun_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in degrees. Extracts column 0 from sun_ra_dec_deg."""
+        ...
+
+    @property
+    def sun_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in degrees. Extracts column 1 from sun_ra_dec_deg."""
+        ...
+
+    @property
+    def moon_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in degrees. Extracts column 0 from moon_ra_dec_deg."""
+        ...
+
+    @property
+    def moon_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in degrees. Extracts column 1 from moon_ra_dec_deg."""
+        ...
+
+    @property
+    def earth_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in degrees. Extracts column 0 from earth_ra_dec_deg."""
+        ...
+
+    @property
+    def earth_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in degrees. Extracts column 1 from earth_ra_dec_deg."""
+        ...
+
+    @property
+    def sun_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in radians. Extracts column 0 from sun_ra_dec_rad."""
+        ...
+
+    @property
+    def sun_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in radians. Extracts column 1 from sun_ra_dec_rad."""
+        ...
+
+    @property
+    def moon_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in radians. Extracts column 0 from moon_ra_dec_rad."""
+        ...
+
+    @property
+    def moon_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in radians. Extracts column 1 from moon_ra_dec_rad."""
+        ...
+
+    @property
+    def earth_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in radians. Extracts column 0 from earth_ra_dec_rad."""
+        ...
+
+    @property
+    def earth_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in radians. Extracts column 1 from earth_ra_dec_rad."""
+        ...
+
     def index(self, time: datetime) -> int:
         """
         Find the index of the closest timestamp to the given datetime.
@@ -2043,6 +2163,66 @@ class OEMEphemeris(Ephemeris):
         """
         ...
 
+    @property
+    def sun_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in degrees. Extracts column 0 from sun_ra_dec_deg."""
+        ...
+
+    @property
+    def sun_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in degrees. Extracts column 1 from sun_ra_dec_deg."""
+        ...
+
+    @property
+    def moon_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in degrees. Extracts column 0 from moon_ra_dec_deg."""
+        ...
+
+    @property
+    def moon_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in degrees. Extracts column 1 from moon_ra_dec_deg."""
+        ...
+
+    @property
+    def earth_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in degrees. Extracts column 0 from earth_ra_dec_deg."""
+        ...
+
+    @property
+    def earth_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in degrees. Extracts column 1 from earth_ra_dec_deg."""
+        ...
+
+    @property
+    def sun_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in radians. Extracts column 0 from sun_ra_dec_rad."""
+        ...
+
+    @property
+    def sun_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in radians. Extracts column 1 from sun_ra_dec_rad."""
+        ...
+
+    @property
+    def moon_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in radians. Extracts column 0 from moon_ra_dec_rad."""
+        ...
+
+    @property
+    def moon_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in radians. Extracts column 1 from moon_ra_dec_rad."""
+        ...
+
+    @property
+    def earth_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in radians. Extracts column 0 from earth_ra_dec_rad."""
+        ...
+
+    @property
+    def earth_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in radians. Extracts column 1 from earth_ra_dec_rad."""
+        ...
+
     def index(self, time: datetime) -> int:
         """
         Find the index of the closest timestamp to the given datetime.
@@ -2491,6 +2671,66 @@ class GroundEphemeris(Ephemeris):
         Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
         This property is cached for performance.
         """
+        ...
+
+    @property
+    def sun_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in degrees. Extracts column 0 from sun_ra_dec_deg."""
+        ...
+
+    @property
+    def sun_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in degrees. Extracts column 1 from sun_ra_dec_deg."""
+        ...
+
+    @property
+    def moon_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in degrees. Extracts column 0 from moon_ra_dec_deg."""
+        ...
+
+    @property
+    def moon_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in degrees. Extracts column 1 from moon_ra_dec_deg."""
+        ...
+
+    @property
+    def earth_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in degrees. Extracts column 0 from earth_ra_dec_deg."""
+        ...
+
+    @property
+    def earth_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in degrees. Extracts column 1 from earth_ra_dec_deg."""
+        ...
+
+    @property
+    def sun_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in radians. Extracts column 0 from sun_ra_dec_rad."""
+        ...
+
+    @property
+    def sun_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in radians. Extracts column 1 from sun_ra_dec_rad."""
+        ...
+
+    @property
+    def moon_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in radians. Extracts column 0 from moon_ra_dec_rad."""
+        ...
+
+    @property
+    def moon_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in radians. Extracts column 1 from moon_ra_dec_rad."""
+        ...
+
+    @property
+    def earth_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in radians. Extracts column 0 from earth_ra_dec_rad."""
+        ...
+
+    @property
+    def earth_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in radians. Extracts column 1 from earth_ra_dec_rad."""
         ...
 
     def index(self, time: datetime) -> int:

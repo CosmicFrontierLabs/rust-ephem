@@ -170,6 +170,80 @@ class Ephemeris(abc.ABC):
         Returns Nx2 array: column 0=RA [0,2π), column 1=Dec [-π/2,π/2].
         Cached for performance.
         """
+        ...
+
+    @property
+    @abc.abstractmethod
+    def sun_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in degrees. Extracts column 0 from sun_ra_dec_deg."""
+        ...
+
+    @property
+    @abc.abstractmethod
+    def sun_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in degrees. Extracts column 1 from sun_ra_dec_deg."""
+        ...
+
+    @property
+    @abc.abstractmethod
+    def moon_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in degrees. Extracts column 0 from moon_ra_dec_deg."""
+        ...
+
+    @property
+    @abc.abstractmethod
+    def moon_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in degrees. Extracts column 1 from moon_ra_dec_deg."""
+        ...
+
+    @property
+    @abc.abstractmethod
+    def earth_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in degrees. Extracts column 0 from earth_ra_dec_deg."""
+        ...
+
+    @property
+    @abc.abstractmethod
+    def earth_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in degrees. Extracts column 1 from earth_ra_dec_deg."""
+        ...
+
+    @property
+    @abc.abstractmethod
+    def sun_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Sun in radians. Extracts column 0 from sun_ra_dec_rad."""
+        ...
+
+    @property
+    @abc.abstractmethod
+    def sun_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Sun in radians. Extracts column 1 from sun_ra_dec_rad."""
+        ...
+
+    @property
+    @abc.abstractmethod
+    def moon_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Moon in radians. Extracts column 0 from moon_ra_dec_rad."""
+        ...
+
+    @property
+    @abc.abstractmethod
+    def moon_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Moon in radians. Extracts column 1 from moon_ra_dec_rad."""
+        ...
+
+    @property
+    @abc.abstractmethod
+    def earth_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension of the Earth in radians. Extracts column 0 from earth_ra_dec_rad."""
+        ...
+
+    @property
+    @abc.abstractmethod
+    def earth_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Declination of the Earth in radians. Extracts column 1 from earth_ra_dec_rad."""
+        ...
+
     @abc.abstractmethod
     def index(self, time: datetime) -> int: ...
     @abc.abstractmethod
