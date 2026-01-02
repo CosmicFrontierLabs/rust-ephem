@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.2.1...v0.3.0) (2026-01-02)
+
+
+### Features
+
+* add sun/moon/earth ra/dec values in degrees and radians ([#105](https://github.com/CosmicFrontierLabs/rust-ephem/issues/105)) ([81bf0ae](https://github.com/CosmicFrontierLabs/rust-ephem/commit/81bf0aec788fc59929f6a018a311a0a2a6dd1075))
+
+
+### Bug Fixes
+
+* add dependabot for actions ([#97](https://github.com/CosmicFrontierLabs/rust-ephem/issues/97)) ([fd394c6](https://github.com/CosmicFrontierLabs/rust-ephem/commit/fd394c6f5be16187915ddf83ac1152a0c9c36f0a))
+* fix image and changelog ([#104](https://github.com/CosmicFrontierLabs/rust-ephem/issues/104)) ([9ccff1b](https://github.com/CosmicFrontierLabs/rust-ephem/commit/9ccff1b050f4b7acab24ad674c32bcdcc2052ca1))
+
 ## [0.2.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.2.0...v0.2.1) (2025-12-18)
 
 
