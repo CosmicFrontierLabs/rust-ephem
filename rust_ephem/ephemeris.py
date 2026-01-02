@@ -229,6 +229,54 @@ class Ephemeris(abc.ABC):
         """Whether polar motion corrections are applied."""
         ...
 
+    @property
+    def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension and Declination of the Sun in degrees."""
+        if not hasattr(self, "_sun_ra_deg") or not hasattr(self, "_sun_dec_deg"):
+            self._sun_ra_deg = self.sun.ra.deg
+            self._sun_dec_deg = self.sun.dec.deg
+        return np.vstack((self._sun_ra_deg, self._sun_dec_deg)).T
+
+    @property
+    def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension and Declination of the Moon in degrees."""
+        if not hasattr(self, "_moon_ra_deg") or not hasattr(self, "_moon_dec_deg"):
+            self._moon_ra_deg = self.moon.ra.deg
+            self._moon_dec_deg = self.moon.dec.deg
+        return np.vstack((self._moon_ra_deg, self._moon_dec_deg)).T
+
+    @property
+    def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension and Declination of the Earth in degrees."""
+        if not hasattr(self, "_earth_ra_deg") or not hasattr(self, "_earth_dec_deg"):
+            self._earth_ra_deg = self.earth.ra.deg
+            self._earth_dec_deg = self.earth.dec.deg
+        return np.vstack((self._earth_ra_deg, self._earth_dec_deg)).T
+
+    @property
+    def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension and Declination of the Sun in radians."""
+        if not hasattr(self, "_sun_ra_rad") or not hasattr(self, "_sun_dec_rad"):
+            self._sun_ra_rad = self.sun.ra.rad
+            self._sun_dec_rad = self.sun.dec.rad
+        return np.vstack((self._sun_ra_rad, self._sun_dec_rad)).T
+
+    @property
+    def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension and Declination of the Moon in radians."""
+        if not hasattr(self, "_moon_ra_rad") or not hasattr(self, "_moon_dec_rad"):
+            self._moon_ra_rad = self.moon.ra.rad
+            self._moon_dec_rad = self.moon.dec.rad
+        return np.vstack((self._moon_ra_rad, self._moon_dec_rad)).T
+
+    @property
+    def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension and Declination of the Earth in radians."""
+        if not hasattr(self, "_earth_ra_rad") or not hasattr(self, "_earth_dec_rad"):
+            self._earth_ra_rad = self.earth.ra.rad
+            self._earth_dec_rad = self.earth.dec.rad
+        return np.vstack((self._earth_ra_rad, self._earth_dec_rad)).T
+
 
 # Register all concrete ephemeris classes as virtual subclasses
 Ephemeris.register(TLEEphemeris)
