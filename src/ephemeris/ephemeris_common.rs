@@ -1583,6 +1583,26 @@ pub trait EphemerisBase {
         Ok(result_py)
     }
 
+    /// Helper method to extract a column from an Nx2 array
+    ///
+    /// # Arguments
+    /// * `ra_dec_array` - The Nx2 array to extract from
+    /// * `column` - Column index (0 for RA, 1 for Dec)
+    /// * `py` - Python context
+    ///
+    /// # Returns
+    /// 1D NumPy array with the extracted column
+    fn extract_column(
+        &self,
+        py: Python,
+        ra_dec_array: Py<PyAny>,
+        column: usize,
+    ) -> PyResult<Py<PyAny>> {
+        let ra_dec_bound = ra_dec_array.bind(py);
+        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), column),))?;
+        Ok(result.into())
+    }
+
     /// Get RA of the Sun in degrees as a 1D array
     ///
     /// Convenience method that extracts just the RA column from sun_ra_dec_deg.
@@ -1590,11 +1610,7 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of shape (N,) with RA in degrees
     fn get_sun_ra_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let ra_dec = self.get_sun_ra_dec_deg(py)?;
-        // Extract column 0 using [:, 0]
-        let ra_dec_bound = ra_dec.bind(py);
-        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 0),))?;
-        Ok(result.into())
+        self.extract_column(py, self.get_sun_ra_dec_deg(py)?, 0)
     }
 
     /// Get Dec of the Sun in degrees as a 1D array
@@ -1604,11 +1620,7 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of shape (N,) with Dec in degrees
     fn get_sun_dec_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let ra_dec = self.get_sun_ra_dec_deg(py)?;
-        // Extract column 1 using [:, 1]
-        let ra_dec_bound = ra_dec.bind(py);
-        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 1),))?;
-        Ok(result.into())
+        self.extract_column(py, self.get_sun_ra_dec_deg(py)?, 1)
     }
 
     /// Get RA of the Moon in degrees as a 1D array
@@ -1618,11 +1630,7 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of shape (N,) with RA in degrees
     fn get_moon_ra_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let ra_dec = self.get_moon_ra_dec_deg(py)?;
-        // Extract column 0 using [:, 0]
-        let ra_dec_bound = ra_dec.bind(py);
-        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 0),))?;
-        Ok(result.into())
+        self.extract_column(py, self.get_moon_ra_dec_deg(py)?, 0)
     }
 
     /// Get Dec of the Moon in degrees as a 1D array
@@ -1632,11 +1640,7 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of shape (N,) with Dec in degrees
     fn get_moon_dec_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let ra_dec = self.get_moon_ra_dec_deg(py)?;
-        // Extract column 1 using [:, 1]
-        let ra_dec_bound = ra_dec.bind(py);
-        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 1),))?;
-        Ok(result.into())
+        self.extract_column(py, self.get_moon_ra_dec_deg(py)?, 1)
     }
 
     /// Get RA of the Earth in degrees as a 1D array
@@ -1646,11 +1650,7 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of shape (N,) with RA in degrees
     fn get_earth_ra_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let ra_dec = self.get_earth_ra_dec_deg(py)?;
-        // Extract column 0 using [:, 0]
-        let ra_dec_bound = ra_dec.bind(py);
-        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 0),))?;
-        Ok(result.into())
+        self.extract_column(py, self.get_earth_ra_dec_deg(py)?, 0)
     }
 
     /// Get Dec of the Earth in degrees as a 1D array
@@ -1660,11 +1660,7 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of shape (N,) with Dec in degrees
     fn get_earth_dec_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let ra_dec = self.get_earth_ra_dec_deg(py)?;
-        // Extract column 1 using [:, 1]
-        let ra_dec_bound = ra_dec.bind(py);
-        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 1),))?;
-        Ok(result.into())
+        self.extract_column(py, self.get_earth_ra_dec_deg(py)?, 1)
     }
 
     /// Get RA of the Sun in radians as a 1D array
@@ -1674,11 +1670,7 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of shape (N,) with RA in radians
     fn get_sun_ra_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let ra_dec = self.get_sun_ra_dec_rad(py)?;
-        // Extract column 0 using [:, 0]
-        let ra_dec_bound = ra_dec.bind(py);
-        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 0),))?;
-        Ok(result.into())
+        self.extract_column(py, self.get_sun_ra_dec_rad(py)?, 0)
     }
 
     /// Get Dec of the Sun in radians as a 1D array
@@ -1688,11 +1680,7 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of shape (N,) with Dec in radians
     fn get_sun_dec_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let ra_dec = self.get_sun_ra_dec_rad(py)?;
-        // Extract column 1 using [:, 1]
-        let ra_dec_bound = ra_dec.bind(py);
-        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 1),))?;
-        Ok(result.into())
+        self.extract_column(py, self.get_sun_ra_dec_rad(py)?, 1)
     }
 
     /// Get RA of the Moon in radians as a 1D array
@@ -1702,11 +1690,7 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of shape (N,) with RA in radians
     fn get_moon_ra_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let ra_dec = self.get_moon_ra_dec_rad(py)?;
-        // Extract column 0 using [:, 0]
-        let ra_dec_bound = ra_dec.bind(py);
-        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 0),))?;
-        Ok(result.into())
+        self.extract_column(py, self.get_moon_ra_dec_rad(py)?, 0)
     }
 
     /// Get Dec of the Moon in radians as a 1D array
@@ -1716,11 +1700,7 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of shape (N,) with Dec in radians
     fn get_moon_dec_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let ra_dec = self.get_moon_ra_dec_rad(py)?;
-        // Extract column 1 using [:, 1]
-        let ra_dec_bound = ra_dec.bind(py);
-        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 1),))?;
-        Ok(result.into())
+        self.extract_column(py, self.get_moon_ra_dec_rad(py)?, 1)
     }
 
     /// Get RA of the Earth in radians as a 1D array
@@ -1730,11 +1710,7 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of shape (N,) with RA in radians
     fn get_earth_ra_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let ra_dec = self.get_earth_ra_dec_rad(py)?;
-        // Extract column 0 using [:, 0]
-        let ra_dec_bound = ra_dec.bind(py);
-        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 0),))?;
-        Ok(result.into())
+        self.extract_column(py, self.get_earth_ra_dec_rad(py)?, 0)
     }
 
     /// Get Dec of the Earth in radians as a 1D array
@@ -1744,11 +1720,7 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of shape (N,) with Dec in radians
     fn get_earth_dec_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let ra_dec = self.get_earth_ra_dec_rad(py)?;
-        // Extract column 1 using [:, 1]
-        let ra_dec_bound = ra_dec.bind(py);
-        let result = ra_dec_bound.call_method1("__getitem__", ((py.Ellipsis(), 1),))?;
-        Ok(result.into())
+        self.extract_column(py, self.get_earth_ra_dec_rad(py)?, 1)
     }
 
     /// Find the index of the closest timestamp to the given datetime
