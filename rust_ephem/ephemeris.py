@@ -234,7 +234,23 @@ class Ephemeris(abc.ABC):
     def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]:
         """Right Ascension and Declination of the Sun in degrees.
 
-        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        Provides a convenient Nx2 NumPy array with celestial coordinates of the Sun
+        relative to the observer (spacecraft or ground station) in the GCRS frame.
+
+        Returns:
+            Nx2 NumPy array where:
+                - Column 0: Right Ascension in degrees [0, 360)
+                - Column 1: Declination in degrees [-90, 90]
+                - N is the number of timestamps in the ephemeris
+
+        Note:
+            This property is cached for performance. Subsequent accesses return
+            the same array without recomputation.
+
+        Example:
+            >>> ra_dec = ephem.sun_ra_dec_deg
+            >>> ra = ra_dec[:, 0]   # All RA values
+            >>> dec = ra_dec[:, 1]  # All Dec values
         """
         ...
 
@@ -243,7 +259,23 @@ class Ephemeris(abc.ABC):
     def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]:
         """Right Ascension and Declination of the Moon in degrees.
 
-        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        Provides a convenient Nx2 NumPy array with celestial coordinates of the Moon
+        relative to the observer (spacecraft or ground station) in the GCRS frame.
+
+        Returns:
+            Nx2 NumPy array where:
+                - Column 0: Right Ascension in degrees [0, 360)
+                - Column 1: Declination in degrees [-90, 90]
+                - N is the number of timestamps in the ephemeris
+
+        Note:
+            This property is cached for performance. Subsequent accesses return
+            the same array without recomputation.
+
+        Example:
+            >>> ra_dec = ephem.moon_ra_dec_deg
+            >>> ra = ra_dec[:, 0]   # All RA values
+            >>> dec = ra_dec[:, 1]  # All Dec values
         """
         ...
 
@@ -252,7 +284,24 @@ class Ephemeris(abc.ABC):
     def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]:
         """Right Ascension and Declination of the Earth in degrees.
 
-        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        Provides a convenient Nx2 NumPy array with celestial coordinates of the Earth
+        relative to the observer (spacecraft). For GroundEphemeris, this represents
+        the ground station's own position.
+
+        Returns:
+            Nx2 NumPy array where:
+                - Column 0: Right Ascension in degrees [0, 360)
+                - Column 1: Declination in degrees [-90, 90]
+                - N is the number of timestamps in the ephemeris
+
+        Note:
+            This property is cached for performance. Subsequent accesses return
+            the same array without recomputation.
+
+        Example:
+            >>> ra_dec = ephem.earth_ra_dec_deg
+            >>> ra = ra_dec[:, 0]   # All RA values
+            >>> dec = ra_dec[:, 1]  # All Dec values
         """
         ...
 
@@ -261,7 +310,23 @@ class Ephemeris(abc.ABC):
     def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]:
         """Right Ascension and Declination of the Sun in radians.
 
-        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        Provides a convenient Nx2 NumPy array with celestial coordinates of the Sun
+        relative to the observer (spacecraft or ground station) in the GCRS frame.
+
+        Returns:
+            Nx2 NumPy array where:
+                - Column 0: Right Ascension in radians [0, 2π)
+                - Column 1: Declination in radians [-π/2, π/2]
+                - N is the number of timestamps in the ephemeris
+
+        Note:
+            This property is cached for performance. Subsequent accesses return
+            the same array without recomputation.
+
+        Example:
+            >>> ra_dec = ephem.sun_ra_dec_rad
+            >>> ra = ra_dec[:, 0]   # All RA values
+            >>> dec = ra_dec[:, 1]  # All Dec values
         """
         ...
 
@@ -270,7 +335,23 @@ class Ephemeris(abc.ABC):
     def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]:
         """Right Ascension and Declination of the Moon in radians.
 
-        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        Provides a convenient Nx2 NumPy array with celestial coordinates of the Moon
+        relative to the observer (spacecraft or ground station) in the GCRS frame.
+
+        Returns:
+            Nx2 NumPy array where:
+                - Column 0: Right Ascension in radians [0, 2π)
+                - Column 1: Declination in radians [-π/2, π/2]
+                - N is the number of timestamps in the ephemeris
+
+        Note:
+            This property is cached for performance. Subsequent accesses return
+            the same array without recomputation.
+
+        Example:
+            >>> ra_dec = ephem.moon_ra_dec_rad
+            >>> ra = ra_dec[:, 0]   # All RA values
+            >>> dec = ra_dec[:, 1]  # All Dec values
         """
         ...
 
@@ -279,7 +360,24 @@ class Ephemeris(abc.ABC):
     def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]:
         """Right Ascension and Declination of the Earth in radians.
 
-        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
+        Provides a convenient Nx2 NumPy array with celestial coordinates of the Earth
+        relative to the observer (spacecraft). For GroundEphemeris, this represents
+        the ground station's own position.
+
+        Returns:
+            Nx2 NumPy array where:
+                - Column 0: Right Ascension in radians [0, 2π)
+                - Column 1: Declination in radians [-π/2, π/2]
+                - N is the number of timestamps in the ephemeris
+
+        Note:
+            This property is cached for performance. Subsequent accesses return
+            the same array without recomputation.
+
+        Example:
+            >>> ra_dec = ephem.earth_ra_dec_rad
+            >>> ra = ra_dec[:, 0]   # All RA values
+            >>> dec = ra_dec[:, 1]  # All Dec values
         """
         ...
 

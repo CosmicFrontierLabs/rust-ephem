@@ -114,22 +114,62 @@ class Ephemeris(abc.ABC):
     def earth_radius_rad(self) -> npt.NDArray[np.float64]: ...
     @property
     @abc.abstractmethod
-    def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]: ...
+    def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension and Declination of the Sun in degrees.
+
+        Returns Nx2 array: column 0=RA [0,360), column 1=Dec [-90,90].
+        Cached for performance.
+        """
+        ...
+
     @property
     @abc.abstractmethod
-    def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]: ...
+    def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension and Declination of the Moon in degrees.
+
+        Returns Nx2 array: column 0=RA [0,360), column 1=Dec [-90,90].
+        Cached for performance.
+        """
+        ...
+
     @property
     @abc.abstractmethod
-    def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]: ...
+    def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Right Ascension and Declination of the Earth in degrees.
+
+        Returns Nx2 array: column 0=RA [0,360), column 1=Dec [-90,90].
+        Cached for performance.
+        """
+        ...
+
     @property
     @abc.abstractmethod
-    def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]: ...
+    def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension and Declination of the Sun in radians.
+
+        Returns Nx2 array: column 0=RA [0,2π), column 1=Dec [-π/2,π/2].
+        Cached for performance.
+        """
+        ...
+
     @property
     @abc.abstractmethod
-    def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]: ...
+    def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension and Declination of the Moon in radians.
+
+        Returns Nx2 array: column 0=RA [0,2π), column 1=Dec [-π/2,π/2].
+        Cached for performance.
+        """
+        ...
+
     @property
     @abc.abstractmethod
-    def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]: ...
+    def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Right Ascension and Declination of the Earth in radians.
+
+        Returns Nx2 array: column 0=RA [0,2π), column 1=Dec [-π/2,π/2].
+        Cached for performance.
+        """
     @abc.abstractmethod
     def index(self, time: datetime) -> int: ...
     @abc.abstractmethod

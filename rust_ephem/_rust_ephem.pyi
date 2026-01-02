@@ -958,8 +958,27 @@ class TLEEphemeris(Ephemeris):
         """
         Right Ascension and Declination of the Sun in degrees.
 
-        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
-        This property is cached for performance.
+        Convenient property that extracts RA/Dec from the sun SkyCoord and combines
+        them into a single Nx2 NumPy array for efficient numerical operations.
+
+        Returns:
+            Nx2 NumPy array where:
+                - Column 0: Right Ascension in degrees [0, 360)
+                - Column 1: Declination in degrees [-90, 90]
+                - N is the number of timestamps in the ephemeris
+
+        Note:
+            This property is cached for performance. The coordinates are in the
+            GCRS (Geocentric Celestial Reference System) frame relative to the
+            spacecraft position.
+
+        Example:
+            >>> eph = TLEEphemeris(...)
+            >>> sun_coords = eph.sun_ra_dec_deg
+            >>> sun_ra = sun_coords[:, 0]   # All RA values
+            >>> sun_dec = sun_coords[:, 1]  # All Dec values
+            >>> # Find when Sun is above horizon (Dec > 0)
+            >>> above_horizon = sun_dec > 0
         """
         ...
 
@@ -968,8 +987,25 @@ class TLEEphemeris(Ephemeris):
         """
         Right Ascension and Declination of the Moon in degrees.
 
-        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
-        This property is cached for performance.
+        Convenient property that extracts RA/Dec from the moon SkyCoord and combines
+        them into a single Nx2 NumPy array for efficient numerical operations.
+
+        Returns:
+            Nx2 NumPy array where:
+                - Column 0: Right Ascension in degrees [0, 360)
+                - Column 1: Declination in degrees [-90, 90]
+                - N is the number of timestamps in the ephemeris
+
+        Note:
+            This property is cached for performance. The coordinates are in the
+            GCRS (Geocentric Celestial Reference System) frame relative to the
+            spacecraft position.
+
+        Example:
+            >>> eph = TLEEphemeris(...)
+            >>> moon_coords = eph.moon_ra_dec_deg
+            >>> moon_ra = moon_coords[:, 0]   # All RA values
+            >>> moon_dec = moon_coords[:, 1]  # All Dec values
         """
         ...
 
@@ -978,8 +1014,25 @@ class TLEEphemeris(Ephemeris):
         """
         Right Ascension and Declination of the Earth in degrees.
 
-        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
-        This property is cached for performance.
+        Convenient property that extracts RA/Dec from the earth SkyCoord and combines
+        them into a single Nx2 NumPy array for efficient numerical operations.
+
+        Returns:
+            Nx2 NumPy array where:
+                - Column 0: Right Ascension in degrees [0, 360)
+                - Column 1: Declination in degrees [-90, 90]
+                - N is the number of timestamps in the ephemeris
+
+        Note:
+            This property is cached for performance. The coordinates are in the
+            GCRS (Geocentric Celestial Reference System) frame and represent
+            Earth's position relative to the spacecraft.
+
+        Example:
+            >>> eph = TLEEphemeris(...)
+            >>> earth_coords = eph.earth_ra_dec_deg
+            >>> earth_ra = earth_coords[:, 0]   # All RA values
+            >>> earth_dec = earth_coords[:, 1]  # All Dec values
         """
         ...
 
@@ -988,8 +1041,28 @@ class TLEEphemeris(Ephemeris):
         """
         Right Ascension and Declination of the Sun in radians.
 
-        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
-        This property is cached for performance.
+        Convenient property that extracts RA/Dec from the sun SkyCoord and combines
+        them into a single Nx2 NumPy array for efficient numerical operations.
+
+        Returns:
+            Nx2 NumPy array where:
+                - Column 0: Right Ascension in radians [0, 2π)
+                - Column 1: Declination in radians [-π/2, π/2]
+                - N is the number of timestamps in the ephemeris
+
+        Note:
+            This property is cached for performance. The coordinates are in the
+            GCRS (Geocentric Celestial Reference System) frame relative to the
+            spacecraft position.
+
+        Example:
+            >>> import numpy as np
+            >>> eph = TLEEphemeris(...)
+            >>> sun_coords = eph.sun_ra_dec_rad
+            >>> sun_ra = sun_coords[:, 0]   # All RA values in radians
+            >>> sun_dec = sun_coords[:, 1]  # All Dec values in radians
+            >>> # Convert to degrees if needed
+            >>> sun_ra_deg = np.degrees(sun_ra)
         """
         ...
 
@@ -998,8 +1071,25 @@ class TLEEphemeris(Ephemeris):
         """
         Right Ascension and Declination of the Moon in radians.
 
-        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
-        This property is cached for performance.
+        Convenient property that extracts RA/Dec from the moon SkyCoord and combines
+        them into a single Nx2 NumPy array for efficient numerical operations.
+
+        Returns:
+            Nx2 NumPy array where:
+                - Column 0: Right Ascension in radians [0, 2π)
+                - Column 1: Declination in radians [-π/2, π/2]
+                - N is the number of timestamps in the ephemeris
+
+        Note:
+            This property is cached for performance. The coordinates are in the
+            GCRS (Geocentric Celestial Reference System) frame relative to the
+            spacecraft position.
+
+        Example:
+            >>> eph = TLEEphemeris(...)
+            >>> moon_coords = eph.moon_ra_dec_rad
+            >>> moon_ra = moon_coords[:, 0]   # All RA values in radians
+            >>> moon_dec = moon_coords[:, 1]  # All Dec values in radians
         """
         ...
 
@@ -1008,8 +1098,25 @@ class TLEEphemeris(Ephemeris):
         """
         Right Ascension and Declination of the Earth in radians.
 
-        Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
-        This property is cached for performance.
+        Convenient property that extracts RA/Dec from the earth SkyCoord and combines
+        them into a single Nx2 NumPy array for efficient numerical operations.
+
+        Returns:
+            Nx2 NumPy array where:
+                - Column 0: Right Ascension in radians [0, 2π)
+                - Column 1: Declination in radians [-π/2, π/2]
+                - N is the number of timestamps in the ephemeris
+
+        Note:
+            This property is cached for performance. The coordinates are in the
+            GCRS (Geocentric Celestial Reference System) frame and represent
+            Earth's position relative to the spacecraft.
+
+        Example:
+            >>> eph = TLEEphemeris(...)
+            >>> earth_coords = eph.earth_ra_dec_rad
+            >>> earth_ra = earth_coords[:, 0]   # All RA values in radians
+            >>> earth_dec = earth_coords[:, 1]  # All Dec values in radians
         """
         ...
 
