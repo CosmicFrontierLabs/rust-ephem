@@ -470,3 +470,210 @@ class TestEdgeCases:
         assert np.array_equal(sun_deg_1, sun_deg_2)
         assert np.array_equal(moon_rad_1, moon_rad_2)
         assert np.array_equal(earth_deg_1, earth_deg_2)
+
+
+class TestIndividualRaDecProperties:
+    """Test individual RA and Dec convenience properties"""
+
+    def test_sun_ra_deg_returns_1d_array(self, tle_ephemeris):
+        """sun_ra_deg should return a 1D numpy array"""
+        ra = tle_ephemeris.sun_ra_deg
+        assert isinstance(ra, np.ndarray)
+        assert ra.dtype == np.float64
+        assert ra.ndim == 1
+
+    def test_sun_dec_deg_returns_1d_array(self, tle_ephemeris):
+        """sun_dec_deg should return a 1D numpy array"""
+        dec = tle_ephemeris.sun_dec_deg
+        assert isinstance(dec, np.ndarray)
+        assert dec.dtype == np.float64
+        assert dec.ndim == 1
+
+    def test_sun_ra_dec_individual_match_combined(self, tle_ephemeris):
+        """Individual sun_ra_deg and sun_dec_deg should match columns of sun_ra_dec_deg"""
+        ra_dec = tle_ephemeris.sun_ra_dec_deg
+        ra = tle_ephemeris.sun_ra_deg
+        dec = tle_ephemeris.sun_dec_deg
+
+        assert np.array_equal(ra, ra_dec[:, 0])
+        assert np.array_equal(dec, ra_dec[:, 1])
+
+    def test_moon_ra_dec_individual_match_combined(self, tle_ephemeris):
+        """Individual moon_ra_deg and moon_dec_deg should match columns of moon_ra_dec_deg"""
+        ra_dec = tle_ephemeris.moon_ra_dec_deg
+        ra = tle_ephemeris.moon_ra_deg
+        dec = tle_ephemeris.moon_dec_deg
+
+        assert np.array_equal(ra, ra_dec[:, 0])
+        assert np.array_equal(dec, ra_dec[:, 1])
+
+    def test_earth_ra_dec_individual_match_combined(self, tle_ephemeris):
+        """Individual earth_ra_deg and earth_dec_deg should match columns of earth_ra_dec_deg"""
+        ra_dec = tle_ephemeris.earth_ra_dec_deg
+        ra = tle_ephemeris.earth_ra_deg
+        dec = tle_ephemeris.earth_dec_deg
+
+        assert np.array_equal(ra, ra_dec[:, 0])
+        assert np.array_equal(dec, ra_dec[:, 1])
+
+    def test_sun_ra_dec_rad_individual_match_combined(self, tle_ephemeris):
+        """Individual sun_ra_rad and sun_dec_rad should match columns of sun_ra_dec_rad"""
+        ra_dec = tle_ephemeris.sun_ra_dec_rad
+        ra = tle_ephemeris.sun_ra_rad
+        dec = tle_ephemeris.sun_dec_rad
+
+        assert np.array_equal(ra, ra_dec[:, 0])
+        assert np.array_equal(dec, ra_dec[:, 1])
+
+    def test_moon_ra_dec_rad_individual_match_combined(self, tle_ephemeris):
+        """Individual moon_ra_rad and moon_dec_rad should match columns of moon_ra_dec_rad"""
+        ra_dec = tle_ephemeris.moon_ra_dec_rad
+        ra = tle_ephemeris.moon_ra_rad
+        dec = tle_ephemeris.moon_dec_rad
+
+        assert np.array_equal(ra, ra_dec[:, 0])
+        assert np.array_equal(dec, ra_dec[:, 1])
+
+    def test_earth_ra_dec_rad_individual_match_combined(self, tle_ephemeris):
+        """Individual earth_ra_rad and earth_dec_rad should match columns of earth_ra_dec_rad"""
+        ra_dec = tle_ephemeris.earth_ra_dec_rad
+        ra = tle_ephemeris.earth_ra_rad
+        dec = tle_ephemeris.earth_dec_rad
+
+        assert np.array_equal(ra, ra_dec[:, 0])
+        assert np.array_equal(dec, ra_dec[:, 1])
+
+    def test_individual_deg_rad_conversion(self, tle_ephemeris):
+        """Individual RA/Dec properties should convert correctly between degrees and radians"""
+        # Sun
+        sun_ra_deg = tle_ephemeris.sun_ra_deg
+        sun_ra_rad = tle_ephemeris.sun_ra_rad
+        sun_dec_deg = tle_ephemeris.sun_dec_deg
+        sun_dec_rad = tle_ephemeris.sun_dec_rad
+
+        assert np.allclose(sun_ra_deg, np.degrees(sun_ra_rad), rtol=1e-10)
+        assert np.allclose(sun_dec_deg, np.degrees(sun_dec_rad), rtol=1e-10)
+
+        # Moon
+        moon_ra_deg = tle_ephemeris.moon_ra_deg
+        moon_ra_rad = tle_ephemeris.moon_ra_rad
+        moon_dec_deg = tle_ephemeris.moon_dec_deg
+        moon_dec_rad = tle_ephemeris.moon_dec_rad
+
+        assert np.allclose(moon_ra_deg, np.degrees(moon_ra_rad), rtol=1e-10)
+        assert np.allclose(moon_dec_deg, np.degrees(moon_dec_rad), rtol=1e-10)
+
+        # Earth
+        earth_ra_deg = tle_ephemeris.earth_ra_deg
+        earth_ra_rad = tle_ephemeris.earth_ra_rad
+        earth_dec_deg = tle_ephemeris.earth_dec_deg
+        earth_dec_rad = tle_ephemeris.earth_dec_rad
+
+        assert np.allclose(earth_ra_deg, np.degrees(earth_ra_rad), rtol=1e-10)
+        assert np.allclose(earth_dec_deg, np.degrees(earth_dec_rad), rtol=1e-10)
+
+    def test_individual_ra_in_expected_range(self, tle_ephemeris):
+        """Individual RA properties should be in expected ranges"""
+        # RA in degrees: 0-360
+        assert np.all(
+            (tle_ephemeris.sun_ra_deg >= 0) & (tle_ephemeris.sun_ra_deg <= 360)
+        )
+        assert np.all(
+            (tle_ephemeris.moon_ra_deg >= 0) & (tle_ephemeris.moon_ra_deg <= 360)
+        )
+        assert np.all(
+            (tle_ephemeris.earth_ra_deg >= 0) & (tle_ephemeris.earth_ra_deg <= 360)
+        )
+
+        # RA in radians: 0-2π
+        assert np.all(
+            (tle_ephemeris.sun_ra_rad >= 0) & (tle_ephemeris.sun_ra_rad <= 2 * np.pi)
+        )
+        assert np.all(
+            (tle_ephemeris.moon_ra_rad >= 0) & (tle_ephemeris.moon_ra_rad <= 2 * np.pi)
+        )
+        assert np.all(
+            (tle_ephemeris.earth_ra_rad >= 0)
+            & (tle_ephemeris.earth_ra_rad <= 2 * np.pi)
+        )
+
+    def test_individual_dec_in_expected_range(self, tle_ephemeris):
+        """Individual Dec properties should be in expected ranges"""
+        # Dec in degrees: -90 to +90
+        assert np.all(
+            (tle_ephemeris.sun_dec_deg >= -90) & (tle_ephemeris.sun_dec_deg <= 90)
+        )
+        assert np.all(
+            (tle_ephemeris.moon_dec_deg >= -90) & (tle_ephemeris.moon_dec_deg <= 90)
+        )
+        assert np.all(
+            (tle_ephemeris.earth_dec_deg >= -90) & (tle_ephemeris.earth_dec_deg <= 90)
+        )
+
+        # Dec in radians: -π/2 to +π/2
+        assert np.all(
+            (tle_ephemeris.sun_dec_rad >= -np.pi / 2)
+            & (tle_ephemeris.sun_dec_rad <= np.pi / 2)
+        )
+        assert np.all(
+            (tle_ephemeris.moon_dec_rad >= -np.pi / 2)
+            & (tle_ephemeris.moon_dec_rad <= np.pi / 2)
+        )
+        assert np.all(
+            (tle_ephemeris.earth_dec_rad >= -np.pi / 2)
+            & (tle_ephemeris.earth_dec_rad <= np.pi / 2)
+        )
+
+    def test_individual_properties_available_on_ground_ephemeris(
+        self, ground_ephemeris
+    ):
+        """Individual RA/Dec properties should be available on GroundEphemeris"""
+        # Just verify they're accessible and return expected types
+        assert isinstance(ground_ephemeris.sun_ra_deg, np.ndarray)
+        assert isinstance(ground_ephemeris.sun_dec_deg, np.ndarray)
+        assert isinstance(ground_ephemeris.moon_ra_deg, np.ndarray)
+        assert isinstance(ground_ephemeris.moon_dec_deg, np.ndarray)
+        assert isinstance(ground_ephemeris.earth_ra_deg, np.ndarray)
+        assert isinstance(ground_ephemeris.earth_dec_deg, np.ndarray)
+
+        assert isinstance(ground_ephemeris.sun_ra_rad, np.ndarray)
+        assert isinstance(ground_ephemeris.sun_dec_rad, np.ndarray)
+        assert isinstance(ground_ephemeris.moon_ra_rad, np.ndarray)
+        assert isinstance(ground_ephemeris.moon_dec_rad, np.ndarray)
+        assert isinstance(ground_ephemeris.earth_ra_rad, np.ndarray)
+        assert isinstance(ground_ephemeris.earth_dec_rad, np.ndarray)
+
+    def test_individual_properties_available_on_spice_ephemeris(self, spice_ephemeris):
+        """Individual RA/Dec properties should be available on SPICEEphemeris"""
+        # Just verify they're accessible and return expected types
+        assert isinstance(spice_ephemeris.sun_ra_deg, np.ndarray)
+        assert isinstance(spice_ephemeris.sun_dec_deg, np.ndarray)
+        assert isinstance(spice_ephemeris.moon_ra_deg, np.ndarray)
+        assert isinstance(spice_ephemeris.moon_dec_deg, np.ndarray)
+        assert isinstance(spice_ephemeris.earth_ra_deg, np.ndarray)
+        assert isinstance(spice_ephemeris.earth_dec_deg, np.ndarray)
+
+        assert isinstance(spice_ephemeris.sun_ra_rad, np.ndarray)
+        assert isinstance(spice_ephemeris.sun_dec_rad, np.ndarray)
+        assert isinstance(spice_ephemeris.moon_ra_rad, np.ndarray)
+        assert isinstance(spice_ephemeris.moon_dec_rad, np.ndarray)
+        assert isinstance(spice_ephemeris.earth_ra_rad, np.ndarray)
+        assert isinstance(spice_ephemeris.earth_dec_rad, np.ndarray)
+
+    def test_individual_properties_have_correct_length(self, tle_ephemeris):
+        """All individual RA/Dec properties should have same length as timestamp array"""
+        n_times = len(tle_ephemeris.timestamp)
+
+        assert len(tle_ephemeris.sun_ra_deg) == n_times
+        assert len(tle_ephemeris.sun_dec_deg) == n_times
+        assert len(tle_ephemeris.moon_ra_deg) == n_times
+        assert len(tle_ephemeris.moon_dec_deg) == n_times
+        assert len(tle_ephemeris.earth_ra_deg) == n_times
+        assert len(tle_ephemeris.earth_dec_deg) == n_times
+
+        assert len(tle_ephemeris.sun_ra_rad) == n_times
+        assert len(tle_ephemeris.sun_dec_rad) == n_times
+        assert len(tle_ephemeris.moon_ra_rad) == n_times
+        assert len(tle_ephemeris.moon_dec_rad) == n_times
+        assert len(tle_ephemeris.earth_ra_rad) == n_times
+        assert len(tle_ephemeris.earth_dec_rad) == n_times
