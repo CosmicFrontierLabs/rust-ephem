@@ -424,6 +424,36 @@ impl TLEEphemeris {
         self.get_earth_radius_rad(py)
     }
 
+    #[getter]
+    fn sun_ra_dec_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_sun_ra_dec_deg(py)
+    }
+
+    #[getter]
+    fn moon_ra_dec_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_moon_ra_dec_deg(py)
+    }
+
+    #[getter]
+    fn earth_ra_dec_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_earth_ra_dec_deg(py)
+    }
+
+    #[getter]
+    fn sun_ra_dec_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_sun_ra_dec_rad(py)
+    }
+
+    #[getter]
+    fn moon_ra_dec_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_moon_ra_dec_rad(py)
+    }
+
+    #[getter]
+    fn earth_ra_dec_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.get_earth_ra_dec_rad(py)
+    }
+
     /// Calculate Moon illumination fraction for all ephemeris times
     ///
     /// Returns the fraction of the Moon's illuminated surface as seen from the

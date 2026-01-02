@@ -78,6 +78,9 @@ class TestEphemerisABCBehavior:
     def test_ephemeris_has_abstract_methods(self):
         """Test that Ephemeris defines the expected abstract methods."""
         # Check that all expected abstract methods are defined
+        # Note: sun_ra_dec_deg, moon_ra_dec_deg, earth_ra_dec_deg,
+        # sun_ra_dec_rad, moon_ra_dec_rad, earth_ra_dec_rad are now
+        # implemented in Rust and are no longer abstract
         expected_abstract_methods = {
             "timestamp",
             "gcrs_pv",
