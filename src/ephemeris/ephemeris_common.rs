@@ -1343,28 +1343,35 @@ pub trait EphemerisBase {
         Ok(result)
     }
 
-    /// Get RA and Dec of the Sun in degrees as an Nx2 array
+    /// Helper method to extract RA/Dec from a SkyCoord object and create Nx2 array
     ///
-    /// Returns a NumPy array where column 0 is RA in degrees and column 1 is Dec in degrees.
+    /// # Arguments
+    /// * `py` - Python context
+    /// * `cache` - Cache reference to check and store result
+    /// * `skycoord` - The SkyCoord object
+    /// * `unit` - Unit attribute name ("deg" or "rad")
     ///
     /// # Returns
-    /// NumPy array of shape (N, 2) with RA and Dec in degrees
-    fn get_sun_ra_dec_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+    /// NumPy array of shape (N, 2) with RA and Dec
+    fn build_ra_dec_array(
+        &self,
+        py: Python,
+        cache: &OnceLock<Py<PyAny>>,
+        skycoord: Py<PyAny>,
+        unit: &str,
+    ) -> PyResult<Py<PyAny>> {
         // Check cache first
-        if let Some(cached) = self.data().sun_ra_dec_deg_cache.get() {
+        if let Some(cached) = cache.get() {
             return Ok(cached.clone_ref(py));
         }
 
-        // Get the Sun SkyCoord object
-        let sun_skycoord = self.get_sun(py)?;
-
-        // Extract RA and Dec in degrees
-        let ra_deg = sun_skycoord.getattr(py, "ra")?.getattr(py, "deg")?;
-        let dec_deg = sun_skycoord.getattr(py, "dec")?.getattr(py, "deg")?;
+        // Extract RA and Dec with specified unit
+        let ra = skycoord.getattr(py, "ra")?.getattr(py, unit)?;
+        let dec = skycoord.getattr(py, "dec")?.getattr(py, unit)?;
 
         // Convert to numpy arrays
-        let ra_array = ra_deg.bind(py);
-        let dec_array = dec_deg.bind(py);
+        let ra_array = ra.bind(py);
+        let dec_array = dec.bind(py);
 
         // Stack them into Nx2 array using numpy
         let np = py.import("numpy")?;
@@ -1375,12 +1382,20 @@ pub trait EphemerisBase {
         let result_py: Py<PyAny> = result.into();
 
         // Cache the result
-        let _ = self
-            .data()
-            .sun_ra_dec_deg_cache
-            .set(result_py.clone_ref(py));
+        let _ = cache.set(result_py.clone_ref(py));
 
         Ok(result_py)
+    }
+
+    /// Get RA and Dec of the Sun in degrees as an Nx2 array
+    ///
+    /// Returns a NumPy array where column 0 is RA in degrees and column 1 is Dec in degrees.
+    ///
+    /// # Returns
+    /// NumPy array of shape (N, 2) with RA and Dec in degrees
+    fn get_sun_ra_dec_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let sun_skycoord = self.get_sun(py)?;
+        self.build_ra_dec_array(py, &self.data().sun_ra_dec_deg_cache, sun_skycoord, "deg")
     }
 
     /// Get RA and Dec of the Moon in degrees as an Nx2 array
@@ -1390,37 +1405,8 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of shape (N, 2) with RA and Dec in degrees
     fn get_moon_ra_dec_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
-        // Check cache first
-        if let Some(cached) = self.data().moon_ra_dec_deg_cache.get() {
-            return Ok(cached.clone_ref(py));
-        }
-
-        // Get the Moon SkyCoord object
         let moon_skycoord = self.get_moon(py)?;
-
-        // Extract RA and Dec in degrees
-        let ra_deg = moon_skycoord.getattr(py, "ra")?.getattr(py, "deg")?;
-        let dec_deg = moon_skycoord.getattr(py, "dec")?.getattr(py, "deg")?;
-
-        // Convert to numpy arrays
-        let ra_array = ra_deg.bind(py);
-        let dec_array = dec_deg.bind(py);
-
-        // Stack them into Nx2 array using numpy
-        let np = py.import("numpy")?;
-        let vstack = np.getattr("vstack")?;
-        let stacked = vstack.call1(((ra_array, dec_array),))?;
-        let result = stacked.getattr("T")?; // Transpose to get Nx2 instead of 2xN
-
-        let result_py: Py<PyAny> = result.into();
-
-        // Cache the result
-        let _ = self
-            .data()
-            .moon_ra_dec_deg_cache
-            .set(result_py.clone_ref(py));
-
-        Ok(result_py)
+        self.build_ra_dec_array(py, &self.data().moon_ra_dec_deg_cache, moon_skycoord, "deg")
     }
 
     /// Get RA and Dec of the Earth in degrees as an Nx2 array
@@ -1430,37 +1416,13 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of shape (N, 2) with RA and Dec in degrees
     fn get_earth_ra_dec_deg(&self, py: Python) -> PyResult<Py<PyAny>> {
-        // Check cache first
-        if let Some(cached) = self.data().earth_ra_dec_deg_cache.get() {
-            return Ok(cached.clone_ref(py));
-        }
-
-        // Get the Earth SkyCoord object
         let earth_skycoord = self.get_earth(py)?;
-
-        // Extract RA and Dec in degrees
-        let ra_deg = earth_skycoord.getattr(py, "ra")?.getattr(py, "deg")?;
-        let dec_deg = earth_skycoord.getattr(py, "dec")?.getattr(py, "deg")?;
-
-        // Convert to numpy arrays
-        let ra_array = ra_deg.bind(py);
-        let dec_array = dec_deg.bind(py);
-
-        // Stack them into Nx2 array using numpy
-        let np = py.import("numpy")?;
-        let vstack = np.getattr("vstack")?;
-        let stacked = vstack.call1(((ra_array, dec_array),))?;
-        let result = stacked.getattr("T")?; // Transpose to get Nx2 instead of 2xN
-
-        let result_py: Py<PyAny> = result.into();
-
-        // Cache the result
-        let _ = self
-            .data()
-            .earth_ra_dec_deg_cache
-            .set(result_py.clone_ref(py));
-
-        Ok(result_py)
+        self.build_ra_dec_array(
+            py,
+            &self.data().earth_ra_dec_deg_cache,
+            earth_skycoord,
+            "deg",
+        )
     }
 
     /// Get RA and Dec of the Sun in radians as an Nx2 array
@@ -1470,37 +1432,8 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of shape (N, 2) with RA and Dec in radians
     fn get_sun_ra_dec_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
-        // Check cache first
-        if let Some(cached) = self.data().sun_ra_dec_rad_cache.get() {
-            return Ok(cached.clone_ref(py));
-        }
-
-        // Get the Sun SkyCoord object
         let sun_skycoord = self.get_sun(py)?;
-
-        // Extract RA and Dec in radians
-        let ra_rad = sun_skycoord.getattr(py, "ra")?.getattr(py, "rad")?;
-        let dec_rad = sun_skycoord.getattr(py, "dec")?.getattr(py, "rad")?;
-
-        // Convert to numpy arrays
-        let ra_array = ra_rad.bind(py);
-        let dec_array = dec_rad.bind(py);
-
-        // Stack them into Nx2 array using numpy
-        let np = py.import("numpy")?;
-        let vstack = np.getattr("vstack")?;
-        let stacked = vstack.call1(((ra_array, dec_array),))?;
-        let result = stacked.getattr("T")?; // Transpose to get Nx2 instead of 2xN
-
-        let result_py: Py<PyAny> = result.into();
-
-        // Cache the result
-        let _ = self
-            .data()
-            .sun_ra_dec_rad_cache
-            .set(result_py.clone_ref(py));
-
-        Ok(result_py)
+        self.build_ra_dec_array(py, &self.data().sun_ra_dec_rad_cache, sun_skycoord, "rad")
     }
 
     /// Get RA and Dec of the Moon in radians as an Nx2 array
@@ -1510,37 +1443,8 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of shape (N, 2) with RA and Dec in radians
     fn get_moon_ra_dec_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
-        // Check cache first
-        if let Some(cached) = self.data().moon_ra_dec_rad_cache.get() {
-            return Ok(cached.clone_ref(py));
-        }
-
-        // Get the Moon SkyCoord object
         let moon_skycoord = self.get_moon(py)?;
-
-        // Extract RA and Dec in radians
-        let ra_rad = moon_skycoord.getattr(py, "ra")?.getattr(py, "rad")?;
-        let dec_rad = moon_skycoord.getattr(py, "dec")?.getattr(py, "rad")?;
-
-        // Convert to numpy arrays
-        let ra_array = ra_rad.bind(py);
-        let dec_array = dec_rad.bind(py);
-
-        // Stack them into Nx2 array using numpy
-        let np = py.import("numpy")?;
-        let vstack = np.getattr("vstack")?;
-        let stacked = vstack.call1(((ra_array, dec_array),))?;
-        let result = stacked.getattr("T")?; // Transpose to get Nx2 instead of 2xN
-
-        let result_py: Py<PyAny> = result.into();
-
-        // Cache the result
-        let _ = self
-            .data()
-            .moon_ra_dec_rad_cache
-            .set(result_py.clone_ref(py));
-
-        Ok(result_py)
+        self.build_ra_dec_array(py, &self.data().moon_ra_dec_rad_cache, moon_skycoord, "rad")
     }
 
     /// Get RA and Dec of the Earth in radians as an Nx2 array
@@ -1550,37 +1454,13 @@ pub trait EphemerisBase {
     /// # Returns
     /// NumPy array of shape (N, 2) with RA and Dec in radians
     fn get_earth_ra_dec_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
-        // Check cache first
-        if let Some(cached) = self.data().earth_ra_dec_rad_cache.get() {
-            return Ok(cached.clone_ref(py));
-        }
-
-        // Get the Earth SkyCoord object
         let earth_skycoord = self.get_earth(py)?;
-
-        // Extract RA and Dec in radians
-        let ra_rad = earth_skycoord.getattr(py, "ra")?.getattr(py, "rad")?;
-        let dec_rad = earth_skycoord.getattr(py, "dec")?.getattr(py, "rad")?;
-
-        // Convert to numpy arrays
-        let ra_array = ra_rad.bind(py);
-        let dec_array = dec_rad.bind(py);
-
-        // Stack them into Nx2 array using numpy
-        let np = py.import("numpy")?;
-        let vstack = np.getattr("vstack")?;
-        let stacked = vstack.call1(((ra_array, dec_array),))?;
-        let result = stacked.getattr("T")?; // Transpose to get Nx2 instead of 2xN
-
-        let result_py: Py<PyAny> = result.into();
-
-        // Cache the result
-        let _ = self
-            .data()
-            .earth_ra_dec_rad_cache
-            .set(result_py.clone_ref(py));
-
-        Ok(result_py)
+        self.build_ra_dec_array(
+            py,
+            &self.data().earth_ra_dec_rad_cache,
+            earth_skycoord,
+            "rad",
+        )
     }
 
     /// Helper method to extract a column from an Nx2 array
