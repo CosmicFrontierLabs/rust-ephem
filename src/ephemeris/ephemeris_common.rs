@@ -169,6 +169,12 @@ pub struct EphemerisData {
     pub sun_ra_dec_rad_cache: OnceLock<Py<PyAny>>,
     pub moon_ra_dec_rad_cache: OnceLock<Py<PyAny>>,
     pub earth_ra_dec_rad_cache: OnceLock<Py<PyAny>>,
+    /// Cached local sidereal time (LST) array in radians
+    pub lst_rad_cache: OnceLock<Array1<f64>>,
+    /// Cached local sidereal time (LST) array in degrees
+    pub lst_deg_cache: OnceLock<Array1<f64>>,
+    /// Cached local sidereal time (LST) array in hours
+    pub lst_hours_cache: OnceLock<Array1<f64>>,
 }
 
 impl EphemerisData {
@@ -206,6 +212,9 @@ impl EphemerisData {
             sun_ra_dec_rad_cache: OnceLock::new(),
             moon_ra_dec_rad_cache: OnceLock::new(),
             earth_ra_dec_rad_cache: OnceLock::new(),
+            lst_rad_cache: OnceLock::new(),
+            lst_deg_cache: OnceLock::new(),
+            lst_hours_cache: OnceLock::new(),
         }
     }
 }
@@ -694,6 +703,80 @@ pub trait EphemerisBase {
         } else {
             Ok(None)
         }
+    }
+
+    /// Get Local Sidereal Time (LST) in radians [0, 2π)
+    ///
+    /// Computes the Local Apparent Sidereal Time using IAU 2006 GAST.
+    /// Values are cached after first computation.
+    fn get_lst_rad(&self, py: Python) -> PyResult<Option<Py<PyAny>>>
+    where
+        Self: Sized,
+    {
+        use crate::utils::celestial::calculate_lst_rad;
+
+        if let Some(lst_arr) = self.data().lst_rad_cache.get() {
+            let arr = lst_arr.clone().into_pyarray(py).to_owned();
+            return Ok(Some(arr.into()));
+        }
+
+        // Compute and cache
+        let lst = calculate_lst_rad(self as &dyn EphemerisBase);
+        let arr = lst.clone().into_pyarray(py).to_owned();
+        let _ = self.data().lst_rad_cache.set(lst);
+        Ok(Some(arr.into()))
+    }
+
+    /// Get Local Sidereal Time (LST) in degrees [0, 360)
+    fn get_lst_deg(&self, py: Python) -> PyResult<Option<Py<PyAny>>>
+    where
+        Self: Sized,
+    {
+        use crate::utils::celestial::calculate_lst_rad;
+
+        if let Some(lst_arr) = self.data().lst_deg_cache.get() {
+            let arr = lst_arr.clone().into_pyarray(py).to_owned();
+            return Ok(Some(arr.into()));
+        }
+
+        // Compute from radians cache if available, otherwise compute fresh
+        let lst_deg = if let Some(lst_rad) = self.data().lst_rad_cache.get() {
+            lst_rad.mapv(|v| v.to_degrees())
+        } else {
+            let lst_rad = calculate_lst_rad(self as &dyn EphemerisBase);
+            let _ = self.data().lst_rad_cache.set(lst_rad.clone());
+            lst_rad.mapv(|v| v.to_degrees())
+        };
+
+        let arr = lst_deg.clone().into_pyarray(py).to_owned();
+        let _ = self.data().lst_deg_cache.set(lst_deg);
+        Ok(Some(arr.into()))
+    }
+
+    /// Get Local Sidereal Time (LST) in hours [0, 24)
+    fn get_lst_hours(&self, py: Python) -> PyResult<Option<Py<PyAny>>>
+    where
+        Self: Sized,
+    {
+        use crate::utils::celestial::calculate_lst_rad;
+
+        if let Some(lst_arr) = self.data().lst_hours_cache.get() {
+            let arr = lst_arr.clone().into_pyarray(py).to_owned();
+            return Ok(Some(arr.into()));
+        }
+
+        // Compute from radians cache if available, otherwise compute fresh
+        let lst_hours = if let Some(lst_rad) = self.data().lst_rad_cache.get() {
+            lst_rad.mapv(|v| v.to_degrees() / 15.0)
+        } else {
+            let lst_rad = calculate_lst_rad(self as &dyn EphemerisBase);
+            let _ = self.data().lst_rad_cache.set(lst_rad.clone());
+            lst_rad.mapv(|v| v.to_degrees() / 15.0)
+        };
+
+        let arr = lst_hours.clone().into_pyarray(py).to_owned();
+        let _ = self.data().lst_hours_cache.set(lst_hours);
+        Ok(Some(arr.into()))
     }
 
     /// Get observer geocentric velocity (obsgeovel) - alias for GCRS velocity

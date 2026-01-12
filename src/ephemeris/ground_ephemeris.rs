@@ -98,6 +98,13 @@ impl GroundEphemeris {
             let _ = ephemeris.common_data.longitude_rad_cache.set(lon_rad);
             let _ = ephemeris.common_data.height_cache.set(h_m);
             let _ = ephemeris.common_data.height_km_cache.set(h_km);
+
+            // Pre-compute and cache LST for fast alt/az calculations
+            use crate::utils::celestial::calculate_lst_rad;
+            let lst_rad = calculate_lst_rad(
+                &ephemeris as &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+            );
+            let _ = ephemeris.common_data.lst_rad_cache.set(lst_rad);
         }
 
         // Note: SkyCoords are now created lazily on first access
@@ -445,6 +452,21 @@ impl GroundEphemeris {
     #[getter]
     fn earth_dec_rad(&self, py: Python) -> PyResult<Py<PyAny>> {
         self.get_earth_dec_rad(py)
+    }
+
+    #[getter]
+    fn lst_rad(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.get_lst_rad(py)
+    }
+
+    #[getter]
+    fn lst_deg(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.get_lst_deg(py)
+    }
+
+    #[getter]
+    fn lst_hours(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.get_lst_hours(py)
     }
 
     /// Calculate Moon illumination fraction for all ephemeris times
