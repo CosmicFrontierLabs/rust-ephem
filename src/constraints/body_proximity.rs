@@ -100,11 +100,9 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
             } else {
                 let sun_positions = ephemeris.get_sun_positions()?;
                 let observer_positions = ephemeris.get_gcrs_positions()?;
-                (
-                    sun_positions.clone(),
-                    observer_positions.clone(),
-                    times.len(),
-                )
+                // sun_positions and observer_positions are already owned (from .to_owned() in getters)
+                // so no need to clone again
+                (sun_positions, observer_positions, times.len())
             };
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(

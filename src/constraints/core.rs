@@ -106,7 +106,9 @@ pub struct ConstraintResult {
     step_seconds: i64,
     /// Cached Python timestamp array (not directly exposed, use getter)
     timestamp_cache: OnceLock<Py<PyAny>>,
-    /// Cached constraint array (not directly exposed, use getter)
+    /// Cached constraint vector (Rust-side, used by both constraint_array and visibility)
+    constraint_vec_cache: OnceLock<Vec<bool>>,
+    /// Cached constraint array (Python-side, not directly exposed, use getter)
     constraint_array_cache: OnceLock<Py<PyAny>>,
 }
 
@@ -131,6 +133,7 @@ impl ConstraintResult {
             times,
             step_seconds,
             timestamp_cache: OnceLock::new(),
+            constraint_vec_cache: OnceLock::new(),
             constraint_array_cache: OnceLock::new(),
         }
     }
@@ -158,62 +161,64 @@ impl ConstraintResult {
         Ok(total_seconds)
     }
 
-    /// Internal: compute boolean array indicating if constraint is violated at each time
+    /// Internal: get cached constraint vector, computing if necessary
     ///
     /// NOTE: This returns a *violation mask* where True means the constraint
     /// is violated (target NOT visible) at that timestamp. The public
     /// `constraint_array` property therefore exposes violation semantics
     /// (True == violated) to Python; visibility windows are computed by
     /// inverting this mask.
-    fn _compute_constraint_vec(&self) -> Vec<bool> {
-        if self.times.is_empty() {
-            return Vec::new();
-        }
+    fn _get_constraint_vec(&self) -> &Vec<bool> {
+        self.constraint_vec_cache.get_or_init(|| {
+            if self.times.is_empty() {
+                return Vec::new();
+            }
 
-        // Pre-allocate result vector: default false == not violated
-        let mut violated = vec![false; self.times.len()];
+            // Pre-allocate result vector: default false == not violated
+            let mut violated = vec![false; self.times.len()];
 
-        // Early return if no violations (all false)
-        if self.violations.is_empty() {
-            return violated;
-        }
+            // Early return if no violations (all false)
+            if self.violations.is_empty() {
+                return violated;
+            }
 
-        // Mark violated times - violations are already sorted by time
-        for (i, t) in self.times.iter().enumerate() {
-            // Binary search could be used here, but violation count is typically small
-            for v in &self.violations {
-                if t < &v.start_time_internal {
-                    break; // Violations are sorted, no need to check further
-                }
-                if &v.start_time_internal <= t && t <= &v.end_time_internal {
-                    violated[i] = true;
-                    break;
+            // Mark violated times - violations are already sorted by time
+            for (i, t) in self.times.iter().enumerate() {
+                // Binary search could be used here, but violation count is typically small
+                for v in &self.violations {
+                    if t < &v.start_time_internal {
+                        break; // Violations are sorted, no need to check further
+                    }
+                    if &v.start_time_internal <= t && t <= &v.end_time_internal {
+                        violated[i] = true;
+                        break;
+                    }
                 }
             }
-        }
-        violated
+            violated
+        })
     }
 
     /// Property: array of booleans for each timestamp where True means constraint violated
     #[getter]
     fn constraint_array(&self, py: Python) -> PyResult<Py<PyAny>> {
-        // Use cached value if available
+        // Use cached Python value if available
         if let Some(cached) = self.constraint_array_cache.get() {
             return Ok(cached.clone_ref(py));
         }
 
-        // Compute and cache
+        // Get cached Rust vector (computes if needed), convert to Python list
         // Return a Python list of bools (True == violated) so indexing yields
         // native Python bool values. Tests historically expect identity
         // comparisons ("is True"), so returning Python bools is safer.
-        let arr = self._compute_constraint_vec();
+        let arr = self._get_constraint_vec();
         let py_list = pyo3::types::PyList::empty(py);
         for b in arr {
-            py_list.append(pyo3::types::PyBool::new(py, b))?;
+            py_list.append(pyo3::types::PyBool::new(py, *b))?;
         }
         let py_obj: Py<PyAny> = py_list.into();
 
-        // Cache the result (ignore if already set by another thread)
+        // Cache the Python result (ignore if already set by another thread)
         let _ = self.constraint_array_cache.set(py_obj.clone_ref(py));
 
         Ok(py_obj)
@@ -305,8 +310,8 @@ impl ConstraintResult {
         let mut windows = Vec::new();
         let mut current_window_start: Option<usize> = None;
 
-        // Get violation mask for each time (True == violated)
-        let violated_vec = self._compute_constraint_vec();
+        // Get cached violation mask for each time (True == violated)
+        let violated_vec = self._get_constraint_vec();
 
         for (i, &is_violated) in violated_vec.iter().enumerate() {
             let is_satisfied = !is_violated;
@@ -759,11 +764,9 @@ macro_rules! extract_body_ephemeris_data {
             let obs_filtered = observer_positions.select(ndarray::Axis(0), indices);
             (filtered_times, body_filtered, obs_filtered)
         } else {
-            (
-                times.to_vec(),
-                body_positions.clone(),
-                observer_positions.clone(),
-            )
+            // body_positions and observer_positions are already owned (from .to_owned() in getters)
+            // so no need to clone again
+            (times.to_vec(), body_positions, observer_positions)
         }
     }};
 }
@@ -788,7 +791,8 @@ macro_rules! extract_observer_ephemeris_data {
             let obs_filtered = observer_positions.select(ndarray::Axis(0), indices);
             (filtered_times, obs_filtered)
         } else {
-            (times.to_vec(), observer_positions.clone())
+            // observer_positions is already owned (from .to_owned() in getter)
+            (times.to_vec(), observer_positions)
         }
     }};
 }
