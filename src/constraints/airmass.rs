@@ -51,7 +51,11 @@ impl ConstraintEvaluator for AirmassEvaluator {
         target_dec: f64,
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
-        // Get alt/az using the proper calculation
+        // Ensure geodetic caches are available before computing alt/az
+        // so radec_to_altaz can use cached lat/lon/height fast path when possible
+        let _ = ephemeris.compute_latlon_caches();
+
+        // Get alt/az using the proper calculation (uses caches if present)
         let altaz = radec_to_altaz(target_ra, target_dec, ephemeris, time_indices);
 
         // Extract and filter ephemeris data for times

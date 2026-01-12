@@ -13,6 +13,7 @@ use crate::utils::math_utils::transpose_matrix;
 use crate::utils::time_utils::{datetime_to_jd_tt, datetime_to_jd_utc};
 use crate::utils::{eop_provider, ut1_provider};
 use crate::{is_planetary_ephemeris_initialized, utils::config::*};
+use std::env;
 
 /// Calculate Sun positions for multiple timestamps
 /// Returns Array2 with shape (N, 6) containing [x, y, z, vx, vy, vz] for each timestamp
@@ -503,6 +504,10 @@ pub fn radec_to_altaz(
     ephemeris: &dyn EphemerisBase,
     time_indices: Option<&[usize]>,
 ) -> Array2<f64> {
+    // Optional fast path (approximate): enable via env RUST_EPHEM_FAST_ALTAZ=1
+    if use_fast_altaz() {
+        return radec_to_altaz_fast(ra_deg, dec_deg, ephemeris, time_indices);
+    }
     // Get ephemeris data
     let times = ephemeris.get_times().expect("Ephemeris must have times");
     let gcrs_data = ephemeris
@@ -511,45 +516,93 @@ pub fn radec_to_altaz(
         .as_ref()
         .expect("Ephemeris must have GCRS data");
 
-    // Filter times and GCRS data if indices provided
-    let (times_filtered, gcrs_filtered) = if let Some(indices) = time_indices {
+    // Filter times and optionally indices
+    let (times_filtered, indices_vec) = if let Some(indices) = time_indices {
         let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
-        let obs_filtered = gcrs_data.select(ndarray::Axis(0), indices);
-        (filtered_times, obs_filtered)
+        (filtered_times, Some(indices.to_vec()))
     } else {
-        (times.to_vec(), gcrs_data.clone())
+        (times.to_vec(), None)
     };
 
     let n_times = times_filtered.len();
     let mut result = Array2::<f64>::zeros((n_times, 2));
 
-    // Convert observer positions from GCRS to ITRS (convert_frames expects 6 columns: pos + vel)
-    let itrs_data = convert_frames(
-        &gcrs_filtered,
-        &times_filtered,
-        Frame::GCRS,
-        Frame::ITRS,
-        true,
-    );
+    // Try to use cached geodetic coordinates if available, else fall back to conversion
+    let (lat_rads, lon_rads, heights_m): (Vec<f64>, Vec<f64>, Vec<f64>) = {
+        let data = ephemeris.data();
+        if let (Some(lat_rad_cache), Some(lon_rad_cache), Some(h_km_cache)) = (
+            data.latitude_rad_cache.get(),
+            data.longitude_rad_cache.get(),
+            data.height_km_cache.get(),
+        ) {
+            // Use caches (filter if indices provided)
+            if let Some(indices) = &indices_vec {
+                let lat_r: Vec<f64> = indices.iter().map(|&i| lat_rad_cache[i]).collect();
+                let lon_r: Vec<f64> = indices.iter().map(|&i| lon_rad_cache[i]).collect();
+                let h_m: Vec<f64> = indices.iter().map(|&i| h_km_cache[i] * 1000.0).collect();
+                (lat_r, lon_r, h_m)
+            } else {
+                (
+                    lat_rad_cache.to_vec(),
+                    lon_rad_cache.to_vec(),
+                    h_km_cache.mapv(|v| v * 1000.0).to_vec(),
+                )
+            }
+        } else {
+            // Fallback: compute from GCRS -> ITRS and then geodetic
+            let gcrs_filtered = if let Some(indices) = &indices_vec {
+                gcrs_data.select(ndarray::Axis(0), indices)
+            } else {
+                gcrs_data.clone()
+            };
 
-    // Convert ITRS positions to geodetic coordinates (extract position columns only)
-    let positions_slice = itrs_data.slice(s![.., 0..3]);
-    let positions_array = positions_slice.to_owned();
-    let (lats_deg, lons_deg, heights_km) = ecef_to_geodetic_deg(&positions_array);
+            let itrs_data = convert_frames(
+                &gcrs_filtered,
+                &times_filtered,
+                Frame::GCRS,
+                Frame::ITRS,
+                true,
+            );
+            let positions_slice = itrs_data.slice(s![.., 0..3]);
+            let positions_array = positions_slice.to_owned();
+            let (lats_deg, lons_deg, heights_km) = ecef_to_geodetic_deg(&positions_array);
+            (
+                lats_deg.mapv(|v| v.to_radians()).to_vec(),
+                lons_deg.mapv(|v| v.to_radians()).to_vec(),
+                heights_km.mapv(|v| v * 1000.0).to_vec(),
+            )
+        }
+    };
 
     // Precompute target coordinates in radians
     let ra_rad = ra_deg.to_radians();
     let dec_rad = dec_deg.to_radians();
 
-    for i in 0..n_times {
-        let lat_rad = lats_deg[i].to_radians();
-        let lon_rad = lons_deg[i].to_radians();
-        let height_m = heights_km[i] * 1000.0;
-        let time = &times_filtered[i];
+    // Precompute per-time timing/EOP values once
+    let mut utc1s = Vec::with_capacity(n_times);
+    let mut utc2s = Vec::with_capacity(n_times);
+    let mut dut1s = Vec::with_capacity(n_times);
+    let mut xps = Vec::with_capacity(n_times);
+    let mut yps = Vec::with_capacity(n_times);
+    for t in &times_filtered {
+        let (utc1, utc2) = datetime_to_jd_utc(t);
+        utc1s.push(utc1);
+        utc2s.push(utc2);
+        dut1s.push(ut1_provider::get_ut1_utc_offset(t));
+        let (xp, yp) = eop_provider::get_polar_motion_rad(t);
+        xps.push(xp);
+        yps.push(yp);
+    }
 
-        let (utc1, utc2) = datetime_to_jd_utc(time);
-        let dut1 = ut1_provider::get_ut1_utc_offset(time);
-        let (xp, yp) = eop_provider::get_polar_motion_rad(time);
+    for i in 0..n_times {
+        let lat_rad = lat_rads[i];
+        let lon_rad = lon_rads[i];
+        let height_m = heights_m[i];
+        let utc1 = utc1s[i];
+        let utc2 = utc2s[i];
+        let dut1 = dut1s[i];
+        let xp = xps[i];
+        let yp = yps[i];
 
         // Use SOFA apparent-place routine for full topocentric alt/az (pressure=0: no refraction)
         let (aob, zob, _hob, _dob, _rob, _eo) = atco13(
@@ -591,6 +644,10 @@ pub fn radec_to_altaz_batch(
     ephemeris: &dyn EphemerisBase,
     time_indices: Option<&[usize]>,
 ) -> Vec<Array2<f64>> {
+    // Optional fast path (approximate): enable via env RUST_EPHEM_FAST_ALTAZ=1
+    if use_fast_altaz() {
+        return radec_to_altaz_batch_fast(target_ras_deg, target_decs_deg, ephemeris, time_indices);
+    }
     // Get ephemeris data
     let times = ephemeris.get_times().expect("Ephemeris must have times");
     let gcrs_data = ephemeris
@@ -599,46 +656,78 @@ pub fn radec_to_altaz_batch(
         .as_ref()
         .expect("Ephemeris must have GCRS data");
 
-    // Filter times and GCRS data if indices provided
-    let (times_filtered, gcrs_filtered) = if let Some(indices) = time_indices {
+    // Filter times and optionally indices
+    let (times_filtered, indices_vec) = if let Some(indices) = time_indices {
         let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
-        let obs_filtered = gcrs_data.select(ndarray::Axis(0), indices);
-        (filtered_times, obs_filtered)
+        (filtered_times, Some(indices.to_vec()))
     } else {
-        (times.to_vec(), gcrs_data.clone())
+        (times.to_vec(), None)
     };
 
     let n_times = times_filtered.len();
 
-    // Convert observer positions from GCRS to ITRS (convert_frames expects 6 columns: pos + vel)
-    let itrs_data = convert_frames(
-        &gcrs_filtered,
-        &times_filtered,
-        Frame::GCRS,
-        Frame::ITRS,
-        true,
-    );
-
-    // Convert ITRS positions to geodetic coordinates (extract position columns only)
-    let positions_slice = itrs_data.slice(s![.., 0..3]);
-    let positions_array = positions_slice.to_owned();
-    let (lats_deg, lons_deg, heights_km) = ecef_to_geodetic_deg(&positions_array);
+    // Use cached geodetic coords if present, else compute
+    let (lat_rads, lon_rads, heights_m): (Vec<f64>, Vec<f64>, Vec<f64>) = {
+        let data = ephemeris.data();
+        if let (Some(lat_rad_cache), Some(lon_rad_cache), Some(h_km_cache)) = (
+            data.latitude_rad_cache.get(),
+            data.longitude_rad_cache.get(),
+            data.height_km_cache.get(),
+        ) {
+            if let Some(indices) = &indices_vec {
+                let lat_r: Vec<f64> = indices.iter().map(|&i| lat_rad_cache[i]).collect();
+                let lon_r: Vec<f64> = indices.iter().map(|&i| lon_rad_cache[i]).collect();
+                let h_m: Vec<f64> = indices.iter().map(|&i| h_km_cache[i] * 1000.0).collect();
+                (lat_r, lon_r, h_m)
+            } else {
+                (
+                    lat_rad_cache.to_vec(),
+                    lon_rad_cache.to_vec(),
+                    h_km_cache.mapv(|v| v * 1000.0).to_vec(),
+                )
+            }
+        } else {
+            // Fallback to conversion path
+            let gcrs_filtered = if let Some(indices) = &indices_vec {
+                gcrs_data.select(ndarray::Axis(0), indices)
+            } else {
+                gcrs_data.clone()
+            };
+            let itrs_data = convert_frames(
+                &gcrs_filtered,
+                &times_filtered,
+                Frame::GCRS,
+                Frame::ITRS,
+                true,
+            );
+            let positions_slice = itrs_data.slice(s![.., 0..3]);
+            let positions_array = positions_slice.to_owned();
+            let (lats_deg, lons_deg, heights_km) = ecef_to_geodetic_deg(&positions_array);
+            (
+                lats_deg.mapv(|v| v.to_radians()).to_vec(),
+                lons_deg.mapv(|v| v.to_radians()).to_vec(),
+                heights_km.mapv(|v| v * 1000.0).to_vec(),
+            )
+        }
+    };
 
     // Pre-compute observer-dependent values for all times
-    // This avoids recomputing these expensive values for each target
     let mut observer_data = Vec::with_capacity(n_times);
     for i in 0..n_times {
-        let lat_rad = lats_deg[i].to_radians();
-        let lon_rad = lons_deg[i].to_radians();
-        let height_m = heights_km[i] * 1000.0;
         let time = &times_filtered[i];
-
-        let utc1 = datetime_to_jd_utc(time).0;
-        let utc2 = datetime_to_jd_utc(time).1;
+        let (utc1, utc2) = datetime_to_jd_utc(time);
         let dut1 = ut1_provider::get_ut1_utc_offset(time);
         let (xp, yp) = eop_provider::get_polar_motion_rad(time);
-
-        observer_data.push((lat_rad, lon_rad, height_m, utc1, utc2, dut1, xp, yp));
+        observer_data.push((
+            lat_rads[i],
+            lon_rads[i],
+            heights_m[i],
+            utc1,
+            utc2,
+            dut1,
+            xp,
+            yp,
+        ));
     }
 
     // Now calculate alt/az for each target using pre-computed observer data
@@ -666,6 +755,205 @@ pub fn radec_to_altaz_batch(
 
             result[[i, 0]] = alt_deg;
             result[[i, 1]] = az_deg;
+        }
+        results.push(result);
+    }
+
+    results
+}
+
+fn use_fast_altaz() -> bool {
+    matches!(
+        env::var("RUST_EPHEM_FAST_ALTAZ").as_deref(),
+        Ok("1") | Ok("true") | Ok("TRUE")
+    )
+}
+
+fn gmst_approx_rad(jd_utc: f64) -> f64 {
+    // Simple GMST approximation (sufficient for fast mode)
+    // GMST (deg) ≈ 280.46061837 + 360.98564736629 * (JD_UT1 - 2451545.0)
+    // Use UTC as approximation for UT1; wrap to [0, 360)
+    let days = jd_utc - JD_J2000;
+    let gmst_deg = 280.46061837 + 360.98564736629 * days;
+    let mut gmst_rad = (gmst_deg.to_radians()) % (2.0 * std::f64::consts::PI);
+    if gmst_rad < 0.0 {
+        gmst_rad += 2.0 * std::f64::consts::PI;
+    }
+    gmst_rad
+}
+
+fn radec_to_altaz_fast(
+    ra_deg: f64,
+    dec_deg: f64,
+    ephemeris: &dyn EphemerisBase,
+    time_indices: Option<&[usize]>,
+) -> Array2<f64> {
+    // Times
+    let times = ephemeris.get_times().expect("Ephemeris must have times");
+    let (times_filtered, indices_vec) = if let Some(indices) = time_indices {
+        let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+        (filtered_times, Some(indices.to_vec()))
+    } else {
+        (times.to_vec(), None)
+    };
+
+    // Observer geodetic from caches if available; else fallback convert
+    let data = ephemeris.data();
+    let (lat_rads, lon_rads): (Vec<f64>, Vec<f64>) =
+        if let (Some(lat_rad_cache), Some(lon_rad_cache)) = (
+            data.latitude_rad_cache.get(),
+            data.longitude_rad_cache.get(),
+        ) {
+            if let Some(indices) = &indices_vec {
+                let lat_r: Vec<f64> = indices.iter().map(|&i| lat_rad_cache[i]).collect();
+                let lon_r: Vec<f64> = indices.iter().map(|&i| lon_rad_cache[i]).collect();
+                (lat_r, lon_r)
+            } else {
+                (lat_rad_cache.to_vec(), lon_rad_cache.to_vec())
+            }
+        } else {
+            // Fallback: derive from GCRS through ITRS
+            let gcrs = data.gcrs.as_ref().expect("Ephemeris must have GCRS data");
+            let gcrs_filtered = if let Some(indices) = &indices_vec {
+                gcrs.select(ndarray::Axis(0), indices)
+            } else {
+                gcrs.clone()
+            };
+            let itrs = convert_frames(
+                &gcrs_filtered,
+                &times_filtered,
+                Frame::GCRS,
+                Frame::ITRS,
+                true,
+            );
+            let positions_slice = itrs.slice(s![.., 0..3]);
+            let positions_array = positions_slice.to_owned();
+            let (lats_deg, lons_deg, _h_km) = ecef_to_geodetic_deg(&positions_array);
+            (
+                lats_deg.mapv(|v| v.to_radians()).to_vec(),
+                lons_deg.mapv(|v| v.to_radians()).to_vec(),
+            )
+        };
+
+    let n_times = times_filtered.len();
+    let mut out = Array2::<f64>::zeros((n_times, 2));
+
+    let ra = ra_deg.to_radians();
+    let dec = dec_deg.to_radians();
+    let sin_dec = dec.sin();
+    let cos_dec = dec.cos();
+
+    for i in 0..n_times {
+        let (jd1, jd2) = datetime_to_jd_utc(&times_filtered[i]);
+        let jd = jd1 + jd2;
+        let gmst = gmst_approx_rad(jd);
+        let lst = (gmst + lon_rads[i]) % (2.0 * std::f64::consts::PI);
+        let ha = lst - ra;
+        let sin_lat = lat_rads[i].sin();
+        let cos_lat = lat_rads[i].cos();
+
+        let sin_alt = sin_dec * sin_lat + cos_dec * cos_lat * ha.cos();
+        let alt = sin_alt.asin();
+
+        let y = ha.sin();
+        let x = ha.cos() * sin_lat - (dec.tan()) * cos_lat;
+        let mut az = y.atan2(x);
+        if az < 0.0 {
+            az += 2.0 * std::f64::consts::PI;
+        }
+
+        out[[i, 0]] = alt.to_degrees();
+        out[[i, 1]] = az.to_degrees();
+    }
+
+    out
+}
+
+fn radec_to_altaz_batch_fast(
+    target_ras_deg: &[f64],
+    target_decs_deg: &[f64],
+    ephemeris: &dyn EphemerisBase,
+    time_indices: Option<&[usize]>,
+) -> Vec<Array2<f64>> {
+    // Times
+    let times = ephemeris.get_times().expect("Ephemeris must have times");
+    let (times_filtered, indices_vec) = if let Some(indices) = time_indices {
+        let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+        (filtered_times, Some(indices.to_vec()))
+    } else {
+        (times.to_vec(), None)
+    };
+
+    // Observer geodetic
+    let data = ephemeris.data();
+    let (lat_rads, lon_rads): (Vec<f64>, Vec<f64>) =
+        if let (Some(lat_rad_cache), Some(lon_rad_cache)) = (
+            data.latitude_rad_cache.get(),
+            data.longitude_rad_cache.get(),
+        ) {
+            if let Some(indices) = &indices_vec {
+                let lat_r: Vec<f64> = indices.iter().map(|&i| lat_rad_cache[i]).collect();
+                let lon_r: Vec<f64> = indices.iter().map(|&i| lon_rad_cache[i]).collect();
+                (lat_r, lon_r)
+            } else {
+                (lat_rad_cache.to_vec(), lon_rad_cache.to_vec())
+            }
+        } else {
+            // Fallback
+            let gcrs = data.gcrs.as_ref().expect("Ephemeris must have GCRS data");
+            let gcrs_filtered = if let Some(indices) = &indices_vec {
+                gcrs.select(ndarray::Axis(0), indices)
+            } else {
+                gcrs.clone()
+            };
+            let itrs = convert_frames(
+                &gcrs_filtered,
+                &times_filtered,
+                Frame::GCRS,
+                Frame::ITRS,
+                true,
+            );
+            let positions_slice = itrs.slice(s![.., 0..3]);
+            let positions_array = positions_slice.to_owned();
+            let (lats_deg, lons_deg, _h_km) = ecef_to_geodetic_deg(&positions_array);
+            (
+                lats_deg.mapv(|v| v.to_radians()).to_vec(),
+                lons_deg.mapv(|v| v.to_radians()).to_vec(),
+            )
+        };
+
+    let n_times = times_filtered.len();
+    // Precompute GMST per time
+    let mut gmsts = Vec::with_capacity(n_times);
+    for t in &times_filtered {
+        let (jd1, jd2) = datetime_to_jd_utc(t);
+        gmsts.push(gmst_approx_rad(jd1 + jd2));
+    }
+
+    let mut results = Vec::with_capacity(target_ras_deg.len());
+    for (ra_deg, dec_deg) in target_ras_deg.iter().zip(target_decs_deg.iter()) {
+        let mut result = Array2::<f64>::zeros((n_times, 2));
+        let ra = ra_deg.to_radians();
+        let dec = dec_deg.to_radians();
+        let sin_dec = dec.sin();
+        let cos_dec = dec.cos();
+        for i in 0..n_times {
+            let lst = (gmsts[i] + lon_rads[i]) % (2.0 * std::f64::consts::PI);
+            let ha = lst - ra;
+            let sin_lat = lat_rads[i].sin();
+            let cos_lat = lat_rads[i].cos();
+
+            let sin_alt = sin_dec * sin_lat + cos_dec * cos_lat * ha.cos();
+            let alt = sin_alt.asin();
+            let y = ha.sin();
+            let x = ha.cos() * sin_lat - (dec.tan()) * cos_lat;
+            let mut az = y.atan2(x);
+            if az < 0.0 {
+                az += 2.0 * std::f64::consts::PI;
+            }
+
+            result[[i, 0]] = alt.to_degrees();
+            result[[i, 1]] = az.to_degrees();
         }
         results.push(result);
     }
