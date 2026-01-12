@@ -196,6 +196,11 @@ impl ConstraintEvaluator for SunProximityEvaluator {
         // Convert all target RA/Dec to unit vectors
         let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
 
+        // Pre-compute cosine thresholds (avoids acos() in inner loop)
+        // For angle comparison: angle < threshold ⟺ cos(angle) > cos(threshold)
+        let min_cos_threshold = self.min_angle_deg.to_radians().cos();
+        let max_cos_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
+
         // Evaluate only diagonal elements: target_i at time_i
         let mut result = Vec::with_capacity(n);
 
@@ -233,18 +238,17 @@ impl ConstraintEvaluator for SunProximityEvaluator {
                 target_vectors[[i, 2]],
             ];
 
-            // Calculate angle between target and sun
-            let dot = target_vec[0] * sun_unit[0]
+            // Calculate cosine of angle between target and sun
+            let cos_angle = target_vec[0] * sun_unit[0]
                 + target_vec[1] * sun_unit[1]
                 + target_vec[2] * sun_unit[2];
-            let dot_clamped = dot.clamp(-1.0, 1.0);
-            let angle_deg = dot_clamped.acos().to_degrees();
 
-            // Check if violated
-            let is_violated = angle_deg < self.min_angle_deg
-                || self.max_angle_deg.is_some_and(|max| angle_deg > max);
+            // Check constraints using cosine comparison (avoids acos)
+            // too_close: angle < min_angle ⟺ cos(angle) > cos(min_angle)
+            let too_close = cos_angle > min_cos_threshold;
+            let too_far = max_cos_threshold.is_some_and(|max_thresh| cos_angle < max_thresh);
 
-            result.push(is_violated);
+            result.push(too_close || too_far);
         }
 
         Ok(result)

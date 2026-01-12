@@ -566,6 +566,11 @@ macro_rules! impl_proximity_evaluator {
                     target_ra_dec.1,
                 );
 
+                // Pre-compute cosine thresholds (avoids acos() in inner loop)
+                // For angle comparison: angle < threshold ⟺ cos(angle) > cos(threshold)
+                let min_cos_threshold = self.min_angle_deg.to_radians().cos();
+                let max_cos_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
+
                 let violations = track_violations(
                     times,
                     |i| {
@@ -575,19 +580,32 @@ macro_rules! impl_proximity_evaluator {
                             observer_positions[[i, 1]],
                             observer_positions[[i, 2]],
                         ];
-                        let angle_deg = crate::utils::vector_math::calculate_angular_separation(
+
+                        // Calculate cosine of angle (avoids acos call)
+                        let cos_angle = crate::utils::vector_math::calculate_cosine_separation(
                             &target_vec,
                             &body_pos,
                             &obs_pos,
                         );
 
-                        let is_violated = angle_deg < self.min_angle_deg
-                            || self.max_angle_deg.is_some_and(|max| angle_deg > max);
+                        // Check constraints using cosine comparison
+                        // too_close: angle < min_angle ⟺ cos(angle) > cos(min_angle)
+                        let too_close = cos_angle > min_cos_threshold;
+                        let too_far =
+                            max_cos_threshold.is_some_and(|max_thresh| cos_angle < max_thresh);
+                        let is_violated = too_close || too_far;
 
-                        let severity = if angle_deg < self.min_angle_deg {
-                            (self.min_angle_deg - angle_deg) / self.min_angle_deg
-                        } else if let Some(max) = self.max_angle_deg {
-                            (angle_deg - max) / max
+                        // Compute severity using the angle (required for violation windows)
+                        // Only compute acos when there's actually a violation to report
+                        let severity = if is_violated {
+                            let angle_deg = cos_angle.clamp(-1.0, 1.0).acos().to_degrees();
+                            if angle_deg < self.min_angle_deg {
+                                (self.min_angle_deg - angle_deg) / self.min_angle_deg
+                            } else if let Some(max) = self.max_angle_deg {
+                                (angle_deg - max) / max
+                            } else {
+                                0.0
+                            }
                         } else {
                             0.0
                         };

@@ -90,6 +90,36 @@ pub fn calculate_angular_separation(
     cos_angle.clamp(-1.0, 1.0).acos().to_degrees()
 }
 
+/// Calculate cosine of angular separation between a target and a body (optimized)
+///
+/// This is an optimized alternative to `calculate_angular_separation()` that avoids
+/// the expensive `acos()` call. Returns the cosine of the angle instead of the angle
+/// itself, which is suitable for threshold comparisons.
+///
+/// Uses the mathematical property: angle < threshold ⟺ cos(angle) > cos(threshold)
+/// (since cosine is decreasing on [0, π])
+///
+/// # Arguments
+/// * `target_vec` - Unit vector pointing to the target (ICRS/J2000)
+/// * `body_position` - Position of the body in km (GCRS)
+/// * `observer_position` - Position of the observer in km (GCRS)
+///
+/// # Returns
+/// Cosine of the angular separation (in range [-1, 1])
+pub fn calculate_cosine_separation(
+    target_vec: &[f64; 3],
+    body_position: &[f64; 3],
+    observer_position: &[f64; 3],
+) -> f64 {
+    let body_rel = [
+        body_position[0] - observer_position[0],
+        body_position[1] - observer_position[1],
+        body_position[2] - observer_position[2],
+    ];
+    let body_unit = normalize_vector(&body_rel);
+    dot_product(target_vec, &body_unit)
+}
+
 // ============================================================================
 // Vectorized batch operations for performance
 // ============================================================================
