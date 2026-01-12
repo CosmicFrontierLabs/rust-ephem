@@ -677,13 +677,9 @@ pub fn calculate_airmass_batch_fast(
     let cos_lats = obs_lats.mapv(f64::cos);
 
     // Compute hour angles matrix: HA[j, i] = obs_lon[i] - ra_rad[j]
-    let ras_col = ras_rad.view().into_shape((n_targets, 1)).unwrap();
-    let obs_lons_row = obs_lons.view().into_shape((1, n_times)).unwrap();
-    let ha_matrix = obs_lons_row
-        .broadcast((n_targets, n_times))
-        .unwrap()
-        .to_owned()
-        - ras_col.broadcast((n_targets, n_times)).unwrap();
+    // Avoid .to_owned() on broadcast by using from_shape_fn for direct computation
+    let ha_matrix: Array2<f64> =
+        Array2::from_shape_fn((n_targets, n_times), |(j, i)| obs_lons[i] - ras_rad[j]);
 
     // Reshape 1D arrays into column/row vectors for broadcasting
     let sin_dec_col = sin_decs.view().into_shape((n_targets, 1)).unwrap();

@@ -121,36 +121,18 @@ impl ConstraintEvaluator for AirmassEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
-        // Extract and filter ephemeris data
-        let (times_filtered, _) = extract_observer_ephemeris_data!(ephemeris, time_indices);
-
-        let n_targets = target_ras.len();
-        let n_times = times_filtered.len();
-
         // Get airmass for ALL targets at ALL times in one vectorized call
         let airmass_values =
             calculate_airmass_batch_fast(target_ras, target_decs, ephemeris, time_indices);
 
-        // Evaluate constraints on the precomputed airmass values
-        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
-
-        for j in 0..n_targets {
-            for i in 0..n_times {
-                let airmass = airmass_values[[j, i]];
-
-                let mut violated = false;
-                if airmass > self.max_airmass {
-                    violated = true;
-                }
-                if let Some(min_airmass) = self.min_airmass {
-                    if airmass < min_airmass {
-                        violated = true;
-                    }
-                }
-
-                result[[j, i]] = violated;
+        // Vectorized constraint evaluation - single pass with mapv, no nested loops
+        let result = airmass_values.mapv(|airmass| {
+            let mut violated = airmass > self.max_airmass;
+            if let Some(min_airmass) = self.min_airmass {
+                violated = violated || airmass < min_airmass;
             }
-        }
+            violated
+        });
 
         Ok(result)
     }
