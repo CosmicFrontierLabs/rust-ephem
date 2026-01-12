@@ -647,13 +647,13 @@ pub fn calculate_airmass_batch_fast(
 
     let n_times = obs_filtered.nrows();
 
-    // Pre-compute observer latitudes and longitudes for all times (n_times,)
-    // Vectorized: extract columns and compute atan2 element-wise
-    let obs_x = obs_filtered.column(0).to_owned();
-    let obs_y = obs_filtered.column(1).to_owned();
-    let obs_z = obs_filtered.column(2).to_owned();
+    // Pre-compute observer latitudes and longitudes for all times
+    let obs_x = obs_filtered.column(0);
+    let obs_y = obs_filtered.column(1);
+    let obs_z = obs_filtered.column(2);
 
-    let rho = (&obs_x * &obs_x + &obs_y * &obs_y).mapv(f64::sqrt);
+    let rho =
+        (obs_x.to_owned() * obs_x.to_owned() + obs_y.to_owned() * obs_y.to_owned()).mapv(f64::sqrt);
     let obs_lats: Array1<f64> = obs_z
         .iter()
         .zip(rho.iter())
@@ -665,17 +665,17 @@ pub fn calculate_airmass_batch_fast(
         .map(|(y, x)| y.atan2(*x))
         .collect();
 
-    // Convert target RA/Dec to radians and pre-compute trig functions - vectorized
-    let ras_rad: Array1<f64> = Array1::from_vec(ras_deg.iter().map(|r| r.to_radians()).collect());
-    let decs_rad: Array1<f64> = Array1::from_vec(decs_deg.iter().map(|d| d.to_radians()).collect());
+    // Convert target RA/Dec to radians
+    let ras_rad = Array1::from_vec(ras_deg.iter().map(|r| r.to_radians()).collect());
+    let decs_rad = Array1::from_vec(decs_deg.iter().map(|d| d.to_radians()).collect());
 
+    // Pre-compute trig functions
     let sin_decs = decs_rad.mapv(f64::sin);
     let cos_decs = decs_rad.mapv(f64::cos);
     let sin_lats = obs_lats.mapv(f64::sin);
     let cos_lats = obs_lats.mapv(f64::cos);
 
-    // Compute hour angles matrix using broadcasting
-    // HA[j, i] = obs_lon[i] - ra_rad[j]
+    // Compute hour angles matrix: HA[j, i] = obs_lon[i] - ra_rad[j]
     let ras_col = ras_rad.view().into_shape((n_targets, 1)).unwrap();
     let obs_lons_row = obs_lons.view().into_shape((1, n_times)).unwrap();
     let ha_matrix = obs_lons_row
@@ -684,27 +684,21 @@ pub fn calculate_airmass_batch_fast(
         .to_owned()
         - ras_col.broadcast((n_targets, n_times)).unwrap();
 
-    // Compute sin(alt) matrix using outer products via broadcasting
-    // sin(alt)[j, i] = sin(dec)[j] * sin(lat)[i] + cos(dec)[j] * cos(lat)[i] * cos(HA)[j, i]
-
     // Reshape 1D arrays into column/row vectors for broadcasting
     let sin_dec_col = sin_decs.view().into_shape((n_targets, 1)).unwrap();
     let sin_lat_row = sin_lats.view().into_shape((1, n_times)).unwrap();
     let cos_dec_col = cos_decs.view().into_shape((n_targets, 1)).unwrap();
     let cos_lat_row = cos_lats.view().into_shape((1, n_times)).unwrap();
 
-    // First term: sin(dec)[j] * sin(lat)[i] - computed via outer product
+    // First term: sin(dec)[j] * sin(lat)[i]
     let first_term = &sin_dec_col * &sin_lat_row;
 
     // Second term: cos(dec)[j] * cos(lat)[i] * cos(HA[j, i])
     let cos_ha = ha_matrix.mapv(f64::cos);
     let second_term = &cos_dec_col * &cos_lat_row * &cos_ha;
 
-    // Combine both terms
-    let sin_alt_matrix = first_term + second_term;
-
-    // Convert sin(alt) to altitude degrees and apply Kasten formula - fully vectorized
-    sin_alt_matrix.mapv(|sin_alt| {
+    // Combine and apply Kasten formula
+    (first_term + second_term).mapv(|sin_alt| {
         let alt_rad = sin_alt.clamp(-1.0, 1.0).asin();
         calculate_airmass_kasten(alt_rad.to_degrees())
     })
