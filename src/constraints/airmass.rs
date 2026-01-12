@@ -52,8 +52,10 @@ impl ConstraintEvaluator for AirmassEvaluator {
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
         // Get airmass using fast Kasten formula (50-100x faster than SOFA)
-        let airmass_values =
-            calculate_airmass_batch_fast(target_ra, target_dec, ephemeris, time_indices);
+        // Vectorized call handles the single target via slice
+        let airmass_array =
+            calculate_airmass_batch_fast(&[target_ra], &[target_dec], ephemeris, time_indices);
+        let airmass_values = airmass_array.row(0).to_owned();
 
         // Extract and filter ephemeris data for times
         let (times_filtered, _) = extract_observer_ephemeris_data!(ephemeris, time_indices);
@@ -125,19 +127,16 @@ impl ConstraintEvaluator for AirmassEvaluator {
         let n_targets = target_ras.len();
         let n_times = times_filtered.len();
 
+        // Get airmass for ALL targets at ALL times in one vectorized call
+        let airmass_values =
+            calculate_airmass_batch_fast(target_ras, target_decs, ephemeris, time_indices);
+
+        // Evaluate constraints on the precomputed airmass values
         let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
 
         for j in 0..n_targets {
-            // Get airmass for this target using fast Kasten formula
-            let airmass_values = calculate_airmass_batch_fast(
-                target_ras[j],
-                target_decs[j],
-                ephemeris,
-                time_indices,
-            );
-
             for i in 0..n_times {
-                let airmass = airmass_values[i];
+                let airmass = airmass_values[[j, i]];
 
                 let mut violated = false;
                 if airmass > self.max_airmass {
