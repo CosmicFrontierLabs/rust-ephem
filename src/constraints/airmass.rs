@@ -1,6 +1,6 @@
 /// Airmass constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
-use crate::utils::celestial::{altitude_to_airmass, radec_to_altaz};
+use crate::utils::celestial::calculate_airmass_batch_fast;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
@@ -51,32 +51,17 @@ impl ConstraintEvaluator for AirmassEvaluator {
         target_dec: f64,
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
-        // Get alt/az using the proper calculation
-        let altaz = radec_to_altaz(target_ra, target_dec, ephemeris, time_indices);
+        // Get airmass using fast Kasten formula (50-100x faster than SOFA)
+        let airmass_values =
+            calculate_airmass_batch_fast(target_ra, target_dec, ephemeris, time_indices);
 
         // Extract and filter ephemeris data for times
         let (times_filtered, _) = extract_observer_ephemeris_data!(ephemeris, time_indices);
 
-        // Get observer heights (ensure caches are computed)
-        ephemeris.compute_latlon_caches()?;
-        let heights_km =
-            ephemeris.data().height_km_cache.get().ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err("Height data not available")
-            })?;
-
-        // Filter heights by time indices
-        let heights_filtered: Vec<f64> = if let Some(indices) = time_indices {
-            indices.iter().map(|&i| heights_km[i]).collect()
-        } else {
-            heights_km.to_vec()
-        };
-
         let violations = track_violations(
             &times_filtered,
             |i| {
-                let altitude_deg = altaz[[i, 0]];
-                let height_km = heights_filtered[i];
-                let airmass = altitude_to_airmass(altitude_deg, height_km);
+                let airmass = airmass_values[i];
 
                 let mut violated = false;
                 let mut severity = 1.0;
@@ -96,26 +81,24 @@ impl ConstraintEvaluator for AirmassEvaluator {
                 (violated, severity)
             },
             |i, _violated| {
-                let altitude_deg = altaz[[i, 0]];
-                let height_km = heights_filtered[i];
-                let airmass = altitude_to_airmass(altitude_deg, height_km);
+                let airmass = airmass_values[i];
 
                 if airmass > self.max_airmass {
                     format!(
-                        "Airmass {:.2} > max {:.2} (altitude: {:.1}°, height: {:.1} km)",
-                        airmass, self.max_airmass, altitude_deg, height_km
+                        "Airmass {:.2} > max {:.2} (too close to horizon)",
+                        airmass, self.max_airmass
                     )
                 } else if let Some(min_airmass) = self.min_airmass {
                     if airmass < min_airmass {
                         format!(
-                            "Airmass {:.2} < min {:.2} (altitude: {:.1}°, height: {:.1} km)",
-                            airmass, min_airmass, altitude_deg, height_km
+                            "Airmass {:.2} < min {:.2} (too high in sky)",
+                            airmass, min_airmass
                         )
                     } else {
                         "Airmass constraint satisfied".to_string()
                     }
                 } else {
-                    format!("Airmass: {:.2} (altitude: {:.1}°)", airmass, altitude_deg)
+                    format!("Airmass: {:.2}", airmass)
                 }
             },
         );
@@ -139,33 +122,22 @@ impl ConstraintEvaluator for AirmassEvaluator {
         // Extract and filter ephemeris data
         let (times_filtered, _) = extract_observer_ephemeris_data!(ephemeris, time_indices);
 
-        // Get observer heights (ensure caches are computed)
-        ephemeris.compute_latlon_caches()?;
-        let heights_km =
-            ephemeris.data().height_km_cache.get().ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err("Height data not available")
-            })?;
-
-        // Filter heights by time indices
-        let heights_filtered: Vec<f64> = if let Some(indices) = time_indices {
-            indices.iter().map(|&i| heights_km[i]).collect()
-        } else {
-            heights_km.to_vec()
-        };
-
         let n_targets = target_ras.len();
         let n_times = times_filtered.len();
 
         let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
 
         for j in 0..n_targets {
-            // Get alt/az for this target
-            let altaz = radec_to_altaz(target_ras[j], target_decs[j], ephemeris, time_indices);
+            // Get airmass for this target using fast Kasten formula
+            let airmass_values = calculate_airmass_batch_fast(
+                target_ras[j],
+                target_decs[j],
+                ephemeris,
+                time_indices,
+            );
 
             for i in 0..n_times {
-                let altitude_deg = altaz[[i, 0]];
-                let height_km = heights_filtered[i];
-                let airmass = altitude_to_airmass(altitude_deg, height_km);
+                let airmass = airmass_values[i];
 
                 let mut violated = false;
                 if airmass > self.max_airmass {
