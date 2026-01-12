@@ -854,9 +854,13 @@ fn radec_to_altaz_fast(
 
         let sin_alt = sin_dec * sin_lat + cos_dec * cos_lat * ha.cos();
         let alt = sin_alt.asin();
+        let cos_alt = alt.cos();
 
-        let y = ha.sin();
-        let x = ha.cos() * sin_lat - (dec.tan()) * cos_lat;
+        // Astronomical convention: azimuth measured from North toward East
+        // sin A = -cos(dec) * sin(HA) / cos(alt)
+        // cos A = (sin(dec) - sin(alt)*sin(lat)) / (cos(alt)*cos(lat))
+        let y = -cos_dec * ha.sin() / cos_alt;
+        let x = (sin_dec - sin_alt * sin_lat) / (cos_alt * cos_lat);
         let mut az = y.atan2(x);
         if az < 0.0 {
             az += 2.0 * std::f64::consts::PI;
@@ -945,8 +949,10 @@ fn radec_to_altaz_batch_fast(
 
             let sin_alt = sin_dec * sin_lat + cos_dec * cos_lat * ha.cos();
             let alt = sin_alt.asin();
-            let y = ha.sin();
-            let x = ha.cos() * sin_lat - (dec.tan()) * cos_lat;
+            let cos_alt = alt.cos();
+            // Astronomical convention: azimuth measured from North toward East
+            let y = -cos_dec * ha.sin() / cos_alt;
+            let x = (sin_dec - sin_alt * sin_lat) / (cos_alt * cos_lat);
             let mut az = y.atan2(x);
             if az < 0.0 {
                 az += 2.0 * std::f64::consts::PI;
