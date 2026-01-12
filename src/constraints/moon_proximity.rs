@@ -126,6 +126,11 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
         // Initialize result array: false = not violated (constraint satisfied)
         let mut result = Array2::from_elem((n_targets, n_times), false);
 
+        // Pre-compute cosine thresholds (avoids acos() in inner loop)
+        // For angle comparison: angle < threshold ⟺ cos(angle) > cos(threshold)
+        let min_cos_threshold = self.min_angle_deg.to_radians().cos();
+        let max_cos_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
+
         // For each time, check all targets
         for t in 0..n_times {
             let moon_pos = [
@@ -162,19 +167,17 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
                     target_vectors[[target_idx, 2]],
                 ];
 
-                // Calculate angle between target and moon
-                let dot = target_vec[0] * moon_unit[0]
+                // Calculate cosine of angle between target and moon
+                let cos_angle = target_vec[0] * moon_unit[0]
                     + target_vec[1] * moon_unit[1]
                     + target_vec[2] * moon_unit[2];
-                let dot_clamped = dot.clamp(-1.0, 1.0);
-                let angle_rad = dot_clamped.acos();
-                let angle_deg = angle_rad.to_degrees();
 
-                // Check if violated
-                let is_violated = angle_deg < self.min_angle_deg
-                    || self.max_angle_deg.is_some_and(|max| angle_deg > max);
+                // Check constraints using cosine comparison (avoids acos)
+                // too_close: angle < min_angle ⟺ cos(angle) > cos(min_angle)
+                let too_close = cos_angle > min_cos_threshold;
+                let too_far = max_cos_threshold.is_some_and(|max_thresh| cos_angle < max_thresh);
 
-                result[[target_idx, t]] = is_violated;
+                result[[target_idx, t]] = too_close || too_far;
             }
         }
 
