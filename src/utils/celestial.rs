@@ -674,31 +674,34 @@ pub fn calculate_airmass_batch_fast(
     let sin_lats = obs_lats.mapv(f64::sin);
     let cos_lats = obs_lats.mapv(f64::cos);
 
-    // Compute hour angles matrix: (n_targets, n_times)
-    // HA[j, i] = obs_lon[i] - ra_rad[j] using broadcasting
-    let mut ha_matrix = Array2::<f64>::zeros((n_targets, n_times));
-    for (j, &ra) in ras_rad.iter().enumerate() {
-        ha_matrix.row_mut(j).assign(&(&obs_lons - ra));
-    }
+    // Compute hour angles matrix using broadcasting
+    // HA[j, i] = obs_lon[i] - ra_rad[j]
+    let ras_col = ras_rad.view().into_shape((n_targets, 1)).unwrap();
+    let obs_lons_row = obs_lons.view().into_shape((1, n_times)).unwrap();
+    let ha_matrix = obs_lons_row
+        .broadcast((n_targets, n_times))
+        .unwrap()
+        .to_owned()
+        - ras_col.broadcast((n_targets, n_times)).unwrap();
 
-    // Vectorized altitude calculation using ndarray operations
+    // Compute sin(alt) matrix using outer products via broadcasting
     // sin(alt)[j, i] = sin(dec)[j] * sin(lat)[i] + cos(dec)[j] * cos(lat)[i] * cos(HA)[j, i]
-    let mut sin_alt_matrix = Array2::<f64>::zeros((n_targets, n_times));
 
-    for j in 0..n_targets {
-        // First term: sin(dec)[j] * sin(lat)[:] - vectorized
-        let first_term = &sin_lats * sin_decs[j];
+    // Reshape 1D arrays into column/row vectors for broadcasting
+    let sin_dec_col = sin_decs.view().into_shape((n_targets, 1)).unwrap();
+    let sin_lat_row = sin_lats.view().into_shape((1, n_times)).unwrap();
+    let cos_dec_col = cos_decs.view().into_shape((n_targets, 1)).unwrap();
+    let cos_lat_row = cos_lats.view().into_shape((1, n_times)).unwrap();
 
-        // Second term: cos(dec)[j] * cos(lat)[:] * cos(HA[j, :]) - vectorized
-        let ha_row = ha_matrix.row(j);
-        let cos_ha = ha_row.mapv(f64::cos);
-        let second_term = &cos_lats * cos_decs[j] * cos_ha;
+    // First term: sin(dec)[j] * sin(lat)[i] - computed via outer product
+    let first_term = &sin_dec_col * &sin_lat_row;
 
-        // Combine terms
-        sin_alt_matrix
-            .row_mut(j)
-            .assign(&(first_term + second_term));
-    }
+    // Second term: cos(dec)[j] * cos(lat)[i] * cos(HA[j, i])
+    let cos_ha = ha_matrix.mapv(f64::cos);
+    let second_term = &cos_dec_col * &cos_lat_row * &cos_ha;
+
+    // Combine both terms
+    let sin_alt_matrix = first_term + second_term;
 
     // Convert sin(alt) to altitude degrees and apply Kasten formula - fully vectorized
     sin_alt_matrix.mapv(|sin_alt| {
