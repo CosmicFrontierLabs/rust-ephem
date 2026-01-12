@@ -446,3 +446,36 @@ class TestSwiftVisibility:
             ), (
                 f"Overlapping visibility windows: {result.visibility[i]} and {result.visibility[i + 1]}"
             )
+
+    def test_constraint_array_and_visibility_consistency(
+        self, swift_sun_constraint: SunConstraint, swift_ephemeris: TLEEphemeris
+    ) -> None:
+        """Test that constraint_array and visibility are consistent.
+
+        This tests the lazy caching: both methods use _get_constraint_vec internally,
+        so calling both on the same result should produce consistent results.
+        constraint_array[i] == True means violated (not visible) at timestamps[i].
+        """
+        result = swift_sun_constraint.evaluate(
+            ephemeris=swift_ephemeris, target_ra=66, target_dec=-29
+        )
+
+        timestamps = result.timestamps
+        constraint_array = result.constraint_array
+        visibility_windows = result.visibility
+
+        assert len(timestamps) == len(constraint_array)
+
+        # For each timestamp, check consistency
+        for i, (ts, is_violated) in enumerate(zip(timestamps, constraint_array)):
+            # Check if this timestamp falls within any visibility window
+            in_visibility = any(
+                vw.start_time <= ts <= vw.end_time for vw in visibility_windows
+            )
+
+            # If in a visibility window, constraint should NOT be violated
+            # If not in a visibility window, constraint SHOULD be violated
+            assert is_violated != in_visibility, (
+                f"Inconsistency at {ts}: constraint_array={is_violated}, "
+                f"in_visibility={in_visibility}"
+            )
