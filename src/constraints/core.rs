@@ -102,6 +102,8 @@ pub struct ConstraintResult {
     pub constraint_name: String,
     /// Evaluation times as Rust DateTime<Utc>, not directly exposed to Python
     pub times: Vec<DateTime<Utc>>,
+    /// Step size in seconds between timestamps (for O(1) index lookup)
+    step_seconds: i64,
     /// Cached Python timestamp array (not directly exposed, use getter)
     timestamp_cache: OnceLock<Py<PyAny>>,
     /// Cached constraint array (not directly exposed, use getter)
@@ -116,11 +118,18 @@ impl ConstraintResult {
         constraint_name: String,
         times: Vec<DateTime<Utc>>,
     ) -> Self {
+        // Compute step size from first two timestamps (0 if fewer than 2 times)
+        let step_seconds = if times.len() >= 2 {
+            (times[1] - times[0]).num_seconds()
+        } else {
+            0
+        };
         Self {
             violations,
             all_satisfied,
             constraint_name,
             times,
+            step_seconds,
             timestamp_cache: OnceLock::new(),
             constraint_array_cache: OnceLock::new(),
         }
@@ -244,22 +253,46 @@ impl ConstraintResult {
     fn in_constraint(&self, _py: Python, time: &Bound<PyAny>) -> PyResult<bool> {
         let dt = python_datetime_to_utc(time)?;
 
-        // Find matching time in our array
-        if let Some(_idx) = self.times.iter().position(|t| t == &dt) {
-            // Check if this time falls within any violation window
-            for v in &self.violations {
-                if v.start_time_internal <= dt && dt <= v.end_time_internal {
-                    // Time is in a violation window, so in-constraint (violated)
-                    return Ok(true);
-                }
-            }
-            // No violations found for this time, so not in-constraint
-            Ok(false)
-        } else {
-            Err(pyo3::exceptions::PyValueError::new_err(
-                "time not found in evaluated timestamps",
-            ))
+        // O(1) index calculation instead of O(n) linear search
+        if self.times.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "no evaluated timestamps",
+            ));
         }
+
+        let begin = self.times[0];
+        let offset_seconds = (dt - begin).num_seconds();
+
+        // Check if time is before begin
+        if offset_seconds < 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "time not found in evaluated timestamps",
+            ));
+        }
+
+        // Calculate index directly (O(1) instead of O(n))
+        let idx = if self.step_seconds > 0 {
+            (offset_seconds / self.step_seconds) as usize
+        } else {
+            0
+        };
+
+        // Verify index is in bounds and matches exactly
+        if idx >= self.times.len() || self.times[idx] != dt {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "time not found in evaluated timestamps",
+            ));
+        }
+
+        // Check if this time falls within any violation window
+        for v in &self.violations {
+            if v.start_time_internal <= dt && dt <= v.end_time_internal {
+                // Time is in a violation window, so in-constraint (violated)
+                return Ok(true);
+            }
+        }
+        // No violations found for this time, so not in-constraint
+        Ok(false)
     }
 
     /// Property: array of visibility windows when target is not constrained
@@ -332,6 +365,8 @@ pub struct MovingBodyResult {
     pub decs: Vec<f64>,
     /// Evaluation times as Rust DateTime<Utc>, not directly exposed to Python
     pub times: Vec<DateTime<Utc>>,
+    /// Step size in seconds between timestamps (for O(1) index lookup)
+    step_seconds: i64,
     /// Boolean array indicating constraint violation at each time (True = violated)
     constraint_vec: Vec<bool>,
 }
@@ -347,6 +382,12 @@ impl MovingBodyResult {
         decs: Vec<f64>,
         constraint_vec: Vec<bool>,
     ) -> Self {
+        // Compute step size from first two timestamps (0 if fewer than 2 times)
+        let step_seconds = if times.len() >= 2 {
+            (times[1] - times[0]).num_seconds()
+        } else {
+            0
+        };
         Self {
             violations,
             all_satisfied,
@@ -354,6 +395,7 @@ impl MovingBodyResult {
             ras,
             decs,
             times,
+            step_seconds,
             constraint_vec,
         }
     }
@@ -412,13 +454,38 @@ impl MovingBodyResult {
     fn in_constraint(&self, _py: Python, time: &Bound<PyAny>) -> PyResult<bool> {
         let dt = python_datetime_to_utc(time)?;
 
-        if let Some(idx) = self.times.iter().position(|t| t == &dt) {
-            Ok(self.constraint_vec[idx])
-        } else {
-            Err(pyo3::exceptions::PyValueError::new_err(
-                "time not found in evaluated timestamps",
-            ))
+        // O(1) index calculation instead of O(n) linear search
+        if self.times.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "no evaluated timestamps",
+            ));
         }
+
+        let begin = self.times[0];
+        let offset_seconds = (dt - begin).num_seconds();
+
+        // Check if time is before begin
+        if offset_seconds < 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "time not found in evaluated timestamps",
+            ));
+        }
+
+        // Calculate index directly (O(1) instead of O(n))
+        let idx = if self.step_seconds > 0 {
+            (offset_seconds / self.step_seconds) as usize
+        } else {
+            0
+        };
+
+        // Verify index is in bounds and matches exactly
+        if idx >= self.times.len() || self.times[idx] != dt {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "time not found in evaluated timestamps",
+            ));
+        }
+
+        Ok(self.constraint_vec[idx])
     }
 
     /// Property: array of visibility windows when target is not constrained
