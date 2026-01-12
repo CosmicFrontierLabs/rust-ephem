@@ -1,5 +1,6 @@
 /// Altitude/Azimuth constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
+use crate::utils::celestial::radec_to_altaz_batch;
 use crate::utils::polygon;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
@@ -179,11 +180,9 @@ impl ConstraintEvaluator for AltAzEvaluator {
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
         let n_targets = target_ras.len();
-        let altaz_list: Vec<_> = target_ras
-            .iter()
-            .zip(target_decs.iter())
-            .map(|(&ra, &dec)| ephemeris.radec_to_altaz(ra, dec, time_indices))
-            .collect();
+
+        // Use vectorized alt/az calculation (much faster than calling radec_to_altaz per target)
+        let altaz_list = radec_to_altaz_batch(target_ras, target_decs, ephemeris, time_indices);
 
         let n_times = altaz_list.first().map(|a| a.nrows()).unwrap_or(0);
 

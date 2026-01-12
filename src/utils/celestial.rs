@@ -571,6 +571,108 @@ pub fn radec_to_altaz(
     result
 }
 
+/// Vectorized calculation of alt/az for multiple targets and all times
+///
+/// Pre-computes expensive observer-dependent calculations once (geodetic coords, EOP, etc.)
+/// and reuses them for all targets. This is much faster than calling `radec_to_altaz()`
+/// repeatedly for each target.
+///
+/// # Arguments
+/// * `target_ras_deg` - Array of target RA values in degrees
+/// * `target_decs_deg` - Array of target Dec values in degrees
+/// * `ephemeris` - Ephemeris object containing observer positions
+/// * `time_indices` - Optional indices into ephemeris times (default: all times)
+///
+/// # Returns
+/// Vector of Array2 where each element is (n_times, 2) with [altitude, azimuth] in degrees
+pub fn radec_to_altaz_batch(
+    target_ras_deg: &[f64],
+    target_decs_deg: &[f64],
+    ephemeris: &dyn EphemerisBase,
+    time_indices: Option<&[usize]>,
+) -> Vec<Array2<f64>> {
+    // Get ephemeris data
+    let times = ephemeris.get_times().expect("Ephemeris must have times");
+    let gcrs_data = ephemeris
+        .data()
+        .gcrs
+        .as_ref()
+        .expect("Ephemeris must have GCRS data");
+
+    // Filter times and GCRS data if indices provided
+    let (times_filtered, gcrs_filtered) = if let Some(indices) = time_indices {
+        let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
+        let obs_filtered = gcrs_data.select(ndarray::Axis(0), indices);
+        (filtered_times, obs_filtered)
+    } else {
+        (times.to_vec(), gcrs_data.clone())
+    };
+
+    let n_times = times_filtered.len();
+
+    // Convert observer positions from GCRS to ITRS (convert_frames expects 6 columns: pos + vel)
+    let itrs_data = convert_frames(
+        &gcrs_filtered,
+        &times_filtered,
+        Frame::GCRS,
+        Frame::ITRS,
+        true,
+    );
+
+    // Convert ITRS positions to geodetic coordinates (extract position columns only)
+    let positions_slice = itrs_data.slice(s![.., 0..3]);
+    let positions_array = positions_slice.to_owned();
+    let (lats_deg, lons_deg, heights_km) = ecef_to_geodetic_deg(&positions_array);
+
+    // Pre-compute observer-dependent values for all times
+    // This avoids recomputing these expensive values for each target
+    let mut observer_data = Vec::with_capacity(n_times);
+    for i in 0..n_times {
+        let lat_rad = lats_deg[i].to_radians();
+        let lon_rad = lons_deg[i].to_radians();
+        let height_m = heights_km[i] * 1000.0;
+        let time = &times_filtered[i];
+
+        let utc1 = datetime_to_jd_utc(time).0;
+        let utc2 = datetime_to_jd_utc(time).1;
+        let dut1 = ut1_provider::get_ut1_utc_offset(time);
+        let (xp, yp) = eop_provider::get_polar_motion_rad(time);
+
+        observer_data.push((lat_rad, lon_rad, height_m, utc1, utc2, dut1, xp, yp));
+    }
+
+    // Now calculate alt/az for each target using pre-computed observer data
+    let mut results = Vec::with_capacity(target_ras_deg.len());
+    for (ra_deg, dec_deg) in target_ras_deg.iter().zip(target_decs_deg.iter()) {
+        let mut result = Array2::<f64>::zeros((n_times, 2));
+        let ra_rad = ra_deg.to_radians();
+        let dec_rad = dec_deg.to_radians();
+
+        for i in 0..n_times {
+            let (lat_rad, lon_rad, height_m, utc1, utc2, dut1, xp, yp) = observer_data[i];
+
+            // Use SOFA apparent-place routine for full topocentric alt/az (pressure=0: no refraction)
+            let (aob, zob, _hob, _dob, _rob, _eo) = atco13(
+                ra_rad, dec_rad, 0.0, 0.0, 0.0, 0.0, utc1, utc2, dut1, lon_rad, lat_rad, height_m,
+                xp, yp, 0.0, 0.0, 0.0, 0.55,
+            )
+            .expect("SOFA atco13 failed");
+
+            let alt_deg = (std::f64::consts::FRAC_PI_2 - zob).to_degrees();
+            let mut az_deg = aob.to_degrees();
+            if az_deg < 0.0 {
+                az_deg += 360.0;
+            }
+
+            result[[i, 0]] = alt_deg;
+            result[[i, 1]] = az_deg;
+        }
+        results.push(result);
+    }
+
+    results
+}
+
 /// Calculate Sun altitudes for all ephemeris times (vectorized for daytime constraints)
 ///
 /// This function calculates the Sun's altitude above the horizon for all times in the ephemeris,

@@ -1,6 +1,6 @@
 /// Airmass constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
-use crate::utils::celestial::{altitude_to_airmass, radec_to_altaz};
+use crate::utils::celestial::{altitude_to_airmass, radec_to_altaz, radec_to_altaz_batch};
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
@@ -158,9 +158,11 @@ impl ConstraintEvaluator for AirmassEvaluator {
 
         let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
 
+        // Use vectorized alt/az calculation (much faster than calling radec_to_altaz per target)
+        let altaz_batch = radec_to_altaz_batch(target_ras, target_decs, ephemeris, time_indices);
+
         for j in 0..n_targets {
-            // Get alt/az for this target
-            let altaz = radec_to_altaz(target_ras[j], target_decs[j], ephemeris, time_indices);
+            let altaz = &altaz_batch[j];
 
             for i in 0..n_times {
                 let altitude_deg = altaz[[i, 0]];
