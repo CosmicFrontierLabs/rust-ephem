@@ -648,69 +648,63 @@ pub fn calculate_airmass_batch_fast(
     let n_times = obs_filtered.nrows();
 
     // Pre-compute observer latitudes and longitudes for all times (n_times,)
-    let mut obs_lats = Array1::<f64>::zeros(n_times);
-    let mut obs_lons = Array1::<f64>::zeros(n_times);
+    // Vectorized: extract columns and compute atan2 element-wise
+    let obs_x = obs_filtered.column(0).to_owned();
+    let obs_y = obs_filtered.column(1).to_owned();
+    let obs_z = obs_filtered.column(2).to_owned();
 
-    for i in 0..n_times {
-        let obs_x = obs_filtered[[i, 0]];
-        let obs_y = obs_filtered[[i, 1]];
-        let obs_z = obs_filtered[[i, 2]];
+    let rho = (&obs_x * &obs_x + &obs_y * &obs_y).mapv(f64::sqrt);
+    let obs_lats: Array1<f64> = obs_z
+        .iter()
+        .zip(rho.iter())
+        .map(|(z, r)| z.atan2(*r))
+        .collect();
+    let obs_lons: Array1<f64> = obs_y
+        .iter()
+        .zip(obs_x.iter())
+        .map(|(y, x)| y.atan2(*x))
+        .collect();
 
-        obs_lats[i] = obs_z.atan2((obs_x * obs_x + obs_y * obs_y).sqrt());
-        obs_lons[i] = obs_y.atan2(obs_x);
-    }
+    // Convert target RA/Dec to radians and pre-compute trig functions - vectorized
+    let ras_rad: Array1<f64> = Array1::from_vec(ras_deg.iter().map(|r| r.to_radians()).collect());
+    let decs_rad: Array1<f64> = Array1::from_vec(decs_deg.iter().map(|d| d.to_radians()).collect());
 
-    // Convert target RA/Dec to radians for vectorized operations
-    let ras_rad: Vec<f64> = ras_deg.iter().map(|r| r.to_radians()).collect();
-    let decs_rad: Vec<f64> = decs_deg.iter().map(|d| d.to_radians()).collect();
-
-    // Pre-compute trig functions for targets (n_targets,) - vectorized
-    let sin_decs: Array1<f64> = Array1::from_vec(decs_rad.iter().map(|d| d.sin()).collect());
-    let cos_decs: Array1<f64> = Array1::from_vec(decs_rad.iter().map(|d| d.cos()).collect());
-    let sin_lats: Array1<f64> = obs_lats.map(|l| l.sin());
-    let cos_lats: Array1<f64> = obs_lats.map(|l| l.cos());
+    let sin_decs = decs_rad.mapv(f64::sin);
+    let cos_decs = decs_rad.mapv(f64::cos);
+    let sin_lats = obs_lats.mapv(f64::sin);
+    let cos_lats = obs_lats.mapv(f64::cos);
 
     // Compute hour angles matrix: (n_targets, n_times)
-    // HA[j, i] = obs_lon[i] - ra_rad[j]
+    // HA[j, i] = obs_lon[i] - ra_rad[j] using broadcasting
     let mut ha_matrix = Array2::<f64>::zeros((n_targets, n_times));
-    for j in 0..n_targets {
-        for i in 0..n_times {
-            ha_matrix[[j, i]] = obs_lons[i] - ras_rad[j];
-        }
+    for (j, &ra) in ras_rad.iter().enumerate() {
+        ha_matrix.row_mut(j).assign(&(&obs_lons - ra));
     }
 
-    // Vectorized altitude calculation using broadcasting
-    // sin(alt) = sin(dec) * sin(lat) + cos(dec) * cos(lat) * cos(HA)
-    // Target shape: (n_targets, n_times)
+    // Vectorized altitude calculation using ndarray operations
+    // sin(alt)[j, i] = sin(dec)[j] * sin(lat)[i] + cos(dec)[j] * cos(lat)[i] * cos(HA)[j, i]
     let mut sin_alt_matrix = Array2::<f64>::zeros((n_targets, n_times));
 
     for j in 0..n_targets {
-        let sin_dec = sin_decs[j];
-        let cos_dec = cos_decs[j];
+        // First term: sin(dec)[j] * sin(lat)[:] - vectorized
+        let first_term = &sin_lats * sin_decs[j];
 
-        // First term: sin(dec) * sin(lat) - broadcast across all times
-        for i in 0..n_times {
-            sin_alt_matrix[[j, i]] = sin_dec * sin_lats[i];
-        }
+        // Second term: cos(dec)[j] * cos(lat)[:] * cos(HA[j, :]) - vectorized
+        let ha_row = ha_matrix.row(j);
+        let cos_ha = ha_row.mapv(f64::cos);
+        let second_term = &cos_lats * cos_decs[j] * cos_ha;
 
-        // Second term: cos(dec) * cos(lat) * cos(HA) - vectorized
-        for i in 0..n_times {
-            sin_alt_matrix[[j, i]] += cos_dec * cos_lats[i] * ha_matrix[[j, i]].cos();
-        }
+        // Combine terms
+        sin_alt_matrix
+            .row_mut(j)
+            .assign(&(first_term + second_term));
     }
 
-    // Convert sin(alt) to altitude degrees and apply Kasten formula (vectorized)
-    let mut result = Array2::<f64>::zeros((n_targets, n_times));
-    for j in 0..n_targets {
-        for i in 0..n_times {
-            let sin_alt = sin_alt_matrix[[j, i]];
-            let alt_rad = sin_alt.clamp(-1.0, 1.0).asin();
-            let altitude_deg = alt_rad.to_degrees();
-            result[[j, i]] = calculate_airmass_kasten(altitude_deg);
-        }
-    }
-
-    result
+    // Convert sin(alt) to altitude degrees and apply Kasten formula - fully vectorized
+    sin_alt_matrix.mapv(|sin_alt| {
+        let alt_rad = sin_alt.clamp(-1.0, 1.0).asin();
+        calculate_airmass_kasten(alt_rad.to_degrees())
+    })
 }
 
 /// Calculate Sun altitudes for all ephemeris times (vectorized for daytime constraints)
