@@ -652,22 +652,23 @@ pub fn calculate_airmass_batch_fast(
     let obs_y = obs_filtered.column(1);
     let obs_z = obs_filtered.column(2);
 
-    let rho =
-        (obs_x.to_owned() * obs_x.to_owned() + obs_y.to_owned() * obs_y.to_owned()).mapv(f64::sqrt);
-    let obs_lats: Array1<f64> = obs_z
+    // Compute rho = sqrt(x² + y²) more efficiently using element-wise operations
+    let rho: Array1<f64> = obs_x
         .iter()
-        .zip(rho.iter())
-        .map(|(z, r)| z.atan2(*r))
-        .collect();
-    let obs_lons: Array1<f64> = obs_y
-        .iter()
-        .zip(obs_x.iter())
-        .map(|(y, x)| y.atan2(*x))
+        .zip(obs_y.iter())
+        .map(|(x, y)| {
+            let x2y2 = x * x + y * y;
+            x2y2.sqrt()
+        })
         .collect();
 
-    // Convert target RA/Dec to radians
-    let ras_rad = Array1::from_vec(ras_deg.iter().map(|r| r.to_radians()).collect());
-    let decs_rad = Array1::from_vec(decs_deg.iter().map(|d| d.to_radians()).collect());
+    // Vectorize lat/lon computation avoiding collect
+    let obs_lats: Array1<f64> = Array1::from_shape_fn(n_times, |i| obs_z[i].atan2(rho[i]));
+    let obs_lons: Array1<f64> = Array1::from_shape_fn(n_times, |i| obs_y[i].atan2(obs_x[i]));
+
+    // Convert target RA/Dec to radians - avoid intermediate Vec
+    let ras_rad: Array1<f64> = Array1::from_shape_fn(n_targets, |i| ras_deg[i].to_radians());
+    let decs_rad: Array1<f64> = Array1::from_shape_fn(n_targets, |i| decs_deg[i].to_radians());
 
     // Pre-compute trig functions
     let sin_decs = decs_rad.mapv(f64::sin);
