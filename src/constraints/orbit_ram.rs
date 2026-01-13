@@ -196,23 +196,39 @@ impl ConstraintEvaluator for OrbitRamEvaluator {
             ram_directions[[i, 2]] = ram_unit[2];
         }
 
-        // Calculate angular separations for all targets and times (vectorized)
-        let angles_deg = crate::utils::vector_math::calculate_angular_separations_batch(
-            &target_vectors,
-            &ram_directions,
-        );
+        // Pre-compute cosine thresholds (avoids acos() in inner loop)
+        // Using cosine trick: angle < threshold_deg ⟺ cos(angle) > cos(threshold_deg)
+        let cos_min_threshold = self.min_angle_deg.to_radians().cos();
+        let cos_max_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
 
-        // Check constraints for all targets and times
+        // Check constraints for all targets and times using cosine comparison
         for j in 0..n_targets {
+            let target_vec = [
+                target_vectors[[j, 0]],
+                target_vectors[[j, 1]],
+                target_vectors[[j, 2]],
+            ];
+
             for i in 0..n_times {
-                let angle_deg = angles_deg[[j, i]];
+                let ram_vec = [
+                    ram_directions[[i, 0]],
+                    ram_directions[[i, 1]],
+                    ram_directions[[i, 2]],
+                ];
+
+                // Calculate cosine of angle (avoids acos call)
+                let cos_angle = crate::utils::vector_math::dot_product(&target_vec, &ram_vec);
+
+                // Check constraint using cosine trick (avoids expensive acos in inner loop)
+                // angle < min_angle ⟺ cos(angle) > cos(min_angle)
+                // angle > max_angle ⟺ cos(angle) < cos(max_angle)
                 let mut violated = false;
 
-                if angle_deg < self.min_angle_deg {
+                if cos_angle > cos_min_threshold {
                     violated = true;
                 }
-                if let Some(max_angle) = self.max_angle_deg {
-                    if angle_deg > max_angle {
+                if let Some(cos_max) = cos_max_threshold {
+                    if cos_angle < cos_max {
                         violated = true;
                     }
                 }

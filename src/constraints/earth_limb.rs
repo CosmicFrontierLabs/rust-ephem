@@ -72,6 +72,7 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
 
         // Convert target RA/Dec to unit vector
         let target_vec = radec_to_unit_vector(target_ra, target_dec);
+        let cos_max_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
 
         for (i, _time) in times_filtered.iter().enumerate() {
             // Vector from observer to Earth center is -observer position
@@ -104,11 +105,9 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
             let cos_angle = dot_product(&target_vec, &center_unit);
             let angle_deg = cos_angle.clamp(-1.0, 1.0).acos().to_degrees();
 
-            let is_violation = if let Some(max_angle) = self.max_angle_deg {
-                angle_deg < threshold_deg || angle_deg > max_angle
-            } else {
-                angle_deg < threshold_deg
-            };
+            let is_min_violation = angle_deg < threshold_deg;
+            let is_max_violation = cos_max_threshold.is_some_and(|cos_max| cos_angle < cos_max);
+            let is_violation = is_min_violation || is_max_violation;
 
             if is_violation {
                 let severity = if angle_deg < threshold_deg {
@@ -231,9 +230,11 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         // Initialize to false (not violated) for consistency with default implementation
         let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
 
-        // Pre-compute thresholds and center unit vectors for each time point
+        // Pre-compute cosine thresholds and center unit vectors for each time point
         // These only depend on time, not on target, so compute once and reuse
-        let mut thresholds = vec![0.0; n_times];
+        // Using cosine trick: angle < threshold_deg ⟺ cos(angle) > cos(threshold_deg)
+        let mut cos_thresholds = vec![0.0; n_times];
+        let cos_max_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
         let mut center_units = vec![[0.0; 3]; n_times];
 
         for t in 0..n_times {
@@ -255,7 +256,9 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
                 0.0
             };
 
-            thresholds[t] = earth_ang_radius_deg + self.min_angle_deg + horizon_dip_correction;
+            let threshold_deg = earth_ang_radius_deg + self.min_angle_deg + horizon_dip_correction;
+            // Pre-compute cosine of threshold (avoids acos() in inner loop)
+            cos_thresholds[t] = threshold_deg.to_radians().cos();
 
             // Pre-compute Earth center direction unit vector
             center_units[t] = normalize_vector(&[-obs_pos[0], -obs_pos[1], -obs_pos[2]]);
@@ -272,13 +275,16 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
             for t in 0..n_times {
                 // Use pre-computed center unit vector
                 let cos_angle = dot_product(&target_vec, &center_units[t]);
-                let angle_deg = cos_angle.clamp(-1.0, 1.0).acos().to_degrees();
 
-                // Check constraint - INVERTED: false = satisfied, true = violated
-                let is_violated = if let Some(max_angle) = self.max_angle_deg {
-                    angle_deg < thresholds[t] || angle_deg > max_angle
+                // Check constraint using cosine trick (avoids expensive acos/asin in inner loop)
+                // angle < threshold_deg ⟺ cos(angle) > cos(threshold_deg)
+                // angle > max_angle ⟺ cos(angle) < cos(max_angle)
+                let is_violated = if let Some(cos_max) = cos_max_threshold {
+                    // Too close to limb OR too far from limb
+                    cos_angle > cos_thresholds[t] || cos_angle < cos_max
                 } else {
-                    angle_deg < thresholds[t]
+                    // Only check if too close to limb
+                    cos_angle > cos_thresholds[t]
                 };
 
                 result[[i, t]] = is_violated;

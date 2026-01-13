@@ -295,55 +295,82 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
             south_pole_directions[[i, 2]] = south_pole[2];
         }
 
-        // Calculate angular separations to both poles for all targets and times (vectorized)
-        let angles_north_deg = crate::utils::vector_math::calculate_angular_separations_batch(
-            &target_vectors,
-            &north_pole_directions,
-        );
-        let angles_south_deg = crate::utils::vector_math::calculate_angular_separations_batch(
-            &target_vectors,
-            &south_pole_directions,
-        );
+        // Pre-compute effective minimum angle thresholds and cosine thresholds for each time
+        // These depend on time (due to earth_limb_pole), so compute once and reuse
+        // Using cosine trick: angle < threshold_deg ⟺ cos(angle) > cos(threshold_deg)
+        let mut cos_min_thresholds = vec![0.0; n_times];
+        let mut cos_max_thresholds: Option<Vec<f64>> =
+            self.max_angle_deg.map(|_| vec![0.0; n_times]);
 
-        // Use the minimum angle to either pole for constraint checking
-        let mut min_angles_to_poles = Array2::<f64>::zeros((n_targets, n_times));
-        for j in 0..n_targets {
-            for i in 0..n_times {
-                min_angles_to_poles[[j, i]] =
-                    angles_north_deg[[j, i]].min(angles_south_deg[[j, i]]);
+        for i in 0..n_times {
+            // Calculate effective minimum angle for this time
+            let effective_min_angle = if self.earth_limb_pole {
+                let position = [
+                    gcrs_filtered[[i, 0]], // x
+                    gcrs_filtered[[i, 1]], // y
+                    gcrs_filtered[[i, 2]], // z
+                ];
+                let distance = (position[0] * position[0]
+                    + position[1] * position[1]
+                    + position[2] * position[2])
+                    .sqrt();
+                let ratio = (6378.137 / distance).min(1.0);
+                let earth_radius_deg = ratio.asin().to_degrees();
+                earth_radius_deg + self.min_angle_deg - 90.0
+            } else {
+                self.min_angle_deg
+            };
+
+            // Pre-compute cosine of threshold (avoids acos() in inner loop)
+            cos_min_thresholds[i] = effective_min_angle.to_radians().cos();
+
+            // Pre-compute cosine of max angle threshold if present
+            if let Some(ref mut max_cos) = cos_max_thresholds {
+                if let Some(max_angle) = self.max_angle_deg {
+                    max_cos[i] = max_angle.to_radians().cos();
+                }
             }
         }
 
-        // Check constraints for all targets and times
+        // Check constraints for all targets and times using cosine comparison
         for j in 0..n_targets {
+            let target_vec = [
+                target_vectors[[j, 0]],
+                target_vectors[[j, 1]],
+                target_vectors[[j, 2]],
+            ];
+
             for i in 0..n_times {
-                let angle_deg = min_angles_to_poles[[j, i]];
+                let north_pole_vec = [
+                    north_pole_directions[[i, 0]],
+                    north_pole_directions[[i, 1]],
+                    north_pole_directions[[i, 2]],
+                ];
+                let south_pole_vec = [
+                    south_pole_directions[[i, 0]],
+                    south_pole_directions[[i, 1]],
+                    south_pole_directions[[i, 2]],
+                ];
 
-                // Calculate effective minimum angle for this time
-                let effective_min_angle = if self.earth_limb_pole {
-                    let position = [
-                        gcrs_filtered[[i, 0]], // x
-                        gcrs_filtered[[i, 1]], // y
-                        gcrs_filtered[[i, 2]], // z
-                    ];
-                    let distance = (position[0] * position[0]
-                        + position[1] * position[1]
-                        + position[2] * position[2])
-                        .sqrt();
-                    let ratio = (6378.137 / distance).min(1.0);
-                    let earth_radius_deg = ratio.asin().to_degrees();
-                    earth_radius_deg + self.min_angle_deg - 90.0
-                } else {
-                    self.min_angle_deg
-                };
+                // Calculate cosines to both poles (avoids acos calls)
+                let cos_angle_north =
+                    crate::utils::vector_math::dot_product(&target_vec, &north_pole_vec);
+                let cos_angle_south =
+                    crate::utils::vector_math::dot_product(&target_vec, &south_pole_vec);
 
+                // Use the maximum cosine (corresponding to minimum angle to either pole)
+                let max_cos_angle = cos_angle_north.max(cos_angle_south);
+
+                // Check constraint using cosine trick (avoids expensive acos in inner loop)
+                // angle < min_angle ⟺ cos(angle) > cos(min_angle)
+                // angle > max_angle ⟺ cos(angle) < cos(max_angle)
                 let mut violated = false;
 
-                if angle_deg < effective_min_angle {
+                if max_cos_angle > cos_min_thresholds[i] {
                     violated = true;
                 }
-                if let Some(max_angle) = self.max_angle_deg {
-                    if angle_deg > max_angle {
+                if let Some(ref max_cos) = cos_max_thresholds {
+                    if max_cos_angle < max_cos[i] {
                         violated = true;
                     }
                 }
