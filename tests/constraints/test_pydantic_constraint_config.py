@@ -20,46 +20,6 @@ from rust_ephem.constraints import (
 )
 
 
-@pytest.fixture
-def mock_ephem():
-    """Fixture for a mock ephemeris object."""
-
-    class MockEphemeris:
-        pass
-
-    return MockEphemeris()
-
-
-@pytest.fixture
-def sun_constraint():
-    """Fixture for a SunConstraint instance."""
-    return SunConstraint(min_angle=45.0)
-
-
-@pytest.fixture
-def moon_constraint():
-    """Fixture for a MoonConstraint instance."""
-    return MoonConstraint(min_angle=30.0)
-
-
-@pytest.fixture
-def eclipse_constraint():
-    """Fixture for an EclipseConstraint instance."""
-    return EclipseConstraint(umbra_only=True)
-
-
-@pytest.fixture
-def earth_limb_constraint():
-    """Fixture for an EarthLimbConstraint instance."""
-    return EarthLimbConstraint(min_angle=10.0)
-
-
-@pytest.fixture
-def body_constraint():
-    """Fixture for a BodyConstraint instance."""
-    return BodyConstraint(body="Mars", min_angle=15.0)
-
-
 class TestRustConstraintMixin:
     """Test RustConstraintMixin base functionality."""
 

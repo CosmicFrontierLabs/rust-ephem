@@ -1,83 +1,6 @@
-from datetime import datetime, timezone
-
 import numpy as np
 import pytest
 from astropy.coordinates import SkyCoord  # type:ignore[import-untyped]
-
-import rust_ephem
-from rust_ephem.constraints import (
-    EarthLimbConstraint,
-    EclipseConstraint,
-    MoonConstraint,
-    SunConstraint,
-)
-
-
-@pytest.fixture
-def tle() -> tuple:
-    tle1 = "1 28485U 04047A   25317.24527149  .00068512  00000+0  12522-2 0  9999"
-    tle2 = "2 28485  20.5556  25.5469 0004740 206.7882 153.2316 15.47667717153136"
-    return tle1, tle2
-
-
-@pytest.fixture
-def begin_end_step_size() -> tuple[datetime, datetime, int]:
-    # Time span and step
-    begin = datetime(2025, 9, 23, 0, 0, 0, tzinfo=timezone.utc)
-    end = datetime(2025, 9, 24, 0, 0, 0, tzinfo=timezone.utc)
-    step_s = 60  # 1 minute
-    return begin, end, step_s
-
-
-@pytest.fixture
-def tle_ephem(tle, begin_end_step_size):
-    yield rust_ephem.TLEEphemeris(
-        tle[0],
-        tle[1],
-        begin_end_step_size[0],
-        begin_end_step_size[1],
-        begin_end_step_size[2],
-    )
-
-
-@pytest.fixture
-def sun(tle_ephem) -> SkyCoord:
-    return tle_ephem.sun[183]
-
-
-@pytest.fixture
-def moon(tle_ephem) -> SkyCoord:
-    return tle_ephem.moon[183]
-
-
-@pytest.fixture
-def earth(tle_ephem) -> SkyCoord:
-    return tle_ephem.earth[183]
-
-
-@pytest.fixture
-def timestamp(tle_ephem) -> datetime:
-    return tle_ephem.timestamp[183]
-
-
-@pytest.fixture
-def sun_constraint() -> SunConstraint:
-    return SunConstraint(min_angle=45)
-
-
-@pytest.fixture
-def moon_constraint() -> MoonConstraint:
-    return MoonConstraint(min_angle=21)
-
-
-@pytest.fixture
-def earth_limb_constraint() -> EarthLimbConstraint:
-    return EarthLimbConstraint(min_angle=21)
-
-
-@pytest.fixture
-def eclipse_constraint() -> EclipseConstraint:
-    return EclipseConstraint()
 
 
 class TestSunConstraints:
@@ -145,7 +68,7 @@ class TestMoonConstraints:
             target_ra=(moon.ra.deg + offset) % 360,
             target_dec=moon.dec.deg,
         )
-        if offset < 21:
+        if offset <= 30:
             assert not_vis is True, "Moon should be Moon Constrained"
         else:
             assert not_vis is False, "Moon should not be Moon Constrained"
@@ -167,7 +90,7 @@ class TestMoonConstraints:
             SkyCoord(moon.ra.deg, moon.dec.deg, unit="deg")
             .separation(SkyCoord(moon.ra.deg + offset, moon.dec.deg, unit="deg"))
             .deg
-            < 21
+            <= 30
         )
         assert in_moon_cons == not_vis
 
@@ -189,7 +112,7 @@ class TestMoonConstraints:
             .separation(SkyCoord(moon.ra.deg + offset, moon.dec.deg, unit="deg"))
             .deg
         )
-        in_moon_cons = moon_angle < 21
+        in_moon_cons = moon_angle <= 30
         assert in_moon_cons == not_vis, f"Moon is at {moon_angle:.1f} degrees"
 
 
@@ -212,7 +135,7 @@ class TestEarthLimbConstraints:
             .separation(SkyCoord(earth.ra.deg + offset, earth.dec.deg, unit="deg"))
             .deg
         )
-        in_earth_cons = earth_angle < tle_ephem.earth_radius_deg[0] + 21
+        in_earth_cons = earth_angle < tle_ephem.earth_radius_deg[0] + 10
         assert in_earth_cons == not_vis, f"Earth is at {earth_angle:.1f} degrees"
 
     @pytest.mark.parametrize(
@@ -233,7 +156,7 @@ class TestEarthLimbConstraints:
             .separation(SkyCoord(earth.ra.deg + offset, earth.dec.deg, unit="deg"))
             .deg
         )
-        in_earth_cons = earth_angle < tle_ephem.earth_radius_deg[0] + 21
+        in_earth_cons = earth_angle < tle_ephem.earth_radius_deg[0] + 10
         assert in_earth_cons == not_vis, f"Earth is at {earth_angle:.1f} degrees"
 
 

@@ -4,7 +4,6 @@ from typing import Any, List, Optional, Tuple, Type
 import numpy as np
 import pytest
 
-import rust_ephem
 from rust_ephem.constraints import (
     AirmassConstraint,
     ConstraintResult,
@@ -200,69 +199,6 @@ def constraint_result_without_rust_ref() -> ConstraintResult:
     return result
 
 
-@pytest.fixture
-def patched_constraint(monkeypatch: pytest.MonkeyPatch) -> Type[DummyConstraintBackend]:
-    DummyConstraintBackend.created = 0
-    monkeypatch.setattr(rust_ephem, "Constraint", DummyConstraintBackend)
-    return DummyConstraintBackend
-
-
-@pytest.fixture
-def dummy_ephemeris() -> Any:
-    return object()
-
-
-@pytest.fixture
-def mock_ephemeris_with_body() -> Any:
-    """Mock ephemeris that supports body lookup"""
-
-    class MockEphemeris:
-        def get_body(
-            self,
-            body: Any,
-            spice_kernel: Optional[Any] = None,
-            use_horizons: bool = False,
-        ) -> Any:
-            return type(
-                "SkyCoord",
-                (),
-                {
-                    "ra": type("Angle", (), {"deg": [1.0, 2.0]})(),
-                    "dec": type("Angle", (), {"deg": [3.0, 4.0]})(),
-                },
-            )()
-
-        @property
-        def timestamp(self) -> List[datetime]:
-            return [datetime(2024, 1, 1, 0, 0, 0), datetime(2024, 1, 1, 0, 0, 1)]
-
-    return MockEphemeris()
-
-
-@pytest.fixture
-def mock_ephemeris_simple() -> Any:
-    """Simple mock ephemeris for coordinate tests"""
-
-    class MockEphemeris:
-        @property
-        def timestamp(self) -> List[datetime]:
-            return [datetime(2024, 1, 1, 0, 0, 0), datetime(2024, 1, 1, 0, 0, 1)]
-
-    return MockEphemeris()
-
-
-@pytest.fixture
-def mock_ephemeris_single() -> Any:
-    """Mock ephemeris with single timestamp"""
-
-    class MockEphemeris:
-        @property
-        def timestamp(self) -> List[datetime]:
-            return [datetime(2024, 1, 1, 0, 0, 0)]
-
-    return MockEphemeris()
-
-
 class TestEvaluateMovingBody:
     def test_timestamps(
         self,
@@ -339,7 +275,7 @@ class TestRustConstraintMixin:
         _: ConstraintResult = constraint.evaluate(
             dummy_ephemeris, target_ra=3.0, target_dec=4.0
         )
-        assert DummyConstraintBackend.created == 1
+        assert patched_constraint.created == 1
 
     def test_evaluate_creates_backend_once_first_result_type(
         self, patched_constraint: Type[DummyConstraintBackend], dummy_ephemeris: Any
@@ -385,12 +321,13 @@ class TestRustConstraintMixin:
             target_ra=1.0,
             target_dec=2.0,
         )
-        assert DummyConstraintBackend.created == 1
+        assert patched_constraint.created == 1
 
     def test_batch_and_single_batch_shape(
         self, patched_constraint: Type[DummyConstraintBackend], dummy_ephemeris: Any
     ) -> None:
         constraint: SunConstraint = SunConstraint(min_angle=5.0)
+        constraint._rust_constraint = patched_constraint()
         batch: np.ndarray = constraint.in_constraint_batch(
             dummy_ephemeris,
             target_ras=[1.0, 2.0],
@@ -404,12 +341,13 @@ class TestRustConstraintMixin:
             target_ra=1.0,
             target_dec=2.0,
         )
-        assert batch.shape == (2, 2)
+        assert batch.shape == (2, 1)
 
     def test_batch_and_single_batch_calls_exist(
         self, patched_constraint: Type[DummyConstraintBackend], dummy_ephemeris: Any
     ) -> None:
         constraint: SunConstraint = SunConstraint(min_angle=5.0)
+        constraint._rust_constraint = patched_constraint()
         _ = constraint.in_constraint_batch(
             dummy_ephemeris,
             target_ras=[1.0, 2.0],
@@ -430,6 +368,7 @@ class TestRustConstraintMixin:
         self, patched_constraint: Type[DummyConstraintBackend], dummy_ephemeris: Any
     ) -> None:
         constraint: SunConstraint = SunConstraint(min_angle=5.0)
+        constraint._rust_constraint = patched_constraint()
         _ = constraint.in_constraint_batch(
             dummy_ephemeris,
             target_ras=[1.0, 2.0],
@@ -450,6 +389,7 @@ class TestRustConstraintMixin:
         self, patched_constraint: Type[DummyConstraintBackend], dummy_ephemeris: Any
     ) -> None:
         constraint: SunConstraint = SunConstraint(min_angle=5.0)
+        constraint._rust_constraint = patched_constraint()
         _ = constraint.in_constraint_batch(
             dummy_ephemeris,
             target_ras=[1.0, 2.0],
@@ -607,6 +547,7 @@ class TestEvaluateMovingBodyMethod:
     ) -> None:
         """Test that evaluate_moving_body with body calls backend once"""
         constraint = SunConstraint(min_angle=10.0)
+        constraint._rust_constraint = patched_constraint()
         constraint.evaluate_moving_body(mock_ephemeris_with_body, body=499)
 
         backend: DummyConstraintBackend = constraint._rust_constraint
@@ -619,6 +560,7 @@ class TestEvaluateMovingBodyMethod:
     ) -> None:
         """Test that evaluate_moving_body passes body argument correctly"""
         constraint = SunConstraint(min_angle=10.0)
+        constraint._rust_constraint = patched_constraint()
         constraint.evaluate_moving_body(mock_ephemeris_with_body, body=499)
 
         backend: DummyConstraintBackend = constraint._rust_constraint
@@ -632,6 +574,7 @@ class TestEvaluateMovingBodyMethod:
     ) -> None:
         """Test that evaluate_moving_body with body returns MovingVisibilityResult"""
         constraint = SunConstraint(min_angle=10.0)
+        constraint._rust_constraint = patched_constraint()
         result = constraint.evaluate_moving_body(mock_ephemeris_with_body, body=499)
 
         assert isinstance(result, MovingVisibilityResult)
@@ -643,6 +586,7 @@ class TestEvaluateMovingBodyMethod:
     ) -> None:
         """Test that evaluate_moving_body with coords calls backend once"""
         constraint = SunConstraint(min_angle=10.0)
+        constraint._rust_constraint = patched_constraint()
         ras = [1.0, 2.0]
         decs = [3.0, 4.0]
 
@@ -660,6 +604,7 @@ class TestEvaluateMovingBodyMethod:
     ) -> None:
         """Test that evaluate_moving_body passes target_ras correctly"""
         constraint = SunConstraint(min_angle=10.0)
+        constraint._rust_constraint = patched_constraint()
         ras = [1.0, 2.0]
         decs = [3.0, 4.0]
 
@@ -678,6 +623,7 @@ class TestEvaluateMovingBodyMethod:
     ) -> None:
         """Test that evaluate_moving_body passes target_decs correctly"""
         constraint = SunConstraint(min_angle=10.0)
+        constraint._rust_constraint = patched_constraint()
         ras = [1.0, 2.0]
         decs = [3.0, 4.0]
 
@@ -696,6 +642,7 @@ class TestEvaluateMovingBodyMethod:
     ) -> None:
         """Test that evaluate_moving_body with coords returns MovingVisibilityResult"""
         constraint = SunConstraint(min_angle=10.0)
+        constraint._rust_constraint = patched_constraint()
         ras = [1.0, 2.0]
         decs = [3.0, 4.0]
 
