@@ -596,7 +596,7 @@ pub fn calculate_airmass_kasten(altitude_deg: f64) -> f64 {
     let cos_z = zenith_deg.to_radians().cos();
 
     // Kasten formula: AM = 1 / (cos(z) + 0.50572 * (96.07995 - z)^(-1.6364))
-    let denominator = cos_z + 0.50572 * (96.07995 - zenith_deg).abs().powf(-1.6364);
+    let denominator = cos_z + 0.50572 * (96.07995 - zenith_deg).powf(-1.6364);
     1.0 / denominator
 }
 
