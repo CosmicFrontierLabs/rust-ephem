@@ -286,33 +286,17 @@ pub trait EphemerisBase {
         dec_deg: f64,
         time_indices: Option<&[usize]>,
     ) -> PyResult<Vec<f64>> {
-        use crate::utils::celestial::altitude_to_airmass;
+        use crate::utils::celestial::calculate_airmass_kasten;
 
         // Get altitudes
         let altaz = self.radec_to_altaz(ra_deg, dec_deg, time_indices);
 
-        // Ensure latitude/longitude caches are computed
-        self.compute_latlon_caches()?;
-
-        // Get observer heights
-        let heights_km =
-            self.data().height_km_cache.get().ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err("Height data not available")
-            })?;
-
-        // Filter heights by time indices if provided
-        let heights_filtered: Vec<f64> = if let Some(indices) = time_indices {
-            indices.iter().map(|&i| heights_km[i]).collect()
-        } else {
-            heights_km.to_vec()
-        };
-
-        // Calculate airmass for each time
+        // Calculate airmass for each time using Kasten formula
+        // Kasten & Czeplak (1980): accurate to ±0.02 airmass for zenith angles up to ~75°
         let airmass: Vec<f64> = (0..altaz.nrows())
             .map(|i| {
                 let altitude_deg = altaz[[i, 0]];
-                let height_km = heights_filtered[i];
-                altitude_to_airmass(altitude_deg, height_km)
+                calculate_airmass_kasten(altitude_deg)
             })
             .collect();
 

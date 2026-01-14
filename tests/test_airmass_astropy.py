@@ -33,7 +33,12 @@ from astropy.coordinates import (  # type: ignore[import-untyped]
 from astropy.time import Time  # type: ignore[import-untyped]
 
 import rust_ephem
-from rust_ephem.constraints import AirmassConstraint
+
+# Tolerances for airmass comparisons
+RTOL_SEA_LEVEL = 0.05  # 5% relative tolerance
+ATOL_SEA_LEVEL = 0.01  # absolute tolerance
+RTOL_ALTITUDE = 0.05  # 5% relative tolerance for altitude comparisons
+ATOL_ALTITUDE = 0.01  # absolute tolerance
 
 
 @pytest.fixture
@@ -87,51 +92,9 @@ class TestAirmassAstropyComparison:
             np.testing.assert_allclose(
                 np.array(airmass_rust)[valid_idx],
                 airmass_astropy[valid_idx],
-                rtol=0.05,  # 5% relative tolerance
-                atol=0.1,  # 0.1 absolute tolerance
+                rtol=RTOL_SEA_LEVEL,
+                atol=ATOL_SEA_LEVEL,
             )
-
-    def test_airmass_altitude_correction(self, test_times: List[datetime]) -> None:
-        """Test that airmass correctly accounts for observer altitude."""
-
-        lat, lon = 19.8207, -155.4681  # Mauna Kea coordinates
-
-        # Test at two different heights
-        height_sea_level = 0.0
-        height_mauna_kea = 4200.0  # 4.2 km
-
-        # Create ephemerides for both heights
-        ephem_sea = rust_ephem.GroundEphemeris(
-            lat, lon, height_sea_level, test_times[0], test_times[-1], step_size=3600
-        )
-
-        ephem_high = rust_ephem.GroundEphemeris(
-            lat, lon, height_mauna_kea, test_times[0], test_times[-1], step_size=3600
-        )
-
-        # Target coordinates
-        ra_deg, dec_deg = 83.63, 22.01  # Pleiades
-
-        # Calculate airmass at both altitudes
-        airmass_sea = ephem_sea.calculate_airmass(ra_deg, dec_deg)
-        airmass_high = ephem_high.calculate_airmass(ra_deg, dec_deg)
-
-        # At high altitude, there's less atmosphere above
-        # So airmass should be lower (by exponential scale height factor)
-        scale_height_km = 8.5
-        expected_factor = np.exp(-height_mauna_kea / 1000.0 / scale_height_km)
-
-        # For finite airmass values, high altitude should be lower
-        for i in range(len(airmass_sea)):
-            if np.isfinite(airmass_sea[i]) and airmass_sea[i] < 10:
-                # Airmass at high altitude should be roughly reduced by scale height factor
-                ratio = airmass_high[i] / airmass_sea[i]
-                np.testing.assert_allclose(
-                    ratio,
-                    expected_factor,
-                    rtol=0.1,  # 10% tolerance
-                    err_msg=f"At time {i}, airmass ratio {ratio:.3f} != expected {expected_factor:.3f}",
-                )
 
     def test_airmass_vs_altitude_comparison(self, test_times: List[datetime]) -> None:
         """Test airmass calculation for various altitudes."""
@@ -174,8 +137,8 @@ class TestAirmassAstropyComparison:
                 np.testing.assert_allclose(
                     np.array(airmass_rust)[valid_idx],
                     airmass_astropy[valid_idx],
-                    rtol=0.1,  # 10% relative tolerance
-                    atol=0.2,  # 0.2 absolute tolerance
+                    rtol=RTOL_ALTITUDE,
+                    atol=ATOL_ALTITUDE,
                     err_msg=f"Mismatch for target RA={ra_deg}, Dec={dec_deg}",
                 )
 
@@ -226,95 +189,4 @@ class TestAirmassAstropyComparison:
             else:
                 assert np.isfinite(airmass_rust[i]), (
                     f"Airmass should be finite when alt={alt_deg:.1f}° (above horizon)"
-                )
-
-    def test_airmass_height_correction_formula(self) -> None:
-        """Directly test the exponential height correction formula."""
-
-        # Test at a specific time
-        test_time = datetime(2025, 6, 15, 12, 0, 0)
-
-        lat, lon = 28.7603, -17.8796  # La Palma, Canary Islands
-        heights = [
-            0.0,
-            1000.0,
-            2400.0,
-        ]  # Sea level, 1km, 2.4km (Roque de los Muchachos)
-
-        ra_deg, dec_deg = 83.63, 22.01  # Pleiades
-
-        scale_height_km = 8.5
-
-        # Calculate airmass at different heights
-        airmass_values = []
-        for height in heights:
-            ephem = rust_ephem.GroundEphemeris(
-                lat, lon, height, test_time, test_time, step_size=60
-            )
-            am = ephem.calculate_airmass(ra_deg, dec_deg)
-            airmass_values.append(am[0])
-
-        # Verify exponential relationship
-        # airmass(h) = airmass(0) * exp(-h/H)
-        if np.isfinite(airmass_values[0]) and airmass_values[0] < 10:
-            for i in range(1, len(heights)):
-                expected = airmass_values[0] * np.exp(
-                    -heights[i] / 1000.0 / scale_height_km
-                )
-                np.testing.assert_allclose(
-                    airmass_values[i],
-                    expected,
-                    rtol=0.02,  # 2% tolerance
-                    err_msg=f"Height correction not following exponential formula at {heights[i]}m",
-                )
-
-    def test_airmass_constraint_with_height(self, test_times: List[datetime]) -> None:
-        """Test AirmassConstraint properly uses height correction."""
-
-        lat, lon = 19.8207, -155.4681  # Mauna Kea
-        height_sea_level = 0.0
-        height_high = 4200.0  # 4.2 km
-
-        # Create ephemerides at different heights
-        ephem_sea = rust_ephem.GroundEphemeris(
-            lat, lon, height_sea_level, test_times[0], test_times[-1], step_size=3600
-        )
-
-        ephem_high = rust_ephem.GroundEphemeris(
-            lat, lon, height_high, test_times[0], test_times[-1], step_size=3600
-        )
-
-        # Target coordinates
-        ra_deg, dec_deg = 83.63, 22.01  # Pleiades
-
-        # Create airmass constraint
-        constraint = AirmassConstraint(max_airmass=2.0)
-
-        # Evaluate constraint at both heights
-        result_sea = constraint.evaluate(ephem_sea, ra_deg, dec_deg)
-        result_high = constraint.evaluate(ephem_high, ra_deg, dec_deg)
-
-        # Get direct airmass calculations
-        airmass_sea = ephem_sea.calculate_airmass(ra_deg, dec_deg)
-        airmass_high = ephem_high.calculate_airmass(ra_deg, dec_deg)
-
-        # At high altitude, airmass should be lower, so there should be
-        # fewer violations (less time above the max_airmass threshold)
-        # This verifies that the height correction is being applied
-        assert len(result_high.violations) <= len(result_sea.violations), (
-            "High altitude should have fewer airmass violations than sea level"
-        )
-
-        # Verify the actual values are corrected
-        scale_height_km = 8.5
-        expected_factor = np.exp(-height_high / 1000.0 / scale_height_km)
-
-        for i in range(len(airmass_sea)):
-            if np.isfinite(airmass_sea[i]) and airmass_sea[i] < 10:
-                ratio = airmass_high[i] / airmass_sea[i]
-                np.testing.assert_allclose(
-                    ratio,
-                    expected_factor,
-                    rtol=0.1,
-                    err_msg=f"Height correction not applied in constraint at time {i}",
                 )
