@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.3.0...v0.3.1) (2026-01-14)
+
+
+### Bug Fixes
+
+* add more of this goodness ([6e761e4](https://github.com/CosmicFrontierLabs/rust-ephem/commit/6e761e40bd123055f4151fdc2f1f3f85ad344ab4))
+
+
+### Performance Improvements
+
+* add cosine opt to other constraints ([#110](https://github.com/CosmicFrontierLabs/rust-ephem/issues/110)) ([6c40a45](https://github.com/CosmicFrontierLabs/rust-ephem/commit/6c40a457f3e1d2f0925a9631a1a898a485b1daac))
+* increase speed of airmass constraint calculation ([#111](https://github.com/CosmicFrontierLabs/rust-ephem/issues/111)) ([382edc1](https://github.com/CosmicFrontierLabs/rust-ephem/commit/382edc18307d5ec733a0afb273c489830b168da6))
+* O(1) index lookup in in_constraint() ([d891d0b](https://github.com/CosmicFrontierLabs/rust-ephem/commit/d891d0b79f04ed180d62ebf106eeb02254e4e637))
+* O(1) index lookup in in_constraint() instead of O(n) linear search ([820fc20](https://github.com/CosmicFrontierLabs/rust-ephem/commit/820fc20a56517a6134d901bc52b90880b0c0d2a2))
+* remove redundant array clones in constraint macros ([#107](https://github.com/CosmicFrontierLabs/rust-ephem/issues/107)) ([bc18402](https://github.com/CosmicFrontierLabs/rust-ephem/commit/bc184020ae6ce1a0f648c315d3dc9b1ff26ddf67))
+* use cosine threshold instead of acos in batch constraint evaluation ([365d206](https://github.com/CosmicFrontierLabs/rust-ephem/commit/365d20684e385724d1e5fb830af6fa5defc94668))
+* use cosine threshold instead of acos in batch constraint evaluation ([b158a2c](https://github.com/CosmicFrontierLabs/rust-ephem/commit/b158a2c5eefac94463ab46ef1387f96ddd25477b))
+
 ## [0.3.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.2.1...v0.3.0) (2026-01-02)
 
 
