@@ -1,5 +1,3 @@
-from datetime import datetime, timezone
-
 import numpy as np
 import pytest
 from astropy.coordinates import SkyCoord  # type:ignore[import-untyped]
@@ -174,7 +172,7 @@ class TestMoonConstraints:
             target_ra=(moon.ra.deg + offset) % 360,
             target_dec=moon.dec.deg,
         )
-        if offset < 21:
+        if offset <= 30:
             assert not_vis is True, "Moon should be Moon Constrained"
         else:
             assert not_vis is False, "Moon should not be Moon Constrained"
@@ -196,7 +194,7 @@ class TestMoonConstraints:
             SkyCoord(moon.ra.deg, moon.dec.deg, unit="deg")
             .separation(SkyCoord(moon.ra.deg + offset, moon.dec.deg, unit="deg"))
             .deg
-            < 21
+            <= 30
         )
         assert in_moon_cons == not_vis
 
@@ -218,7 +216,7 @@ class TestMoonConstraints:
             .separation(SkyCoord(moon.ra.deg + offset, moon.dec.deg, unit="deg"))
             .deg
         )
-        in_moon_cons = moon_angle < 21
+        in_moon_cons = moon_angle <= 30
         assert in_moon_cons == not_vis, f"Moon is at {moon_angle:.1f} degrees"
 
 
@@ -241,7 +239,7 @@ class TestEarthLimbConstraints:
             .separation(SkyCoord(earth.ra.deg + offset, earth.dec.deg, unit="deg"))
             .deg
         )
-        in_earth_cons = earth_angle < tle_ephem.earth_radius_deg[0] + 21
+        in_earth_cons = earth_angle < tle_ephem.earth_radius_deg[0] + 10
         assert in_earth_cons == not_vis, f"Earth is at {earth_angle:.1f} degrees"
 
     @pytest.mark.parametrize(
@@ -262,7 +260,7 @@ class TestEarthLimbConstraints:
             .separation(SkyCoord(earth.ra.deg + offset, earth.dec.deg, unit="deg"))
             .deg
         )
-        in_earth_cons = earth_angle < tle_ephem.earth_radius_deg[0] + 21
+        in_earth_cons = earth_angle < tle_ephem.earth_radius_deg[0] + 10
         assert in_earth_cons == not_vis, f"Earth is at {earth_angle:.1f} degrees"
 
 
