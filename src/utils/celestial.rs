@@ -502,7 +502,7 @@ pub fn radec_to_altaz(
     result
 }
 
-/// Calculate airmass using Kasten (1966) empirical formula (fast approximation)
+/// Calculate airmass using Kasten empirical formula (fast approximation)
 ///
 /// The Kasten formula is a simple empirical fit to airmass vs zenith angle:
 /// airmass = 1 / (cos(z) + 0.50572 * (96.07995 - z)^(-1.6364))
@@ -517,7 +517,7 @@ pub fn radec_to_altaz(
 /// Airmass value (1.0 at zenith, increases toward horizon)
 ///
 /// # Reference
-/// Kasten, F., & Czeplak, G. (1980). Solar energy, 24(5), 497-501.
+/// Kasten, F., & Young, A. T. (1989)
 pub fn calculate_airmass_kasten(altitude_deg: f64) -> f64 {
     if altitude_deg <= 0.0 {
         return f64::INFINITY; // Target below horizon
