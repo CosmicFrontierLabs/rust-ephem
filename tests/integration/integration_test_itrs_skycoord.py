@@ -16,12 +16,15 @@ Build and install the Rust module first:
 """
 
 from datetime import datetime, timezone
+from typing import Any
 
 import numpy as np
 import pytest
 
+from rust_ephem._rust_ephem import TLEEphemeris
+
 try:
-    import rust_ephem  # type: ignore[import-untyped]
+    import rust_ephem
 
     RUST_EPHEM_AVAILABLE = True
 except ImportError:
@@ -48,12 +51,12 @@ TOLERANCE = 1e-9
 
 
 @pytest.fixture
-def ephem():
+def ephem() -> TLEEphemeris:
     return rust_ephem.TLEEphemeris(TLE1, TLE2, BEGIN, END, STEP_SIZE)
 
 
 @pytest.fixture()
-def ephem_single_point():
+def ephem_single_point() -> TLEEphemeris:
     return rust_ephem.TLEEphemeris(TLE1, TLE2, BEGIN, BEGIN, 1)
 
 
@@ -61,7 +64,7 @@ def ephem_single_point():
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-def test_itrs_to_skycoord_is_skycoord(ephem):
+def test_itrs_to_skycoord_is_skycoord(ephem: Any) -> None:
     """Test that itrs property returns valid SkyCoord with ITRS frame."""
 
     # Get ITRS SkyCoord
@@ -73,20 +76,20 @@ def test_itrs_to_skycoord_is_skycoord(ephem):
     )
 
 
-def test_itrs_to_skycoord_check_len(ephem):
+def test_itrs_to_skycoord_check_len(ephem: Any) -> None:
     """Test that itrs property returns valid SkyCoord with ITRS frame."""
 
     # Get ITRS SkyCoord
     itrs_skycoord = ephem.itrs
 
     # Check length
-    expected_len = len(ephem.timestamp)
+    expected_len: int = len(ephem.timestamp)
     assert len(itrs_skycoord) == expected_len, (
         f"Expected {expected_len} coords, got {len(itrs_skycoord)}"
     )
 
 
-def test_itrs_to_skycoord_check_frame(ephem):
+def test_itrs_to_skycoord_check_frame(ephem: Any) -> None:
     """Test that itrs property returns valid SkyCoord with ITRS frame."""
 
     # Get ITRS SkyCoord
@@ -98,7 +101,7 @@ def test_itrs_to_skycoord_check_frame(ephem):
     )
 
 
-def test_itrs_to_skycoord_has_velocity(ephem):
+def test_itrs_to_skycoord_has_velocity(ephem: Any) -> None:
     """Test that itrs property returns valid SkyCoord with ITRS frame."""
 
     # Get ITRS SkyCoord
@@ -108,7 +111,7 @@ def test_itrs_to_skycoord_has_velocity(ephem):
     assert itrs_skycoord.velocity is not None, "SkyCoord missing velocity"
 
 
-def test_itrs_to_skycoord_check_positions(ephem):
+def test_itrs_to_skycoord_check_positions(ephem: Any) -> None:
     """Test that itrs property returns valid SkyCoord with ITRS frame."""
 
     # Get ITRS SkyCoord
@@ -126,7 +129,7 @@ def test_itrs_to_skycoord_check_positions(ephem):
 @pytest.mark.parametrize(
     "index", range(31)
 )  # 31 time points (0-30 minutes, 1 min step)
-def test_itrs_to_skycoord_check_velocities(ephem, index):
+def test_itrs_to_skycoord_check_velocities(ephem: Any, index: int) -> None:
     """Test that itrs property returns valid SkyCoord with ITRS frame."""
 
     # Get ITRS SkyCoord
@@ -144,7 +147,7 @@ def test_itrs_to_skycoord_check_velocities(ephem, index):
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-def test_itrs_frame_conversion(ephem_single_point):
+def test_itrs_frame_conversion(ephem_single_point: Any) -> None:
     """Test that ITRS SkyCoord can be converted to other frames."""
     # Get ITRS SkyCoord
     itrs_skycoord = ephem_single_point.itrs

@@ -12,7 +12,7 @@ from rust_ephem import (
 from rust_ephem.constraints import EarthLimbConstraint
 
 
-def test_sun_proximity_batch():
+def test_sun_proximity_batch() -> None:
     """Test batch constraint evaluation with multiple targets."""
     # Create ephemeris for a ground station
     begin = datetime.datetime(2024, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
@@ -58,7 +58,7 @@ def test_sun_proximity_batch():
         )
 
 
-def test_batch_with_times_filter():
+def test_batch_with_times_filter() -> None:
     """Test batch evaluation with time filtering."""
     begin = datetime.datetime(2024, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
     end = datetime.datetime(2024, 1, 1, 5, 0, 0, tzinfo=datetime.timezone.utc)
@@ -89,7 +89,7 @@ def test_batch_with_times_filter():
     assert result.shape == (3, 2), f"Expected shape (3, 2), got {result.shape}"
 
 
-def test_batch_with_indices_filter():
+def test_batch_with_indices_filter() -> None:
     """Test batch evaluation with index filtering."""
     begin = datetime.datetime(2024, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
     end = datetime.datetime(2024, 1, 1, 5, 0, 0, tzinfo=datetime.timezone.utc)
@@ -119,7 +119,7 @@ def test_batch_with_indices_filter():
     assert result.shape == (2, 3), f"Expected shape (2, 3), got {result.shape}"
 
 
-def test_batch_mismatched_array_lengths():
+def test_batch_mismatched_array_lengths() -> None:
     """Test that mismatched RA/Dec array lengths raise an error."""
     begin = datetime.datetime(2024, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
     end = datetime.datetime(2024, 1, 1, 2, 0, 0, tzinfo=datetime.timezone.utc)
@@ -144,7 +144,7 @@ def test_batch_mismatched_array_lengths():
         constraint.in_constraint_batch(ephem, target_ras, target_decs)
 
 
-def test_batch_empty_arrays():
+def test_batch_empty_arrays() -> None:
     """Test batch evaluation with empty arrays."""
     begin = datetime.datetime(2024, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
     end = datetime.datetime(2024, 1, 1, 2, 0, 0, tzinfo=datetime.timezone.utc)
@@ -166,7 +166,7 @@ def test_batch_empty_arrays():
     assert result.shape == (0, 3), f"Expected shape (0, 3), got {result.shape}"
 
 
-def test_batch_single_target():
+def test_batch_single_target() -> None:
     """Test batch evaluation with single target matches regular evaluation."""
     begin = datetime.datetime(2024, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
     end = datetime.datetime(2024, 1, 1, 2, 0, 0, tzinfo=datetime.timezone.utc)
@@ -195,7 +195,7 @@ def test_batch_single_target():
     np.testing.assert_array_equal(batch_result[0, :], single_result)
 
 
-def test_earth_limb_batch():
+def test_earth_limb_batch() -> None:
     """Test Earth limb constraint batch evaluation with optimized implementation."""
     # Create ephemeris for a ground station
     begin = datetime.datetime(2024, 6, 15, 12, 0, 0, tzinfo=datetime.timezone.utc)
@@ -243,7 +243,7 @@ def test_earth_limb_batch():
         )
 
 
-def test_earth_limb_batch_with_max_angle():
+def test_earth_limb_batch_with_max_angle() -> None:
     """Test Earth limb constraint batch evaluation with max_angle parameter."""
     begin = datetime.datetime(2024, 6, 15, 12, 0, 0, tzinfo=datetime.timezone.utc)
     end = datetime.datetime(2024, 6, 15, 14, 0, 0, tzinfo=datetime.timezone.utc)
@@ -279,7 +279,7 @@ def test_earth_limb_batch_with_max_angle():
         )
 
 
-def test_earth_limb_batch_large_scale():
+def test_earth_limb_batch_large_scale() -> None:
     """Test Earth limb batch evaluation with many targets for performance validation."""
     begin = datetime.datetime(2024, 6, 15, 12, 0, 0, tzinfo=datetime.timezone.utc)
     end = datetime.datetime(2024, 6, 15, 13, 0, 0, tzinfo=datetime.timezone.utc)

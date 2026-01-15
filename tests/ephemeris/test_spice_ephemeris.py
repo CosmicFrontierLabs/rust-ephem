@@ -29,7 +29,7 @@ TEST_SPK_PATH = "test_data/de440s.bsp"
 SKIP_TEST = not os.path.exists(TEST_SPK_PATH)
 
 try:
-    import rust_ephem  # type: ignore[import-untyped]
+    import rust_ephem
 
     RUST_EPHEM_AVAILABLE = True
 except ImportError:
@@ -46,7 +46,7 @@ class TestSPICEEphemeris:
         ),
     ]
 
-    def test_timestamps_count(self):
+    def test_timestamps_count(self) -> None:
         """Test that SPICEEphemeris generates the expected number of timestamps"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -67,7 +67,7 @@ class TestSPICEEphemeris:
             f"Expected {expected_count} timestamps, got {len(timestamps)}"
         )
 
-    def test_gcrs_available(self):
+    def test_gcrs_available(self) -> None:
         """Test that GCRS data is available"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -85,7 +85,7 @@ class TestSPICEEphemeris:
         gcrs = ephem.gcrs_pv
         assert gcrs is not None, "GCRS data should be available"
 
-    def test_position_shape_rows(self):
+    def test_position_shape_rows(self) -> None:
         """Test position shape rows"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -106,7 +106,7 @@ class TestSPICEEphemeris:
             f"Position should have {expected_count} rows"
         )
 
-    def test_position_shape_columns(self):
+    def test_position_shape_columns(self) -> None:
         """Test position shape columns"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -124,7 +124,7 @@ class TestSPICEEphemeris:
         position = ephem.gcrs_pv.position
         assert position.shape[1] == 3, "Position should have 3 columns (x, y, z)"
 
-    def test_velocity_shape_rows(self):
+    def test_velocity_shape_rows(self) -> None:
         """Test velocity shape rows"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -145,7 +145,7 @@ class TestSPICEEphemeris:
             f"Velocity should have {expected_count} rows"
         )
 
-    def test_velocity_shape_columns(self):
+    def test_velocity_shape_columns(self) -> None:
         """Test velocity shape columns"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -163,7 +163,7 @@ class TestSPICEEphemeris:
         velocity = ephem.gcrs_pv.velocity
         assert velocity.shape[1] == 3, "Velocity should have 3 columns (vx, vy, vz)"
 
-    def test_position_magnitude_min(self):
+    def test_position_magnitude_min(self) -> None:
         """Test position magnitude minimum"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -186,7 +186,7 @@ class TestSPICEEphemeris:
             "Moon distance should be > 300,000 km"
         )
 
-    def test_position_magnitude_max(self):
+    def test_position_magnitude_max(self) -> None:
         """Test position magnitude maximum"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -209,7 +209,7 @@ class TestSPICEEphemeris:
             "Moon distance should be < 500,000 km"
         )
 
-    def test_sun_available(self):
+    def test_sun_available(self) -> None:
         """Test that Sun data is available"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -227,7 +227,7 @@ class TestSPICEEphemeris:
         sun = ephem.sun_pv
         assert sun is not None, "Sun data should be available"
 
-    def test_moon_available(self):
+    def test_moon_available(self) -> None:
         """Test that Moon data is available"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -245,7 +245,7 @@ class TestSPICEEphemeris:
         moon = ephem.moon_pv
         assert moon is not None, "Moon data should be available"
 
-    def test_obsgeoloc_available(self):
+    def test_obsgeoloc_available(self) -> None:
         """Test that obsgeoloc is available"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -263,7 +263,7 @@ class TestSPICEEphemeris:
         obsgeoloc = ephem.obsgeoloc
         assert obsgeoloc is not None, "obsgeoloc should be available"
 
-    def test_obsgeovel_available(self):
+    def test_obsgeovel_available(self) -> None:
         """Test that obsgeovel is available"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -281,7 +281,7 @@ class TestSPICEEphemeris:
         obsgeovel = ephem.obsgeovel
         assert obsgeovel is not None, "obsgeovel should be available"
 
-    def test_has_gcrs(self):
+    def test_has_gcrs(self) -> None:
         """Test that SPICEEphemeris has gcrs attribute"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 0, 10, 0, tzinfo=timezone.utc)
@@ -299,7 +299,7 @@ class TestSPICEEphemeris:
             "SPICEEphemeris should have attribute: gcrs_pv"
         )
 
-    def test_has_timestamp(self):
+    def test_has_timestamp(self) -> None:
         """Test that SPICEEphemeris has timestamp attribute"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 0, 10, 0, tzinfo=timezone.utc)
@@ -317,7 +317,7 @@ class TestSPICEEphemeris:
             "SPICEEphemeris should have attribute: timestamp"
         )
 
-    def test_has_sun(self):
+    def test_has_sun(self) -> None:
         """Test that SPICEEphemeris has sun attribute"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 0, 10, 0, tzinfo=timezone.utc)
@@ -335,7 +335,7 @@ class TestSPICEEphemeris:
             "SPICEEphemeris should have attribute: sun_pv"
         )
 
-    def test_has_moon(self):
+    def test_has_moon(self) -> None:
         """Test that SPICEEphemeris has moon attribute"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 0, 10, 0, tzinfo=timezone.utc)
@@ -353,7 +353,7 @@ class TestSPICEEphemeris:
             "SPICEEphemeris should have attribute: moon_pv"
         )
 
-    def test_has_obsgeoloc(self):
+    def test_has_obsgeoloc(self) -> None:
         """Test that SPICEEphemeris has obsgeoloc attribute"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 0, 10, 0, tzinfo=timezone.utc)
@@ -371,7 +371,7 @@ class TestSPICEEphemeris:
             "SPICEEphemeris should have attribute: obsgeoloc"
         )
 
-    def test_has_obsgeovel(self):
+    def test_has_obsgeovel(self) -> None:
         """Test that SPICEEphemeris has obsgeovel attribute"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 0, 10, 0, tzinfo=timezone.utc)
@@ -389,7 +389,7 @@ class TestSPICEEphemeris:
             "SPICEEphemeris should have attribute: obsgeovel"
         )
 
-    def test_has_gcrs_skycoord(self):
+    def test_has_gcrs_skycoord(self) -> None:
         """Test that SPICEEphemeris has gcrs attribute"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 0, 10, 0, tzinfo=timezone.utc)
@@ -407,7 +407,7 @@ class TestSPICEEphemeris:
             "SPICEEphemeris should have attribute: gcrs"
         )
 
-    def test_has_earth_skycoord(self):
+    def test_has_earth_skycoord(self) -> None:
         """Test that SPICEEphemeris has earth attribute"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 0, 10, 0, tzinfo=timezone.utc)
@@ -425,7 +425,7 @@ class TestSPICEEphemeris:
             "SPICEEphemeris should have attribute: earth"
         )
 
-    def test_has_sun_skycoord(self):
+    def test_has_sun_skycoord(self) -> None:
         """Test that SPICEEphemeris has sun attribute"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 0, 10, 0, tzinfo=timezone.utc)
@@ -441,7 +441,7 @@ class TestSPICEEphemeris:
 
         assert hasattr(spice_ephem, "sun"), "SPICEEphemeris should have attribute: sun"
 
-    def test_has_moon_skycoord(self):
+    def test_has_moon_skycoord(self) -> None:
         """Test that SPICEEphemeris has moon attribute"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 0, 10, 0, tzinfo=timezone.utc)
@@ -459,7 +459,7 @@ class TestSPICEEphemeris:
             "SPICEEphemeris should have attribute: moon"
         )
 
-    def test_has_itrs(self):
+    def test_has_itrs(self) -> None:
         """Test that SPICEEphemeris has itrs attribute"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 0, 10, 0, tzinfo=timezone.utc)
@@ -477,7 +477,7 @@ class TestSPICEEphemeris:
             "SPICEEphemeris should have attribute: itrs_pv"
         )
 
-    def test_has_itrs_skycoord(self):
+    def test_has_itrs_skycoord(self) -> None:
         """Test that SPICEEphemeris has itrs SkyCoord attribute"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 0, 10, 0, tzinfo=timezone.utc)
@@ -495,7 +495,7 @@ class TestSPICEEphemeris:
             "SPICEEphemeris should have attribute: itrs"
         )
 
-    def test_itrs_available(self):
+    def test_itrs_available(self) -> None:
         """Test that ITRS data is available"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -513,7 +513,7 @@ class TestSPICEEphemeris:
         itrs = ephem.itrs_pv
         assert itrs is not None, "ITRS data should be available"
 
-    def test_itrs_shape(self):
+    def test_itrs_shape(self) -> None:
         """Test ITRS position and velocity shapes"""
         begin = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         end = datetime(2025, 1, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -543,7 +543,7 @@ class TestSPICEEphemeris:
         )
 
 
-def main():  # pragma: no cover
+def main() -> int:  # pragma: no cover
     return pytest.main([__file__, "-v"])
 
 

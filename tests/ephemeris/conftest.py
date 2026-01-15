@@ -2,6 +2,7 @@
 
 import os
 from datetime import datetime, timezone
+from typing import Any
 
 import pytest
 
@@ -17,7 +18,7 @@ STEP_SIZE = 120  # 2 minutes
 
 
 @pytest.fixture
-def sample_oem_file(tmp_path):
+def sample_oem_file(tmp_path: Any) -> str:
     """Create a minimal OEM file for testing."""
     oem_path = tmp_path / "test_satellite.oem"
     oem_content = """CCSDS_OEM_VERS = 2.0
@@ -46,7 +47,7 @@ DATA_STOP
 
 
 @pytest.fixture
-def spk_path():
+def spk_path() -> str:
     path = "test_data/de440s.bsp"
     if not os.path.exists(path):
         pytest.skip(f"SPICE kernel not found at {path}")
@@ -54,7 +55,7 @@ def spk_path():
 
 
 @pytest.fixture
-def ground_ephemeris():
+def ground_ephemeris() -> GroundEphemeris:
     return GroundEphemeris(
         latitude=34.0,
         longitude=-118.0,
@@ -66,7 +67,7 @@ def ground_ephemeris():
 
 
 @pytest.fixture
-def tle_ephemeris():
+def tle_ephemeris() -> TLEEphemeris:
     return TLEEphemeris(
         tle1=VALID_TLE1,
         tle2=VALID_TLE2,

@@ -1,7 +1,7 @@
 """Pytest configuration for utils tests."""
 
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Tuple
 
 import pytest
 
@@ -9,7 +9,7 @@ import rust_ephem
 
 
 @pytest.fixture(scope="module")
-def ensure_planetary_data():
+def ensure_planetary_data() -> None:
     """Ensure planetary ephemeris is loaded once for all tests"""
     import os
 
@@ -30,7 +30,7 @@ def ensure_planetary_data():
 
 
 @pytest.fixture
-def tle_ephemeris(ensure_planetary_data):
+def tle_ephemeris(ensure_planetary_data: None) -> rust_ephem.TLEEphemeris:
     """Create a TLEEphemeris instance for testing"""
     tle1 = "1 25544U 98067A   25315.25818480  .00012468  00000-0  22984-3 0  9991"
     tle2 = "2 25544  51.6338 298.3179 0004133  57.8977 302.2413 15.49525392537972"
@@ -40,7 +40,7 @@ def tle_ephemeris(ensure_planetary_data):
 
 
 @pytest.fixture
-def ground_ephemeris(ensure_planetary_data):
+def ground_ephemeris(ensure_planetary_data: None) -> rust_ephem.GroundEphemeris:
     """Create a GroundEphemeris instance for testing (Mauna Kea Observatory)"""
     latitude = 19.8207  # degrees
     longitude = -155.4681  # degrees
@@ -53,7 +53,7 @@ def ground_ephemeris(ensure_planetary_data):
 
 
 @pytest.fixture
-def spice_ephemeris(ensure_planetary_data):
+def spice_ephemeris(ensure_planetary_data: None) -> rust_ephem.SPICEEphemeris:
     """Create a SPICEEphemeris instance for testing"""
     import os
 
@@ -82,7 +82,7 @@ def test_times() -> List[datetime]:
 
 
 @pytest.fixture
-def tle_lines():
+def tle_lines() -> Tuple[str, str]:
     """Provide TLE data for testing"""
     return (
         "1 28485U 04047A   25287.56748435  .00035474  00000+0  70906-3 0  9995",
@@ -91,7 +91,7 @@ def tle_lines():
 
 
 @pytest.fixture(scope="module")
-def eph_small_range():
+def eph_small_range() -> rust_ephem.TLEEphemeris:
     from rust_ephem import TLEEphemeris
 
     TLE1 = "1 25544U 98067A   08264.51782528 -.00002182  00000-0 -11606-4 0  2927"
@@ -102,7 +102,7 @@ def eph_small_range():
 
 
 @pytest.fixture(scope="module")
-def eph_large_range():
+def eph_large_range() -> rust_ephem.TLEEphemeris:
     from rust_ephem import TLEEphemeris
 
     TLE1 = "1 25544U 98067A   08264.51782528 -.00002182  00000-0 -11606-4 0  2927"

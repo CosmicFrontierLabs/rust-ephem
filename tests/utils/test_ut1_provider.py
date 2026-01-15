@@ -5,8 +5,10 @@ Tests UT1 provider availability, functionality, and accuracy.
 """
 
 from datetime import datetime, timedelta, timezone
+from typing import List, Tuple
 
 import pytest
+from astropy.time.core import Time  # type: ignore[import-untyped]
 
 try:
     import rust_ephem
@@ -23,7 +25,9 @@ except ImportError:
     ASTROPY_AVAILABLE = False
 
 
-pytestmark = pytest.mark.skipif(not RUST_AVAILABLE, reason="rust_ephem not available")
+pytestmark: pytest.MarkDecorator = pytest.mark.skipif(
+    not RUST_AVAILABLE, reason="rust_ephem not available"
+)
 
 
 class TestUT1Provider:
@@ -32,25 +36,25 @@ class TestUT1Provider:
     def test_provider_initialization(self) -> None:
         """Test that UT1 provider can be initialized."""
         # Check if provider is available (may be initialized already)
-        is_available = rust_ephem.is_ut1_available()
+        is_available: bool = rust_ephem.is_ut1_available()
 
         # Should return a boolean without raising
         assert isinstance(is_available, bool)
 
         # If not available, try to initialize
         if not is_available:
-            success = rust_ephem.init_ut1_provider()
+            success: bool = rust_ephem.init_ut1_provider()
             # Should return a boolean
             assert isinstance(success, bool)
 
     def test_is_ut1_available(self) -> None:
         """Test is_ut1_available() function."""
-        result = rust_ephem.is_ut1_available()
+        result: bool = rust_ephem.is_ut1_available()
         assert isinstance(result, bool)
 
     def test_init_ut1_provider(self) -> None:
         """Test init_ut1_provider() function."""
-        result = rust_ephem.init_ut1_provider()
+        result: bool = rust_ephem.init_ut1_provider()
         assert isinstance(result, bool)
 
 
@@ -60,20 +64,20 @@ class TestUT1Offsets:
     def test_ut1_offset_returns_float(self) -> None:
         """Test that get_ut1_utc_offset returns a float."""
         dt = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-        offset = rust_ephem.get_ut1_utc_offset(dt)
+        offset: float = rust_ephem.get_ut1_utc_offset(dt)
         assert isinstance(offset, float)
 
     def test_ut1_offset_reasonable_range(self) -> None:
         """Test that UT1-UTC offsets are in reasonable range."""
         # Test several dates with expected IERS coverage
-        test_dates = [
+        test_dates: List[datetime] = [
             datetime(2024, 6, 1, 0, 0, 0, tzinfo=timezone.utc),
             datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
             datetime.now(timezone.utc),
         ]
 
         for dt in test_dates:
-            offset = rust_ephem.get_ut1_utc_offset(dt)
+            offset: float = rust_ephem.get_ut1_utc_offset(dt)
             # UT1-UTC should be between -0.9 and +0.9 seconds (IERS constraint)
             # or 0.0 if data unavailable
             assert -1.0 <= offset <= 1.0, f"Offset {offset} out of range for {dt}"
@@ -83,8 +87,8 @@ class TestUT1Offsets:
         dt1 = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         dt2 = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 
-        offset1 = rust_ephem.get_ut1_utc_offset(dt1)
-        offset2 = rust_ephem.get_ut1_utc_offset(dt2)
+        offset1: float = rust_ephem.get_ut1_utc_offset(dt1)
+        offset2: float = rust_ephem.get_ut1_utc_offset(dt2)
 
         # Both should be valid floats
         assert isinstance(offset1, float)
@@ -101,7 +105,7 @@ class TestUT1Offsets:
     def test_ut1_offset_various_dates(self, date_tuple: tuple[str, datetime]) -> None:
         """Test UT1-UTC offsets for various dates."""
         date_str, dt = date_tuple
-        offset = rust_ephem.get_ut1_utc_offset(dt)
+        offset: float = rust_ephem.get_ut1_utc_offset(dt)
 
         # Should return a float in reasonable range
         assert isinstance(offset, float)
@@ -113,9 +117,9 @@ class TestUT1DataCoverage:
 
     def test_data_coverage_ranges(self) -> None:
         """Test UT1 data coverage for various time ranges."""
-        now = datetime.now(timezone.utc)
+        now: datetime = datetime.now(timezone.utc)
 
-        test_periods = [
+        test_periods: List[Tuple[str, datetime]] = [
             ("1 year ago", now - timedelta(days=365)),
             ("6 months ago", now - timedelta(days=180)),
             ("3 months ago", now - timedelta(days=90)),
@@ -127,7 +131,7 @@ class TestUT1DataCoverage:
 
         results = []
         for label, dt in test_periods:
-            offset = rust_ephem.get_ut1_utc_offset(dt)
+            offset: float = rust_ephem.get_ut1_utc_offset(dt)
             results.append((label, offset))
 
             # All should be valid floats
@@ -142,7 +146,7 @@ class TestUT1DataCoverage:
                 if "ago" in label or label == "today"
             ]
             # At least one recent date should have data (non-zero)
-            has_data = any(abs(offset) > 0.001 for offset in recent_offsets)
+            has_data: bool = any(abs(offset) > 0.001 for offset in recent_offsets)
             # This is not a strict requirement (could be offline), but informative
             if not has_data:
                 pytest.skip(
@@ -156,10 +160,10 @@ class TestUT1Comparison:
 
     def test_compare_with_astropy(self) -> None:
         """Compare UT1-UTC offsets between rust_ephem and astropy."""
-        now = datetime.now(timezone.utc)
+        now: datetime = datetime.now(timezone.utc)
 
         # Test dates with expected IERS coverage
-        test_dates = [
+        test_dates: List[datetime] = [
             now - timedelta(days=180),  # 6 months ago
             now - timedelta(days=90),  # 3 months ago
             now - timedelta(days=30),  # 1 month ago
@@ -168,10 +172,10 @@ class TestUT1Comparison:
 
         for dt in test_dates:
             # Get rust_ephem UT1-UTC
-            rust_ut1_utc = rust_ephem.get_ut1_utc_offset(dt)
+            rust_ut1_utc: float = rust_ephem.get_ut1_utc_offset(dt)
 
             # Get astropy UT1-UTC
-            t = Time(dt, scale="utc")
+            t: Time = Time(dt, scale="utc")
             astropy_ut1_utc = (t.ut1.jd - t.utc.jd) * 86400.0  # Convert days to seconds
 
             # Calculate difference in milliseconds
@@ -210,8 +214,8 @@ class TestUT1WithEphemeris:
 
     def test_ut1_impact_on_position(self) -> None:
         """Test the impact of UT1-UTC on position calculations."""
-        test_date = datetime.now(timezone.utc)
-        ut1_utc = rust_ephem.get_ut1_utc_offset(test_date)
+        test_date: datetime = datetime.now(timezone.utc)
+        ut1_utc: float = rust_ephem.get_ut1_utc_offset(test_date)
 
         # If UT1 data is available, verify it's being used
         if rust_ephem.is_ut1_available() and abs(ut1_utc) > 0.001:
@@ -220,7 +224,7 @@ class TestUT1WithEphemeris:
 
             # Calculate expected positional impact
             earth_rotation_speed = 465.1  # m/s at equator
-            position_error = abs(ut1_utc) * earth_rotation_speed
+            position_error: float = abs(ut1_utc) * earth_rotation_speed
 
             # Position error should be reasonable (less than 500m for ±0.9s)
             assert position_error < 500.0
@@ -230,8 +234,8 @@ class TestUT1WithEphemeris:
         tle1 = "1 28485U 04047A   25287.56748435  .00035474  00000+0  70906-3 0  9995"
         tle2 = "2 28485  20.5535 247.0048 0005179 187.1586 172.8782 15.44937919148530"
 
-        test_date = datetime.now(timezone.utc)
-        end_date = test_date + timedelta(minutes=5)
+        test_date: datetime = datetime.now(timezone.utc)
+        end_date: datetime = test_date + timedelta(minutes=5)
 
         ephem = rust_ephem.TLEEphemeris(
             tle1=tle1, tle2=tle2, begin=test_date, end=end_date, step_size=60
@@ -249,8 +253,8 @@ class TestUT1WithEphemeris:
         # Calculate magnitudes
         import math
 
-        pos_mag = math.sqrt(pos0[0] ** 2 + pos0[1] ** 2 + pos0[2] ** 2)
-        vel_mag = math.sqrt(vel0[0] ** 2 + vel0[1] ** 2 + vel0[2] ** 2)
+        pos_mag: float = math.sqrt(pos0[0] ** 2 + pos0[1] ** 2 + pos0[2] ** 2)
+        vel_mag: float = math.sqrt(vel0[0] ** 2 + vel0[1] ** 2 + vel0[2] ** 2)
 
         # Position should be in LEO range (6500-8000 km)
         assert 6500 < pos_mag < 8000, (

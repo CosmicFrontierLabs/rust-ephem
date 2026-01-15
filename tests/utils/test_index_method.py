@@ -3,6 +3,7 @@ Tests for the index() method on all ephemeris types
 """
 
 from datetime import datetime
+from typing import Any
 
 import numpy as np
 import pytest
@@ -11,7 +12,7 @@ from rust_ephem import GroundEphemeris, SPICEEphemeris, TLEEphemeris
 
 
 @pytest.fixture
-def tle_ephemeris():
+def tle_ephemeris() -> TLEEphemeris:
     """Create a TLE ephemeris for testing"""
     tle1 = "1 25544U 98067A   25315.25818480  .00012468  00000-0  22984-3 0  9991"
     tle2 = "2 25544  51.6338 298.3179 0004133  57.8977 302.2413 15.49525392537972"
@@ -21,7 +22,7 @@ def tle_ephemeris():
 
 
 @pytest.fixture
-def ground_ephemeris():
+def ground_ephemeris() -> GroundEphemeris:
     """Create a ground ephemeris for testing"""
     begin = datetime(2024, 1, 1, 0, 0, 0)
     end = datetime(2024, 1, 1, 1, 0, 0)
@@ -32,20 +33,20 @@ def ground_ephemeris():
 class TestIndexMethod:
     """Test the index() method functionality"""
 
-    def test_index_returns_int(self, tle_ephemeris):
+    def test_index_returns_int(self, tle_ephemeris: Any) -> None:
         """index() should return an integer"""
         target_time = datetime(2024, 1, 1, 0, 30, 0)
         idx = tle_ephemeris.index(target_time)
         assert isinstance(idx, int)
 
-    def test_index_in_valid_range(self, tle_ephemeris):
+    def test_index_in_valid_range(self, tle_ephemeris: Any) -> None:
         """index() should return a value within the valid array range"""
         target_time = datetime(2024, 1, 1, 0, 30, 0)
         idx = tle_ephemeris.index(target_time)
         num_timestamps = len(tle_ephemeris.timestamp)
         assert 0 <= idx < num_timestamps
 
-    def test_index_finds_exact_match(self, tle_ephemeris):
+    def test_index_finds_exact_match(self, tle_ephemeris: Any) -> None:
         """index() should return correct index for exact timestamp match"""
         timestamps = tle_ephemeris.timestamp
         # Pick the 10th timestamp
@@ -53,47 +54,47 @@ class TestIndexMethod:
         idx = tle_ephemeris.index(target_time)
         assert idx == 10
 
-    def test_index_finds_closest_before(self, tle_ephemeris):
+    def test_index_finds_closest_before(self, tle_ephemeris: Any) -> None:
         """index() should find closest timestamp when target is between points"""
         # Time that's 10 seconds after the first timestamp (closer to first than second)
         target_time = datetime(2024, 1, 1, 0, 0, 10)
         idx = tle_ephemeris.index(target_time)
         assert idx == 0  # Should be closest to first timestamp
 
-    def test_index_finds_closest_after(self, tle_ephemeris):
+    def test_index_finds_closest_after(self, tle_ephemeris: Any) -> None:
         """index() should find closest timestamp when target is between points"""
         # Time that's 50 seconds after the first timestamp (closer to second)
         target_time = datetime(2024, 1, 1, 0, 0, 50)
         idx = tle_ephemeris.index(target_time)
         assert idx == 1  # Should be closest to second timestamp at 1 minute
 
-    def test_index_at_start(self, tle_ephemeris):
+    def test_index_at_start(self, tle_ephemeris: Any) -> None:
         """index() should handle time at the start of the range"""
         target_time = datetime(2024, 1, 1, 0, 0, 0)
         idx = tle_ephemeris.index(target_time)
         assert idx == 0
 
-    def test_index_at_end(self, tle_ephemeris):
+    def test_index_at_end(self, tle_ephemeris: Any) -> None:
         """index() should handle time at the end of the range"""
         target_time = datetime(2024, 1, 1, 1, 0, 0)
         idx = tle_ephemeris.index(target_time)
         timestamps = tle_ephemeris.timestamp
         assert idx == len(timestamps) - 1
 
-    def test_index_before_range(self, tle_ephemeris):
+    def test_index_before_range(self, tle_ephemeris: Any) -> None:
         """index() should return first index for time before range"""
         target_time = datetime(2023, 12, 31, 23, 0, 0)  # Before range
         idx = tle_ephemeris.index(target_time)
         assert idx == 0  # Should return closest (first) timestamp
 
-    def test_index_after_range(self, tle_ephemeris):
+    def test_index_after_range(self, tle_ephemeris: Any) -> None:
         """index() should return last index for time after range"""
         target_time = datetime(2024, 1, 1, 2, 0, 0)  # After range
         idx = tle_ephemeris.index(target_time)
         timestamps = tle_ephemeris.timestamp
         assert idx == len(timestamps) - 1  # Should return closest (last) timestamp
 
-    def test_index_can_access_position_data(self, tle_ephemeris):
+    def test_index_can_access_position_data(self, tle_ephemeris: Any) -> None:
         """Returned index should be usable to access position data"""
         target_time = datetime(2024, 1, 1, 0, 30, 0)
         idx = tle_ephemeris.index(target_time)
@@ -103,7 +104,7 @@ class TestIndexMethod:
         assert position.shape == (3,)  # Should be a 3D vector
         assert np.all(np.isfinite(position))  # Should be valid numbers
 
-    def test_index_can_access_velocity_data(self, tle_ephemeris):
+    def test_index_can_access_velocity_data(self, tle_ephemeris: Any) -> None:
         """Returned index should be usable to access velocity data"""
         target_time = datetime(2024, 1, 1, 0, 15, 0)
         idx = tle_ephemeris.index(target_time)
@@ -112,7 +113,7 @@ class TestIndexMethod:
         assert velocity.shape == (3,)
         assert np.all(np.isfinite(velocity))
 
-    def test_index_works_with_ground_ephemeris(self, ground_ephemeris):
+    def test_index_works_with_ground_ephemeris(self, ground_ephemeris: Any) -> None:
         """index() should work with GroundEphemeris"""
         target_time = datetime(2024, 1, 1, 0, 30, 0)
         idx = ground_ephemeris.index(target_time)
@@ -124,7 +125,7 @@ class TestIndexMethod:
         sun_pos = ground_ephemeris.sun_pv.position[idx]
         assert sun_pos.shape == (3,)
 
-    def test_index_consistency_across_properties(self, tle_ephemeris):
+    def test_index_consistency_across_properties(self, tle_ephemeris: Any) -> None:
         """Same index should work for all properties"""
         target_time = datetime(2024, 1, 1, 0, 20, 0)
         idx = tle_ephemeris.index(target_time)
@@ -145,7 +146,7 @@ class TestIndexMethod:
 class TestIndexMethodSPICE:
     """Test index() method with SPICE ephemeris"""
 
-    def test_index_works_with_spice(self):
+    def test_index_works_with_spice(self) -> None:
         """index() should work with SPICEEphemeris"""
         # Use the test data SPK file
         spk_path = "test_data/de440s.bsp"
@@ -170,7 +171,7 @@ class TestIndexMethodSPICE:
 class TestIndexMethodEdgeCases:
     """Test edge cases for index() method"""
 
-    def test_index_with_single_timestamp(self):
+    def test_index_with_single_timestamp(self) -> None:
         """index() should work with ephemeris containing only one timestamp"""
         tle1 = "1 25544U 98067A   25315.25818480  .00012468  00000-0  22984-3 0  9991"
         tle2 = "2 25544  51.6338 298.3179 0004133  57.8977 302.2413 15.49525392537972"
@@ -182,7 +183,7 @@ class TestIndexMethodEdgeCases:
         idx = eph.index(target_time)
         assert idx == 0  # Only one timestamp, so index must be 0
 
-    def test_index_with_many_timestamps(self):
+    def test_index_with_many_timestamps(self) -> None:
         """index() should work efficiently with many timestamps"""
         tle1 = "1 25544U 98067A   25315.25818480  .00012468  00000-0  22984-3 0  9991"
         tle2 = "2 25544  51.6338 298.3179 0004133  57.8977 302.2413 15.49525392537972"
@@ -208,7 +209,7 @@ class TestIndexMethodEdgeCases:
         time_diff = abs((found_time - target_time).total_seconds())
         assert time_diff <= 10  # Should be within one step_size
 
-    def test_index_midpoint_rounding(self, tle_ephemeris):
+    def test_index_midpoint_rounding(self, tle_ephemeris: Any) -> None:
         """Test behavior when target is exactly between two timestamps"""
         # Time exactly between first two timestamps (30 seconds after first)
         target_time = datetime(2024, 1, 1, 0, 0, 30)

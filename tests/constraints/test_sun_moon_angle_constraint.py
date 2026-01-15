@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 import pytest
 from astropy.coordinates import SkyCoord  # type:ignore[import-untyped]
@@ -108,7 +110,7 @@ def eclipse_constraint() -> EclipseConstraint:
 
 
 class TestSunConstraints:
-    def test_sun_is_near_zero_declination(self, sun):
+    def test_sun_is_near_zero_declination(self, sun: Any) -> None:
         assert sun.dec.deg == pytest.approx(0.0, abs=1e-3)
 
     @pytest.mark.parametrize(
@@ -116,8 +118,8 @@ class TestSunConstraints:
         [x for x in range(0, 190, 10)],
     )
     def test_sun_is_sun_in_constraint(
-        self, sun_constraint, tle_ephem, timestamp, sun, offset
-    ):
+        self, sun_constraint: Any, tle_ephem: Any, timestamp: Any, sun: Any, offset: Any
+    ) -> None:
         not_vis = sun_constraint.in_constraint(
             ephemeris=tle_ephem,
             time=timestamp,
@@ -134,8 +136,8 @@ class TestSunConstraints:
         [x for x in range(0, 190, 10)],
     )
     def test_sun_is_sun_evaluated_bad(
-        self, sun_constraint, tle_ephem, timestamp, sun, offset
-    ):
+        self, sun_constraint: Any, tle_ephem: Any, timestamp: Any, sun: Any, offset: Any
+    ) -> None:
         not_vis = sun_constraint.evaluate(
             ephemeris=tle_ephem,
             times=[timestamp],
@@ -147,11 +149,13 @@ class TestSunConstraints:
         else:
             assert not_vis is False, "Sun should not be Sun Constrained"
 
-    def test_or_constraints_sun_angle_greater_than_90(self, sun):
+    def test_or_constraints_sun_angle_greater_than_90(self, sun: Any) -> None:
         sun_angle = sun.separation(SkyCoord(10, 0, unit="deg")).deg
         assert sun_angle > 90, f"Sun is too close, {sun.ra} {sun.dec}"
 
-    def test_or_constraints_sun_not_in_constraint(self, sun_constraint, tle_ephem):
+    def test_or_constraints_sun_not_in_constraint(
+        self, sun_constraint: Any, tle_ephem: Any
+    ) -> None:
         sun_cons = sun_constraint.evaluate(
             ephemeris=tle_ephem, target_ra=0, target_dec=0
         )
@@ -164,8 +168,13 @@ class TestMoonConstraints:
         [x for x in range(0, 190, 10)],
     )
     def test_moon_is_moon_in_constraint(
-        self, moon_constraint, tle_ephem, timestamp, moon, offset
-    ):
+        self,
+        moon_constraint: Any,
+        tle_ephem: Any,
+        timestamp: Any,
+        moon: Any,
+        offset: Any,
+    ) -> None:
         not_vis = moon_constraint.in_constraint(
             ephemeris=tle_ephem,
             time=timestamp,
@@ -182,8 +191,13 @@ class TestMoonConstraints:
         [x for x in range(0, 190, 10)],
     )
     def test_moon_is_moon_in_constraint_vs_distance(
-        self, moon_constraint, tle_ephem, timestamp, moon, offset
-    ):
+        self,
+        moon_constraint: Any,
+        tle_ephem: Any,
+        timestamp: Any,
+        moon: Any,
+        offset: Any,
+    ) -> None:
         not_vis = moon_constraint.in_constraint(
             ephemeris=tle_ephem,
             time=timestamp,
@@ -203,8 +217,13 @@ class TestMoonConstraints:
         [x for x in range(0, 190, 10)],
     )
     def test_moon_is_moon_evaluated_bad(
-        self, moon_constraint, tle_ephem, timestamp, moon, offset
-    ):
+        self,
+        moon_constraint: Any,
+        tle_ephem: Any,
+        timestamp: Any,
+        moon: Any,
+        offset: Any,
+    ) -> None:
         not_vis = moon_constraint.evaluate(
             ephemeris=tle_ephem,
             times=[timestamp],
@@ -226,8 +245,13 @@ class TestEarthLimbConstraints:
         [x for x in range(0, 190, 10)],
     )
     def test_earth_is_earth_in_constraint_vs_distance(
-        self, earth_limb_constraint, tle_ephem, timestamp, earth, offset
-    ):
+        self,
+        earth_limb_constraint: Any,
+        tle_ephem: Any,
+        timestamp: Any,
+        earth: Any,
+        offset: Any,
+    ) -> None:
         not_vis = earth_limb_constraint.in_constraint(
             ephemeris=tle_ephem,
             time=timestamp,
@@ -247,8 +271,13 @@ class TestEarthLimbConstraints:
         [x for x in range(0, 190, 10)],
     )
     def test_earth_is_earth_evaluated_bad(
-        self, earth_limb_constraint, tle_ephem, timestamp, earth, offset
-    ):
+        self,
+        earth_limb_constraint: Any,
+        tle_ephem: Any,
+        timestamp: Any,
+        earth: Any,
+        offset: Any,
+    ) -> None:
         not_vis = earth_limb_constraint.evaluate(
             ephemeris=tle_ephem,
             times=[timestamp],
@@ -270,8 +299,8 @@ class TestEclipseConstraints:
         [x for x in range(0, 100, 10)],
     )
     def test_eclipse_in_constraint_vs_distance(
-        self, eclipse_constraint, tle_ephem, offset
-    ):
+        self, eclipse_constraint: Any, tle_ephem: Any, offset: Any
+    ) -> None:
         not_vis = eclipse_constraint.in_constraint(
             ephemeris=tle_ephem,
             time=tle_ephem.timestamp[offset],
@@ -317,7 +346,9 @@ class TestEclipseConstraints:
         "offset",
         [x for x in range(0, 190, 10)],
     )
-    def test_eclipse_evaluated_bad(self, eclipse_constraint, tle_ephem, offset):
+    def test_eclipse_evaluated_bad(
+        self, eclipse_constraint: Any, tle_ephem: Any, offset: Any
+    ) -> None:
         not_vis = eclipse_constraint.evaluate(
             ephemeris=tle_ephem,
             times=[tle_ephem.timestamp[offset]],
@@ -333,8 +364,8 @@ class TestEclipseConstraints:
 
 class TestOrConstraints:
     def test_or_constraints_constraint_array_truths_equal(
-        self, earth_limb_constraint, sun_constraint, tle_ephem
-    ):
+        self, earth_limb_constraint: Any, sun_constraint: Any, tle_ephem: Any
+    ) -> None:
         earth_cons = earth_limb_constraint.evaluate(
             ephemeris=tle_ephem, target_ra=250, target_dec=-23
         )
@@ -343,14 +374,14 @@ class TestOrConstraints:
             ephemeris=tle_ephem, target_ra=0, target_dec=0
         )
 
-        earth_any = np.array(earth_cons.constraint_array).any()
-        sun_earth_any = np.array(sun_earth_cons.constraint_array).any()
+        earth_any: np.bool[bool] = np.array(earth_cons.constraint_array).any()
+        sun_earth_any: np.bool[bool] = np.array(sun_earth_cons.constraint_array).any()
 
         assert earth_any == sun_earth_any, "Both arrays should have a True in them"
 
     def test_or_constraints_visibility_length_equal(
-        self, earth_limb_constraint, sun_constraint, tle_ephem
-    ):
+        self, earth_limb_constraint: Any, sun_constraint: Any, tle_ephem: Any
+    ) -> None:
         earth_cons = earth_limb_constraint.evaluate(
             ephemeris=tle_ephem, target_ra=250, target_dec=-23
         )
@@ -366,8 +397,8 @@ class TestOrConstraints:
 
 class TestAndConstraints:
     def test_and_constraints_constraint_array_truths_equal(
-        self, earth_limb_constraint, sun_constraint, tle_ephem
-    ):
+        self, earth_limb_constraint: Any, sun_constraint: Any, tle_ephem: Any
+    ) -> None:
         """
         Test that a constraint that is always False makes one with True in
         it turn all False when ANDed together.
@@ -380,14 +411,14 @@ class TestAndConstraints:
             ephemeris=tle_ephem, target_ra=0, target_dec=0
         )
 
-        sun_any = np.array(sun_cons.constraint_array).any()
-        sun_earth_any = np.array(sun_earth_cons.constraint_array).any()
+        sun_any: np.bool[bool] = np.array(sun_cons.constraint_array).any()
+        sun_earth_any: np.bool[bool] = np.array(sun_earth_cons.constraint_array).any()
 
         assert sun_any == sun_earth_any, "Both arrays should have a True in them"
 
     def test_and_constraints_visibility_length_equal(
-        self, earth_limb_constraint, sun_constraint, tle_ephem
-    ):
+        self, earth_limb_constraint: Any, sun_constraint: Any, tle_ephem: Any
+    ) -> None:
         """Test and the constraint ANDed with itself produces the same result"""
         earth_cons = earth_limb_constraint.evaluate(
             ephemeris=tle_ephem, target_ra=250, target_dec=-23

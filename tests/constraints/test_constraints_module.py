@@ -67,7 +67,7 @@ class DummyMovingBodyResult:
 class DummyConstraintBackend:
     created: int = 0
 
-    def __init__(self, payload: str) -> None:
+    def __init__(self, payload: str = "") -> None:
         self.payload: str = payload
         self.evaluate_calls: List[
             Tuple[Any, float, float, List[datetime], Optional[List[int]]]
@@ -219,7 +219,7 @@ class TestEvaluateMovingBody:
         constraint_result_with_rust_ref: Tuple[ConstraintResult, DummyRustResult],
     ) -> None:
         result, rust_result = constraint_result_with_rust_ref
-        assert result.visibility == rust_result.visibility
+        assert result.visibility == rust_result.visibility  # type: ignore[comparison-overlap]
 
     def test_in_constraint(
         self,
@@ -272,9 +272,7 @@ class TestRustConstraintMixin:
         _: ConstraintResult = constraint.evaluate(
             dummy_ephemeris, target_ra=1.0, target_dec=2.0
         )
-        _: ConstraintResult = constraint.evaluate(
-            dummy_ephemeris, target_ra=3.0, target_dec=4.0
-        )
+        _ = constraint.evaluate(dummy_ephemeris, target_ra=3.0, target_dec=4.0)
         assert patched_constraint.created == 1
 
     def test_evaluate_creates_backend_once_first_result_type(
@@ -301,7 +299,7 @@ class TestRustConstraintMixin:
         constraint: SunConstraint = SunConstraint(min_angle=10.0)
         _ = constraint.evaluate(dummy_ephemeris, target_ra=1.0, target_dec=2.0)
         _ = constraint.evaluate(dummy_ephemeris, target_ra=3.0, target_dec=4.0)
-        backend: DummyConstraintBackend = constraint._rust_constraint
+        backend: DummyConstraintBackend = constraint._rust_constraint  # type: ignore[attr-defined]
         assert len(backend.evaluate_calls) == 2
 
     def test_batch_and_single_created_count(
@@ -327,7 +325,7 @@ class TestRustConstraintMixin:
         self, patched_constraint: Type[DummyConstraintBackend], dummy_ephemeris: Any
     ) -> None:
         constraint: SunConstraint = SunConstraint(min_angle=5.0)
-        constraint._rust_constraint = patched_constraint()
+        constraint._rust_constraint = patched_constraint()  # type: ignore[attr-defined]
         batch: np.ndarray = constraint.in_constraint_batch(
             dummy_ephemeris,
             target_ras=[1.0, 2.0],
@@ -347,7 +345,7 @@ class TestRustConstraintMixin:
         self, patched_constraint: Type[DummyConstraintBackend], dummy_ephemeris: Any
     ) -> None:
         constraint: SunConstraint = SunConstraint(min_angle=5.0)
-        constraint._rust_constraint = patched_constraint()
+        constraint._rust_constraint = patched_constraint()  # type: ignore[attr-defined]
         _ = constraint.in_constraint_batch(
             dummy_ephemeris,
             target_ras=[1.0, 2.0],
@@ -361,14 +359,14 @@ class TestRustConstraintMixin:
             target_ra=1.0,
             target_dec=2.0,
         )
-        backend: DummyConstraintBackend = constraint._rust_constraint
+        backend: DummyConstraintBackend = constraint._rust_constraint  # type: ignore[attr-defined]
         assert backend.batch_calls
 
     def test_batch_and_single_single_calls_exist(
         self, patched_constraint: Type[DummyConstraintBackend], dummy_ephemeris: Any
     ) -> None:
         constraint: SunConstraint = SunConstraint(min_angle=5.0)
-        constraint._rust_constraint = patched_constraint()
+        constraint._rust_constraint = patched_constraint()  # type: ignore[attr-defined]
         _ = constraint.in_constraint_batch(
             dummy_ephemeris,
             target_ras=[1.0, 2.0],
@@ -382,14 +380,14 @@ class TestRustConstraintMixin:
             target_ra=1.0,
             target_dec=2.0,
         )
-        backend: DummyConstraintBackend = constraint._rust_constraint
+        backend: DummyConstraintBackend = constraint._rust_constraint  # type: ignore[attr-defined]
         assert backend.single_calls
 
     def test_batch_and_single_single_result(
         self, patched_constraint: Type[DummyConstraintBackend], dummy_ephemeris: Any
     ) -> None:
         constraint: SunConstraint = SunConstraint(min_angle=5.0)
-        constraint._rust_constraint = patched_constraint()
+        constraint._rust_constraint = patched_constraint()  # type: ignore[attr-defined]
         _ = constraint.in_constraint_batch(
             dummy_ephemeris,
             target_ras=[1.0, 2.0],
@@ -397,13 +395,13 @@ class TestRustConstraintMixin:
             times=[datetime(2024, 1, 1)],
             indices=None,
         )
-        single: str = constraint.in_constraint(
+        single = constraint.in_constraint(
             time=datetime(2024, 1, 1),
             ephemeris=dummy_ephemeris,
             target_ra=1.0,
             target_dec=2.0,
         )
-        assert single == "single-result"
+        assert single == "single-result"  # type: ignore[comparison-overlap]
 
 
 class TestOperatorCombinators:
@@ -501,12 +499,12 @@ class TestValidators:
 
 
 class DummyAngle:
-    def __init__(self, deg: float) -> None:
-        self.deg: float = deg
+    def __init__(self, deg: float | list[float]) -> None:
+        self.deg: float | list[float] = deg
 
 
 class DummySkyCoord:
-    def __init__(self, ra: float, dec: float) -> None:
+    def __init__(self, ra: float | list[float], dec: float | list[float]) -> None:
         self.ra: DummyAngle = DummyAngle(ra)
         self.dec: DummyAngle = DummyAngle(dec)
 
@@ -547,10 +545,10 @@ class TestEvaluateMovingBodyMethod:
     ) -> None:
         """Test that evaluate_moving_body with body calls backend once"""
         constraint = SunConstraint(min_angle=10.0)
-        constraint._rust_constraint = patched_constraint()
+        constraint._rust_constraint = patched_constraint()  # type: ignore[attr-defined]
         constraint.evaluate_moving_body(mock_ephemeris_with_body, body=499)
 
-        backend: DummyConstraintBackend = constraint._rust_constraint
+        backend: DummyConstraintBackend = constraint._rust_constraint  # type: ignore[attr-defined]
         assert len(backend.evaluate_moving_body_calls) == 1
 
     def test_with_body_passes_body_argument(
@@ -560,10 +558,10 @@ class TestEvaluateMovingBodyMethod:
     ) -> None:
         """Test that evaluate_moving_body passes body argument correctly"""
         constraint = SunConstraint(min_angle=10.0)
-        constraint._rust_constraint = patched_constraint()
+        constraint._rust_constraint = patched_constraint()  # type: ignore[attr-defined]
         constraint.evaluate_moving_body(mock_ephemeris_with_body, body=499)
 
-        backend: DummyConstraintBackend = constraint._rust_constraint
+        backend: DummyConstraintBackend = constraint._rust_constraint  # type: ignore[attr-defined]
         call_args = backend.evaluate_moving_body_calls[0]
         assert call_args[4] == "499"  # body
 
@@ -574,7 +572,7 @@ class TestEvaluateMovingBodyMethod:
     ) -> None:
         """Test that evaluate_moving_body with body returns MovingVisibilityResult"""
         constraint = SunConstraint(min_angle=10.0)
-        constraint._rust_constraint = patched_constraint()
+        constraint._rust_constraint = patched_constraint()  # type: ignore[attr-defined]
         result = constraint.evaluate_moving_body(mock_ephemeris_with_body, body=499)
 
         assert isinstance(result, MovingVisibilityResult)
@@ -586,7 +584,7 @@ class TestEvaluateMovingBodyMethod:
     ) -> None:
         """Test that evaluate_moving_body with coords calls backend once"""
         constraint = SunConstraint(min_angle=10.0)
-        constraint._rust_constraint = patched_constraint()
+        constraint._rust_constraint = patched_constraint()  # type: ignore[attr-defined]
         ras = [1.0, 2.0]
         decs = [3.0, 4.0]
 
@@ -594,7 +592,7 @@ class TestEvaluateMovingBodyMethod:
             mock_ephemeris_simple, target_ras=ras, target_decs=decs
         )
 
-        backend: DummyConstraintBackend = constraint._rust_constraint
+        backend: DummyConstraintBackend = constraint._rust_constraint  # type: ignore[attr-defined]
         assert len(backend.evaluate_moving_body_calls) == 1
 
     def test_with_explicit_coords_passes_ras(
@@ -604,7 +602,7 @@ class TestEvaluateMovingBodyMethod:
     ) -> None:
         """Test that evaluate_moving_body passes target_ras correctly"""
         constraint = SunConstraint(min_angle=10.0)
-        constraint._rust_constraint = patched_constraint()
+        constraint._rust_constraint = patched_constraint()  # type: ignore[attr-defined]
         ras = [1.0, 2.0]
         decs = [3.0, 4.0]
 
@@ -612,7 +610,7 @@ class TestEvaluateMovingBodyMethod:
             mock_ephemeris_simple, target_ras=ras, target_decs=decs
         )
 
-        backend: DummyConstraintBackend = constraint._rust_constraint
+        backend: DummyConstraintBackend = constraint._rust_constraint  # type: ignore[attr-defined]
         call_args = backend.evaluate_moving_body_calls[0]
         assert call_args[1] == ras  # target_ras
 
@@ -623,7 +621,7 @@ class TestEvaluateMovingBodyMethod:
     ) -> None:
         """Test that evaluate_moving_body passes target_decs correctly"""
         constraint = SunConstraint(min_angle=10.0)
-        constraint._rust_constraint = patched_constraint()
+        constraint._rust_constraint = patched_constraint()  # type: ignore[attr-defined]
         ras = [1.0, 2.0]
         decs = [3.0, 4.0]
 
@@ -631,7 +629,7 @@ class TestEvaluateMovingBodyMethod:
             mock_ephemeris_simple, target_ras=ras, target_decs=decs
         )
 
-        backend: DummyConstraintBackend = constraint._rust_constraint
+        backend: DummyConstraintBackend = constraint._rust_constraint  # type: ignore[attr-defined]
         call_args = backend.evaluate_moving_body_calls[0]
         assert call_args[2] == decs  # target_decs
 
@@ -642,7 +640,7 @@ class TestEvaluateMovingBodyMethod:
     ) -> None:
         """Test that evaluate_moving_body with coords returns MovingVisibilityResult"""
         constraint = SunConstraint(min_angle=10.0)
-        constraint._rust_constraint = patched_constraint()
+        constraint._rust_constraint = patched_constraint()  # type: ignore[attr-defined]
         ras = [1.0, 2.0]
         decs = [3.0, 4.0]
 

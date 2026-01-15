@@ -16,12 +16,15 @@ Build and install the Rust module first:
 """
 
 from datetime import datetime, timezone
+from typing import Any
 
 import numpy as np
 import pytest
 
+from rust_ephem._rust_ephem import TLEEphemeris
+
 try:
-    import rust_ephem  # type: ignore[import-untyped]
+    import rust_ephem
 
     RUST_EPHEM_AVAILABLE = True
 except ImportError:
@@ -49,13 +52,13 @@ TOLERANCE = 1e-9
 
 # Fixtures for test classes
 @pytest.fixture
-def multi_point_ephem():
+def multi_point_ephem() -> TLEEphemeris:
     """Create TLEEphemeris with multiple time points (31 points over 30 minutes)."""
     return rust_ephem.TLEEphemeris(TLE1, TLE2, BEGIN, END, STEP_SIZE)
 
 
 @pytest.fixture
-def single_point_ephem():
+def single_point_ephem() -> TLEEphemeris:
     """Create TLEEphemeris with single time point."""
     return rust_ephem.TLEEphemeris(TLE1, TLE2, BEGIN, BEGIN, 1)
 
@@ -65,23 +68,23 @@ def single_point_ephem():
 class TestEarthSkyCoordBasic:
     """Test basic properties of earth SkyCoord."""
 
-    def test_earth_returns_skycoord(self, multi_point_ephem):
+    def test_earth_returns_skycoord(self: Any, multi_point_ephem: Any) -> None:
         """Test that earth property returns a SkyCoord object."""
         earth_skycoord = multi_point_ephem.earth
         assert isinstance(earth_skycoord, SkyCoord)
 
-    def test_earth_correct_length(self, multi_point_ephem):
+    def test_earth_correct_length(self: Any, multi_point_ephem: Any) -> None:
         """Test that earth has correct number of points."""
         earth_skycoord = multi_point_ephem.earth
-        expected_len = len(multi_point_ephem.timestamp)
+        expected_len: int = len(multi_point_ephem.timestamp)
         assert len(earth_skycoord) == expected_len
 
-    def test_earth_has_gcrs_frame(self, multi_point_ephem):
+    def test_earth_has_gcrs_frame(self: Any, multi_point_ephem: Any) -> None:
         """Test that earth uses GCRS frame."""
         earth_skycoord = multi_point_ephem.earth
         assert isinstance(earth_skycoord.frame, GCRS)
 
-    def test_earth_has_velocity(self, multi_point_ephem):
+    def test_earth_has_velocity(self: Any, multi_point_ephem: Any) -> None:
         """Test that earth includes velocity information."""
         earth_skycoord = multi_point_ephem.earth
         assert earth_skycoord.velocity is not None
@@ -93,7 +96,9 @@ class TestEarthPositionAccuracy:
     """Test Earth position accuracy for all time points."""
 
     @pytest.mark.parametrize("i", range(31))
-    def test_earth_position_is_negative_of_spacecraft(self, multi_point_ephem, i):
+    def test_earth_position_is_negative_of_spacecraft(
+        self: Any, multi_point_ephem: Any, i: int
+    ) -> None:
         """Test that Earth position is negative of spacecraft position at time point i."""
         earth_skycoord = multi_point_ephem.earth
         expected_pos = -multi_point_ephem.gcrs_pv.position[i]
@@ -107,7 +112,9 @@ class TestEarthVelocityAccuracy:
     """Test Earth velocity accuracy for all time points."""
 
     @pytest.mark.parametrize("i", range(31))
-    def test_earth_velocity_is_negative_of_spacecraft(self, multi_point_ephem, i):
+    def test_earth_velocity_is_negative_of_spacecraft(
+        self: Any, multi_point_ephem: Any, i: int
+    ) -> None:
         """Test that Earth velocity is negative of spacecraft velocity at time point i."""
         earth_skycoord = multi_point_ephem.earth
         expected_vel = -multi_point_ephem.gcrs_pv.velocity[i]
@@ -120,18 +127,20 @@ class TestEarthVelocityAccuracy:
 class TestEarthObsGeo:
     """Test obsgeoloc and obsgeovel properties of earth."""
 
-    def test_obsgeoloc_is_set(self, multi_point_ephem):
+    def test_obsgeoloc_is_set(self: Any, multi_point_ephem: Any) -> None:
         """Test that obsgeoloc is set in earth frame."""
         earth_skycoord = multi_point_ephem.earth
         assert earth_skycoord.frame.obsgeoloc is not None
 
-    def test_obsgeovel_is_set(self, multi_point_ephem):
+    def test_obsgeovel_is_set(self: Any, multi_point_ephem: Any) -> None:
         """Test that obsgeovel is set in earth frame."""
         earth_skycoord = multi_point_ephem.earth
         assert earth_skycoord.frame.obsgeovel is not None
 
     @pytest.mark.parametrize("i", range(31))
-    def test_obsgeoloc_matches_spacecraft_position(self, multi_point_ephem, i):
+    def test_obsgeoloc_matches_spacecraft_position(
+        self: Any, multi_point_ephem: Any, i: int
+    ) -> None:
         """Test that obsgeoloc matches spacecraft position at time point i."""
         earth_skycoord = multi_point_ephem.earth
         expected_pos = multi_point_ephem.gcrs_pv.position[i]
@@ -145,7 +154,9 @@ class TestEarthObsGeo:
         assert np.allclose(expected_pos, actual_pos, rtol=TOLERANCE)
 
     @pytest.mark.parametrize("i", range(31))
-    def test_obsgeovel_matches_spacecraft_velocity(self, multi_point_ephem, i):
+    def test_obsgeovel_matches_spacecraft_velocity(
+        self: Any, multi_point_ephem: Any, i: int
+    ) -> None:
         """Test that obsgeovel matches spacecraft velocity at time point i."""
         earth_skycoord = multi_point_ephem.earth
         expected_vel = multi_point_ephem.gcrs_pv.velocity[i]
@@ -165,8 +176,8 @@ class TestEarthSpacecraftRelationship:
     """Test relationship between Earth and spacecraft SkyCoord objects."""
 
     def test_earth_position_is_negative_of_spacecraft_single_point(
-        self, single_point_ephem
-    ):
+        self, single_point_ephem: TLEEphemeris
+    ) -> None:
         """Test that Earth position equals negative of spacecraft position (single point)."""
         spacecraft_skycoord = single_point_ephem.gcrs
         earth_skycoord = single_point_ephem.earth
@@ -176,8 +187,8 @@ class TestEarthSpacecraftRelationship:
         assert np.allclose(earth_pos, expected_earth, rtol=TOLERANCE)
 
     def test_earth_velocity_is_negative_of_spacecraft_single_point(
-        self, single_point_ephem
-    ):
+        self, single_point_ephem: TLEEphemeris
+    ) -> None:
         """Test that Earth velocity equals negative of spacecraft velocity (single point)."""
         spacecraft_skycoord = single_point_ephem.gcrs
         earth_skycoord = single_point_ephem.earth
