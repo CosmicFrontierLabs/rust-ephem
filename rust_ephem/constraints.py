@@ -149,7 +149,7 @@ class RustConstraintMixin(BaseModel):
         Returns:
             ConstraintResult containing violation windows
         """
-        if not hasattr(self, "_rust_constraint"):
+        if getattr(self, "_rust_constraint", None) is None:
             from rust_ephem import Constraint
 
             self._rust_constraint = Constraint.from_json(self.model_dump_json())
@@ -203,7 +203,7 @@ class RustConstraintMixin(BaseModel):
         Returns:
             2D numpy array of shape (n_targets, n_times) with boolean violation status
         """
-        if not hasattr(self, "_rust_constraint"):
+        if getattr(self, "_rust_constraint", None) is None:
             from rust_ephem import Constraint
 
             self._rust_constraint = Constraint.from_json(self.model_dump_json())
@@ -244,7 +244,7 @@ class RustConstraintMixin(BaseModel):
             False if constraint is satisfied (out-of-constraint).
             Returns a single bool for a single time, or a list of bools for multiple times.
         """
-        if not hasattr(self, "_rust_constraint"):
+        if getattr(self, "_rust_constraint", None) is None:
             from rust_ephem import Constraint
 
             self._rust_constraint = Constraint.from_json(self.model_dump_json())
@@ -299,7 +299,7 @@ class RustConstraintMixin(BaseModel):
             ...     ephem, body="2000001", spice_kernel="/path/to/ceres.bsp"
             ... )
         """
-        if not hasattr(self, "_rust_constraint"):
+        if getattr(self, "_rust_constraint", None) is None:
             from rust_ephem import Constraint
 
             self._rust_constraint = Constraint.from_json(self.model_dump_json())
