@@ -2,17 +2,19 @@
 
 import os
 from datetime import datetime, timezone
+from typing import Any
 
 import numpy as np
 import pytest
 
 from rust_ephem import OEMEphemeris
+from rust_ephem._rust_ephem import PositionVelocityData
 
 # Sample OEM data directory
-TEST_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "test_data")
+TEST_DATA_DIR: str = os.path.join(os.path.dirname(__file__), "..", "test_data")
 
 
-def create_sample_oem(path):
+def create_sample_oem(path: str) -> None:
     """Create a simple OEM file for testing"""
     oem_content = """CCSDS_OEM_VERS = 2.0
 CREATION_DATE = 2024-01-01T00:00:00.000
@@ -43,14 +45,14 @@ DATA_STOP
 
 
 @pytest.fixture
-def sample_oem_path(tmp_path):
+def sample_oem_path(tmp_path: Any) -> str:
     """Create a temporary OEM file for testing"""
     oem_path = tmp_path / "test_satellite.oem"
     create_sample_oem(str(oem_path))
     return str(oem_path)
 
 
-def test_ccsds_ephemeris_initialization(sample_oem_path):
+def test_ccsds_ephemeris_initialization(sample_oem_path: Any) -> None:
     """Test basic initialization of OEMEphemeris"""
     begin = datetime(2024, 1, 1, 0, 0, 0)
     end = datetime(2024, 1, 1, 0, 30, 0)
@@ -62,7 +64,7 @@ def test_ccsds_ephemeris_initialization(sample_oem_path):
     assert len(eph.timestamp) == 31  # 30 minutes at 60-second steps + 1
 
 
-def test_ccsds_ephemeris_gcrs_data(sample_oem_path):
+def test_ccsds_ephemeris_gcrs_data(sample_oem_path: Any) -> None:
     """Test GCRS position and velocity data"""
     begin = datetime(2024, 1, 1, 0, 0, 0)
     end = datetime(2024, 1, 1, 0, 30, 0)
@@ -75,7 +77,7 @@ def test_ccsds_ephemeris_gcrs_data(sample_oem_path):
     )
 
     # Check GCRS data exists
-    gcrs_pv = eph.gcrs_pv
+    gcrs_pv: PositionVelocityData = eph.gcrs_pv
     assert gcrs_pv.position.shape[0] == 7  # 30 minutes / 5 minutes + 1
     assert gcrs_pv.position.shape[1] == 3
     assert gcrs_pv.velocity.shape[1] == 3
@@ -86,7 +88,7 @@ def test_ccsds_ephemeris_gcrs_data(sample_oem_path):
     assert np.all(positions[:, 0] < 8000)  # and < 8000 km for LEO
 
 
-def test_ccsds_ephemeris_interpolation(sample_oem_path):
+def test_ccsds_ephemeris_interpolation(sample_oem_path: Any) -> None:
     """Test that interpolation produces smooth results"""
     begin = datetime(2024, 1, 1, 0, 0, 0)
     end = datetime(2024, 1, 1, 0, 30, 0)
@@ -98,12 +100,14 @@ def test_ccsds_ephemeris_interpolation(sample_oem_path):
     velocities = eph.gcrs_pv.velocity
 
     # Velocities should be relatively smooth (no huge jumps)
-    velocity_diffs = np.diff(velocities, axis=0)
+    velocity_diffs: np.ndarray[tuple[Any, ...], np.dtype[Any]] = np.diff(
+        velocities, axis=0
+    )
     max_velocity_change = np.max(np.abs(velocity_diffs))
     assert max_velocity_change < 0.1  # Less than 0.1 km/s change per second
 
 
-def test_ccsds_ephemeris_itrs_conversion(sample_oem_path):
+def test_ccsds_ephemeris_itrs_conversion(sample_oem_path: Any) -> None:
     """Test ITRS coordinate conversion"""
     begin = datetime(2024, 1, 1, 0, 0, 0)
     end = datetime(2024, 1, 1, 0, 30, 0)
@@ -111,7 +115,7 @@ def test_ccsds_ephemeris_itrs_conversion(sample_oem_path):
     eph = OEMEphemeris(sample_oem_path, begin=begin, end=end, step_size=300)
 
     # Check ITRS data exists
-    itrs_pv = eph.itrs_pv
+    itrs_pv: PositionVelocityData = eph.itrs_pv
     assert itrs_pv.position.shape[0] == 7
     assert itrs_pv.position.shape[1] == 3
 
@@ -121,7 +125,7 @@ def test_ccsds_ephemeris_itrs_conversion(sample_oem_path):
     assert not np.allclose(gcrs_pos, itrs_pos)
 
 
-def test_ccsds_ephemeris_sun_moon(sample_oem_path):
+def test_ccsds_ephemeris_sun_moon(sample_oem_path: Any) -> None:
     """Test Sun and Moon position calculations"""
     begin = datetime(2024, 1, 1, 0, 0, 0)
     end = datetime(2024, 1, 1, 0, 10, 0)
@@ -135,7 +139,7 @@ def test_ccsds_ephemeris_sun_moon(sample_oem_path):
     assert moon is not None
 
 
-def test_ccsds_ephemeris_index_method(sample_oem_path):
+def test_ccsds_ephemeris_index_method(sample_oem_path: Any) -> None:
     """Test the index() method for finding closest timestamps"""
     begin = datetime(2024, 1, 1, 0, 0, 0)
     end = datetime(2024, 1, 1, 0, 30, 0)
@@ -144,16 +148,16 @@ def test_ccsds_ephemeris_index_method(sample_oem_path):
 
     # Test finding index for exact time
     target_time = datetime(2024, 1, 1, 0, 15, 0)
-    idx = eph.index(target_time)
+    idx: int = eph.index(target_time)
     assert idx == 15  # 15 minutes = 15 steps of 60 seconds
 
     # Test finding index for time between steps
     target_time = datetime(2024, 1, 1, 0, 15, 30)
-    idx = eph.index(target_time)
-    assert idx in [15, 16]  # Should be close to 15 or 16
+    idx2: int = eph.index(target_time)
+    assert idx2 in [15, 16]  # Should be close to 15 or 16
 
 
-def test_ccsds_ephemeris_time_range_validation(sample_oem_path):
+def test_ccsds_ephemeris_time_range_validation(sample_oem_path: Any) -> None:
     """Test that requesting times outside OEM range raises an error"""
     # OEM data only covers 2024-01-01 00:00 to 01:00
     begin = datetime(2024, 1, 1, 2, 0, 0)  # Outside range
@@ -163,7 +167,7 @@ def test_ccsds_ephemeris_time_range_validation(sample_oem_path):
         OEMEphemeris(sample_oem_path, begin=begin, end=end, step_size=60)
 
 
-def test_ccsds_ephemeris_oem_pv_property(sample_oem_path):
+def test_ccsds_ephemeris_oem_pv_property(sample_oem_path: Any) -> None:
     """Test accessing raw OEM data"""
     begin = datetime(2024, 1, 1, 0, 0, 0)
     end = datetime(2024, 1, 1, 0, 30, 0)
@@ -171,7 +175,7 @@ def test_ccsds_ephemeris_oem_pv_property(sample_oem_path):
     eph = OEMEphemeris(sample_oem_path, begin=begin, end=end, step_size=300)
 
     # Access raw OEM data
-    oem_pv = eph.oem_pv
+    oem_pv: PositionVelocityData = eph.oem_pv
     assert oem_pv.position.shape[0] == 7  # 7 data points in sample OEM
     assert oem_pv.position.shape[1] == 3
 
@@ -180,7 +184,7 @@ def test_ccsds_ephemeris_oem_pv_property(sample_oem_path):
     assert oem_pv.position[0, 1] == pytest.approx(0.0, rel=1e-6)
 
 
-def test_ccsds_ephemeris_angular_radius(sample_oem_path):
+def test_ccsds_ephemeris_angular_radius(sample_oem_path: Any) -> None:
     """Test angular radius calculations for celestial bodies"""
     begin = datetime(2024, 1, 1, 0, 0, 0)
     end = datetime(2024, 1, 1, 0, 10, 0)
@@ -205,7 +209,7 @@ def test_ccsds_ephemeris_angular_radius(sample_oem_path):
     assert np.all(earth_radius_deg < 80)
 
 
-def test_ccsds_ephemeris_oem_timestamp(sample_oem_path):
+def test_ccsds_ephemeris_oem_timestamp(sample_oem_path: Any) -> None:
     """Test that oem_timestamp property returns raw OEM timestamps"""
     begin = datetime(2024, 1, 1, 0, 0, 0)
     end = datetime(2024, 1, 1, 1, 0, 0)
@@ -215,7 +219,7 @@ def test_ccsds_ephemeris_oem_timestamp(sample_oem_path):
     eph = OEMEphemeris(sample_oem_path, begin=begin, end=end, step_size=300)
 
     # Get raw OEM timestamps
-    oem_timestamps = eph.oem_timestamp
+    oem_timestamps: list[datetime] = eph.oem_timestamp
 
     # Should have 7 raw timestamps (from the sample OEM file, every 10 minutes)
     assert len(oem_timestamps) == 7
@@ -238,7 +242,7 @@ def test_ccsds_ephemeris_oem_timestamp(sample_oem_path):
     assert len(eph.timestamp) != len(oem_timestamps)
 
 
-def test_ccsds_ephemeris_invalid_reference_frame(tmp_path):
+def test_ccsds_ephemeris_invalid_reference_frame(tmp_path: Any) -> None:
     """Test that invalid reference frames are rejected"""
     # Create OEM with ITRF (Earth-fixed) frame instead of inertial
     oem_content = """CCSDS_OEM_VERS = 2.0
@@ -271,7 +275,7 @@ META_STOP
         OEMEphemeris(str(oem_path), begin=begin, end=end, step_size=60)
 
 
-def test_ccsds_ephemeris_missing_reference_frame(tmp_path):
+def test_ccsds_ephemeris_missing_reference_frame(tmp_path: Any) -> None:
     """Test that missing reference frames are rejected"""
     # Create OEM without REF_FRAME field
     oem_content = """CCSDS_OEM_VERS = 2.0
@@ -303,7 +307,7 @@ META_STOP
         OEMEphemeris(str(oem_path), begin=begin, end=end, step_size=60)
 
 
-def test_ccsds_ephemeris_sun_moon_pv(sample_oem_path):
+def test_ccsds_ephemeris_sun_moon_pv(sample_oem_path: Any) -> None:
     """Test that sun_pv and moon_pv properties are exposed"""
     begin = datetime(2024, 1, 1, 0, 0, 0)
     end = datetime(2024, 1, 1, 0, 10, 0)
@@ -311,7 +315,7 @@ def test_ccsds_ephemeris_sun_moon_pv(sample_oem_path):
     eph = OEMEphemeris(sample_oem_path, begin=begin, end=end, step_size=300)
 
     # Test sun_pv
-    sun_pv = eph.sun_pv
+    sun_pv: PositionVelocityData = eph.sun_pv
     assert sun_pv is not None
     assert hasattr(sun_pv, "position")
     assert hasattr(sun_pv, "velocity")
@@ -320,7 +324,7 @@ def test_ccsds_ephemeris_sun_moon_pv(sample_oem_path):
     assert sun_pv.velocity.shape == sun_pv.position.shape
 
     # Test moon_pv
-    moon_pv = eph.moon_pv
+    moon_pv: PositionVelocityData = eph.moon_pv
     assert moon_pv is not None
     assert hasattr(moon_pv, "position")
     assert hasattr(moon_pv, "velocity")
@@ -329,7 +333,7 @@ def test_ccsds_ephemeris_sun_moon_pv(sample_oem_path):
     assert moon_pv.velocity.shape == moon_pv.position.shape
 
 
-def test_ccsds_ephemeris_obsgeoloc_obsgeovel(sample_oem_path):
+def test_ccsds_ephemeris_obsgeoloc_obsgeovel(sample_oem_path: Any) -> None:
     """Test that obsgeoloc and obsgeovel properties are exposed"""
     begin = datetime(2024, 1, 1, 0, 0, 0)
     end = datetime(2024, 1, 1, 0, 10, 0)
@@ -343,7 +347,7 @@ def test_ccsds_ephemeris_obsgeoloc_obsgeovel(sample_oem_path):
     assert obsgeoloc.shape[1] == 3  # x, y, z
 
     # Should match GCRS position
-    gcrs_pv = eph.gcrs_pv
+    gcrs_pv: PositionVelocityData = eph.gcrs_pv
     assert np.allclose(obsgeoloc, gcrs_pv.position)
 
     # Test obsgeovel (should be same as gcrs_pv.velocity)

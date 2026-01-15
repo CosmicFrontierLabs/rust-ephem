@@ -38,14 +38,14 @@ STEP_SIZE = 60
 class TestLegacyTLEMethod:
     """Test backward compatibility with original tle1/tle2 parameters."""
 
-    def test_legacy_tle1_tle2(self):
+    def test_legacy_tle1_tle2(self) -> None:
         """Test that the legacy tle1/tle2 method still works."""
         ephem = rust_ephem.TLEEphemeris(TLE1, TLE2, BEGIN, END, STEP_SIZE)
         assert ephem is not None
         assert ephem.timestamp is not None
         assert len(ephem.timestamp) == 61  # 0 to 60 minutes inclusive
 
-    def test_legacy_with_tle_epoch(self):
+    def test_legacy_with_tle_epoch(self) -> None:
         """Test that tle_epoch is available with legacy method."""
         ephem = rust_ephem.TLEEphemeris(TLE1, TLE2, BEGIN, END, STEP_SIZE)
         assert ephem.tle_epoch is not None
@@ -60,7 +60,7 @@ class TestLegacyTLEMethod:
 class TestFileReading:
     """Test reading TLEs from files."""
 
-    def test_read_2line_tle_file(self):
+    def test_read_2line_tle_file(self) -> None:
         """Test reading a 2-line TLE file."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
             f.write(TLE_2LINE)
@@ -79,7 +79,7 @@ class TestFileReading:
         finally:
             os.unlink(filepath)
 
-    def test_read_3line_tle_file(self):
+    def test_read_3line_tle_file(self) -> None:
         """Test reading a 3-line TLE file (with satellite name)."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
             f.write(TLE_3LINE)
@@ -99,7 +99,7 @@ class TestFileReading:
         finally:
             os.unlink(filepath)
 
-    def test_file_not_found(self):
+    def test_file_not_found(self) -> None:
         """Test error handling when file doesn't exist."""
         with pytest.raises(
             ValueError, match="(Failed to read TLE from file|No such file or directory)"
@@ -108,7 +108,7 @@ class TestFileReading:
                 tle="/nonexistent/file.tle", begin=BEGIN, end=END, step_size=STEP_SIZE
             )
 
-    def test_invalid_tle_in_file(self):
+    def test_invalid_tle_in_file(self) -> None:
         """Test error handling with invalid TLE data in file."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
             f.write("This is not a valid TLE\nAnother invalid line\n")
@@ -127,7 +127,7 @@ class TestFileReading:
 class TestTLEEpoch:
     """Test TLE epoch extraction."""
 
-    def test_tle_epoch_format(self):
+    def test_tle_epoch_format(self) -> None:
         """Test that tle_epoch returns a proper datetime object."""
         ephem = rust_ephem.TLEEphemeris(TLE1, TLE2, BEGIN, END, STEP_SIZE)
         epoch = ephem.tle_epoch
@@ -139,7 +139,7 @@ class TestTLEEpoch:
         assert epoch.month == 10
         assert epoch.day == 14
 
-    def test_tle_epoch_different_tle(self):
+    def test_tle_epoch_different_tle(self) -> None:
         """Test epoch extraction for different TLE."""
         # ISS TLE from 2008, day 264
         tle1_iss = (
@@ -161,7 +161,7 @@ class TestTLEEpoch:
 class TestParameterValidation:
     """Test parameter validation and error handling."""
 
-    def test_missing_begin_end_parameters(self):
+    def test_missing_begin_end_parameters(self) -> None:
         """Test that begin and end are required."""
         with pytest.raises(ValueError, match="begin parameter is required"):
             rust_ephem.TLEEphemeris(TLE1, TLE2, None, END, STEP_SIZE)
@@ -169,12 +169,12 @@ class TestParameterValidation:
         with pytest.raises(ValueError, match="end parameter is required"):
             rust_ephem.TLEEphemeris(TLE1, TLE2, BEGIN, None, STEP_SIZE)
 
-    def test_no_tle_parameters_provided(self):
+    def test_no_tle_parameters_provided(self) -> None:
         """Test error when no TLE source is provided."""
         with pytest.raises(ValueError, match="Must provide either"):
             rust_ephem.TLEEphemeris(begin=BEGIN, end=END, step_size=STEP_SIZE)
 
-    def test_conflicting_parameters(self):
+    def test_conflicting_parameters(self) -> None:
         """Test that only one TLE source should be used (documented behavior)."""
         # The constructor should use the first method it finds
         # Priority: tle1/tle2, then tle, then norad_id, then norad_name
@@ -201,7 +201,7 @@ class TestParameterValidation:
 class TestDataConsistency:
     """Test that all methods produce consistent results."""
 
-    def test_legacy_vs_file_consistency(self):
+    def test_legacy_vs_file_consistency(self) -> None:
         """Test that legacy and file methods produce the same results."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
             f.write(TLE_2LINE)
@@ -233,7 +233,7 @@ class TestDataConsistency:
 class TestPolarMotionParameter:
     """Test that polar_motion parameter works with new TLE methods."""
 
-    def test_polar_motion_with_file(self):
+    def test_polar_motion_with_file(self) -> None:
         """Test polar_motion parameter with file reading."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
             f.write(TLE_2LINE)
@@ -263,7 +263,7 @@ class TestURLDownloading:
     """Test URL downloading (requires network access - placeholder for documentation)."""
 
     @pytest.mark.skip(reason="Requires network access")
-    def test_download_from_url(self):
+    def test_download_from_url(self) -> None:
         """Test downloading TLE from URL (placeholder)."""
         # Example: Test downloading from a valid TLE URL
         # url = "https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=TLE"
@@ -272,7 +272,7 @@ class TestURLDownloading:
         pass
 
     @pytest.mark.skip(reason="Requires network access")
-    def test_url_caching(self):
+    def test_url_caching(self) -> None:
         """Test that URL downloads are cached (placeholder)."""
         # Test that subsequent calls use cache within TTL
         pass
@@ -282,7 +282,7 @@ class TestCelestrakIntegration:
     """Test Celestrak API integration (requires network access - placeholder)."""
 
     @pytest.mark.skip(reason="Requires network access")
-    def test_fetch_by_norad_id(self):
+    def test_fetch_by_norad_id(self) -> None:
         """Test fetching TLE from Celestrak by NORAD ID (placeholder)."""
         # Example: Fetch ISS TLE
         # ephem = rust_ephem.TLEEphemeris(norad_id=25544, begin=BEGIN, end=END, step_size=STEP_SIZE)
@@ -290,7 +290,7 @@ class TestCelestrakIntegration:
         pass
 
     @pytest.mark.skip(reason="Requires network access")
-    def test_fetch_by_name(self):
+    def test_fetch_by_name(self) -> None:
         """Test fetching TLE from Celestrak by satellite name (placeholder)."""
         # Example: Fetch ISS by name
         # ephem = rust_ephem.TLEEphemeris(norad_name="ISS", begin=BEGIN, end=END, step_size=STEP_SIZE)
@@ -313,7 +313,7 @@ class TestSpaceTrackIntegration:
     """
 
     @pytest.mark.skip(reason="Requires network access and Space-Track.org credentials")
-    def test_fetch_by_norad_id_with_spacetrack_credentials(self):
+    def test_fetch_by_norad_id_with_spacetrack_credentials(self) -> None:
         """Test fetching TLE via norad_id using Space-Track.org when credentials available."""
         # Example: Fetch ISS TLE - will use Space-Track.org if credentials are set
         # Requires SPACETRACK_USERNAME and SPACETRACK_PASSWORD env vars
@@ -328,7 +328,7 @@ class TestSpaceTrackIntegration:
         assert epoch_diff < 4 * 24 * 3600  # Within 4 days (default tolerance)
 
     @pytest.mark.skip(reason="Requires network access and Space-Track.org credentials")
-    def test_fetch_by_norad_id_with_explicit_credentials(self):
+    def test_fetch_by_norad_id_with_explicit_credentials(self) -> None:
         """Test fetching TLE via norad_id with explicit Space-Track.org credentials."""
         # This test uses explicit credentials passed as parameters
         # You would replace these with actual test credentials
@@ -344,7 +344,7 @@ class TestSpaceTrackIntegration:
         assert ephem.tle_epoch is not None
 
     @pytest.mark.skip(reason="Requires network access and Space-Track.org credentials")
-    def test_fetch_with_custom_epoch_tolerance(self):
+    def test_fetch_with_custom_epoch_tolerance(self) -> None:
         """Test fetching TLE with custom epoch tolerance for caching."""
         # Test with 7 day tolerance instead of default 4 days
         ephem = rust_ephem.TLEEphemeris(
@@ -358,7 +358,7 @@ class TestSpaceTrackIntegration:
         assert ephem.tle_epoch is not None
 
     @pytest.mark.skip(reason="Requires network access and Space-Track.org credentials")
-    def test_spacetrack_epoch_based_fetching(self):
+    def test_spacetrack_epoch_based_fetching(self) -> None:
         """Test that Space-Track fetches TLE closest to begin epoch."""
         # Use a historical date to test epoch-based fetching
         historical_begin = datetime(2020, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
@@ -376,7 +376,7 @@ class TestSpaceTrackIntegration:
         assert ephem.tle_epoch.month == 1
 
     @pytest.mark.skip(reason="Requires network access to Celestrak")
-    def test_norad_id_without_credentials_uses_celestrak(self):
+    def test_norad_id_without_credentials_uses_celestrak(self) -> None:
         """Test that norad_id without credentials falls back to Celestrak."""
         # Temporarily clear any env vars
         import os
@@ -398,7 +398,7 @@ class TestSpaceTrackIntegration:
             if old_password is not None:
                 os.environ["SPACETRACK_PASSWORD"] = old_password
 
-    def test_spacetrack_partial_credentials_error(self):
+    def test_spacetrack_partial_credentials_error(self) -> None:
         """Test that providing only username or password raises error."""
         with pytest.raises(ValueError) as excinfo:
             rust_ephem.TLEEphemeris(
@@ -418,7 +418,7 @@ class TestSpaceTrackIntegration:
 class TestFetchTLE:
     """Test the fetch_tle function and TLERecord class."""
 
-    def test_fetch_tle_from_file(self):
+    def test_fetch_tle_from_file(self) -> None:
         """Test fetch_tle from a file."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
             f.write(TLE_3LINE)
@@ -436,7 +436,7 @@ class TestFetchTLE:
         finally:
             os.unlink(filepath)
 
-    def test_tle_record_properties(self):
+    def test_tle_record_properties(self) -> None:
         """Test TLERecord computed properties."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
             f.write(TLE_3LINE)
@@ -452,7 +452,7 @@ class TestFetchTLE:
         finally:
             os.unlink(filepath)
 
-    def test_tle_record_to_string(self):
+    def test_tle_record_to_string(self) -> None:
         """Test TLERecord to_tle_string method."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
             f.write(TLE_3LINE)
@@ -469,7 +469,7 @@ class TestFetchTLE:
         finally:
             os.unlink(filepath)
 
-    def test_tle_record_to_string_2line(self):
+    def test_tle_record_to_string_2line(self) -> None:
         """Test TLERecord to_tle_string method for 2-line TLE."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
             f.write(TLE_2LINE)
@@ -487,7 +487,7 @@ class TestFetchTLE:
         finally:
             os.unlink(filepath)
 
-    def test_tle_record_json_serialization(self):
+    def test_tle_record_json_serialization(self) -> None:
         """Test TLERecord can be serialized to JSON."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
             f.write(TLE_3LINE)
@@ -510,7 +510,7 @@ class TestFetchTLE:
         finally:
             os.unlink(filepath)
 
-    def test_tle_record_with_ephemeris(self):
+    def test_tle_record_with_ephemeris(self) -> None:
         """Test passing TLERecord to TLEEphemeris."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
             f.write(TLE_3LINE)
@@ -533,12 +533,12 @@ class TestFetchTLE:
         finally:
             os.unlink(filepath)
 
-    def test_fetch_tle_missing_params(self):
+    def test_fetch_tle_missing_params(self) -> None:
         """Test that fetch_tle raises error with no params."""
         with pytest.raises(ValueError):
             rust_ephem.fetch_tle()
 
-    def test_tle_record_immutable(self):
+    def test_tle_record_immutable(self) -> None:
         """Test that TLERecord is immutable (frozen)."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
             f.write(TLE_3LINE)

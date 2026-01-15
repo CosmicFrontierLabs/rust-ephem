@@ -1,9 +1,12 @@
 """Pytest configuration for rust-ephem tests."""
 
+from typing import Any
+
 import pytest
+from _pytest.config import Config
 
 
-def pytest_configure(config):
+def pytest_configure(config: Config) -> None:
     """Configure pytest with custom markers."""
     config.addinivalue_line(
         "markers", "requires_astropy: Tests that require astropy library"
@@ -13,7 +16,7 @@ def pytest_configure(config):
     )
 
 
-def pytest_collection_modifyitems(config, items):
+def pytest_collection_modifyitems(config: Config, items: list[Any]) -> None:
     """Skip tests that require optional dependencies if they're not available."""
     # Check for astropy
     try:
@@ -24,7 +27,9 @@ def pytest_collection_modifyitems(config, items):
         has_astropy = False
 
     # Mark tests based on module imports
-    skip_astropy = pytest.mark.skip(reason="astropy not installed")
+    skip_astropy: pytest.MarkDecorator = pytest.mark.skip(
+        reason="astropy not installed"
+    )
 
     for item in items:
         # Check if test file imports astropy

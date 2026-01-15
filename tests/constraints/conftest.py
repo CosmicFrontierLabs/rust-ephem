@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Tuple
+from typing import Any, Generator, List, Optional, Tuple
 
 import numpy as np
 import pytest
+from typing_extensions import Self
 
 from rust_ephem import (
     BodyConstraint,
@@ -41,7 +42,7 @@ class DummyRustResult:
         self._in_constraint_return: bool = True
         self.ras: list[float] = [1.0, 2.0]
         self.decs: list[float] = [3.0, 4.0]
-        self.violations: list = [
+        self.violations: list[Any] = [
             type(
                 "Violation",
                 (),
@@ -53,8 +54,6 @@ class DummyRustResult:
                 },
             )()
         ]
-        self.ras: list[float] = [1.0, 2.0]
-        self.decs: list[float] = [3.0, 4.0]
 
     def in_constraint(self, time: datetime) -> bool:
         self._in_constraint_calls.append(time)
@@ -74,7 +73,9 @@ class DummyMovingBodyResult:
 
 
 @pytest.fixture
-def patched_constraint(monkeypatch: pytest.MonkeyPatch):
+def patched_constraint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> type["DummyConstraintBackend"]:
     import rust_ephem
 
     DummyConstraintBackend.created = 0
@@ -85,42 +86,42 @@ def patched_constraint(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture
-def dummy_ephemeris():
+def dummy_ephemeris() -> object:
     return object()
 
 
 @pytest.fixture
-def sun_constraint():
+def sun_constraint() -> SunConstraint:
     """Fixture for a SunConstraint instance."""
     return SunConstraint(min_angle=45.0)
 
 
 @pytest.fixture
-def moon_constraint():
+def moon_constraint() -> MoonConstraint:
     """Fixture for a MoonConstraint instance."""
     return MoonConstraint(min_angle=30.0)
 
 
 @pytest.fixture
-def eclipse_constraint():
+def eclipse_constraint() -> EclipseConstraint:
     """Fixture for an EclipseConstraint instance."""
     return EclipseConstraint(umbra_only=True)
 
 
 @pytest.fixture
-def earth_limb_constraint():
+def earth_limb_constraint() -> EarthLimbConstraint:
     """Fixture for an EarthLimbConstraint instance."""
     return EarthLimbConstraint(min_angle=10.0)
 
 
 @pytest.fixture
-def body_constraint():
+def body_constraint() -> BodyConstraint:
     """Fixture for a BodyConstraint instance."""
     return BodyConstraint(body="Mars", min_angle=15.0)
 
 
 @pytest.fixture
-def ground_ephemeris():
+def ground_ephemeris() -> GroundEphemeris:
     return GroundEphemeris(
         latitude=34.0,
         longitude=-118.0,
@@ -132,7 +133,7 @@ def ground_ephemeris():
 
 
 @pytest.fixture
-def tle_ephemeris():
+def tle_ephemeris() -> TLEEphemeris:
     return TLEEphemeris(
         tle1=VALID_TLE1,
         tle2=VALID_TLE2,
@@ -143,55 +144,57 @@ def tle_ephemeris():
 
 
 class DummyConstraintBackend:
-    created = 0
+    created: int = 0
 
     def __init__(self) -> None:
         DummyConstraintBackend.created += 1
-        self.evaluate_calls = []
-        self.batch_calls = []
-        self.single_calls = []
-        self.evaluate_moving_body_calls = []
+        self.evaluate_calls: list[Any] = []
+        self.batch_calls: list[Any] = []
+        self.single_calls: list[Any] = []
+        self.evaluate_moving_body_calls: list[Any] = []
 
     @classmethod
-    def from_json(cls, json_str):
+    def from_json(cls, json_str: str) -> Self:
         return cls()
 
     def evaluate(
         self,
-        ephemeris,
-        target_ra,
-        target_dec,
-        times,
-        indices,
-    ):
+        ephemeris: object,
+        target_ra: object,
+        target_dec: object,
+        times: object,
+        indices: object,
+    ) -> DummyRustResult:
         self.evaluate_calls.append((ephemeris, target_ra, target_dec, times, indices))
         return DummyRustResult()
 
     def in_constraint_batch(
         self,
-        ephemeris,
-        target_ras,
-        target_decs,
-        times,
-        indices,
-    ):
+        ephemeris: object,
+        target_ras: object,
+        target_decs: object,
+        times: object,
+        indices: object,
+    ) -> np.ndarray:
         self.batch_calls.append((ephemeris, target_ras, target_decs, times, indices))
         return np.array([[True], [False]])
 
-    def in_constraint(self, time, ephemeris, target_ra, target_dec):
+    def in_constraint(
+        self, time: datetime, ephemeris: object, target_ra: object, target_dec: object
+    ) -> str:
         self.single_calls.append((time, ephemeris, target_ra, target_dec))
         return "single-result"
 
     def evaluate_moving_body(
         self,
-        ephemeris,
-        ras,
-        decs,
-        times,
-        body,
+        ephemeris: object,
+        ras: object,
+        decs: object,
+        times: object,
+        body: str,
         use_horizons: bool,
         spice_kernel: Optional[str],
-    ):
+    ) -> DummyRustResult:
         self.evaluate_moving_body_calls.append(
             (ephemeris, ras, decs, times, body, use_horizons, spice_kernel)
         )
@@ -199,7 +202,7 @@ class DummyConstraintBackend:
 
 
 @pytest.fixture
-def mock_ephem():
+def mock_ephem() -> object:
     """Fixture for a mock ephemeris object."""
 
     class MockEphemeris:
@@ -209,16 +212,16 @@ def mock_ephem():
 
 
 @pytest.fixture
-def mock_ephemeris_with_body():
+def mock_ephemeris_with_body() -> object:
     """Mock ephemeris that supports body lookup"""
 
     class MockEphemeris:
         def get_body(
             self,
-            body,
-            spice_kernel=None,
+            body: str,
+            spice_kernel: Optional[str] = None,
             use_horizons: bool = False,
-        ):
+        ) -> object:
             return type(
                 "SkyCoord",
                 (),
@@ -229,7 +232,7 @@ def mock_ephemeris_with_body():
             )()
 
         @property
-        def timestamp(self):
+        def timestamp(self) -> List[datetime]:
             from datetime import datetime
 
             return [datetime(2024, 1, 1, 0, 0, 0)]
@@ -247,7 +250,7 @@ STEP_SIZE = 120  # 2 minutes
 
 
 @pytest.fixture
-def tle() -> tuple:
+def tle() -> tuple[str, str]:
     tle1 = "1 28485U 04047A   25317.24527149  .00068512  00000+0  12522-2 0  9999"
     tle2 = "2 28485  20.5556  25.5469 0004740 206.7882 153.2316 15.47667717153136"
     return tle1, tle2
@@ -263,7 +266,9 @@ def begin_end_step_size() -> tuple[datetime, datetime, int]:
 
 
 @pytest.fixture
-def tle_ephem(tle, begin_end_step_size):
+def tle_ephem(
+    tle: tuple[str, str], begin_end_step_size: tuple[datetime, datetime, int]
+) -> Generator[TLEEphemeris, None, None]:
     import rust_ephem
 
     yield rust_ephem.TLEEphemeris(
@@ -276,41 +281,41 @@ def tle_ephem(tle, begin_end_step_size):
 
 
 @pytest.fixture
-def sun(tle_ephem):
+def sun(tle_ephem: TLEEphemeris) -> object:
     return tle_ephem.sun[183]
 
 
 @pytest.fixture
-def moon(tle_ephem):
+def moon(tle_ephem: TLEEphemeris) -> object:
     return tle_ephem.moon[183]
 
 
 @pytest.fixture
-def earth(tle_ephem):
+def earth(tle_ephem: TLEEphemeris) -> object:
     return tle_ephem.earth[183]
 
 
 @pytest.fixture
-def timestamp(tle_ephem) -> datetime:
+def timestamp(tle_ephem: Any) -> Any:
     return tle_ephem.timestamp[183]
 
 
 @pytest.fixture
-def dummy_rust_result():
+def dummy_rust_result() -> Any:
     class DummyRustResult:
-        def __init__(self):
-            self.evaluate_calls = []
-            self.evaluate_moving_body_calls = []
+        def __init__(self) -> None:
+            self.evaluate_calls: list[Any] = []
+            self.evaluate_moving_body_calls: list[Any] = []
 
         def evaluate(
             self,
-            ephemeris,
-            ras,
-            decs,
-            times,
+            ephemeris: object,
+            ras: object,
+            decs: object,
+            times: object,
             use_horizons: bool,
             spice_kernel: Optional[str],
-        ):
+        ) -> Any:
             self.evaluate_calls.append(
                 (ephemeris, ras, decs, times, use_horizons, spice_kernel)
             )
@@ -318,14 +323,14 @@ def dummy_rust_result():
 
         def evaluate_moving_body(
             self,
-            ephemeris,
-            ras,
-            decs,
-            times,
-            body,
+            ephemeris: object,
+            ras: object,
+            decs: object,
+            times: object,
+            body: str,
             use_horizons: bool,
             spice_kernel: Optional[str],
-        ):
+        ) -> Any:
             self.evaluate_moving_body_calls.append(
                 (ephemeris, ras, decs, times, body, use_horizons, spice_kernel)
             )
@@ -336,7 +341,7 @@ def dummy_rust_result():
 
 @pytest.fixture
 def constraint_result_with_rust_ref(
-    dummy_rust_result,
+    dummy_rust_result: object,
 ) -> Tuple[ConstraintResult, object]:
     result = ConstraintResult(
         violations=[
@@ -389,24 +394,24 @@ def saa_polygon() -> list[tuple[float, float]]:
 
 
 @pytest.fixture
-def mock_ephemeris_simple():
+def mock_ephemeris_simple() -> object:
     """Simple mock ephemeris for coordinate tests"""
 
     class MockEphemeris:
         @property
-        def timestamp(self):
+        def timestamp(self) -> List[datetime]:
             return [datetime(2024, 1, 1, 0, 0, 0), datetime(2024, 1, 1, 0, 0, 1)]
 
     return MockEphemeris()
 
 
 @pytest.fixture
-def mock_ephemeris_single():
+def mock_ephemeris_single() -> object:
     """Mock ephemeris with single timestamp"""
 
     class MockEphemeris:
         @property
-        def timestamp(self):
+        def timestamp(self) -> List[datetime]:
             return [datetime(2024, 1, 1, 0, 0, 0)]
 
     return MockEphemeris()

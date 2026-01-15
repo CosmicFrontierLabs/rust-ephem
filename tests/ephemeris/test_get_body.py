@@ -15,11 +15,11 @@ from datetime import datetime, timezone
 import numpy as np
 import pytest
 
-import rust_ephem  # type: ignore[import-untyped]
+import rust_ephem
 
 
 @pytest.fixture(scope="module")
-def ensure_planetary_data():
+def ensure_planetary_data() -> None:
     """Ensure planetary ephemeris is loaded once for all tests"""
     # Use local test data file if available, otherwise download once
     import os
@@ -41,7 +41,7 @@ def ensure_planetary_data():
 
 
 @pytest.fixture
-def tle_ephemeris(ensure_planetary_data):
+def tle_ephemeris(ensure_planetary_data: None) -> rust_ephem.TLEEphemeris:
     """Create a TLEEphemeris instance for testing"""
     tle1 = "1 25544U 98067A   25315.25818480  .00012468  00000-0  22984-3 0  9991"
     tle2 = "2 25544  51.6338 298.3179 0004133  57.8977 302.2413 15.49525392537972"
@@ -51,7 +51,7 @@ def tle_ephemeris(ensure_planetary_data):
 
 
 @pytest.fixture
-def ground_ephemeris(ensure_planetary_data):
+def ground_ephemeris(ensure_planetary_data: None) -> rust_ephem.GroundEphemeris:
     """Create a GroundEphemeris instance for testing (Mauna Kea Observatory)"""
     latitude = 19.8207  # degrees
     longitude = -155.4681  # degrees
@@ -64,7 +64,7 @@ def ground_ephemeris(ensure_planetary_data):
 
 
 @pytest.fixture
-def spice_ephemeris(ensure_planetary_data):
+def spice_ephemeris(ensure_planetary_data: None) -> rust_ephem.SPICEEphemeris:
     """Create a SPICEEphemeris instance for testing"""
     import os
 
@@ -86,38 +86,48 @@ def spice_ephemeris(ensure_planetary_data):
 class TestTLEEphemerisGetBody:
     """Test get_body_pv() method on TLEEphemeris"""
 
-    def test_sun_by_name_returns_position_velocity(self, tle_ephemeris):
+    def test_sun_by_name_returns_position_velocity(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
         sun = tle_ephemeris.get_body_pv("Sun")
         assert sun.position.shape[1] == 3
 
-    def test_sun_position_has_reasonable_magnitude(self, tle_ephemeris):
+    def test_sun_position_has_reasonable_magnitude(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
         sun = tle_ephemeris.get_body_pv("Sun")
         distance = np.linalg.norm(sun.position[0])
         assert distance > 1e8  # Sun should be > 100 million km away
 
-    def test_moon_by_lowercase_name(self, tle_ephemeris):
+    def test_moon_by_lowercase_name(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
         moon = tle_ephemeris.get_body_pv("moon")
         assert moon.position.shape[1] == 3
 
-    def test_moon_position_has_reasonable_magnitude(self, tle_ephemeris):
+    def test_moon_position_has_reasonable_magnitude(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
         moon = tle_ephemeris.get_body_pv("moon")
         distance = np.linalg.norm(moon.position[0])
         assert 300000 < distance < 500000  # Moon ~384,400 km from Earth
 
-    def test_moon_by_naif_id(self, tle_ephemeris):
+    def test_moon_by_naif_id(self, tle_ephemeris: rust_ephem.TLEEphemeris) -> None:
         moon = tle_ephemeris.get_body_pv("301")
         assert moon.position.shape[1] == 3
 
-    def test_moon_by_name_and_id_match(self, tle_ephemeris):
+    def test_moon_by_name_and_id_match(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
         moon_by_name = tle_ephemeris.get_body_pv("moon")
         moon_by_id = tle_ephemeris.get_body_pv("301")
         assert np.allclose(moon_by_name.position, moon_by_id.position)
 
-    def test_luna_alias_works(self, tle_ephemeris):
+    def test_luna_alias_works(self, tle_ephemeris: rust_ephem.TLEEphemeris) -> None:
         luna = tle_ephemeris.get_body_pv("Luna")
         assert luna.position.shape[1] == 3
 
-    def test_luna_matches_moon(self, tle_ephemeris):
+    def test_luna_matches_moon(self, tle_ephemeris: rust_ephem.TLEEphemeris) -> None:
         luna = tle_ephemeris.get_body_pv("Luna")
         moon = tle_ephemeris.get_body_pv("Moon")
         assert np.allclose(luna.position, moon.position)
@@ -126,23 +136,33 @@ class TestTLEEphemerisGetBody:
 class TestTLEEphemerisGetBodySkyCoord:
     """Test get_body() method on TLEEphemeris"""
 
-    def test_sun_skycoord_is_created(self, tle_ephemeris):
+    def test_sun_skycoord_is_created(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
         sun = tle_ephemeris.get_body("Sun")
         assert sun is not None
 
-    def test_sun_skycoord_has_gcrs_frame(self, tle_ephemeris):
+    def test_sun_skycoord_has_gcrs_frame(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
         sun = tle_ephemeris.get_body("Sun")
         assert sun.frame.name == "gcrs"
 
-    def test_sun_skycoord_has_observer_location(self, tle_ephemeris):
+    def test_sun_skycoord_has_observer_location(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
         sun = tle_ephemeris.get_body("Sun")
         assert hasattr(sun.frame, "obsgeoloc")
 
-    def test_moon_skycoord_is_created(self, tle_ephemeris):
+    def test_moon_skycoord_is_created(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
         moon = tle_ephemeris.get_body("Moon")
         assert moon is not None
 
-    def test_moon_skycoord_has_gcrs_frame(self, tle_ephemeris):
+    def test_moon_skycoord_has_gcrs_frame(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
         moon = tle_ephemeris.get_body("Moon")
         assert moon.frame.name == "gcrs"
 
@@ -150,20 +170,28 @@ class TestTLEEphemerisGetBodySkyCoord:
 class TestGroundEphemerisGetBody:
     """Test get_body_pv() method on GroundEphemeris"""
 
-    def test_sun_returns_position_velocity(self, ground_ephemeris):
+    def test_sun_returns_position_velocity(
+        self, ground_ephemeris: rust_ephem.GroundEphemeris
+    ) -> None:
         sun = ground_ephemeris.get_body_pv("Sun")
         assert sun.position.shape[1] == 3
 
-    def test_sun_position_has_reasonable_magnitude(self, ground_ephemeris):
+    def test_sun_position_has_reasonable_magnitude(
+        self, ground_ephemeris: rust_ephem.GroundEphemeris
+    ) -> None:
         sun = ground_ephemeris.get_body_pv("Sun")
         distance = np.linalg.norm(sun.position[0])
         assert distance > 1e8
 
-    def test_moon_by_naif_id(self, ground_ephemeris):
+    def test_moon_by_naif_id(
+        self, ground_ephemeris: rust_ephem.GroundEphemeris
+    ) -> None:
         moon = ground_ephemeris.get_body_pv("301")
         assert moon.position.shape[1] == 3
 
-    def test_moon_position_has_reasonable_magnitude(self, ground_ephemeris):
+    def test_moon_position_has_reasonable_magnitude(
+        self, ground_ephemeris: rust_ephem.GroundEphemeris
+    ) -> None:
         moon = ground_ephemeris.get_body_pv("301")
         distance = np.linalg.norm(moon.position[0])
         assert 300000 < distance < 500000
@@ -172,11 +200,15 @@ class TestGroundEphemerisGetBody:
 class TestGroundEphemerisGetBodySkyCoord:
     """Test get_body() method on GroundEphemeris"""
 
-    def test_moon_skycoord_is_created(self, ground_ephemeris):
+    def test_moon_skycoord_is_created(
+        self, ground_ephemeris: rust_ephem.GroundEphemeris
+    ) -> None:
         moon = ground_ephemeris.get_body("moon")
         assert moon is not None
 
-    def test_moon_skycoord_has_gcrs_frame(self, ground_ephemeris):
+    def test_moon_skycoord_has_gcrs_frame(
+        self, ground_ephemeris: rust_ephem.GroundEphemeris
+    ) -> None:
         moon = ground_ephemeris.get_body("moon")
         assert moon.frame.name == "gcrs"
 
@@ -184,20 +216,28 @@ class TestGroundEphemerisGetBodySkyCoord:
 class TestSPICEEphemerisGetBody:
     """Test get_body_pv() method on SPICEEphemeris"""
 
-    def test_sun_from_moon_returns_position_velocity(self, spice_ephemeris):
+    def test_sun_from_moon_returns_position_velocity(
+        self, spice_ephemeris: rust_ephem.SPICEEphemeris
+    ) -> None:
         sun = spice_ephemeris.get_body_pv("Sun")
         assert sun.position.shape[1] == 3
 
-    def test_sun_from_moon_has_reasonable_magnitude(self, spice_ephemeris):
+    def test_sun_from_moon_has_reasonable_magnitude(
+        self, spice_ephemeris: rust_ephem.SPICEEphemeris
+    ) -> None:
         sun = spice_ephemeris.get_body_pv("Sun")
         distance = np.linalg.norm(sun.position[0])
         assert distance > 1e8
 
-    def test_earth_from_moon_returns_position_velocity(self, spice_ephemeris):
+    def test_earth_from_moon_returns_position_velocity(
+        self, spice_ephemeris: rust_ephem.SPICEEphemeris
+    ) -> None:
         earth = spice_ephemeris.get_body_pv("Earth")
         assert earth.position.shape[1] == 3
 
-    def test_earth_from_moon_has_reasonable_magnitude(self, spice_ephemeris):
+    def test_earth_from_moon_has_reasonable_magnitude(
+        self, spice_ephemeris: rust_ephem.SPICEEphemeris
+    ) -> None:
         earth = spice_ephemeris.get_body_pv("Earth")
         distance = np.linalg.norm(earth.position[0])
         assert 300000 < distance < 500000
@@ -206,11 +246,15 @@ class TestSPICEEphemerisGetBody:
 class TestSPICEEphemerisGetBodySkyCoord:
     """Test get_body() method on SPICEEphemeris"""
 
-    def test_sun_skycoord_is_created(self, spice_ephemeris):
+    def test_sun_skycoord_is_created(
+        self, spice_ephemeris: rust_ephem.SPICEEphemeris
+    ) -> None:
         sun = spice_ephemeris.get_body("Sun")
         assert sun is not None
 
-    def test_sun_skycoord_has_gcrs_frame(self, spice_ephemeris):
+    def test_sun_skycoord_has_gcrs_frame(
+        self, spice_ephemeris: rust_ephem.SPICEEphemeris
+    ) -> None:
         sun = spice_ephemeris.get_body("Sun")
         assert sun.frame.name == "gcrs"
 
@@ -218,11 +262,15 @@ class TestSPICEEphemerisGetBodySkyCoord:
 class TestErrorHandling:
     """Test that invalid body identifiers raise appropriate errors"""
 
-    def test_invalid_body_name_raises_value_error(self, tle_ephemeris):
+    def test_invalid_body_name_raises_value_error(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
         with pytest.raises(ValueError):
             tle_ephemeris.get_body_pv("InvalidBodyName")
 
-    def test_invalid_naif_id_string_raises_value_error(self, tle_ephemeris):
+    def test_invalid_naif_id_string_raises_value_error(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
         with pytest.raises(ValueError):
             tle_ephemeris.get_body_pv("not_a_number_or_body")
 
@@ -230,36 +278,38 @@ class TestErrorHandling:
 class TestBodyNameVariations:
     """Test that various body name formats work"""
 
-    def test_sun_uppercase(self, tle_ephemeris):
+    def test_sun_uppercase(self, tle_ephemeris: rust_ephem.TLEEphemeris) -> None:
         body = tle_ephemeris.get_body_pv("SUN")
         assert body.position.shape[1] == 3
 
-    def test_sun_lowercase(self, tle_ephemeris):
+    def test_sun_lowercase(self, tle_ephemeris: rust_ephem.TLEEphemeris) -> None:
         body = tle_ephemeris.get_body_pv("sun")
         assert body.position.shape[1] == 3
 
-    def test_sun_mixed_case(self, tle_ephemeris):
+    def test_sun_mixed_case(self, tle_ephemeris: rust_ephem.TLEEphemeris) -> None:
         body = tle_ephemeris.get_body_pv("SuN")
         assert body.position.shape[1] == 3
 
-    def test_sun_case_variations_match(self, tle_ephemeris):
+    def test_sun_case_variations_match(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
         sun1 = tle_ephemeris.get_body_pv("Sun")
         sun2 = tle_ephemeris.get_body_pv("SUN")
         assert np.allclose(sun1.position, sun2.position)
 
-    def test_moon_uppercase(self, tle_ephemeris):
+    def test_moon_uppercase(self, tle_ephemeris: rust_ephem.TLEEphemeris) -> None:
         body = tle_ephemeris.get_body_pv("MOON")
         assert body.position.shape[1] == 3
 
-    def test_luna_uppercase(self, tle_ephemeris):
+    def test_luna_uppercase(self, tle_ephemeris: rust_ephem.TLEEphemeris) -> None:
         body = tle_ephemeris.get_body_pv("LUNA")
         assert body.position.shape[1] == 3
 
-    def test_luna_lowercase(self, tle_ephemeris):
+    def test_luna_lowercase(self, tle_ephemeris: rust_ephem.TLEEphemeris) -> None:
         body = tle_ephemeris.get_body_pv("luna")
         assert body.position.shape[1] == 3
 
-    def test_moon_aliases_match(self, tle_ephemeris):
+    def test_moon_aliases_match(self, tle_ephemeris: rust_ephem.TLEEphemeris) -> None:
         moon = tle_ephemeris.get_body_pv("Moon")
         luna = tle_ephemeris.get_body_pv("Luna")
         assert np.allclose(moon.position, luna.position)

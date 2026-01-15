@@ -18,12 +18,14 @@ Build and install the Rust module first:
 
 import sys
 from datetime import datetime, timezone
+from typing import Any
 
 import numpy as np
 import pytest
+from astropy.coordinates.sky_coordinate import SkyCoord  # type: ignore[import-untyped]
 
 try:
-    import rust_ephem  # type: ignore[import-untyped]
+    import rust_ephem
 
     RUST_EPHEM_AVAILABLE = True
 except ImportError:
@@ -55,52 +57,52 @@ TOLERANCE = 1e-9
 
 
 @pytest.fixture
-def ephem():
+def ephem() -> rust_ephem.TLEEphemeris:
     return rust_ephem.TLEEphemeris(TLE1, TLE2, BEGIN, END, STEP_SIZE)
 
 
 @pytest.fixture
-def sun(ephem):
+def sun(ephem: rust_ephem.TLEEphemeris) -> SkyCoord:
     return ephem.sun
 
 
 @pytest.fixture
-def moon(ephem):
+def moon(ephem: rust_ephem.TLEEphemeris) -> SkyCoord:
     return ephem.moon
 
 
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-def test_sun_type(sun):
+def test_sun_type(sun: Any) -> None:
     """Test that sun property returns SkyCoord."""
     assert isinstance(sun, SkyCoord), f"Expected SkyCoord, got {type(sun)}"
 
 
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-def test_sun_length(sun, ephem):
+def test_sun_length(sun: Any, ephem: Any) -> None:
     """Test that sun has correct length."""
-    expected_len = len(ephem.timestamp)
+    expected_len: int = len(ephem.timestamp)
     assert len(sun) == expected_len, f"Expected {expected_len} coords, got {len(sun)}"
 
 
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-def test_sun_frame(sun):
+def test_sun_frame(sun: Any) -> None:
     """Test that sun is in GCRS frame."""
     assert isinstance(sun.frame, GCRS), f"Expected GCRS frame, got {type(sun.frame)}"
 
 
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-def test_sun_obsgeoloc_set(sun):
+def test_sun_obsgeoloc_set(sun: Any) -> None:
     """Test that sun obsgeoloc is set."""
     assert sun.frame.obsgeoloc is not None, "obsgeoloc not set"
 
 
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-def test_sun_obsgeovel_set(sun):
+def test_sun_obsgeovel_set(sun: Any) -> None:
     """Test that sun obsgeovel is set."""
     assert sun.frame.obsgeovel is not None, "obsgeovel not set"
 
@@ -108,7 +110,7 @@ def test_sun_obsgeovel_set(sun):
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
 @pytest.mark.parametrize("i", range(31))  # 31 timestamps based on BEGIN, END, STEP_SIZE
-def test_sun_obsgeoloc_match(sun, ephem, i):
+def test_sun_obsgeoloc_match(sun: Any, ephem: Any, i: int) -> None:
     """Test that sun obsgeoloc matches spacecraft position at index i."""
     expected_pos = ephem.gcrs_pv.position[i]
     actual_pos = np.array(
@@ -126,7 +128,7 @@ def test_sun_obsgeoloc_match(sun, ephem, i):
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
 @pytest.mark.parametrize("i", range(31))  # 31 timestamps based on BEGIN, END, STEP_SIZE
-def test_sun_obsgeovel_match(sun, ephem, i):
+def test_sun_obsgeovel_match(sun: Any, ephem: Any, i: int) -> None:
     """Test that sun obsgeovel matches spacecraft velocity at index i."""
     expected_vel = ephem.gcrs_pv.velocity[i]
     actual_vel = np.array(
@@ -144,7 +146,7 @@ def test_sun_obsgeovel_match(sun, ephem, i):
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
 @pytest.mark.parametrize("i", range(31))  # 31 timestamps based on BEGIN, END, STEP_SIZE
-def test_sun_position_match(sun, ephem, i):
+def test_sun_position_match(sun: Any, ephem: Any, i: int) -> None:
     """Test that sun position matches expected at index i."""
     expected_sun_pos = ephem.sun_pv.position[i] - ephem.gcrs_pv.position[i]
     actual_sun_pos = sun[i].cartesian.xyz.to("km").value
@@ -156,7 +158,7 @@ def test_sun_position_match(sun, ephem, i):
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
 @pytest.mark.parametrize("i", range(31))  # 31 timestamps based on BEGIN, END, STEP_SIZE
-def test_sun_velocity_match(sun, ephem, i):
+def test_sun_velocity_match(sun: Any, ephem: Any, i: int) -> None:
     """Test that sun velocity matches expected at index i."""
     expected_sun_vel = ephem.sun_pv.velocity[i] - ephem.gcrs_pv.velocity[i]
     actual_sun_vel = sun[i].velocity.d_xyz.to("km/s").value
@@ -167,36 +169,36 @@ def test_sun_velocity_match(sun, ephem, i):
 
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-def test_moon_type(moon):
+def test_moon_type(moon: Any) -> None:
     """Test that moon property returns SkyCoord."""
     assert isinstance(moon, SkyCoord), f"Expected SkyCoord, got {type(moon)}"
 
 
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-def test_moon_length(moon, ephem):
+def test_moon_length(moon: Any, ephem: Any) -> None:
     """Test that moon has correct length."""
-    expected_len = len(ephem.timestamp)
+    expected_len: int = len(ephem.timestamp)
     assert len(moon) == expected_len, f"Expected {expected_len} coords, got {len(moon)}"
 
 
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-def test_moon_frame(moon):
+def test_moon_frame(moon: Any) -> None:
     """Test that moon is in GCRS frame."""
     assert isinstance(moon.frame, GCRS), f"Expected GCRS frame, got {type(moon.frame)}"
 
 
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-def test_moon_obsgeoloc_set(moon):
+def test_moon_obsgeoloc_set(moon: Any) -> None:
     """Test that moon obsgeoloc is set."""
     assert moon.frame.obsgeoloc is not None, "obsgeoloc not set"
 
 
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-def test_moon_obsgeovel_set(moon):
+def test_moon_obsgeovel_set(moon: Any) -> None:
     """Test that moon obsgeovel is set."""
     assert moon.frame.obsgeovel is not None, "obsgeovel not set"
 
@@ -204,7 +206,7 @@ def test_moon_obsgeovel_set(moon):
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
 @pytest.mark.parametrize("i", range(31))  # 31 timestamps based on BEGIN, END, STEP_SIZE
-def test_moon_obsgeoloc_match(moon, ephem, i):
+def test_moon_obsgeoloc_match(moon: Any, ephem: Any, i: int) -> None:
     """Test that moon obsgeoloc matches spacecraft position at index i."""
     expected_pos = ephem.gcrs_pv.position[i]
     actual_pos = np.array(
@@ -222,7 +224,7 @@ def test_moon_obsgeoloc_match(moon, ephem, i):
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
 @pytest.mark.parametrize("i", range(31))  # 31 timestamps based on BEGIN, END, STEP_SIZE
-def test_moon_obsgeovel_match(moon, ephem, i):
+def test_moon_obsgeovel_match(moon: Any, ephem: Any, i: int) -> None:
     """Test that moon obsgeovel matches spacecraft velocity at index i."""
     expected_vel = ephem.gcrs_pv.velocity[i]
     actual_vel = np.array(
@@ -240,7 +242,7 @@ def test_moon_obsgeovel_match(moon, ephem, i):
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
 @pytest.mark.parametrize("i", range(31))  # 31 timestamps based on BEGIN, END, STEP_SIZE
-def test_moon_position_match(moon, ephem, i):
+def test_moon_position_match(moon: Any, ephem: Any, i: int) -> None:
     """Test that moon position matches expected at index i."""
     expected_moon_pos = ephem.moon_pv.position[i] - ephem.gcrs_pv.position[i]
     actual_moon_pos = moon[i].cartesian.xyz.to("km").value
@@ -252,7 +254,7 @@ def test_moon_position_match(moon, ephem, i):
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
 @pytest.mark.parametrize("i", range(31))  # 31 timestamps based on BEGIN, END, STEP_SIZE
-def test_moon_velocity_match(moon, ephem, i):
+def test_moon_velocity_match(moon: Any, ephem: Any, i: int) -> None:
     """Test that moon velocity matches expected at index i."""
     expected_moon_vel = ephem.moon_pv.velocity[i] - ephem.gcrs_pv.velocity[i]
     actual_moon_vel = moon[i].velocity.d_xyz.to("km/s").value
@@ -266,10 +268,10 @@ def test_moon_velocity_match(moon, ephem, i):
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
 @pytest.mark.parametrize("i", range(31))
-def test_moon_ra_compare_to_astropy(moon, ephem, i):
+def test_moon_ra_compare_to_astropy(moon: Any, ephem: Any, i: int) -> None:
     """Test that moon RA matches expected using astropy at index i."""
     expected_moon_pos = ephem.moon[i]
-    actual_moon_pos = get_body(
+    actual_moon_pos: SkyCoord = get_body(
         "moon", Time(ephem.timestamp[i]), location=ephem.itrs.earth_location[i]
     )
     assert np.allclose(expected_moon_pos.ra.value, actual_moon_pos.ra.value, rtol=1e-3)
@@ -278,10 +280,10 @@ def test_moon_ra_compare_to_astropy(moon, ephem, i):
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
 @pytest.mark.parametrize("i", range(31))
-def test_moon_dec_compare_to_astropy(moon, ephem, i):
+def test_moon_dec_compare_to_astropy(moon: Any, ephem: Any, i: int) -> None:
     """Test that moon Dec matches expected using astropy at index i."""
     expected_moon_pos = ephem.moon[i]
-    actual_moon_pos = get_body(
+    actual_moon_pos: SkyCoord = get_body(
         "moon", Time(ephem.timestamp[i]), location=ephem.itrs.earth_location[i]
     )
     assert np.allclose(
@@ -293,10 +295,10 @@ def test_moon_dec_compare_to_astropy(moon, ephem, i):
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
 @pytest.mark.parametrize("i", range(31))
-def test_sun_ra_compare_to_astropy(sun, ephem, i):
+def test_sun_ra_compare_to_astropy(sun: Any, ephem: Any, i: int) -> None:
     """Test that sun RA matches expected using astropy at index i."""
     expected_sun_pos = ephem.sun[i]
-    actual_sun_pos = get_body(
+    actual_sun_pos: SkyCoord = get_body(
         "sun", Time(ephem.timestamp[i]), location=ephem.itrs.earth_location[i]
     )
     assert np.allclose(expected_sun_pos.ra.value, actual_sun_pos.ra.value, rtol=1e-4)
@@ -305,16 +307,16 @@ def test_sun_ra_compare_to_astropy(sun, ephem, i):
 @pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
 @pytest.mark.parametrize("i", range(31))
-def test_sun_dec_compare_to_astropy(sun, ephem, i):
+def test_sun_dec_compare_to_astropy(sun: Any, ephem: Any, i: int) -> None:
     """Test that sun Dec matches expected using astropy at index i."""
     expected_sun_pos = ephem.sun[i]
-    actual_sun_pos = get_body(
+    actual_sun_pos: SkyCoord = get_body(
         "sun", Time(ephem.timestamp[i]), location=ephem.itrs.earth_location[i]
     )
     assert np.allclose(expected_sun_pos.dec.value, actual_sun_pos.dec.value, rtol=1e-3)
 
 
-def main():
+def main() -> int:
     """Run all tests."""
     print("\n" + "=" * 80)
     print("Sun and Moon gcrs_to_skycoord() Integration Tests")

@@ -6,11 +6,12 @@ Compares rust_ephem's TAI-UTC offsets against astropy.
 
 import datetime
 from datetime import timezone
+from typing import Any, Tuple
 
 import pytest
 
 try:
-    import rust_ephem  # type: ignore[import-untyped]
+    import rust_ephem
 
     RUST_AVAILABLE = True
 except ImportError:
@@ -42,7 +43,7 @@ class TestTAIUTCOffsets:
             (datetime.datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc), 37.0),
         ],
     )
-    def test_known_tai_utc_offsets(self, date, expected_offset):
+    def test_known_tai_utc_offsets(self, date: Any, expected_offset: Any) -> None:
         """Test TAI-UTC offsets for dates with known leap seconds"""
         tai_utc = rust_ephem.get_tai_utc_offset(date)
         assert tai_utc is not None, f"TAI-UTC offset should not be None for {date}"
@@ -50,7 +51,7 @@ class TestTAIUTCOffsets:
             f"Expected {expected_offset}, got {tai_utc}"
         )
 
-    def test_tai_utc_offset_returns_value(self):
+    def test_tai_utc_offset_returns_value(self) -> None:
         """Test that TAI-UTC offset returns a numeric value"""
         dt = datetime.datetime(2020, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
         tai_utc = rust_ephem.get_tai_utc_offset(dt)
@@ -58,7 +59,7 @@ class TestTAIUTCOffsets:
         assert isinstance(tai_utc, (int, float)), "TAI-UTC offset should be numeric"
         assert tai_utc > 0, "TAI-UTC offset should be positive"
 
-    def test_tai_utc_offset_increases_with_time(self):
+    def test_tai_utc_offset_increases_with_time(self) -> None:
         """Test that TAI-UTC offset increases or stays constant over time"""
         dates = [
             datetime.datetime(1980, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
@@ -71,12 +72,14 @@ class TestTAIUTCOffsets:
         offsets = [rust_ephem.get_tai_utc_offset(dt) for dt in dates]
         assert all(o is not None for o in offsets), "All offsets should be non-None"
 
-        for i in range(len(offsets) - 1):
-            assert offsets[i] <= offsets[i + 1], (
-                f"TAI-UTC should be non-decreasing: {offsets[i]} > {offsets[i + 1]}"
+        # Cast to list of floats since we've verified they're not None
+        float_offsets = [float(o) for o in offsets if o is not None]
+        for i in range(len(float_offsets) - 1):
+            assert float_offsets[i] <= float_offsets[i + 1], (
+                f"TAI-UTC should be non-decreasing: {float_offsets[i]} > {float_offsets[i + 1]}"
             )
 
-    def test_tai_utc_constant_between_leap_seconds(self):
+    def test_tai_utc_constant_between_leap_seconds(self) -> None:
         """Test that TAI-UTC remains constant between leap second insertions"""
         # Between 2017-01-01 and 2024-01-01, no leap seconds were added
         dt1 = datetime.datetime(2017, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
@@ -89,7 +92,7 @@ class TestTAIUTCOffsets:
             f"TAI-UTC should be constant between leap seconds: {offset1} != {offset2}"
         )
 
-    def test_tai_utc_before_1972(self):
+    def test_tai_utc_before_1972(self) -> None:
         """Test TAI-UTC offset for dates before 1972 (pre-leap second era)"""
         dt = datetime.datetime(1970, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         tai_utc = rust_ephem.get_tai_utc_offset(dt)
@@ -110,7 +113,7 @@ class TestTTUTCConversion:
             datetime.datetime(2024, 11, 11, 0, 0, 0, tzinfo=timezone.utc),
         ],
     )
-    def test_tt_utc_relationship(self, date):
+    def test_tt_utc_relationship(self, date: Any) -> None:
         """Test that TT-UTC = TAI-UTC + 32.184"""
         tai_utc = rust_ephem.get_tai_utc_offset(date)
         assert tai_utc is not None, f"TAI-UTC should not be None for {date}"
@@ -119,7 +122,7 @@ class TestTTUTCConversion:
         assert tt_utc > 32.184, "TT-UTC should be greater than 32.184"
         assert tt_utc < 100.0, "TT-UTC should be reasonable (< 100 seconds)"
 
-    def test_tt_utc_consistency(self):
+    def test_tt_utc_consistency(self) -> None:
         """Test TT-UTC offset consistency across multiple calls"""
         dt = datetime.datetime(2020, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -141,7 +144,7 @@ class TestAstropyComparison:
             datetime.datetime(2024, 11, 11, 0, 0, 0, tzinfo=timezone.utc),
         ],
     )
-    def test_tt_utc_matches_astropy(self, date):
+    def test_tt_utc_matches_astropy(self, date: Any) -> None:
         """Test that TT-UTC matches astropy within 1ms"""
         # Get rust_ephem offset
         tai_utc_rust = rust_ephem.get_tai_utc_offset(date)
@@ -157,7 +160,7 @@ class TestAstropyComparison:
         diff_ms = abs(tt_utc_rust - tt_utc_astropy) * 1000
         assert diff_ms < 1.0, f"TT-UTC difference should be < 1ms, got {diff_ms:.3f}ms"
 
-    def test_tai_utc_matches_astropy(self):
+    def test_tai_utc_matches_astropy(self) -> None:
         """Test that TAI-UTC matches astropy's delta_tai_utc"""
         date = datetime.datetime(2020, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 
@@ -178,14 +181,14 @@ class TestEphemerisWithLeapSeconds:
     """Tests for ephemeris calculations with leap second corrections"""
 
     @pytest.fixture
-    def tle_lines(self):
+    def tle_lines(self) -> Tuple[str, str]:
         """Provide TLE data for testing"""
         return (
             "1 28485U 04047A   25287.56748435  .00035474  00000+0  70906-3 0  9995",
             "2 28485  20.5535 247.0048 0005179 187.1586 172.8782 15.44937919148530",
         )
 
-    def test_ephemeris_creation_with_leap_seconds(self, tle_lines):
+    def test_ephemeris_creation_with_leap_seconds(self, tle_lines: Any) -> None:
         """Test that ephemeris can be created with leap second corrections"""
         tle1, tle2 = tle_lines
         begin = datetime.datetime(2025, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
@@ -195,7 +198,9 @@ class TestEphemerisWithLeapSeconds:
         ephem = rust_ephem.TLEEphemeris(tle1, tle2, begin, end, step_size)
         assert ephem is not None, "Ephemeris should be created successfully"
 
-    def test_ephemeris_propagation_with_leap_seconds(self, tle_lines):
+    def test_ephemeris_propagation_with_leap_seconds(
+        self, tle_lines: Tuple[str, str]
+    ) -> None:
         """Test that ephemeris propagation works with leap second corrections"""
         tle1, tle2 = tle_lines
         begin = datetime.datetime(2025, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
@@ -203,12 +208,13 @@ class TestEphemerisWithLeapSeconds:
         step_size = 3600
 
         ephem = rust_ephem.TLEEphemeris(tle1, tle2, begin, end, step_size)
-        ephem.propagate_to_teme()
 
         assert ephem.teme_pv is not None, "TEME data should be available"
         assert ephem.teme_pv.position is not None, "TEME position should be available"
 
-    def test_ephemeris_gcrs_transformation_with_leap_seconds(self, tle_lines):
+    def test_ephemeris_gcrs_transformation_with_leap_seconds(
+        self, tle_lines: Tuple[str, str]
+    ) -> None:
         """Test GCRS transformation with leap second corrections"""
         tle1, tle2 = tle_lines
         begin = datetime.datetime(2025, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
@@ -216,14 +222,12 @@ class TestEphemerisWithLeapSeconds:
         step_size = 3600
 
         ephem = rust_ephem.TLEEphemeris(tle1, tle2, begin, end, step_size)
-        ephem.propagate_to_teme()
-        ephem.teme_to_gcrs()
 
         assert ephem.gcrs_pv is not None, "GCRS data should be available"
         assert ephem.gcrs_pv.position is not None, "GCRS position should be available"
         assert ephem.gcrs_pv.velocity is not None, "GCRS velocity should be available"
 
-    def test_ephemeris_position_magnitude(self, tle_lines):
+    def test_ephemeris_position_magnitude(self, tle_lines: Tuple[str, str]) -> None:
         """Test that GCRS position magnitude is reasonable for LEO"""
         tle1, tle2 = tle_lines
         begin = datetime.datetime(2025, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
@@ -231,8 +235,6 @@ class TestEphemerisWithLeapSeconds:
         step_size = 3600
 
         ephem = rust_ephem.TLEEphemeris(tle1, tle2, begin, end, step_size)
-        ephem.propagate_to_teme()
-        ephem.teme_to_gcrs()
 
         pos = ephem.gcrs_pv.position[0]
         pos_mag = (pos[0] ** 2 + pos[1] ** 2 + pos[2] ** 2) ** 0.5
@@ -241,7 +243,7 @@ class TestEphemerisWithLeapSeconds:
             f"Position magnitude should be in LEO range, got {pos_mag:.3f} km"
         )
 
-    def test_ephemeris_velocity_magnitude(self, tle_lines):
+    def test_ephemeris_velocity_magnitude(self, tle_lines: Tuple[str, str]) -> None:
         """Test that GCRS velocity magnitude is reasonable for LEO"""
         tle1, tle2 = tle_lines
         begin = datetime.datetime(2025, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
@@ -249,8 +251,6 @@ class TestEphemerisWithLeapSeconds:
         step_size = 3600
 
         ephem = rust_ephem.TLEEphemeris(tle1, tle2, begin, end, step_size)
-        ephem.propagate_to_teme()
-        ephem.teme_to_gcrs()
 
         vel = ephem.gcrs_pv.velocity[0]
         vel_mag = (vel[0] ** 2 + vel[1] ** 2 + vel[2] ** 2) ** 0.5
@@ -259,7 +259,9 @@ class TestEphemerisWithLeapSeconds:
             f"Velocity magnitude should be orbital speed, got {vel_mag:.6f} km/s"
         )
 
-    def test_ephemeris_with_multiple_timesteps(self, tle_lines):
+    def test_ephemeris_with_multiple_timesteps(
+        self, tle_lines: Tuple[str, str]
+    ) -> None:
         """Test ephemeris with multiple time steps"""
         tle1, tle2 = tle_lines
         begin = datetime.datetime(2025, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
@@ -267,8 +269,6 @@ class TestEphemerisWithLeapSeconds:
         step_size = 3600  # 1 hour steps
 
         ephem = rust_ephem.TLEEphemeris(tle1, tle2, begin, end, step_size)
-        ephem.propagate_to_teme()
-        ephem.teme_to_gcrs()
 
         assert len(ephem.gcrs_pv.position) == 7, "Should have 7 positions (0-6 hours)"
         assert len(ephem.gcrs_pv.velocity) == 7, "Should have 7 velocities (0-6 hours)"
@@ -284,7 +284,7 @@ class TestEphemerisWithLeapSeconds:
 class TestEdgeCases:
     """Tests for edge cases and boundary conditions"""
 
-    def test_leap_second_boundary(self):
+    def test_leap_second_boundary(self) -> None:
         """Test TAI-UTC offset at leap second boundaries
 
         Note: The 2017 leap second occurs at 2016-12-31 23:59:60.
@@ -307,7 +307,7 @@ class TestEdgeCases:
             f"Expected 37 after 2017 leap second, got {offset_after}"
         )
 
-    def test_future_date_extrapolation(self):
+    def test_future_date_extrapolation(self) -> None:
         """Test TAI-UTC offset for future dates"""
         future = datetime.datetime(2030, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         tai_utc = rust_ephem.get_tai_utc_offset(future)
@@ -316,7 +316,7 @@ class TestEdgeCases:
         if tai_utc is not None:
             assert tai_utc >= 37.0, "Future offset should be at least current value"
 
-    def test_microsecond_precision(self):
+    def test_microsecond_precision(self) -> None:
         """Test that leap seconds work with microsecond precision"""
         dt = datetime.datetime(2020, 6, 15, 12, 30, 45, 123456, tzinfo=timezone.utc)
         tai_utc = rust_ephem.get_tai_utc_offset(dt)
