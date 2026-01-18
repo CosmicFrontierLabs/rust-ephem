@@ -285,7 +285,7 @@ pub fn query_horizons_body_by_name(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::time_utils::chrono_to_epoch;
+    use crate::utils::time_utils::{chrono_to_epoch, get_tai_utc_offset};
     use chrono::Duration;
     use chrono::TimeZone;
 
@@ -316,6 +316,39 @@ mod tests {
             .expect("parse_horizons_datetime failed");
         let diff_ns = (parsed - dt).num_nanoseconds().unwrap().abs();
         assert!(diff_ns < 1_000_000);
+    }
+
+    #[test]
+    fn test_parse_horizons_datetime_offsets_from_naive_jd() {
+        let dt = Utc.with_ymd_and_hms(2024, 6, 1, 12, 34, 56).unwrap();
+        let jd_tdb = chrono_to_epoch(&dt).to_jde_tdb_days();
+
+        let parsed = parse_horizons_datetime(&format!("{:.12}", jd_tdb))
+            .expect("parse_horizons_datetime failed");
+
+        // Naive conversion treats JD(TDB) as if it were UTC.
+        let unix_seconds_naive = (jd_tdb - 2440587.5) * 86400.0;
+        let mut secs = unix_seconds_naive.floor() as i64;
+        let mut nsecs = ((unix_seconds_naive - secs as f64) * 1e9).round() as i64;
+        if nsecs == 1_000_000_000 {
+            secs += 1;
+            nsecs = 0;
+        }
+        if nsecs < 0 {
+            secs -= 1;
+            nsecs += 1_000_000_000;
+        }
+        let naive = Utc
+            .timestamp_opt(secs, nsecs as u32)
+            .single()
+            .expect("naive JD conversion failed");
+
+        let diff_ns = (parsed - naive).num_nanoseconds().unwrap();
+        let diff_sec = diff_ns as f64 / 1e9;
+
+        let tai_utc = get_tai_utc_offset(&parsed).expect("TAI-UTC offset missing");
+        let expected = tai_utc + 32.184;
+        assert!((diff_sec + expected).abs() < 0.05);
     }
 
     #[test]
