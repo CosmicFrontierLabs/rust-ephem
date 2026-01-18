@@ -28,10 +28,7 @@ struct EclipseEvaluator {
 }
 
 impl EclipseEvaluator {
-    fn shadow_geometry(
-        obs_pos: [f64; 3],
-        sun_pos: [f64; 3],
-    ) -> Option<(f64, f64, f64)> {
+    fn shadow_geometry(obs_pos: [f64; 3], sun_pos: [f64; 3]) -> Option<(f64, f64, f64)> {
         let sun_dist = vector_magnitude(&sun_pos);
         if sun_dist <= 0.0 {
             return None;
