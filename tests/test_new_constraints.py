@@ -17,6 +17,24 @@ from rust_ephem.constraints import (
 )
 
 
+def moon_ra_dec_deg(ephem: rust_ephem.Ephemeris, index: int) -> tuple[float, float]:
+    moon_pos = ephem.moon_pv.position[index]
+    obs_pos = ephem.gcrs_pv.position[index]
+    rel = moon_pos - obs_pos
+    dist = np.linalg.norm(rel)
+    ra = np.degrees(np.arctan2(rel[1], rel[0]))
+    if ra < 0.0:
+        ra += 360.0
+    dec = np.degrees(np.arcsin(rel[2] / dist))
+    return ra, dec
+
+
+def moon_altitude_deg(ephem: rust_ephem.Ephemeris, index: int) -> float:
+    ra, dec = moon_ra_dec_deg(ephem, index)
+    altaz = ephem.radec_to_altaz(ra, dec, time_indices=[index])
+    return float(altaz[0][0])
+
+
 class TestAirmassConstraint:
     """Test AirmassConstraint functionality."""
 
@@ -359,6 +377,93 @@ class TestMoonPhaseConstraint:
         target_decs = [0.0, 30.0, -30.0]
         result = constraint.in_constraint_batch(tle_ephemeris, target_ras, target_decs)
         assert result.dtype == bool
+
+    def test_moon_phase_constraint_illumination_violation(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
+        """Illumination threshold should trigger a violation."""
+        illumination = tle_ephemeris.moon_illumination(time_indices=[0])[0]
+        if illumination <= 0.02:
+            constraint = MoonPhaseConstraint(
+                max_illumination=1.0,
+                min_illumination=illumination + 0.05,
+                enforce_when_below_horizon=True,
+            )
+        else:
+            constraint = MoonPhaseConstraint(
+                max_illumination=max(illumination - 0.02, 0.0),
+                enforce_when_below_horizon=True,
+            )
+        result = constraint.evaluate(
+            tle_ephemeris, target_ra=0.0, target_dec=0.0, indices=0
+        )
+        assert result.all_satisfied is False
+
+    def test_moon_phase_constraint_min_distance_violation(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
+        """Min distance should trigger a violation when target is at the Moon."""
+        ra, dec = moon_ra_dec_deg(tle_ephemeris, 0)
+        constraint = MoonPhaseConstraint(
+            max_illumination=1.0,
+            min_distance=1.0,
+            enforce_when_below_horizon=True,
+        )
+        result = constraint.evaluate(
+            tle_ephemeris, target_ra=ra, target_dec=dec, indices=0
+        )
+        assert result.all_satisfied is False
+
+    def test_moon_phase_constraint_max_distance_violation(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
+        """Max distance should trigger a violation for a far target."""
+        ra, dec = moon_ra_dec_deg(tle_ephemeris, 0)
+        far_ra = (ra + 180.0) % 360.0
+        far_dec = -dec
+        constraint = MoonPhaseConstraint(
+            max_illumination=1.0,
+            max_distance=90.0,
+            enforce_when_below_horizon=True,
+        )
+        result = constraint.evaluate(
+            tle_ephemeris, target_ra=far_ra, target_dec=far_dec, indices=0
+        )
+        assert result.all_satisfied is False
+
+    def test_moon_phase_constraint_below_horizon_skip(
+        self, ground_ephemeris: rust_ephem.GroundEphemeris
+    ) -> None:
+        """Below-horizon Moon should be skipped when enforcement is disabled."""
+        below_index = None
+        for idx in range(len(ground_ephemeris.timestamp)):
+            if moon_altitude_deg(ground_ephemeris, idx) < 0.0:
+                below_index = idx
+                break
+        if below_index is None:
+            pytest.skip("No below-horizon Moon found in test window")
+
+        illumination = ground_ephemeris.moon_illumination(time_indices=[below_index])[0]
+        max_illum = max(illumination - 0.02, 0.0)
+
+        skip_constraint = MoonPhaseConstraint(
+            max_illumination=max_illum,
+            enforce_when_below_horizon=False,
+        )
+        enforced_constraint = MoonPhaseConstraint(
+            max_illumination=max_illum,
+            enforce_when_below_horizon=True,
+        )
+
+        skipped = skip_constraint.evaluate(
+            ground_ephemeris, target_ra=0.0, target_dec=0.0, indices=below_index
+        )
+        enforced = enforced_constraint.evaluate(
+            ground_ephemeris, target_ra=0.0, target_dec=0.0, indices=below_index
+        )
+
+        assert skipped.all_satisfied is True
+        assert enforced.all_satisfied is False
 
 
 class TestSAAConstraint:
