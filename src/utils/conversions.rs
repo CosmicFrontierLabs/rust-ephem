@@ -5,13 +5,15 @@
 /// both TLEEphemeris and SPICEEphemeris to avoid code duplication.
 use chrono::{DateTime, Utc};
 use erfa::{
+    constants::ERFA_D2PI,
     earth::earth_rotation_angle_00,
     misc::norm_angle,
     prenut::pn_matrix_06a,
-    time::{gmst06, gst06a},
+    time::{gmst06, gst06},
     vectors_and_matrices::mat_mul_pvec,
 };
 use ndarray::Array2;
+use std::f64::consts::PI;
 
 use crate::utils::config::*;
 use crate::utils::eop_provider::get_polar_motion_rad;
@@ -26,6 +28,15 @@ fn mat_mul(a: [[f64; 3]; 3], b: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
         }
     }
     out
+}
+
+fn norm_angle_pm(angle: f64) -> f64 {
+    // Normalize to [-pi, pi) to preserve small signed offsets across 2pi wrap.
+    let mut w = norm_angle(angle);
+    if w >= PI {
+        w -= ERFA_D2PI;
+    }
+    w
 }
 
 /// Supported coordinate frames for conversion.
@@ -172,9 +183,9 @@ fn get_rotation(from: Frame, to: Frame, dt: &DateTime<Utc>, polar_motion: bool) 
             let (jd_tt1, jd_tt2) = datetime_to_jd_tt(dt);
             let bpn = pn_matrix_06a(jd_tt1, jd_tt2);
             let (jd_ut1_1, jd_ut1_2) = datetime_to_jd_ut1(dt);
-            let gast = gst06a(jd_ut1_1, jd_ut1_2, jd_tt1, jd_tt2);
+            let gast = gst06(jd_ut1_1, jd_ut1_2, jd_tt1, jd_tt2, bpn);
             let gmst = gmst06(jd_ut1_1, jd_ut1_2, jd_tt1, jd_tt2);
-            let eqeq = norm_angle(gast - gmst);
+            let eqeq = norm_angle_pm(gast - gmst);
             // TEME uses the mean equinox; rotate from true equinox via equation of equinoxes.
             let (sin_eq, cos_eq) = eqeq.sin_cos();
             let eqeq_rot = [
