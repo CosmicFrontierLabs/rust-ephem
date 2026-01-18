@@ -4,6 +4,8 @@ Test suite for new astronomical constraints.
 Tests AirmassConstraint, DaytimeConstraint, MoonPhaseConstraint, and SAAConstraint.
 """
 
+from datetime import datetime, timedelta, timezone
+
 import numpy as np
 import pytest
 from pydantic import ValidationError
@@ -431,17 +433,24 @@ class TestMoonPhaseConstraint:
         )
         assert result.all_satisfied is False
 
-    def test_moon_phase_constraint_below_horizon_skip(
-        self, ground_ephemeris: rust_ephem.GroundEphemeris
-    ) -> None:
+    def test_moon_phase_constraint_below_horizon_skip(self) -> None:
         """Below-horizon Moon should be skipped when enforcement is disabled."""
+        begin = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        end = begin + timedelta(hours=24)
+        ground_ephemeris = rust_ephem.GroundEphemeris(
+            latitude=34.0,
+            longitude=-118.0,
+            height=100.0,
+            begin=begin,
+            end=end,
+            step_size=600,
+        )
         below_index = None
         for idx in range(len(ground_ephemeris.timestamp)):
             if moon_altitude_deg(ground_ephemeris, idx) < 0.0:
                 below_index = idx
                 break
-        if below_index is None:
-            pytest.skip("No below-horizon Moon found in test window")
+        assert below_index is not None, "Expected below-horizon Moon sample"
 
         illumination = ground_ephemeris.moon_illumination(time_indices=[below_index])[0]
         max_illum = max(illumination - 0.02, 0.0)
