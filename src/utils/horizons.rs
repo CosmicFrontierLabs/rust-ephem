@@ -4,7 +4,11 @@
 /// for solar system body positions and velocities when SPICE kernels
 /// are not available or do not contain the required data.
 use chrono::{DateTime, Datelike, TimeZone, Utc};
+use hifitime::Epoch;
 use ndarray::Array2;
+use std::cmp::Ordering;
+
+use crate::utils::time_utils::chrono_to_epoch;
 
 /// Query JPL Horizons for body ephemeris data by NAIF ID in GCRS frame
 ///
@@ -150,27 +154,37 @@ fn parse_horizons_csv_response(
     interpolate_horizons_data(&horizons_times, &horizons_data, times)
 }
 
-/// Parse Horizons Julian Date to DateTime<Utc>
+/// Parse Horizons JDTDB to DateTime<Utc>
 fn parse_horizons_datetime(s: &str) -> Result<DateTime<Utc>, String> {
-    // Parse Julian Date (e.g., "2461018.500000000")
-    let jd: f64 = s
+    // Parse JDTDB (e.g., "2461018.500000000")
+    let jd_tdb: f64 = s
         .parse()
         .map_err(|_| format!("Invalid Julian Date: {}", s))?;
 
-    // Convert Julian Date to Unix timestamp
-    // JD 2440587.5 = Unix epoch (1970-01-01 00:00:00 UTC)
-    let unix_seconds = (jd - 2440587.5) * 86400.0;
+    // Horizons times are in TDB; convert to UTC via hifitime.
+    let epoch = Epoch::from_jde_tdb(jd_tdb);
+    let unix_seconds = epoch.to_unix_seconds();
+    if !unix_seconds.is_finite() {
+        return Err(format!("Invalid Unix seconds from JD {}", jd_tdb));
+    }
 
-    // Create DateTime from timestamp
-    let secs = unix_seconds.floor() as i64;
-    let nsecs = ((unix_seconds - unix_seconds.floor()) * 1e9) as u32;
+    let mut secs = unix_seconds.floor() as i64;
+    let mut nsecs = ((unix_seconds - secs as f64) * 1e9).round() as i64;
+    if nsecs == 1_000_000_000 {
+        secs += 1;
+        nsecs = 0;
+    }
+    if nsecs < 0 {
+        secs -= 1;
+        nsecs += 1_000_000_000;
+    }
 
-    Utc.timestamp_opt(secs, nsecs)
+    Utc.timestamp_opt(secs, nsecs as u32)
         .single()
-        .ok_or_else(|| format!("Invalid timestamp from JD {}", jd))
+        .ok_or_else(|| format!("Invalid timestamp from JD {}", jd_tdb))
 }
 
-/// Interpolate Horizons data to requested times using nearest-neighbor
+/// Interpolate Horizons data to requested times using linear interpolation
 fn interpolate_horizons_data(
     horizons_times: &[DateTime<Utc>],
     horizons_data: &[Vec<f64>],
@@ -178,18 +192,57 @@ fn interpolate_horizons_data(
 ) -> Result<Array2<f64>, String> {
     let mut result = Array2::<f64>::zeros((requested_times.len(), 6));
 
-    for (i, &req_time) in requested_times.iter().enumerate() {
-        // Find nearest horizons time
-        let nearest_idx = horizons_times
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, &t)| (t - req_time).num_seconds().abs())
-            .map(|(idx, _)| idx)
-            .ok_or("No horizons data available")?;
+    let first_time = horizons_times.first().ok_or("No horizons data available")?;
+    let base_epoch = chrono_to_epoch(first_time);
+    let horizons_seconds: Vec<f64> = horizons_times
+        .iter()
+        .map(|t| (chrono_to_epoch(t) - base_epoch).to_seconds())
+        .collect();
 
-        // Copy data
+    for (i, &req_time) in requested_times.iter().enumerate() {
+        let req_seconds = (chrono_to_epoch(&req_time) - base_epoch).to_seconds();
+
+        let idx = match horizons_seconds
+            .binary_search_by(|t| t.partial_cmp(&req_seconds).unwrap_or(Ordering::Equal))
+        {
+            Ok(exact_idx) => {
+                for j in 0..6 {
+                    result[[i, j]] = horizons_data[exact_idx][j];
+                }
+                continue;
+            }
+            Err(insert_idx) => insert_idx,
+        };
+
+        if idx == 0 {
+            for j in 0..6 {
+                result[[i, j]] = horizons_data[0][j];
+            }
+            continue;
+        }
+        if idx >= horizons_seconds.len() {
+            let last_idx = horizons_seconds.len() - 1;
+            for j in 0..6 {
+                result[[i, j]] = horizons_data[last_idx][j];
+            }
+            continue;
+        }
+
+        let left_idx = idx - 1;
+        let right_idx = idx;
+        let t_left = horizons_seconds[left_idx];
+        let t_right = horizons_seconds[right_idx];
+        let denom = t_right - t_left;
+        let weight = if denom == 0.0 {
+            0.0
+        } else {
+            (req_seconds - t_left) / denom
+        };
+
         for j in 0..6 {
-            result[[i, j]] = horizons_data[nearest_idx][j];
+            let left_val = horizons_data[left_idx][j];
+            let right_val = horizons_data[right_idx][j];
+            result[[i, j]] = left_val + weight * (right_val - left_val);
         }
     }
 
@@ -232,6 +285,8 @@ pub fn query_horizons_body_by_name(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::time_utils::chrono_to_epoch;
+    use chrono::Duration;
     use chrono::TimeZone;
 
     #[test]
@@ -251,5 +306,36 @@ mod tests {
         // Check that we got reasonable values (Mars is roughly at AU scale)
         let pos_mag = (data[[0, 0]].powi(2) + data[[0, 1]].powi(2) + data[[0, 2]].powi(2)).sqrt();
         assert!(pos_mag > 1e8 && pos_mag < 5e8); // Roughly 1-5 AU in km
+    }
+
+    #[test]
+    fn test_parse_horizons_datetime_tdb_roundtrip() {
+        let dt = Utc.with_ymd_and_hms(2024, 6, 1, 12, 34, 56).unwrap();
+        let jd_tdb = chrono_to_epoch(&dt).to_jde_tdb_days();
+        let parsed = parse_horizons_datetime(&format!("{:.12}", jd_tdb))
+            .expect("parse_horizons_datetime failed");
+        let diff_ns = (parsed - dt).num_nanoseconds().unwrap().abs();
+        assert!(diff_ns < 1_000_000);
+    }
+
+    #[test]
+    fn test_interpolate_horizons_data_linear() {
+        let t0 = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let t1 = t0 + Duration::seconds(10);
+        let horizons_times = vec![t0, t1];
+        let horizons_data = vec![
+            vec![0.0, 0.0, 0.0, 1.0, 2.0, 3.0],
+            vec![10.0, 20.0, 30.0, 4.0, 6.0, 8.0],
+        ];
+        let requested_times = vec![t0 + Duration::seconds(5)];
+        let result =
+            interpolate_horizons_data(&horizons_times, &horizons_data, &requested_times).unwrap();
+
+        assert!((result[[0, 0]] - 5.0).abs() < 1e-9);
+        assert!((result[[0, 1]] - 10.0).abs() < 1e-9);
+        assert!((result[[0, 2]] - 15.0).abs() < 1e-9);
+        assert!((result[[0, 3]] - 2.5).abs() < 1e-9);
+        assert!((result[[0, 4]] - 4.0).abs() < 1e-9);
+        assert!((result[[0, 5]] - 5.5).abs() < 1e-9);
     }
 }
