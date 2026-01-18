@@ -325,7 +325,7 @@ mod tests {
         let (jd_tt1, jd_tt2) = datetime_to_jd_tt(&dt);
         let bpn = pn_matrix_06a(jd_tt1, jd_tt2);
 
-        let mut max_diff = 0.0;
+        let mut max_diff = 0.0_f64;
         for i in 0..3 {
             for j in 0..3 {
                 max_diff = max_diff.max((matrix[i][j] - bpn[i][j]).abs());
