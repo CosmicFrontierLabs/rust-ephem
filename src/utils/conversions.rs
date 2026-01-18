@@ -345,11 +345,8 @@ mod tests {
         let matrix = mat_mul(eqeq_rot, bpn);
         let expected_matrix = transpose_matrix(matrix);
 
-        let input = Array2::from_shape_vec(
-            (1, 6),
-            vec![7000.0, 1000.0, -2000.0, 1.0, -2.0, 0.5],
-        )
-        .expect("input array");
+        let input = Array2::from_shape_vec((1, 6), vec![7000.0, 1000.0, -2000.0, 1.0, -2.0, 0.5])
+            .expect("input array");
         let output = convert_frames(&input, &[dt], Frame::TEME, Frame::GCRS, false);
 
         let expected_pos = mat_mul_pvec(expected_matrix, [7000.0, 1000.0, -2000.0]);
