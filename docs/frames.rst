@@ -14,6 +14,7 @@ Reference Frames
    - Origin: Earth center
    - Reference: True equator, mean equinox of date
    - Use case: TLE propagation (SGP4 native output)
+   - GCRS conversion: Applies the equation of equinoxes to align mean vs true equinox
 
 **ITRS (International Terrestrial Reference System)**
    An Earth-fixed coordinate system that rotates with the Earth. Useful for

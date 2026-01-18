@@ -5,7 +5,11 @@
 /// both TLEEphemeris and SPICEEphemeris to avoid code duplication.
 use chrono::{DateTime, Utc};
 use erfa::{
-    earth::earth_rotation_angle_00, prenut::pn_matrix_06a, vectors_and_matrices::mat_mul_pvec,
+    earth::earth_rotation_angle_00,
+    misc::norm_angle,
+    prenut::pn_matrix_06a,
+    time::{gmst06, gst06a},
+    vectors_and_matrices::mat_mul_pvec,
 };
 use ndarray::Array2;
 
@@ -13,6 +17,16 @@ use crate::utils::config::*;
 use crate::utils::eop_provider::get_polar_motion_rad;
 use crate::utils::math_utils::{polar_motion_matrix, transpose_matrix};
 use crate::utils::time_utils::{datetime_to_jd_tt, datetime_to_jd_ut1};
+
+fn mat_mul(a: [[f64; 3]; 3], b: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    let mut out = [[0.0; 3]; 3];
+    for i in 0..3 {
+        for j in 0..3 {
+            out[i][j] = a[i][0] * b[0][j] + a[i][1] * b[1][j] + a[i][2] * b[2][j];
+        }
+    }
+    out
+}
 
 /// Supported coordinate frames for conversion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,7 +170,19 @@ fn get_rotation(from: Frame, to: Frame, dt: &DateTime<Utc>, polar_motion: bool) 
         // Precession-nutation transformation (TEME <-> GCRS)
         (Frame::TEME, Frame::GCRS) | (Frame::GCRS, Frame::TEME) => {
             let (jd_tt1, jd_tt2) = datetime_to_jd_tt(dt);
-            let matrix = pn_matrix_06a(jd_tt1, jd_tt2);
+            let bpn = pn_matrix_06a(jd_tt1, jd_tt2);
+            let (jd_ut1_1, jd_ut1_2) = datetime_to_jd_ut1(dt);
+            let gast = gst06a(jd_ut1_1, jd_ut1_2, jd_tt1, jd_tt2);
+            let gmst = gmst06(jd_ut1_1, jd_ut1_2, jd_tt1, jd_tt2);
+            let eqeq = norm_angle(gast - gmst);
+            // TEME uses the mean equinox; rotate from true equinox via equation of equinoxes.
+            let (sin_eq, cos_eq) = eqeq.sin_cos();
+            let eqeq_rot = [
+                [cos_eq, sin_eq, 0.0],
+                [-sin_eq, cos_eq, 0.0],
+                [0.0, 0.0, 1.0],
+            ];
+            let matrix = mat_mul(eqeq_rot, bpn);
             Rotation::Matrix3x3 { matrix }
         }
         // GMST rotation (TEME <-> ITRS)
