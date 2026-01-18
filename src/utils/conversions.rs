@@ -318,3 +318,46 @@ pub fn convert_frames(
 
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn test_teme_to_gcrs_includes_eqeq() {
+        let dt = Utc.with_ymd_and_hms(2025, 10, 14, 0, 0, 0).unwrap();
+        let (jd_tt1, jd_tt2) = datetime_to_jd_tt(&dt);
+        let bpn = pn_matrix_06a(jd_tt1, jd_tt2);
+        let (jd_ut1_1, jd_ut1_2) = datetime_to_jd_ut1(&dt);
+        let gast = gst06(jd_ut1_1, jd_ut1_2, jd_tt1, jd_tt2, bpn);
+        let gmst = gmst06(jd_ut1_1, jd_ut1_2, jd_tt1, jd_tt2);
+        let eqeq = norm_angle_pm(gast - gmst);
+
+        assert!(eqeq.abs() > 1e-7, "eqeq too small for reliable test");
+
+        let (sin_eq, cos_eq) = eqeq.sin_cos();
+        let eqeq_rot = [
+            [cos_eq, sin_eq, 0.0],
+            [-sin_eq, cos_eq, 0.0],
+            [0.0, 0.0, 1.0],
+        ];
+        let matrix = mat_mul(eqeq_rot, bpn);
+        let expected_matrix = transpose_matrix(matrix);
+
+        let input = Array2::from_shape_vec(
+            (1, 6),
+            vec![7000.0, 1000.0, -2000.0, 1.0, -2.0, 0.5],
+        )
+        .expect("input array");
+        let output = convert_frames(&input, &[dt], Frame::TEME, Frame::GCRS, false);
+
+        let expected_pos = mat_mul_pvec(expected_matrix, [7000.0, 1000.0, -2000.0]);
+        let expected_vel = mat_mul_pvec(expected_matrix, [1.0, -2.0, 0.5]);
+
+        for i in 0..3 {
+            assert!((output[[0, i]] - expected_pos[i]).abs() < 1e-9);
+            assert!((output[[0, i + 3]] - expected_vel[i]).abs() < 1e-9);
+        }
+    }
+}
