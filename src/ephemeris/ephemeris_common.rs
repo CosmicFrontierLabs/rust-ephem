@@ -996,6 +996,34 @@ pub trait EphemerisBase {
         to_skycoord(py, Some(modules), config)
     }
 
+    fn body_observer_distances(&self, body_data: &Array2<f64>) -> PyResult<Vec<f64>> {
+        let observer_data = self.data().gcrs.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(
+                "No GCRS data available. Ephemeris should compute GCRS during initialization.",
+            )
+        })?;
+
+        if body_data.nrows() != observer_data.nrows() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Body and observer data must have the same number of rows.",
+            ));
+        }
+
+        let n = body_data.nrows();
+        let mut distances = Vec::with_capacity(n);
+
+        for i in 0..n {
+            let body_row = body_data.row(i);
+            let obs_row = observer_data.row(i);
+            let dx = body_row[0] - obs_row[0];
+            let dy = body_row[1] - obs_row[1];
+            let dz = body_row[2] - obs_row[2];
+            distances.push((dx * dx + dy * dy + dz * dz).sqrt());
+        }
+
+        Ok(distances)
+    }
+
     /// Get angular radius of the Sun as seen from the observer (in degrees)
     ///
     /// Returns a NumPy array of angular radii for each timestamp.
@@ -1018,16 +1046,12 @@ pub trait EphemerisBase {
             .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No Sun data available."))?;
 
-        let n = sun_pv_data.nrows();
-        let mut angular_radii = Vec::with_capacity(n);
+        let distances = self.body_observer_distances(sun_pv_data)?;
+        let mut angular_radii = Vec::with_capacity(distances.len());
 
-        for i in 0..n {
-            let row = sun_pv_data.row(i);
-            let x = row[0];
-            let y = row[1];
-            let z = row[2];
-            let distance = (x * x + y * y + z * z).sqrt();
-            let angular_radius_rad = (SUN_RADIUS_KM / distance).asin();
+        for distance in distances {
+            let ratio = (SUN_RADIUS_KM / distance).min(1.0);
+            let angular_radius_rad = ratio.asin();
             angular_radii.push(angular_radius_rad.to_degrees());
         }
 
@@ -1063,16 +1087,12 @@ pub trait EphemerisBase {
                 pyo3::exceptions::PyValueError::new_err("No Moon data available.")
             })?;
 
-        let n = moon_pv_data.nrows();
-        let mut angular_radii = Vec::with_capacity(n);
+        let distances = self.body_observer_distances(moon_pv_data)?;
+        let mut angular_radii = Vec::with_capacity(distances.len());
 
-        for i in 0..n {
-            let row = moon_pv_data.row(i);
-            let x = row[0];
-            let y = row[1];
-            let z = row[2];
-            let distance = (x * x + y * y + z * z).sqrt();
-            let angular_radius_rad = (MOON_RADIUS_KM / distance).asin();
+        for distance in distances {
+            let ratio = (MOON_RADIUS_KM / distance).min(1.0);
+            let angular_radius_rad = ratio.asin();
             angular_radii.push(angular_radius_rad.to_degrees());
         }
 
@@ -1209,16 +1229,12 @@ pub trait EphemerisBase {
             .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No Sun data available."))?;
 
-        let n = sun_pv_data.nrows();
-        let mut angular_radii = Vec::with_capacity(n);
+        let distances = self.body_observer_distances(sun_pv_data)?;
+        let mut angular_radii = Vec::with_capacity(distances.len());
 
-        for i in 0..n {
-            let row = sun_pv_data.row(i);
-            let x = row[0];
-            let y = row[1];
-            let z = row[2];
-            let distance = (x * x + y * y + z * z).sqrt();
-            let angular_radius_rad = (SUN_RADIUS_KM / distance).asin();
+        for distance in distances {
+            let ratio = (SUN_RADIUS_KM / distance).min(1.0);
+            let angular_radius_rad = ratio.asin();
             angular_radii.push(angular_radius_rad);
         }
 
@@ -1254,16 +1270,12 @@ pub trait EphemerisBase {
                 pyo3::exceptions::PyValueError::new_err("No Moon data available.")
             })?;
 
-        let n = moon_pv_data.nrows();
-        let mut angular_radii = Vec::with_capacity(n);
+        let distances = self.body_observer_distances(moon_pv_data)?;
+        let mut angular_radii = Vec::with_capacity(distances.len());
 
-        for i in 0..n {
-            let row = moon_pv_data.row(i);
-            let x = row[0];
-            let y = row[1];
-            let z = row[2];
-            let distance = (x * x + y * y + z * z).sqrt();
-            let angular_radius_rad = (MOON_RADIUS_KM / distance).asin();
+        for distance in distances {
+            let ratio = (MOON_RADIUS_KM / distance).min(1.0);
+            let angular_radius_rad = ratio.asin();
             angular_radii.push(angular_radius_rad);
         }
 
