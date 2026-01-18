@@ -550,6 +550,8 @@ class EclipseConstraint(RustConstraintMixin):
     """Eclipse constraint
 
     Checks if observer is in Earth's shadow (umbra and/or penumbra).
+    Assumes Earth-centered ephemerides (Earth at the origin); results are
+    undefined for other centers.
 
     Attributes:
         type: Always "eclipse"

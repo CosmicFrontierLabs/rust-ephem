@@ -12,6 +12,35 @@ from rust_ephem.constraints import (
     SunConstraint,
 )
 
+EARTH_RADIUS_KM = 6378.137
+SUN_RADIUS_KM = 696000.0
+
+
+def eclipse_flags(obs_pos: np.ndarray, sun_pos: np.ndarray) -> tuple[bool, bool]:
+    sun_dist = np.linalg.norm(sun_pos)
+    if sun_dist <= 0.0:
+        return False, False
+
+    sun_unit = sun_pos / sun_dist
+    dot = float(np.dot(obs_pos, sun_unit))
+    if dot >= 0.0:
+        return False, False
+
+    s = -dot
+    perp = obs_pos - sun_unit * dot
+    dist_to_axis = np.linalg.norm(perp)
+
+    l_umbra = EARTH_RADIUS_KM * sun_dist / (SUN_RADIUS_KM - EARTH_RADIUS_KM)
+    l_penumbra = EARTH_RADIUS_KM * sun_dist / (SUN_RADIUS_KM + EARTH_RADIUS_KM)
+
+    umbra_radius = EARTH_RADIUS_KM * (1.0 - s / l_umbra) if s <= l_umbra else 0.0
+    penumbra_radius = EARTH_RADIUS_KM * (1.0 + s / l_penumbra)
+
+    in_umbra = umbra_radius > 0.0 and dist_to_axis < umbra_radius
+    in_penumbra = dist_to_axis < penumbra_radius
+
+    return in_umbra, in_penumbra
+
 
 @pytest.fixture
 def tle() -> tuple:
@@ -256,6 +285,35 @@ class TestEclipseConstraints:
         assert in_eclipse == not_vis, (
             f"Earth/Sun angle is at {earth_sun_angle:.1f} degrees"
         )
+
+    def test_eclipse_penumbra_expands_constraint(self, tle_ephem):
+        obs_positions = tle_ephem.gcrs_pv.position
+        sun_positions = tle_ephem.sun_pv.position
+
+        penumbra_only_indices = []
+        for i in range(len(tle_ephem.timestamp)):
+            in_umbra, in_penumbra = eclipse_flags(obs_positions[i], sun_positions[i])
+            if in_penumbra and not in_umbra:
+                penumbra_only_indices.append(i)
+
+        if not penumbra_only_indices:
+            pytest.skip("No penumbra-only samples in test ephemeris.")
+
+        idx = penumbra_only_indices[0]
+        time = tle_ephem.timestamp[idx]
+
+        umbra_only = EclipseConstraint(umbra_only=True)
+        with_penumbra = EclipseConstraint(umbra_only=False)
+
+        in_umbra_only = umbra_only.in_constraint(
+            ephemeris=tle_ephem, time=time, target_ra=0, target_dec=0
+        )
+        in_penumbra = with_penumbra.in_constraint(
+            ephemeris=tle_ephem, time=time, target_ra=0, target_dec=0
+        )
+
+        assert in_umbra_only is False, "Umbra-only constraint should not match penumbra"
+        assert in_penumbra is True, "Penumbra-enabled constraint should match penumbra"
 
     @pytest.mark.parametrize(
         "offset",
