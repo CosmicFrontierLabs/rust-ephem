@@ -5,14 +5,46 @@
 /// both TLEEphemeris and SPICEEphemeris to avoid code duplication.
 use chrono::{DateTime, Utc};
 use erfa::{
-    earth::earth_rotation_angle_00, prenut::pn_matrix_06a, vectors_and_matrices::mat_mul_pvec,
+    constants::ERFA_D2PI,
+    earth::earth_rotation_angle_00,
+    misc::norm_angle,
+    prenut::pn_matrix_06a,
+    time::{gmst06, gst06},
+    vectors_and_matrices::{mat_mul_pvec, multiply_matrices},
 };
 use ndarray::Array2;
+use std::f64::consts::PI;
 
 use crate::utils::config::*;
 use crate::utils::eop_provider::get_polar_motion_rad;
 use crate::utils::math_utils::{polar_motion_matrix, transpose_matrix};
 use crate::utils::time_utils::{datetime_to_jd_tt, datetime_to_jd_ut1};
+
+fn norm_angle_pm(angle: f64) -> f64 {
+    // Normalize to [-pi, pi) to preserve small signed offsets across 2pi wrap.
+    let mut w = norm_angle(angle);
+    if w >= PI {
+        w -= ERFA_D2PI;
+    }
+    w
+}
+
+fn teme_gcrs_matrix(dt: &DateTime<Utc>) -> [[f64; 3]; 3] {
+    let (jd_tt1, jd_tt2) = datetime_to_jd_tt(dt);
+    let bpn = pn_matrix_06a(jd_tt1, jd_tt2);
+    let (jd_ut1_1, jd_ut1_2) = datetime_to_jd_ut1(dt);
+    let gast = gst06(jd_ut1_1, jd_ut1_2, jd_tt1, jd_tt2, bpn);
+    let gmst = gmst06(jd_ut1_1, jd_ut1_2, jd_tt1, jd_tt2);
+    let eqeq = norm_angle_pm(gast - gmst);
+    // TEME uses the mean equinox; rotate from true equinox via equation of equinoxes.
+    let (sin_eq, cos_eq) = eqeq.sin_cos();
+    let eqeq_rot = [
+        [cos_eq, sin_eq, 0.0],
+        [-sin_eq, cos_eq, 0.0],
+        [0.0, 0.0, 1.0],
+    ];
+    multiply_matrices(eqeq_rot, bpn)
+}
 
 /// Supported coordinate frames for conversion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -155,8 +187,7 @@ fn get_rotation(from: Frame, to: Frame, dt: &DateTime<Utc>, polar_motion: bool) 
     match (from, to) {
         // Precession-nutation transformation (TEME <-> GCRS)
         (Frame::TEME, Frame::GCRS) | (Frame::GCRS, Frame::TEME) => {
-            let (jd_tt1, jd_tt2) = datetime_to_jd_tt(dt);
-            let matrix = pn_matrix_06a(jd_tt1, jd_tt2);
+            let matrix = teme_gcrs_matrix(dt);
             Rotation::Matrix3x3 { matrix }
         }
         // GMST rotation (TEME <-> ITRS)
@@ -280,4 +311,40 @@ pub fn convert_frames(
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn test_teme_to_gcrs_includes_eqeq() {
+        let dt = Utc.with_ymd_and_hms(2025, 10, 14, 0, 0, 0).unwrap();
+        let matrix = teme_gcrs_matrix(&dt);
+        let (jd_tt1, jd_tt2) = datetime_to_jd_tt(&dt);
+        let bpn = pn_matrix_06a(jd_tt1, jd_tt2);
+
+        let mut max_diff = 0.0_f64;
+        for i in 0..3 {
+            for j in 0..3 {
+                max_diff = max_diff.max((matrix[i][j] - bpn[i][j]).abs());
+            }
+        }
+        assert!(max_diff > 1e-7, "eqeq too small for reliable test");
+
+        let expected_matrix = transpose_matrix(matrix);
+
+        let input = Array2::from_shape_vec((1, 6), vec![7000.0, 1000.0, -2000.0, 1.0, -2.0, 0.5])
+            .expect("input array");
+        let output = convert_frames(&input, &[dt], Frame::TEME, Frame::GCRS, false);
+
+        let expected_pos = mat_mul_pvec(expected_matrix, [7000.0, 1000.0, -2000.0]);
+        let expected_vel = mat_mul_pvec(expected_matrix, [1.0, -2.0, 0.5]);
+
+        for i in 0..3 {
+            assert!((output[[0, i]] - expected_pos[i]).abs() < 1e-9);
+            assert!((output[[0, i + 3]] - expected_vel[i]).abs() < 1e-9);
+        }
+    }
 }

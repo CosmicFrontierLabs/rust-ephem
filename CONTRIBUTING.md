@@ -161,6 +161,13 @@ If the pre-commit hooks fail, fix the issues and commit again. You can also run 
 prek run --all-files
 ```
 
+If `cargo check` or `clippy` fails building vendored OpenSSL (often due to Perl
+modules like `IPC::Cmd` missing), use system OpenSSL instead:
+
+```bash
+OPENSSL_NO_VENDOR=1 prek run --all-files
+```
+
 ## Testing
 
 ### Running Tests

@@ -54,8 +54,9 @@ TEST_TIMES = [
 ]
 
 # Tolerance for position accuracy (in km)
-# Set to 0.2 km to catch regressions; typical accuracy is ~0.1 km
-POSITION_TOLERANCE_KM = 0.2
+# Without equation-of-equinoxes correction this case is ~0.09 km off, so keep
+# the threshold tight enough to catch that regression.
+POSITION_TOLERANCE_KM = 0.01
 
 # Step size for single-point tests (arbitrary since begin==end)
 SINGLE_POINT_STEP_SIZE = 1
