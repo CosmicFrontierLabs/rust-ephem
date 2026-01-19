@@ -18,6 +18,9 @@ import pytest
 
 import rust_ephem  # type: ignore[import-untyped]
 
+SUN_RADIUS_KM = 696000.0
+MOON_RADIUS_KM = 1737.4
+
 
 # Test fixtures for different ephemeris types
 @pytest.fixture(scope="module")
@@ -351,6 +354,24 @@ class TestAngularRadiusConsistency:
             len(earth_rad),
         ]
         assert len(set(lengths)) == 1  # All lengths should be the same
+
+
+class TestAngularRadiusTopocentric:
+    """Test angular radii use observer-relative distances"""
+
+    def test_sun_radius_uses_observer_distance(self, tle_ephemeris):
+        sun_pos = tle_ephemeris.sun_pv.position[0]
+        obs_pos = tle_ephemeris.gcrs_pv.position[0]
+        distance = np.linalg.norm(sun_pos - obs_pos)
+        expected = np.degrees(np.arcsin(SUN_RADIUS_KM / distance))
+        assert np.isclose(tle_ephemeris.sun_radius_deg[0], expected, rtol=1e-7)
+
+    def test_moon_radius_uses_observer_distance(self, tle_ephemeris):
+        moon_pos = tle_ephemeris.moon_pv.position[0]
+        obs_pos = tle_ephemeris.gcrs_pv.position[0]
+        distance = np.linalg.norm(moon_pos - obs_pos)
+        expected = np.degrees(np.arcsin(MOON_RADIUS_KM / distance))
+        assert np.isclose(tle_ephemeris.moon_radius_deg[0], expected, rtol=1e-6)
 
 
 class TestAngularRadiusEdgeCases:
