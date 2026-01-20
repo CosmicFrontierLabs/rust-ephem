@@ -147,6 +147,38 @@ class TestAirmassConstraint:
         )
         assert np.any(result[2, :])  # Some True = some violated
 
+    def test_airmass_batch_matches_single(
+        self, ground_ephemeris: rust_ephem.GroundEphemeris
+    ) -> None:
+        """Test that batch constraint evaluation matches single-target evaluations."""
+        constraint = AirmassConstraint(max_airmass=2.5, min_airmass=1.2)
+
+        # Test with multiple targets
+        target_ras = [0.0, 45.0, 90.0, 180.0, 270.0]
+        target_decs = [0.0, 30.0, -30.0, 60.0, -60.0]
+
+        # Get batch results
+        batch_result = constraint.in_constraint_batch(
+            ground_ephemeris, target_ras, target_decs
+        )
+
+        # Verify shape
+        assert batch_result.shape == (len(target_ras), len(ground_ephemeris.timestamp))
+
+        # Compare each row with single evaluation
+        for i in range(len(target_ras)):
+            single_result = constraint.evaluate(
+                ground_ephemeris, target_ras[i], target_decs[i]
+            )
+
+            # Single result's constraint_array should match batch row
+            np.testing.assert_array_equal(
+                batch_result[i, :],
+                single_result.constraint_array,
+                err_msg=f"Batch result row {i} doesn't match single evaluation for "
+                f"target (RA={target_ras[i]}, Dec={target_decs[i]})",
+            )
+
 
 class TestDaytimeConstraint:
     """Test DaytimeConstraint functionality."""
@@ -225,6 +257,38 @@ class TestDaytimeConstraint:
             ground_ephemeris, target_ras, target_decs
         )
         assert result.dtype == bool
+
+    def test_daytime_batch_matches_single(
+        self, ground_ephemeris: rust_ephem.GroundEphemeris
+    ) -> None:
+        """Test that batch constraint evaluation matches single-target evaluations."""
+        constraint = DaytimeConstraint(twilight="civil")
+
+        # Test with multiple targets
+        target_ras = [0.0, 60.0, 120.0, 180.0, 300.0]
+        target_decs = [0.0, 45.0, -45.0, 90.0, -30.0]
+
+        # Get batch results
+        batch_result = constraint.in_constraint_batch(
+            ground_ephemeris, target_ras, target_decs
+        )
+
+        # Verify shape
+        assert batch_result.shape == (len(target_ras), len(ground_ephemeris.timestamp))
+
+        # Compare each row with single evaluation
+        for i in range(len(target_ras)):
+            single_result = constraint.evaluate(
+                ground_ephemeris, target_ras[i], target_decs[i]
+            )
+
+            # Single result's constraint_array should match batch row
+            np.testing.assert_array_equal(
+                batch_result[i, :],
+                single_result.constraint_array,
+                err_msg=f"Batch result row {i} doesn't match single evaluation for "
+                f"target (RA={target_ras[i]}, Dec={target_decs[i]})",
+            )
 
 
 class TestMoonPhaseConstraint:
@@ -474,6 +538,43 @@ class TestMoonPhaseConstraint:
         assert skipped.all_satisfied is True
         assert enforced.all_satisfied is False
 
+    def test_moon_phase_batch_matches_single(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
+        """Test that batch constraint evaluation matches single-target evaluations."""
+        constraint = MoonPhaseConstraint(
+            max_illumination=0.6,
+            min_distance=10.0,
+            max_distance=120.0,
+            enforce_when_below_horizon=True,
+        )
+
+        # Test with multiple targets
+        target_ras = [0.0, 45.0, 90.0, 180.0, 270.0]
+        target_decs = [0.0, 30.0, -30.0, 60.0, -60.0]
+
+        # Get batch results
+        batch_result = constraint.in_constraint_batch(
+            tle_ephemeris, target_ras, target_decs
+        )
+
+        # Verify shape
+        assert batch_result.shape == (len(target_ras), len(tle_ephemeris.timestamp))
+
+        # Compare each row with single evaluation
+        for i in range(len(target_ras)):
+            single_result = constraint.evaluate(
+                tle_ephemeris, target_ras[i], target_decs[i]
+            )
+
+            # Single result's constraint_array should match batch row
+            np.testing.assert_array_equal(
+                batch_result[i, :],
+                single_result.constraint_array,
+                err_msg=f"Batch result row {i} doesn't match single evaluation for "
+                f"target (RA={target_ras[i]}, Dec={target_decs[i]})",
+            )
+
 
 class TestSAAConstraint:
     """Test SAAConstraint functionality."""
@@ -537,6 +638,40 @@ class TestSAAConstraint:
         target_decs = [0.0, 30.0, -30.0]
         result = constraint.in_constraint_batch(tle_ephemeris, target_ras, target_decs)
         assert result.dtype == bool
+
+    def test_saa_batch_matches_single(
+        self,
+        tle_ephemeris: rust_ephem.TLEEphemeris,
+        saa_polygon: list[tuple[float, float]],
+    ) -> None:
+        """Test that batch constraint evaluation matches single-target evaluations."""
+        constraint = SAAConstraint(polygon=saa_polygon)
+
+        # Test with multiple targets
+        target_ras = [0.0, 90.0, 180.0, 270.0, 45.0]
+        target_decs = [0.0, 30.0, -30.0, 60.0, -45.0]
+
+        # Get batch results
+        batch_result = constraint.in_constraint_batch(
+            tle_ephemeris, target_ras, target_decs
+        )
+
+        # Verify shape
+        assert batch_result.shape == (len(target_ras), len(tle_ephemeris.timestamp))
+
+        # Compare each row with single evaluation
+        for i in range(len(target_ras)):
+            single_result = constraint.evaluate(
+                tle_ephemeris, target_ras[i], target_decs[i]
+            )
+
+            # Single result's constraint_array should match batch row
+            np.testing.assert_array_equal(
+                batch_result[i, :],
+                single_result.constraint_array,
+                err_msg=f"Batch result row {i} doesn't match single evaluation for "
+                f"target (RA={target_ras[i]}, Dec={target_decs[i]})",
+            )
 
     def test_saa_point_in_polygon_logic_polygon_length(
         self, saa_polygon: list[tuple[float, float]]
