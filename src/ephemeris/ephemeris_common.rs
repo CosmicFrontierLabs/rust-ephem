@@ -511,20 +511,58 @@ pub trait EphemerisBase {
     /// # Returns
     /// Vector of Moon illumination fractions for each selected time
     fn moon_illumination(&self, time_indices: Option<&[usize]>) -> PyResult<Vec<f64>> {
-        use crate::utils::moon::calculate_moon_illumination;
+        use crate::utils::moon::calculate_moon_illumination_from_vectors;
 
-        // Get the indices to process
+        let n_times = self
+            .data()
+            .times
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available"))?
+            .len();
+
         let indices: Vec<usize> = if let Some(indices) = time_indices {
             indices.to_vec()
         } else {
-            (0..self.get_times()?.len()).collect()
+            (0..n_times).collect()
         };
 
-        // Calculate illumination for each time index
-        let illuminations: Vec<f64> = indices
-            .iter()
-            .map(|&i| calculate_moon_illumination(self, i))
-            .collect();
+        let n = indices.len();
+
+        let observer_positions = match self.data().gcrs.as_ref() {
+            Some(pos) => pos,
+            None => return Ok(vec![0.5; n]),
+        };
+
+        let sun_positions = match self.data().sun_gcrs.as_ref() {
+            Some(pos) => pos,
+            None => return Ok(vec![0.5; n]),
+        };
+
+        let moon_positions = match self.data().moon_gcrs.as_ref() {
+            Some(pos) => pos,
+            None => return Ok(vec![0.5; n]),
+        };
+
+        let mut illuminations = Vec::with_capacity(n);
+
+        for &i in indices.iter() {
+            let obs_x = observer_positions[[i, 0]];
+            let obs_y = observer_positions[[i, 1]];
+            let obs_z = observer_positions[[i, 2]];
+
+            let sun_rel = [
+                sun_positions[[i, 0]] - obs_x,
+                sun_positions[[i, 1]] - obs_y,
+                sun_positions[[i, 2]] - obs_z,
+            ];
+            let moon_rel = [
+                moon_positions[[i, 0]] - obs_x,
+                moon_positions[[i, 1]] - obs_y,
+                moon_positions[[i, 2]] - obs_z,
+            ];
+
+            illuminations.push(calculate_moon_illumination_from_vectors(sun_rel, moon_rel));
+        }
 
         Ok(illuminations)
     }

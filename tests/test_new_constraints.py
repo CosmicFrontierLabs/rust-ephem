@@ -4,6 +4,8 @@ Test suite for new astronomical constraints.
 Tests AirmassConstraint, DaytimeConstraint, MoonPhaseConstraint, and SAAConstraint.
 """
 
+from datetime import datetime, timedelta, timezone
+
 import numpy as np
 import pytest
 from pydantic import ValidationError
@@ -15,6 +17,24 @@ from rust_ephem.constraints import (
     MoonPhaseConstraint,
     SAAConstraint,
 )
+
+
+def moon_ra_dec_deg(ephem: rust_ephem.Ephemeris, index: int) -> tuple[float, float]:
+    moon_pos = ephem.moon_pv.position[index]
+    obs_pos = ephem.gcrs_pv.position[index]
+    rel = moon_pos - obs_pos
+    dist = np.linalg.norm(rel)
+    ra = np.degrees(np.arctan2(rel[1], rel[0]))
+    if ra < 0.0:
+        ra += 360.0
+    dec = np.degrees(np.arcsin(rel[2] / dist))
+    return ra, dec
+
+
+def moon_altitude_deg(ephem: rust_ephem.Ephemeris, index: int) -> float:
+    ra, dec = moon_ra_dec_deg(ephem, index)
+    altaz = ephem.radec_to_altaz(ra, dec, time_indices=[index])
+    return float(altaz[0][0])
 
 
 class TestAirmassConstraint:
@@ -127,6 +147,38 @@ class TestAirmassConstraint:
         )
         assert np.any(result[2, :])  # Some True = some violated
 
+    def test_airmass_batch_matches_single(
+        self, ground_ephemeris: rust_ephem.GroundEphemeris
+    ) -> None:
+        """Test that batch constraint evaluation matches single-target evaluations."""
+        constraint = AirmassConstraint(max_airmass=2.5, min_airmass=1.2)
+
+        # Test with multiple targets
+        target_ras = [0.0, 45.0, 90.0, 180.0, 270.0]
+        target_decs = [0.0, 30.0, -30.0, 60.0, -60.0]
+
+        # Get batch results
+        batch_result = constraint.in_constraint_batch(
+            ground_ephemeris, target_ras, target_decs
+        )
+
+        # Verify shape
+        assert batch_result.shape == (len(target_ras), len(ground_ephemeris.timestamp))
+
+        # Compare each row with single evaluation
+        for i in range(len(target_ras)):
+            single_result = constraint.evaluate(
+                ground_ephemeris, target_ras[i], target_decs[i]
+            )
+
+            # Single result's constraint_array should match batch row
+            np.testing.assert_array_equal(
+                batch_result[i, :],
+                single_result.constraint_array,
+                err_msg=f"Batch result row {i} doesn't match single evaluation for "
+                f"target (RA={target_ras[i]}, Dec={target_decs[i]})",
+            )
+
 
 class TestDaytimeConstraint:
     """Test DaytimeConstraint functionality."""
@@ -205,6 +257,38 @@ class TestDaytimeConstraint:
             ground_ephemeris, target_ras, target_decs
         )
         assert result.dtype == bool
+
+    def test_daytime_batch_matches_single(
+        self, ground_ephemeris: rust_ephem.GroundEphemeris
+    ) -> None:
+        """Test that batch constraint evaluation matches single-target evaluations."""
+        constraint = DaytimeConstraint(twilight="civil")
+
+        # Test with multiple targets
+        target_ras = [0.0, 60.0, 120.0, 180.0, 300.0]
+        target_decs = [0.0, 45.0, -45.0, 90.0, -30.0]
+
+        # Get batch results
+        batch_result = constraint.in_constraint_batch(
+            ground_ephemeris, target_ras, target_decs
+        )
+
+        # Verify shape
+        assert batch_result.shape == (len(target_ras), len(ground_ephemeris.timestamp))
+
+        # Compare each row with single evaluation
+        for i in range(len(target_ras)):
+            single_result = constraint.evaluate(
+                ground_ephemeris, target_ras[i], target_decs[i]
+            )
+
+            # Single result's constraint_array should match batch row
+            np.testing.assert_array_equal(
+                batch_result[i, :],
+                single_result.constraint_array,
+                err_msg=f"Batch result row {i} doesn't match single evaluation for "
+                f"target (RA={target_ras[i]}, Dec={target_decs[i]})",
+            )
 
 
 class TestMoonPhaseConstraint:
@@ -360,6 +444,137 @@ class TestMoonPhaseConstraint:
         result = constraint.in_constraint_batch(tle_ephemeris, target_ras, target_decs)
         assert result.dtype == bool
 
+    def test_moon_phase_constraint_illumination_violation(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
+        """Illumination threshold should trigger a violation."""
+        illumination = tle_ephemeris.moon_illumination(time_indices=[0])[0]
+        if illumination <= 0.02:
+            constraint = MoonPhaseConstraint(
+                max_illumination=1.0,
+                min_illumination=illumination + 0.05,
+                enforce_when_below_horizon=True,
+            )
+        else:
+            constraint = MoonPhaseConstraint(
+                max_illumination=max(illumination - 0.02, 0.0),
+                enforce_when_below_horizon=True,
+            )
+        result = constraint.evaluate(
+            tle_ephemeris, target_ra=0.0, target_dec=0.0, indices=0
+        )
+        assert result.all_satisfied is False
+
+    def test_moon_phase_constraint_min_distance_violation(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
+        """Min distance should trigger a violation when target is at the Moon."""
+        ra, dec = moon_ra_dec_deg(tle_ephemeris, 0)
+        constraint = MoonPhaseConstraint(
+            max_illumination=1.0,
+            min_distance=1.0,
+            enforce_when_below_horizon=True,
+        )
+        result = constraint.evaluate(
+            tle_ephemeris, target_ra=ra, target_dec=dec, indices=0
+        )
+        assert result.all_satisfied is False
+
+    def test_moon_phase_constraint_max_distance_violation(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
+        """Max distance should trigger a violation for a far target."""
+        ra, dec = moon_ra_dec_deg(tle_ephemeris, 0)
+        far_ra = (ra + 180.0) % 360.0
+        far_dec = -dec
+        constraint = MoonPhaseConstraint(
+            max_illumination=1.0,
+            max_distance=90.0,
+            enforce_when_below_horizon=True,
+        )
+        result = constraint.evaluate(
+            tle_ephemeris, target_ra=far_ra, target_dec=far_dec, indices=0
+        )
+        assert result.all_satisfied is False
+
+    def test_moon_phase_constraint_below_horizon_skip(self) -> None:
+        """Below-horizon Moon should be skipped when enforcement is disabled."""
+        begin = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        end = begin + timedelta(hours=24)
+        ground_ephemeris = rust_ephem.GroundEphemeris(
+            latitude=34.0,
+            longitude=-118.0,
+            height=100.0,
+            begin=begin,
+            end=end,
+            step_size=600,
+        )
+        below_index = None
+        for idx in range(len(ground_ephemeris.timestamp)):
+            if moon_altitude_deg(ground_ephemeris, idx) < 0.0:
+                below_index = idx
+                break
+        assert below_index is not None, "Expected below-horizon Moon sample"
+
+        illumination = ground_ephemeris.moon_illumination(time_indices=[below_index])[0]
+        max_illum = max(illumination - 0.02, 0.0)
+
+        skip_constraint = MoonPhaseConstraint(
+            max_illumination=max_illum,
+            enforce_when_below_horizon=False,
+        )
+        enforced_constraint = MoonPhaseConstraint(
+            max_illumination=max_illum,
+            enforce_when_below_horizon=True,
+        )
+
+        skipped = skip_constraint.evaluate(
+            ground_ephemeris, target_ra=0.0, target_dec=0.0, indices=below_index
+        )
+        enforced = enforced_constraint.evaluate(
+            ground_ephemeris, target_ra=0.0, target_dec=0.0, indices=below_index
+        )
+
+        assert skipped.all_satisfied is True
+        assert enforced.all_satisfied is False
+
+    def test_moon_phase_batch_matches_single(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
+        """Test that batch constraint evaluation matches single-target evaluations."""
+        constraint = MoonPhaseConstraint(
+            max_illumination=0.6,
+            min_distance=10.0,
+            max_distance=120.0,
+            enforce_when_below_horizon=True,
+        )
+
+        # Test with multiple targets
+        target_ras = [0.0, 45.0, 90.0, 180.0, 270.0]
+        target_decs = [0.0, 30.0, -30.0, 60.0, -60.0]
+
+        # Get batch results
+        batch_result = constraint.in_constraint_batch(
+            tle_ephemeris, target_ras, target_decs
+        )
+
+        # Verify shape
+        assert batch_result.shape == (len(target_ras), len(tle_ephemeris.timestamp))
+
+        # Compare each row with single evaluation
+        for i in range(len(target_ras)):
+            single_result = constraint.evaluate(
+                tle_ephemeris, target_ras[i], target_decs[i]
+            )
+
+            # Single result's constraint_array should match batch row
+            np.testing.assert_array_equal(
+                batch_result[i, :],
+                single_result.constraint_array,
+                err_msg=f"Batch result row {i} doesn't match single evaluation for "
+                f"target (RA={target_ras[i]}, Dec={target_decs[i]})",
+            )
+
 
 class TestSAAConstraint:
     """Test SAAConstraint functionality."""
@@ -423,6 +638,40 @@ class TestSAAConstraint:
         target_decs = [0.0, 30.0, -30.0]
         result = constraint.in_constraint_batch(tle_ephemeris, target_ras, target_decs)
         assert result.dtype == bool
+
+    def test_saa_batch_matches_single(
+        self,
+        tle_ephemeris: rust_ephem.TLEEphemeris,
+        saa_polygon: list[tuple[float, float]],
+    ) -> None:
+        """Test that batch constraint evaluation matches single-target evaluations."""
+        constraint = SAAConstraint(polygon=saa_polygon)
+
+        # Test with multiple targets
+        target_ras = [0.0, 90.0, 180.0, 270.0, 45.0]
+        target_decs = [0.0, 30.0, -30.0, 60.0, -45.0]
+
+        # Get batch results
+        batch_result = constraint.in_constraint_batch(
+            tle_ephemeris, target_ras, target_decs
+        )
+
+        # Verify shape
+        assert batch_result.shape == (len(target_ras), len(tle_ephemeris.timestamp))
+
+        # Compare each row with single evaluation
+        for i in range(len(target_ras)):
+            single_result = constraint.evaluate(
+                tle_ephemeris, target_ras[i], target_decs[i]
+            )
+
+            # Single result's constraint_array should match batch row
+            np.testing.assert_array_equal(
+                batch_result[i, :],
+                single_result.constraint_array,
+                err_msg=f"Batch result row {i} doesn't match single evaluation for "
+                f"target (RA={target_ras[i]}, Dec={target_decs[i]})",
+            )
 
     def test_saa_point_in_polygon_logic_polygon_length(
         self, saa_polygon: list[tuple[float, float]]
