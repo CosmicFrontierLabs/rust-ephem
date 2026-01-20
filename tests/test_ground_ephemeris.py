@@ -137,10 +137,9 @@ class TestGroundEphemerisITRS:
         assert np.abs(vel[0, 0]) < 0.001
 
     def test_velocity_y_at_equator(self, equator_obs):
-        """Test ITRS Y velocity at equator (Earth rotation)."""
+        """Test ITRS Y velocity at equator."""
         vel = equator_obs.itrs_pv.velocity
-        expected_vy = 7.292115e-5 * 6378.137  # ~0.465 km/s
-        assert np.abs(vel[0, 1] - expected_vy) < 0.001
+        assert np.abs(vel[0, 1]) < 0.001
 
     def test_velocity_z_at_equator(self, equator_obs):
         """Test ITRS Z velocity at equator."""

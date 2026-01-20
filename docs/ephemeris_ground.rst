@@ -52,7 +52,7 @@ fixed location on Earth's surface.
 
     # Observatory position and velocity
     print("ITRS position (km):", pv_itrs.position[0])  # First timestep
-    print("ITRS velocity (km/s):", pv_itrs.velocity[0])  # Due to Earth rotation
+    print("ITRS velocity (km/s):", pv_itrs.velocity[0])  # Zero for fixed site
     print("GCRS position (km):", pv_gcrs.position[0])
 
     # Sun and Moon positions
@@ -80,7 +80,7 @@ GroundEphemeris Use Cases
 GroundEphemeris Notes
 ---------------------
 - The observatory position is fixed in ITRS (Earth-fixed frame)
-- Velocity in ITRS is due to Earth's rotation
+- Velocity in ITRS is zero for fixed sites; GCRS velocity reflects Earth's rotation
 - Position in GCRS changes over time due to Earth's rotation and precession
 - The ``polar_motion`` parameter enables polar motion corrections (requires EOP data)
 - Use ``re.init_eop_provider()`` to load EOP data for polar motion corrections

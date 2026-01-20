@@ -5,7 +5,6 @@ use std::sync::OnceLock;
 
 use crate::ephemeris::ephemeris_common::{generate_timestamps, EphemerisBase, EphemerisData};
 use crate::ephemeris::position_velocity::PositionVelocityData;
-use crate::utils::config::OMEGA_EARTH;
 use crate::utils::conversions::{self, Frame};
 use crate::utils::to_skycoord::AstropyModules;
 
@@ -500,7 +499,8 @@ impl GroundEphemeris {
 impl GroundEphemeris {
     /// Compute ITRS position and velocity for the ground station
     /// Position is computed from geodetic coordinates (lat, lon, alt)
-    /// Velocity accounts for Earth's rotation
+    /// Velocity is zero in ITRS for a fixed site; Earth's rotation is handled
+    /// when converting to GCRS.
     fn compute_itrs_position(&mut self) -> PyResult<()> {
         let times = self.common_data.times.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(
@@ -532,10 +532,9 @@ impl GroundEphemeris {
         let y = (n + h_km) * lat_rad.cos() * lon_rad.sin();
         let z = (n * (1.0 - E_SQ) + h_km) * lat_rad.sin();
 
-        // Velocity due to Earth's rotation (km/s)
-        // v = omega × r, where omega is along z-axis
-        let vx = -OMEGA_EARTH * y;
-        let vy = OMEGA_EARTH * x;
+        // Velocity in the rotating ITRS frame for a fixed site is zero.
+        let vx = 0.0;
+        let vy = 0.0;
         let vz = 0.0;
 
         // Create array with same position/velocity for all times
