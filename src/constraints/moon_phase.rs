@@ -2,17 +2,65 @@
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
 use chrono::{DateTime, Utc};
 use ndarray::{s, Array2};
+use once_cell::sync::Lazy;
 use pyo3::PyResult;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sofars::astro::atco13;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use crate::utils::conversions::{convert_frames, Frame};
 use crate::utils::geo::ecef_to_geodetic_deg;
 use crate::utils::time_utils::datetime_to_jd_utc;
-use crate::utils::vector_math::{
-    dot_product, normalize_vector, radec_to_unit_vector, radec_to_unit_vectors_batch,
-};
+use crate::utils::vector_math::{radec_to_unit_vector, radec_to_unit_vectors_batch};
 use crate::utils::{eop_provider, ut1_provider};
+
+// Global cache for moon altitudes to avoid recomputing for same ephemeris
+// Cache key: (ephemeris_id, time_hash) -> Vec<f64> altitudes
+static MOON_ALTITUDE_CACHE: Lazy<Mutex<HashMap<u64, Arc<Vec<f64>>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+fn compute_cache_key(
+    times: &[DateTime<Utc>],
+    moon_positions: &Array2<f64>,
+    gcrs_full: &Array2<f64>,
+) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    // Hash time range and position checksums for cache key
+    if !times.is_empty() {
+        times[0].timestamp_millis().hash(&mut hasher);
+        times[times.len() - 1].timestamp_millis().hash(&mut hasher);
+        times.len().hash(&mut hasher);
+    }
+    // Hash moon and observer positions as checksums
+    if moon_positions.nrows() > 0 {
+        moon_positions[[0, 0]].to_bits().hash(&mut hasher);
+        moon_positions[[0, 1]].to_bits().hash(&mut hasher);
+        moon_positions[[0, 2]].to_bits().hash(&mut hasher);
+        if moon_positions.nrows() > 1 {
+            let last = moon_positions.nrows() - 1;
+            moon_positions[[last, 0]].to_bits().hash(&mut hasher);
+            moon_positions[[last, 1]].to_bits().hash(&mut hasher);
+            moon_positions[[last, 2]].to_bits().hash(&mut hasher);
+        }
+    }
+    if gcrs_full.nrows() > 0 && gcrs_full.ncols() >= 3 {
+        gcrs_full[[0, 0]].to_bits().hash(&mut hasher);
+        gcrs_full[[0, 1]].to_bits().hash(&mut hasher);
+        gcrs_full[[0, 2]].to_bits().hash(&mut hasher);
+        if gcrs_full.nrows() > 1 {
+            let last = gcrs_full.nrows() - 1;
+            gcrs_full[[last, 0]].to_bits().hash(&mut hasher);
+            gcrs_full[[last, 1]].to_bits().hash(&mut hasher);
+            gcrs_full[[last, 2]].to_bits().hash(&mut hasher);
+        }
+    }
+    hasher.finish()
+}
 
 /// Configuration for Moon phase constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,25 +145,30 @@ impl MoonPhaseEvaluator {
         &self,
         moon_positions: &Array2<f64>,
         observer_positions: &Array2<f64>,
-    ) -> PyResult<Vec<[f64; 3]>> {
+    ) -> PyResult<Array2<f64>> {
         if moon_positions.nrows() != observer_positions.nrows() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "Moon and observer position arrays must have the same number of rows.",
             ));
         }
 
-        let n = moon_positions.nrows();
-        let mut moon_units = Vec::with_capacity(n);
+        // Vectorized: moon_rel = moon_positions - observer_positions
+        let moon_rel = moon_positions - observer_positions;
 
-        for i in 0..n {
-            let moon_row = moon_positions.row(i);
-            let obs_row = observer_positions.row(i);
-            let moon_rel = [
-                moon_row[0] - obs_row[0],
-                moon_row[1] - obs_row[1],
-                moon_row[2] - obs_row[2],
-            ];
-            moon_units.push(normalize_vector(&moon_rel));
+        // Vectorized normalization: compute magnitudes for all rows at once
+        let magnitudes = moon_rel
+            .mapv(|x| x * x)
+            .sum_axis(ndarray::Axis(1))
+            .mapv(|x| x.sqrt());
+
+        // Normalize each row by dividing by its magnitude
+        let mut moon_units = Array2::<f64>::zeros((moon_positions.nrows(), 3));
+        for (i, mag) in magnitudes.iter().enumerate() {
+            if *mag > 0.0 {
+                for j in 0..3 {
+                    moon_units[[i, j]] = moon_rel[[i, j]] / mag;
+                }
+            }
         }
 
         Ok(moon_units)
@@ -138,55 +191,98 @@ impl MoonPhaseEvaluator {
             ));
         }
 
+        // Check cache first
+        let cache_key = compute_cache_key(times, moon_positions, gcrs_full);
+        if let Ok(cache) = MOON_ALTITUDE_CACHE.lock() {
+            if let Some(cached) = cache.get(&cache_key) {
+                return Ok((**cached).clone());
+            }
+        }
+
         let itrs_data = convert_frames(gcrs_full, times, Frame::GCRS, Frame::ITRS, true);
         let itrs_positions = itrs_data.slice(s![.., 0..3]).to_owned();
         let (lats_deg, lons_deg, heights_km) = ecef_to_geodetic_deg(&itrs_positions);
 
-        let mut altitudes = Vec::with_capacity(times.len());
+        // Vectorized: compute all relative positions at once
+        let gcrs_positions = gcrs_full.slice(s![.., 0..3]);
+        let moon_rel = moon_positions - &gcrs_positions;
 
-        for i in 0..times.len() {
-            let obs_row = gcrs_full.row(i);
-            let moon_row = moon_positions.row(i);
-            let moon_rel = [
-                moon_row[0] - obs_row[0],
-                moon_row[1] - obs_row[1],
-                moon_row[2] - obs_row[2],
-            ];
-            let dist =
-                (moon_rel[0] * moon_rel[0] + moon_rel[1] * moon_rel[1] + moon_rel[2] * moon_rel[2])
-                    .sqrt();
-            if dist == 0.0 {
-                altitudes.push(-90.0);
-                continue;
-            }
+        // Vectorized: compute distances for all times at once
+        let distances = moon_rel
+            .mapv(|x| x * x)
+            .sum_axis(ndarray::Axis(1))
+            .mapv(|x| x.sqrt());
 
-            let ra_rad = moon_rel[1].atan2(moon_rel[0]);
-            let dec_rad = (moon_rel[2] / dist).asin();
+        // Vectorized: compute RA and Dec for all times
+        let ra_rad = ndarray::Zip::from(moon_rel.column(1))
+            .and(moon_rel.column(0))
+            .map_collect(|&y, &x| y.atan2(x));
 
-            let lat_rad = lats_deg[i].to_radians();
-            let lon_rad = lons_deg[i].to_radians();
-            let height_m = heights_km[i] * 1000.0;
-            let time = &times[i];
+        let dec_rad = ndarray::Zip::from(moon_rel.column(2))
+            .and(&distances)
+            .map_collect(|&z, &dist| {
+                if dist > 0.0 {
+                    (z / dist).asin()
+                } else {
+                    -std::f64::consts::FRAC_PI_2
+                }
+            });
 
-            let (utc1, utc2) = datetime_to_jd_utc(time);
-            let dut1 = ut1_provider::get_ut1_utc_offset(time);
-            let (xp, yp) = eop_provider::get_polar_motion_rad(time);
+        // Precompute per-index scalars to allow parallel altitude computation
+        let lat_rad: Vec<f64> = lats_deg.iter().map(|v| v.to_radians()).collect();
+        let lon_rad: Vec<f64> = lons_deg.iter().map(|v| v.to_radians()).collect();
+        let height_m: Vec<f64> = heights_km.iter().map(|v| v * 1000.0).collect();
 
-            let (_aob, zob, _hob, _dob, _rob, _eo) = atco13(
-                ra_rad, dec_rad, 0.0, 0.0, 0.0, 0.0, utc1, utc2, dut1, lon_rad, lat_rad, height_m,
-                xp, yp, 0.0, 0.0, 0.0, 0.55,
-            )
-            .map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!(
-                    "SOFA atco13 failed for Moon altitude: {e:?}"
-                ))
-            })?;
+        let altitudes: PyResult<Vec<f64>> = (0..times.len())
+            .into_par_iter()
+            .map(|i| -> PyResult<f64> {
+                if distances[i] == 0.0 {
+                    return Ok(-90.0);
+                }
 
-            let alt_deg = (std::f64::consts::FRAC_PI_2 - zob).to_degrees();
-            altitudes.push(alt_deg);
+                let time = &times[i];
+                let (utc1, utc2) = datetime_to_jd_utc(time);
+                let dut1 = ut1_provider::get_ut1_utc_offset(time);
+                let (xp, yp) = eop_provider::get_polar_motion_rad(time);
+
+                let (_aob, zob, _hob, _dob, _rob, _eo) = atco13(
+                    ra_rad[i],
+                    dec_rad[i],
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    utc1,
+                    utc2,
+                    dut1,
+                    lon_rad[i],
+                    lat_rad[i],
+                    height_m[i],
+                    xp,
+                    yp,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.55,
+                )
+                .map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "SOFA atco13 failed for Moon altitude: {e:?}"
+                    ))
+                })?;
+
+                Ok((std::f64::consts::FRAC_PI_2 - zob).to_degrees())
+            })
+            .collect();
+
+        // Cache the computed altitudes
+        let altitudes_vec = altitudes?;
+        let altitudes_arc = Arc::new(altitudes_vec.clone());
+        if let Ok(mut cache) = MOON_ALTITUDE_CACHE.lock() {
+            cache.insert(cache_key, altitudes_arc);
         }
 
-        Ok(altitudes)
+        Ok(altitudes_vec)
     }
 
     /// Check if Moon is sufficiently above horizon based on visibility setting
@@ -239,12 +335,15 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
             self.compute_moon_altitudes(&times_filtered, &moon_positions, &gcrs_full)?;
         let moon_units = self.compute_moon_unit_vectors(&moon_positions, &observer_positions)?;
         let target_vec = radec_to_unit_vector(target_ra, target_dec);
-        let moon_distances: Vec<f64> = moon_units
+
+        // Vectorized: compute all moon distances at once using dot products
+        // moon_units is (n_times, 3), target_vec is (3,)
+        // We want dot(moon_units[i], target_vec) for all i
+        let target_array = ndarray::Array1::from_vec(target_vec.to_vec());
+        let cos_angles = moon_units.dot(&target_array);
+        let moon_distances: Vec<f64> = cos_angles
             .iter()
-            .map(|moon_unit| {
-                let cos_angle = dot_product(&target_vec, moon_unit).clamp(-1.0, 1.0);
-                cos_angle.acos().to_degrees()
-            })
+            .map(|&cos_angle| cos_angle.clamp(-1.0, 1.0).acos().to_degrees())
             .collect();
 
         let violations = track_violations(
@@ -406,6 +505,13 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
         let min_cos_threshold = self.min_distance.map(|min| min.to_radians().cos());
         let max_cos_threshold = self.max_distance.map(|max| max.to_radians().cos());
 
+        // Vectorized: compute all dot products at once using matrix multiplication
+        // moon_units: (n_times, 3), target_vectors: (n_targets, 3)
+        // We want: (n_targets, n_times) where result[j, i] = dot(target_vectors[j], moon_units[i])
+        // This is target_vectors @ moon_units.T
+        let cos_angles = target_vectors.dot(&moon_units.t());
+
+        // Process illumination and visibility for each time index
         for i in 0..n_times {
             let illumination = illuminations[i];
             let moon_altitude = moon_altitudes[i];
@@ -414,35 +520,29 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
             let moon_visible = self.is_moon_visible(moon_altitude);
             if !self.enforce_when_below_horizon && !moon_visible {
                 // Moon is below horizon and we don't enforce in this case
-                // All targets are considered satisfied
+                // All targets are considered satisfied (not violated)
                 for j in 0..n_targets {
                     result[[j, i]] = false;
                 }
                 continue;
             }
 
-            let mut violated = false;
-
-            // Check illumination constraints
+            // Check illumination constraints (same for all targets)
+            let mut illumination_violated = false;
             if illumination > self.max_illumination {
-                violated = true;
+                illumination_violated = true;
             }
             if let Some(min_illumination) = self.min_illumination {
                 if illumination < min_illumination {
-                    violated = true;
+                    illumination_violated = true;
                 }
             }
 
-            // Check distance constraints for each target
+            // Vectorized: check distance constraints for all targets at this time
             for j in 0..n_targets {
-                let target_vec = [
-                    target_vectors[[j, 0]],
-                    target_vectors[[j, 1]],
-                    target_vectors[[j, 2]],
-                ];
-                let cos_angle = dot_product(&target_vec, &moon_units[i]).clamp(-1.0, 1.0);
+                let cos_angle = cos_angles[[j, i]].clamp(-1.0, 1.0);
 
-                let mut target_violated = violated;
+                let mut target_violated = illumination_violated;
                 if let Some(min_thresh) = min_cos_threshold {
                     if cos_angle > min_thresh {
                         target_violated = true;
