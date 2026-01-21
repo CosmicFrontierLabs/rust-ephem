@@ -1,6 +1,7 @@
 /// Eclipse constraint implementation
 use super::core::{ConstraintConfig, ConstraintEvaluator, ConstraintResult, ConstraintViolation};
-use crate::utils::vector_math::{normalize_vector, vector_magnitude};
+use crate::utils::config::{EARTH_RADIUS_KM, SUN_RADIUS_KM};
+use crate::utils::vector_math::vector_magnitude;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
@@ -27,6 +28,72 @@ struct EclipseEvaluator {
 }
 
 impl EclipseEvaluator {
+    fn shadow_geometry(obs_pos: [f64; 3], sun_pos: [f64; 3]) -> Option<(f64, f64, f64)> {
+        let sun_dist = vector_magnitude(&sun_pos);
+        if sun_dist <= 0.0 {
+            return None;
+        }
+
+        let sun_unit = [
+            sun_pos[0] / sun_dist,
+            sun_pos[1] / sun_dist,
+            sun_pos[2] / sun_dist,
+        ];
+
+        // Observer must be behind Earth relative to Sun direction.
+        let dot = obs_pos[0] * sun_unit[0] + obs_pos[1] * sun_unit[1] + obs_pos[2] * sun_unit[2];
+        if dot >= 0.0 {
+            return None;
+        }
+
+        // Distance along the shadow axis (behind Earth).
+        let s = -dot;
+
+        // Perpendicular distance from shadow axis.
+        let perp = [
+            obs_pos[0] - sun_unit[0] * dot,
+            obs_pos[1] - sun_unit[1] * dot,
+            obs_pos[2] - sun_unit[2] * dot,
+        ];
+        let dist_to_axis = vector_magnitude(&perp);
+
+        // Umbra and penumbra cone lengths.
+        let l_umbra = EARTH_RADIUS_KM * sun_dist / (SUN_RADIUS_KM - EARTH_RADIUS_KM);
+        let l_penumbra = EARTH_RADIUS_KM * sun_dist / (SUN_RADIUS_KM + EARTH_RADIUS_KM);
+
+        // Umbra radius decreases linearly to zero at L_umbra.
+        let umbra_radius = if s <= l_umbra {
+            EARTH_RADIUS_KM * (1.0 - s / l_umbra)
+        } else {
+            0.0
+        };
+
+        // Penumbra radius increases linearly with distance.
+        let penumbra_radius = EARTH_RADIUS_KM * (1.0 + s / l_penumbra);
+
+        Some((dist_to_axis, umbra_radius, penumbra_radius))
+    }
+
+    fn shadow_status(&self, obs_pos: [f64; 3], sun_pos: [f64; 3]) -> (bool, f64) {
+        if let Some((dist_to_axis, umbra_radius, penumbra_radius)) =
+            Self::shadow_geometry(obs_pos, sun_pos)
+        {
+            let in_umbra = umbra_radius > 0.0 && dist_to_axis < umbra_radius;
+            if in_umbra {
+                let severity = 1.0 - dist_to_axis / umbra_radius;
+                return (true, severity);
+            }
+
+            if !self.umbra_only && dist_to_axis < penumbra_radius {
+                let denom = (penumbra_radius - umbra_radius).max(1e-9);
+                let penumbra_depth = (penumbra_radius - dist_to_axis) / denom;
+                return (true, 0.5 * penumbra_depth);
+            }
+        }
+
+        (false, 0.0)
+    }
+
     /// Compute eclipse mask for all times (returns true where eclipse occurs)
     fn compute_eclipse_mask(
         &self,
@@ -34,11 +101,6 @@ impl EclipseEvaluator {
         sun_positions: &Array2<f64>,
         observer_positions: &Array2<f64>,
     ) -> Vec<bool> {
-        // Earth radius in km
-        const EARTH_RADIUS: f64 = 6378.137;
-        // Sun radius in km (mean)
-        const SUN_RADIUS: f64 = 696000.0;
-
         let mut result = vec![false; times.len()];
 
         for i in 0..times.len() {
@@ -54,49 +116,7 @@ impl EclipseEvaluator {
                 sun_positions[[i, 2]],
             ];
 
-            // Vector from observer to Sun
-            let obs_to_sun = [
-                sun_pos[0] - obs_pos[0],
-                sun_pos[1] - obs_pos[1],
-                sun_pos[2] - obs_pos[2],
-            ];
-
-            let sun_dist = vector_magnitude(&obs_to_sun);
-            let sun_unit = normalize_vector(&obs_to_sun);
-
-            // Find closest point on observer-to-Sun line to Earth center
-            let t =
-                -(obs_pos[0] * sun_unit[0] + obs_pos[1] * sun_unit[1] + obs_pos[2] * sun_unit[2]);
-
-            // If closest point is behind observer or beyond Sun, not in shadow
-            if t < 0.0 || t > sun_dist {
-                continue;
-            }
-
-            // Closest point on line to Earth center
-            let closest_point = [
-                obs_pos[0] + t * sun_unit[0],
-                obs_pos[1] + t * sun_unit[1],
-                obs_pos[2] + t * sun_unit[2],
-            ];
-
-            // Distance from Earth center to closest point
-            let dist_to_earth = vector_magnitude(&closest_point);
-
-            // Calculate umbra and penumbra radii at observer distance
-            let umbra_radius = EARTH_RADIUS - (EARTH_RADIUS - SUN_RADIUS) * t / sun_dist;
-            let penumbra_radius = EARTH_RADIUS + (SUN_RADIUS - EARTH_RADIUS) * t / sun_dist;
-
-            let in_shadow = if dist_to_earth < umbra_radius {
-                // In umbra
-                true
-            } else if !self.umbra_only && dist_to_earth < penumbra_radius {
-                // In penumbra
-                true
-            } else {
-                false
-            };
-
+            let (in_shadow, _severity) = self.shadow_status(obs_pos, sun_pos);
             result[i] = in_shadow;
         }
 
@@ -118,11 +138,6 @@ impl ConstraintEvaluator for EclipseEvaluator {
         let mut violations = Vec::new();
         let mut current_violation: Option<(usize, f64)> = None;
 
-        // Earth radius in km
-        const EARTH_RADIUS: f64 = 6378.137;
-        // Sun radius in km (mean)
-        const SUN_RADIUS: f64 = 696000.0;
-
         for (i, _time) in times_filtered.iter().enumerate() {
             let obs_pos = [
                 obs_filtered[[i, 0]],
@@ -136,64 +151,7 @@ impl ConstraintEvaluator for EclipseEvaluator {
                 sun_filtered[[i, 2]],
             ];
 
-            // Vector from observer to Sun
-            let obs_to_sun = [
-                sun_pos[0] - obs_pos[0],
-                sun_pos[1] - obs_pos[1],
-                sun_pos[2] - obs_pos[2],
-            ];
-
-            let sun_dist = vector_magnitude(&obs_to_sun);
-            let sun_unit = normalize_vector(&obs_to_sun);
-
-            // Find closest point on observer-to-Sun line to Earth center
-            let t =
-                -(obs_pos[0] * sun_unit[0] + obs_pos[1] * sun_unit[1] + obs_pos[2] * sun_unit[2]);
-
-            // If closest point is behind observer or beyond Sun, not in shadow
-            if t < 0.0 || t > sun_dist {
-                // Close any open violation
-                if let Some((start_idx, max_severity)) = current_violation {
-                    violations.push(ConstraintViolation {
-                        start_time_internal: times_filtered[start_idx],
-                        end_time_internal: times_filtered[i - 1],
-                        max_severity,
-                        description: if self.umbra_only {
-                            "Observer in umbra".to_string()
-                        } else {
-                            "Observer in shadow".to_string()
-                        },
-                    });
-                    current_violation = None;
-                }
-                continue;
-            }
-
-            // Closest point on line to Earth center
-            let closest_point = [
-                obs_pos[0] + t * sun_unit[0],
-                obs_pos[1] + t * sun_unit[1],
-                obs_pos[2] + t * sun_unit[2],
-            ];
-
-            // Distance from Earth center to closest point
-            let dist_to_earth = vector_magnitude(&closest_point);
-
-            // Calculate umbra and penumbra radii at observer distance
-            let umbra_radius = EARTH_RADIUS - (EARTH_RADIUS - SUN_RADIUS) * t / sun_dist;
-            let penumbra_radius = EARTH_RADIUS + (SUN_RADIUS - EARTH_RADIUS) * t / sun_dist;
-
-            let (in_shadow, severity) = if dist_to_earth < umbra_radius {
-                // In umbra
-                (true, 1.0 - dist_to_earth / umbra_radius)
-            } else if !self.umbra_only && dist_to_earth < penumbra_radius {
-                // In penumbra
-                let penumbra_depth =
-                    (penumbra_radius - dist_to_earth) / (penumbra_radius - umbra_radius);
-                (true, 0.5 * penumbra_depth)
-            } else {
-                (false, 0.0)
-            };
+            let (in_shadow, severity) = self.shadow_status(obs_pos, sun_pos);
 
             if in_shadow {
                 match current_violation {
@@ -283,5 +241,44 @@ impl ConstraintEvaluator for EclipseEvaluator {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EclipseEvaluator;
+    use crate::utils::config::AU_TO_KM;
+
+    #[test]
+    fn test_penumbra_wider_than_umbra() {
+        let sun_pos = [AU_TO_KM, 0.0, 0.0];
+        let obs_pos = [-7000.0, 0.0, 0.0];
+        let (_dist_to_axis, umbra_radius, penumbra_radius) =
+            EclipseEvaluator::shadow_geometry(obs_pos, sun_pos).expect("shadow geometry");
+        assert!(umbra_radius > 0.0, "umbra radius should be positive");
+        assert!(
+            penumbra_radius > umbra_radius,
+            "penumbra radius should exceed umbra radius"
+        );
+    }
+
+    #[test]
+    fn test_penumbra_includes_outside_umbra() {
+        let sun_pos = [AU_TO_KM, 0.0, 0.0];
+        let s = 7000.0;
+        let on_axis = [-s, 0.0, 0.0];
+        let (_dist_to_axis, umbra_radius, penumbra_radius) =
+            EclipseEvaluator::shadow_geometry(on_axis, sun_pos).expect("shadow geometry");
+        let d = 0.5 * (umbra_radius + penumbra_radius);
+        let obs_pos = [-s, d, 0.0];
+
+        let umbra_only = EclipseEvaluator { umbra_only: true };
+        let with_penumbra = EclipseEvaluator { umbra_only: false };
+
+        let (in_umbra_only, _) = umbra_only.shadow_status(obs_pos, sun_pos);
+        let (in_penumbra, _) = with_penumbra.shadow_status(obs_pos, sun_pos);
+
+        assert!(!in_umbra_only, "point should be outside umbra");
+        assert!(in_penumbra, "point should be inside penumbra");
     }
 }

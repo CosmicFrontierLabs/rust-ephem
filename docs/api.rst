@@ -671,7 +671,7 @@ The following Pydantic models are used to configure constraints. These can be se
     * ``max_angle`` — Maximum angular separation from body in degrees (0-180), optional
 
 **EclipseConstraint**
-  Eclipse constraint (Earth shadow).
+  Eclipse constraint (Earth shadow). Assumes an Earth-centered ephemeris (Earth at origin).
 
   **Constructor:**
     ``EclipseConstraint(umbra_only=True)``

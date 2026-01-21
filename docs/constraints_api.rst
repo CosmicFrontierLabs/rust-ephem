@@ -806,6 +806,8 @@ EclipseConstraint
 ^^^^^^^^^^^^^^^^^
 
 Eclipse constraint detecting when observer is in Earth's shadow.
+This constraint assumes an Earth-centered ephemeris (Earth at the origin).
+Results are undefined for other centers.
 
 .. py:class:: EclipseConstraint(umbra_only=True)
 

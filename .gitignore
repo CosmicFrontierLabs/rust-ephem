@@ -38,3 +38,7 @@ wheels/
 test_data/*.bsp
 .venv/
 .cache/
+
+# Sphinx build output
+_readthedocs/
+docs/_build/
