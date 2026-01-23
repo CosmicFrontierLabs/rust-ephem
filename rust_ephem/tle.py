@@ -129,16 +129,43 @@ def fetch_tle(
         ... )
     """
     # Call the Rust function
-    result = _fetch_tle(
-        tle=tle,
-        norad_id=norad_id,
-        norad_name=norad_name,
-        epoch=epoch,
-        spacetrack_username=spacetrack_username,
-        spacetrack_password=spacetrack_password,
-        epoch_tolerance_days=epoch_tolerance_days,
-        enforce_source=enforce_source,
-    )
+    try:
+        result = _fetch_tle(
+            tle=tle,
+            norad_id=norad_id,
+            norad_name=norad_name,
+            epoch=epoch,
+            spacetrack_username=spacetrack_username,
+            spacetrack_password=spacetrack_password,
+            epoch_tolerance_days=epoch_tolerance_days,
+            enforce_source=enforce_source,
+        )
+    except ValueError as exc:
+        # Surface a clearer message when the upstream source returned no usable TLE
+        message = str(exc)
+        parse_failure = "Invalid TLE" in message
+
+        if parse_failure:
+            context_parts = []
+            if norad_id is not None:
+                context_parts.append(f"NORAD ID {norad_id}")
+            if norad_name:
+                context_parts.append(f"satellite name '{norad_name}'")
+            if tle:
+                context_parts.append(f"source '{tle}'")
+
+            context = (
+                ", ".join(context_parts) if context_parts else "the requested source"
+            )
+            hint = (
+                "No TLE data was returned from "
+                f"{context}; the response was not in TLE format. "
+                "The satellite may not exist, may not have public TLE data, or the upstream "
+                "service may be temporarily unavailable."
+            )
+            raise ValueError(f"{hint}") from exc
+
+        raise
 
     # Convert the result dict to TLERecord
     return TLERecord(
