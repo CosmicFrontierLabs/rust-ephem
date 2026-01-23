@@ -163,7 +163,7 @@ def fetch_tle(
                 "The satellite may not exist, may not have public TLE data, or the upstream "
                 "service may be temporarily unavailable."
             )
-            raise ValueError(f"{hint}") from exc
+            raise ValueError(hint) from exc
 
         raise
 
