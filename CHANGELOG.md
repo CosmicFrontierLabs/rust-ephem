@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.2](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.3.1...v0.3.2) (2026-01-27)
+
+
+### Bug Fixes
+
+* Apply equation of equinoxes in TEME conversion ([#115](https://github.com/CosmicFrontierLabs/rust-ephem/issues/115)) ([faee2a5](https://github.com/CosmicFrontierLabs/rust-ephem/commit/faee2a53cf5848c48b5968087fbad7686e729fae))
+* Fix eclipse penumbra geometry ([#113](https://github.com/CosmicFrontierLabs/rust-ephem/issues/113)) ([e670a50](https://github.com/CosmicFrontierLabs/rust-ephem/commit/e670a50b4f6ef48d23ad0f07fec9282325397355))
+* Fix Horizons JDTDB conversion and interpolation ([#118](https://github.com/CosmicFrontierLabs/rust-ephem/issues/118)) ([d61a399](https://github.com/CosmicFrontierLabs/rust-ephem/commit/d61a399814b6a0bee4d84299a9a5b9d6532a3648))
+* Fix MoonPhase constraint geometry ([#117](https://github.com/CosmicFrontierLabs/rust-ephem/issues/117)) ([3d1994b](https://github.com/CosmicFrontierLabs/rust-ephem/commit/3d1994b31d2d3a4e92a402b83bbb52e39ac74255))
+* make fetch_tle error message clearer to user ([#122](https://github.com/CosmicFrontierLabs/rust-ephem/issues/122)) ([b22e515](https://github.com/CosmicFrontierLabs/rust-ephem/commit/b22e5151bac6e9f496a3c943601566466c9009a8))
+* test failing in CI/CD ([#124](https://github.com/CosmicFrontierLabs/rust-ephem/issues/124)) ([4d8b054](https://github.com/CosmicFrontierLabs/rust-ephem/commit/4d8b054c1289d071dfdd6a4201815d697da9e78c))
+* use observer-relative distances for angular radii ([#116](https://github.com/CosmicFrontierLabs/rust-ephem/issues/116)) ([b8089e5](https://github.com/CosmicFrontierLabs/rust-ephem/commit/b8089e55abe9d0c91dd86f0deabbe852aa346002))
+
+
+### Performance Improvements
+
+* cache results of get_timestamp_vec ([#125](https://github.com/CosmicFrontierLabs/rust-ephem/issues/125)) ([fa58fe4](https://github.com/CosmicFrontierLabs/rust-ephem/commit/fa58fe454a90fe64a63cde98e71f6620c0891960))
+
 ## [0.3.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.3.0...v0.3.1) (2026-01-14)
 
 
