@@ -1169,34 +1169,15 @@ pub trait EphemerisBase {
             return Ok(cached.clone_ref(py));
         }
 
-        use crate::utils::config::EARTH_RADIUS_KM;
-        use numpy::PyArray1;
+        use numpy::{PyArray1, PyArrayMethods};
 
-        let gcrs_data =
-            self.data().gcrs.as_ref().ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err("No GCRS data available.")
-            })?;
+        // Get radians, then convert to degrees
+        let radians_array = self.get_earth_radius_rad(py)?;
+        let radians_bound = radians_array.downcast_bound::<PyArray1<f64>>(py)?;
+        let radians_vec = radians_bound.readonly().as_slice()?.to_vec();
 
-        let n = gcrs_data.nrows();
-        let distances: Vec<f64> = (0..n)
-            .map(|i| {
-                let row = gcrs_data.row(i);
-                let x = row[0];
-                let y = row[1];
-                let z = row[2];
-                (x * x + y * y + z * z).sqrt()
-            })
-            .collect();
-
-        // Angular radius: angle from observer to visible horizon
-        // For ground observers: arcsin(R_earth / distance) < 90°
-        let angular_radii_rad = self.compute_angular_radii_rad(EARTH_RADIUS_KM, &distances);
-        let angular_radii_deg: Vec<f64> = angular_radii_rad
-            .iter()
-            .map(|val| val.to_degrees())
-            .collect();
-
-        let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii_deg).to_owned().into();
+        let degrees_vec: Vec<f64> = radians_vec.iter().map(|r| r.to_degrees()).collect();
+        let result: Py<PyAny> = PyArray1::from_vec(py, degrees_vec).to_owned().into();
 
         // Cache the result
         let _ = self
