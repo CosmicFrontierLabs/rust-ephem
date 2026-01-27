@@ -143,6 +143,8 @@ pub struct EphemerisData {
     pub moon_skycoord: OnceLock<Py<PyAny>>,
     /// Cached Python timestamp array (NumPy array of datetime objects)
     pub timestamp_cache: OnceLock<Py<PyAny>>,
+    /// Cached Python timestamp vector (Vec of Python datetime objects for SkyCoord creation)
+    pub timestamp_vec_cache: OnceLock<Vec<Py<PyDateTime>>>,
     /// Cached angular radius arrays
     pub sun_angular_radius_cache: OnceLock<Py<PyAny>>,
     pub moon_angular_radius_cache: OnceLock<Py<PyAny>>,
@@ -184,6 +186,7 @@ impl EphemerisData {
             sun_skycoord: OnceLock::new(),
             moon_skycoord: OnceLock::new(),
             timestamp_cache: OnceLock::new(),
+            timestamp_vec_cache: OnceLock::new(),
             sun_angular_radius_cache: OnceLock::new(),
             moon_angular_radius_cache: OnceLock::new(),
             earth_angular_radius_cache: OnceLock::new(),
@@ -397,7 +400,14 @@ pub trait EphemerisBase {
 
     /// Get timestamps as Python datetime objects (for internal use by SkyCoordConfig)
     fn get_timestamp_vec(&self, py: Python) -> PyResult<Option<Vec<Py<PyDateTime>>>> {
-        Ok(self.data().times.as_ref().map(|times| {
+        // Check cache first
+        if let Some(cached) = self.data().timestamp_vec_cache.get() {
+            // Clone each Py<PyDateTime> using clone_ref
+            let cloned: Vec<Py<PyDateTime>> = cached.iter().map(|dt| dt.clone_ref(py)).collect();
+            return Ok(Some(cloned));
+        }
+
+        let result: Option<Vec<Py<PyDateTime>>> = self.data().times.as_ref().map(|times| {
             times
                 .iter()
                 .map(|dt| {
@@ -416,7 +426,16 @@ pub trait EphemerisBase {
                     .into()
                 })
                 .collect()
-        }))
+        });
+
+        // Cache the result if it exists (store by value since we own it)
+        if let Some(vec) = &result {
+            // Create a clone for caching - each Py<PyDateTime> uses clone_ref
+            let cache_vec: Vec<Py<PyDateTime>> = vec.iter().map(|dt| dt.clone_ref(py)).collect();
+            let _ = self.data().timestamp_vec_cache.set(cache_vec);
+        }
+
+        Ok(result)
     }
 
     /// Get timestamps as numpy array of Python datetime objects (optimized for property access)
