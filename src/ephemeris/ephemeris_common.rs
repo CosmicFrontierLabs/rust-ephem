@@ -1086,23 +1086,15 @@ pub trait EphemerisBase {
             return Ok(cached.clone_ref(py));
         }
 
-        use crate::utils::config::SUN_RADIUS_KM;
-        use numpy::PyArray1;
+        use numpy::{PyArray1, PyArrayMethods};
 
-        let sun_pv_data = self
-            .data()
-            .sun_gcrs
-            .as_ref()
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No Sun data available."))?;
+        // Get radians, then convert to degrees
+        let radians_array = self.get_sun_radius_rad(py)?;
+        let radians_bound = radians_array.downcast_bound::<PyArray1<f64>>(py)?;
+        let radians_vec = radians_bound.readonly().as_slice()?.to_vec();
 
-        let distances = self.body_observer_distances(sun_pv_data)?;
-        let angular_radii_rad = self.compute_angular_radii_rad(SUN_RADIUS_KM, &distances);
-        let angular_radii_deg: Vec<f64> = angular_radii_rad
-            .iter()
-            .map(|val| val.to_degrees())
-            .collect();
-
-        let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii_deg).to_owned().into();
+        let degrees_vec: Vec<f64> = radians_vec.iter().map(|r| r.to_degrees()).collect();
+        let result: Py<PyAny> = PyArray1::from_vec(py, degrees_vec).to_owned().into();
 
         // Cache the result
         let _ = self
@@ -1125,22 +1117,16 @@ pub trait EphemerisBase {
         if let Some(cached) = self.data().moon_angular_radius_cache.get() {
             return Ok(cached.clone_ref(py));
         }
-        use crate::utils::config::MOON_RADIUS_KM;
-        use numpy::PyArray1;
 
-        let moon_pv_data =
-            self.data().moon_gcrs.as_ref().ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err("No Moon data available.")
-            })?;
+        use numpy::{PyArray1, PyArrayMethods};
 
-        let distances = self.body_observer_distances(moon_pv_data)?;
-        let angular_radii_rad = self.compute_angular_radii_rad(MOON_RADIUS_KM, &distances);
-        let angular_radii_deg: Vec<f64> = angular_radii_rad
-            .iter()
-            .map(|val| val.to_degrees())
-            .collect();
+        // Get radians, then convert to degrees
+        let radians_array = self.get_moon_radius_rad(py)?;
+        let radians_bound = radians_array.downcast_bound::<PyArray1<f64>>(py)?;
+        let radians_vec = radians_bound.readonly().as_slice()?.to_vec();
 
-        let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii_deg).to_owned().into();
+        let degrees_vec: Vec<f64> = radians_vec.iter().map(|r| r.to_degrees()).collect();
+        let result: Py<PyAny> = PyArray1::from_vec(py, degrees_vec).to_owned().into();
 
         // Cache the result
         let _ = self
@@ -1269,13 +1255,13 @@ pub trait EphemerisBase {
         use crate::utils::config::SUN_RADIUS_KM;
         use numpy::PyArray1;
 
-        let sun_pv_data = self
+        let sun_geocentric = self
             .data()
             .sun_gcrs
             .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No Sun data available."))?;
 
-        let distances = self.body_observer_distances(sun_pv_data)?;
+        let distances = self.body_observer_distances(sun_geocentric)?;
         let angular_radii = self.compute_angular_radii_rad(SUN_RADIUS_KM, &distances);
 
         let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii).to_owned().into();
@@ -1305,12 +1291,12 @@ pub trait EphemerisBase {
         use crate::utils::config::MOON_RADIUS_KM;
         use numpy::PyArray1;
 
-        let moon_pv_data =
+        let moon_geocentric =
             self.data().moon_gcrs.as_ref().ok_or_else(|| {
                 pyo3::exceptions::PyValueError::new_err("No Moon data available.")
             })?;
 
-        let distances = self.body_observer_distances(moon_pv_data)?;
+        let distances = self.body_observer_distances(moon_geocentric)?;
         let angular_radii = self.compute_angular_radii_rad(MOON_RADIUS_KM, &distances);
 
         let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii).to_owned().into();
