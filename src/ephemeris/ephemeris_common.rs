@@ -1175,23 +1175,25 @@ pub trait EphemerisBase {
             })?;
 
         let n = gcrs_data.nrows();
-        let mut angular_radii = Vec::with_capacity(n);
+        let distances: Vec<f64> = (0..n)
+            .map(|i| {
+                let row = gcrs_data.row(i);
+                let x = row[0];
+                let y = row[1];
+                let z = row[2];
+                (x * x + y * y + z * z).sqrt()
+            })
+            .collect();
 
-        for i in 0..n {
-            let row = gcrs_data.row(i);
-            let x = row[0];
-            let y = row[1];
-            let z = row[2];
-            let distance = (x * x + y * y + z * z).sqrt();
-            // Angular radius: angle from observer to visible horizon
-            // For ground observers: arcsin(R_earth / distance) < 90°
-            // Clamp ratio to [0, 1] for numerical stability
-            let ratio = (EARTH_RADIUS_KM / distance).min(1.0);
-            let angular_radius_rad = ratio.asin();
-            angular_radii.push(angular_radius_rad.to_degrees());
-        }
+        // Angular radius: angle from observer to visible horizon
+        // For ground observers: arcsin(R_earth / distance) < 90°
+        let angular_radii_rad = self.compute_angular_radii_rad(EARTH_RADIUS_KM, &distances);
+        let angular_radii_deg: Vec<f64> = angular_radii_rad
+            .iter()
+            .map(|val| val.to_degrees())
+            .collect();
 
-        let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii).to_owned().into();
+        let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii_deg).to_owned().into();
 
         // Cache the result
         let _ = self
