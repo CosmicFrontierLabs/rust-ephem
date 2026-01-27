@@ -1096,15 +1096,13 @@ pub trait EphemerisBase {
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No Sun data available."))?;
 
         let distances = self.body_observer_distances(sun_pv_data)?;
-        let mut angular_radii = Vec::with_capacity(distances.len());
+        let angular_radii_rad = self.compute_angular_radii_rad(SUN_RADIUS_KM, &distances);
+        let angular_radii_deg: Vec<f64> = angular_radii_rad
+            .iter()
+            .map(|val| val.to_degrees())
+            .collect();
 
-        for distance in distances {
-            let ratio = (SUN_RADIUS_KM / distance).min(1.0);
-            let angular_radius_rad = ratio.asin();
-            angular_radii.push(angular_radius_rad.to_degrees());
-        }
-
-        let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii).to_owned().into();
+        let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii_deg).to_owned().into();
 
         // Cache the result
         let _ = self
