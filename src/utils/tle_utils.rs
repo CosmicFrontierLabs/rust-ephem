@@ -304,9 +304,9 @@ fn try_read_spacetrack_cache(
     tolerance_days: f64,
 ) -> Option<TLEDataWithEpoch> {
     let entries = fs::read_dir(cache_dir).ok()?;
-    let mut best_tle: Option<TLEDataWithEpoch> = None;
-    let mut best_diff_seconds = f64::MAX;
     let tolerance_seconds = tolerance_days * 86400.0;
+
+    let mut candidates: Vec<(f64, PathBuf)> = Vec::new();
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -317,6 +317,31 @@ fn try_read_spacetrack_cache(
             continue;
         }
 
+        let stem = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s,
+            None => continue,
+        };
+        let parsed = match NaiveDateTime::parse_from_str(stem, "%Y%m%dT%H%M%S") {
+            Ok(dt) => DateTime::from_naive_utc_and_offset(dt, Utc),
+            Err(_) => continue,
+        };
+        let diff_seconds = (*target_epoch - parsed).num_seconds().abs() as f64;
+        if diff_seconds <= tolerance_seconds {
+            candidates.push((diff_seconds, path));
+        }
+    }
+
+    if candidates.is_empty() {
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "Space-Track cache TLEs too far from target ({}): > {:.2} days tolerance",
+            target_epoch, tolerance_days
+        );
+        return None;
+    }
+
+    candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    for (_diff_seconds, path) in candidates {
         let content = match fs::read_to_string(&path) {
             Ok(c) => c,
             Err(_) => continue,
@@ -330,32 +355,18 @@ fn try_read_spacetrack_cache(
             Err(_) => continue,
         };
 
-        let diff_seconds = (*target_epoch - tle_epoch).num_seconds().abs() as f64;
-        if diff_seconds <= tolerance_seconds && diff_seconds < best_diff_seconds {
-            best_diff_seconds = diff_seconds;
-            best_tle = Some(TLEDataWithEpoch {
-                tle,
-                epoch: tle_epoch,
-            });
-        }
+        return Some(TLEDataWithEpoch {
+            tle,
+            epoch: tle_epoch,
+        });
     }
 
-    if let Some(best) = best_tle {
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "Space-Track TLE loaded from cache: {} (epoch diff: {:.2} days)",
-            cache_dir.display(),
-            best_diff_seconds / 86400.0
-        );
-        Some(best)
-    } else {
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "Space-Track cache TLEs too far from target ({}): > {:.2} days tolerance",
-            target_epoch, tolerance_days
-        );
-        None
-    }
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "Space-Track cache TLEs could not be parsed for target ({})",
+        target_epoch
+    );
+    None
 }
 
 /// Save TLE content to Space-Track cache
