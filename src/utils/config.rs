@@ -81,8 +81,11 @@ pub const SPACETRACK_LOGIN_URL: &str = "https://www.space-track.org/ajaxauth/log
 pub const SPACETRACK_USERNAME_ENV: &str = "SPACETRACK_USERNAME";
 pub const SPACETRACK_PASSWORD_ENV: &str = "SPACETRACK_PASSWORD";
 
-/// Default TLE epoch tolerance for Space-Track.org caching (4 days)
-pub const DEFAULT_EPOCH_TOLERANCE_DAYS: f64 = 4.0;
+/// Default TLE epoch tolerance for Space-Track.org caching (2 days)
+pub const DEFAULT_EPOCH_TOLERANCE_DAYS: f64 = 2.0;
+
+/// Maximum number of cached Space-Track TLEs per NORAD ID
+pub const SPACETRACK_CACHE_MAX_ENTRIES: usize = 1000;
 
 /// TTL for cached TLE downloads (24 hours)
 pub const TLE_CACHE_TTL: u64 = 86_400;
