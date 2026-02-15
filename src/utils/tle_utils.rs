@@ -335,7 +335,7 @@ fn try_read_spacetrack_cache(
         }
     }
 
-    if let Some(best) = best_tle.clone() {
+    if let Some(best) = best_tle {
         #[cfg(debug_assertions)]
         eprintln!(
             "Space-Track TLE loaded from cache: {} (epoch diff: {:.2} days)",
@@ -527,7 +527,7 @@ pub fn fetch_tle_from_spacetrack(
     let cache_content = format!("{}\n{}", best_tle.tle.line1, best_tle.tle.line2);
     let cache_path = get_spacetrack_cache_path(norad_id, &best_tle.epoch);
     save_to_spacetrack_cache(&cache_path, &cache_content);
-    let cache_dir = get_spacetrack_cache_dir(norad_id);
+
     prune_spacetrack_cache(&cache_dir, SPACETRACK_CACHE_MAX_ENTRIES);
 
     Ok(best_tle)
