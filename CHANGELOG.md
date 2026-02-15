@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.3.2...v0.4.0) (2026-02-15)
+
+
+### Features
+
+* update on disk caching for Space-track TLEs ([#129](https://github.com/CosmicFrontierLabs/rust-ephem/issues/129)) ([1706c39](https://github.com/CosmicFrontierLabs/rust-ephem/commit/1706c39aeaddead0d904fddd70cb3662c7543c81))
+
 ## [0.3.2](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.3.1...v0.3.2) (2026-01-27)
 
 
