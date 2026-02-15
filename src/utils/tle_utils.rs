@@ -221,42 +221,47 @@ impl std::fmt::Debug for SpaceTrackCredentials {
             .finish()
     }
 }
+
+/// Load Space-Track credentials from environment variables or .env file
+///
+/// Checks in order:
+/// 1. Environment variables SPACETRACK_USERNAME and SPACETRACK_PASSWORD
+/// 2. .env file in the current directory
+/// 3. .env file in the user's home directory
+fn spacetrack_credentials_from_env() -> Result<(String, String), Box<dyn Error>> {
+    // Try to load .env file (silently ignore if not found)
+    let _ = dotenvy::dotenv();
+
+    // Also try home directory .env
+    if let Some(home_dir) = dirs::home_dir() {
+        let home_env = home_dir.join(".env");
+        let _ = dotenvy::from_path(home_env);
+    }
+
+    let username: String = SPACETRACK_USERNAME_ENV.as_ref().cloned().ok_or_else(|| {
+        format!(
+            "Space-Track.org username not found. Set {} environment variable or pass credentials explicitly.",
+            "SPACETRACK_USERNAME"
+        )
+    })?;
+
+    let password: String = SPACETRACK_PASSWORD_ENV.as_ref().cloned().ok_or_else(|| {
+        format!(
+            "Space-Track.org password not found. Set {} environment variable or pass credentials explicitly.",
+            "SPACETRACK_PASSWORD"
+        )
+    })?;
+
+    Ok((username, password))
+}
 impl SpaceTrackCredentials {
     /// Create new credentials from explicit values
     pub fn new(username: String, password: String) -> Self {
         Self { username, password }
     }
 
-    /// Load credentials from environment variables or .env file
-    ///
-    /// Checks in order:
-    /// 1. Environment variables SPACETRACK_USERNAME and SPACETRACK_PASSWORD
-    /// 2. .env file in the current directory
-    /// 3. .env file in the user's home directory
     pub fn from_env() -> Result<Self, Box<dyn Error>> {
-        // Try to load .env file (silently ignore if not found)
-        let _ = dotenvy::dotenv();
-
-        // Also try home directory .env
-        if let Some(home_dir) = dirs::home_dir() {
-            let home_env = home_dir.join(".env");
-            let _ = dotenvy::from_path(home_env);
-        }
-
-        let username = std::env::var(SPACETRACK_USERNAME_ENV).map_err(|_| {
-            format!(
-                "Space-Track.org username not found. Set {} environment variable or pass credentials explicitly.",
-                SPACETRACK_USERNAME_ENV
-            )
-        })?;
-
-        let password = std::env::var(SPACETRACK_PASSWORD_ENV).map_err(|_| {
-            format!(
-                "Space-Track.org password not found. Set {} environment variable or pass credentials explicitly.",
-                SPACETRACK_PASSWORD_ENV
-            )
-        })?;
-
+        let (username, password) = spacetrack_credentials_from_env()?;
         Ok(Self { username, password })
     }
 }
@@ -466,7 +471,7 @@ pub fn fetch_tle_from_spacetrack(
     credentials: Option<SpaceTrackCredentials>,
     epoch_tolerance_days: Option<f64>,
 ) -> Result<TLEDataWithEpoch, Box<dyn Error>> {
-    let tolerance = epoch_tolerance_days.unwrap_or(DEFAULT_EPOCH_TOLERANCE_DAYS);
+    let tolerance = epoch_tolerance_days.unwrap_or(*DEFAULT_EPOCH_TOLERANCE_DAYS);
     let cache_dir = get_spacetrack_cache_dir(norad_id);
 
     // Try to use cached version if epoch is within tolerance
