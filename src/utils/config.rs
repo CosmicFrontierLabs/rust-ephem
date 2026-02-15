@@ -77,12 +77,24 @@ pub const CELESTRAK_API_BASE: &str = "https://celestrak.org/NORAD/elements/gp.ph
 pub const SPACETRACK_API_BASE: &str = "https://www.space-track.org";
 pub const SPACETRACK_LOGIN_URL: &str = "https://www.space-track.org/ajaxauth/login";
 
-/// Environment variable names for Space-Track.org credentials
-pub const SPACETRACK_USERNAME_ENV: &str = "SPACETRACK_USERNAME";
-pub const SPACETRACK_PASSWORD_ENV: &str = "SPACETRACK_PASSWORD";
+/// Space-Track.org credentials loaded from the environment, default to None if not set
+pub static SPACETRACK_USERNAME_ENV: Lazy<Option<String>> =
+    Lazy::new(|| env::var("SPACETRACK_USERNAME").ok());
+pub static SPACETRACK_PASSWORD_ENV: Lazy<Option<String>> =
+    Lazy::new(|| env::var("SPACETRACK_PASSWORD").ok());
 
-/// Default TLE epoch tolerance for Space-Track.org caching (4 days)
-pub const DEFAULT_EPOCH_TOLERANCE_DAYS: f64 = 4.0;
+/// Default TLE epoch tolerance for Space-Track.org caching (2 days)
+///
+/// Override by setting SPACETRACK_EPOCH_TOLERANCE_DAYS to a float value.
+pub static DEFAULT_EPOCH_TOLERANCE_DAYS: Lazy<f64> = Lazy::new(|| {
+    env::var("SPACETRACK_EPOCH_TOLERANCE_DAYS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4.0)
+});
+
+/// Maximum number of cached Space-Track TLEs per NORAD ID
+pub const SPACETRACK_CACHE_MAX_ENTRIES: usize = 1000;
 
 /// TTL for cached TLE downloads (24 hours)
 pub const TLE_CACHE_TTL: u64 = 86_400;

@@ -11,10 +11,11 @@
 
 use crate::utils::config::{
     CACHE_DIR, CELESTRAK_API_BASE, DEFAULT_EPOCH_TOLERANCE_DAYS, SPACETRACK_API_BASE,
-    SPACETRACK_LOGIN_URL, SPACETRACK_PASSWORD_ENV, SPACETRACK_USERNAME_ENV, TLE_CACHE_TTL,
+    SPACETRACK_CACHE_MAX_ENTRIES, SPACETRACK_LOGIN_URL, SPACETRACK_PASSWORD_ENV,
+    SPACETRACK_USERNAME_ENV, TLE_CACHE_TTL,
 };
 #[allow(unused_imports)]
-use chrono::{DateTime, Datelike, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Utc};
 use std::error::Error;
 use std::fs;
 use std::io::Write;
@@ -220,42 +221,47 @@ impl std::fmt::Debug for SpaceTrackCredentials {
             .finish()
     }
 }
+
+/// Load Space-Track credentials from environment variables or .env file
+///
+/// Checks in order:
+/// 1. Environment variables SPACETRACK_USERNAME and SPACETRACK_PASSWORD
+/// 2. .env file in the current directory
+/// 3. .env file in the user's home directory
+fn spacetrack_credentials_from_env() -> Result<(String, String), Box<dyn Error>> {
+    // Try to load .env file (silently ignore if not found)
+    let _ = dotenvy::dotenv();
+
+    // Also try home directory .env
+    if let Some(home_dir) = dirs::home_dir() {
+        let home_env = home_dir.join(".env");
+        let _ = dotenvy::from_path(home_env);
+    }
+
+    let username: String = SPACETRACK_USERNAME_ENV.as_ref().cloned().ok_or_else(|| {
+        format!(
+            "Space-Track.org username not found. Set {} environment variable or pass credentials explicitly.",
+            "SPACETRACK_USERNAME"
+        )
+    })?;
+
+    let password: String = SPACETRACK_PASSWORD_ENV.as_ref().cloned().ok_or_else(|| {
+        format!(
+            "Space-Track.org password not found. Set {} environment variable or pass credentials explicitly.",
+            "SPACETRACK_PASSWORD"
+        )
+    })?;
+
+    Ok((username, password))
+}
 impl SpaceTrackCredentials {
     /// Create new credentials from explicit values
     pub fn new(username: String, password: String) -> Self {
         Self { username, password }
     }
 
-    /// Load credentials from environment variables or .env file
-    ///
-    /// Checks in order:
-    /// 1. Environment variables SPACETRACK_USERNAME and SPACETRACK_PASSWORD
-    /// 2. .env file in the current directory
-    /// 3. .env file in the user's home directory
     pub fn from_env() -> Result<Self, Box<dyn Error>> {
-        // Try to load .env file (silently ignore if not found)
-        let _ = dotenvy::dotenv();
-
-        // Also try home directory .env
-        if let Some(home_dir) = dirs::home_dir() {
-            let home_env = home_dir.join(".env");
-            let _ = dotenvy::from_path(home_env);
-        }
-
-        let username = std::env::var(SPACETRACK_USERNAME_ENV).map_err(|_| {
-            format!(
-                "Space-Track.org username not found. Set {} environment variable or pass credentials explicitly.",
-                SPACETRACK_USERNAME_ENV
-            )
-        })?;
-
-        let password = std::env::var(SPACETRACK_PASSWORD_ENV).map_err(|_| {
-            format!(
-                "Space-Track.org password not found. Set {} environment variable or pass credentials explicitly.",
-                SPACETRACK_PASSWORD_ENV
-            )
-        })?;
-
+        let (username, password) = spacetrack_credentials_from_env()?;
         Ok(Self { username, password })
     }
 }
@@ -267,11 +273,19 @@ pub struct TLEDataWithEpoch {
     pub epoch: DateTime<Utc>,
 }
 
-/// Get cache path for Space-Track TLE with NORAD ID
-fn get_spacetrack_cache_path(norad_id: u32) -> PathBuf {
+/// Get cache directory for Space-Track TLEs with NORAD ID
+fn get_spacetrack_cache_dir(norad_id: u32) -> PathBuf {
     let mut path = CACHE_DIR.clone();
     path.push("spacetrack_cache");
-    path.push(format!("{}.tle", norad_id));
+    path.push(norad_id.to_string());
+    path
+}
+
+/// Get cache path for a Space-Track TLE based on epoch
+fn get_spacetrack_cache_path(norad_id: u32, epoch: &DateTime<Utc>) -> PathBuf {
+    let mut path = get_spacetrack_cache_dir(norad_id);
+    let filename = format!("{}.tle", epoch.format("%Y%m%dT%H%M%S"));
+    path.push(filename);
     path
 }
 
@@ -285,42 +299,74 @@ fn get_spacetrack_cache_path(norad_id: u32) -> PathBuf {
 /// # Returns
 /// Some(TLEDataWithEpoch) if cache is valid, None otherwise
 fn try_read_spacetrack_cache(
-    path: &Path,
+    cache_dir: &Path,
     target_epoch: &DateTime<Utc>,
     tolerance_days: f64,
 ) -> Option<TLEDataWithEpoch> {
-    // Check if file exists and read content
-    let content = fs::read_to_string(path).ok()?;
-
-    // Parse the TLE
-    let tle = parse_tle_string(&content).ok()?;
-
-    // Extract the TLE epoch
-    let tle_epoch = extract_tle_epoch(&tle.line1).ok()?;
-
-    // Check if the TLE epoch is within tolerance of the target epoch
-    let diff_seconds = (*target_epoch - tle_epoch).num_seconds().abs() as f64;
+    let entries = fs::read_dir(cache_dir).ok()?;
     let tolerance_seconds = tolerance_days * 86400.0;
 
-    if diff_seconds <= tolerance_seconds {
+    let mut candidates: Vec<(f64, PathBuf)> = Vec::new();
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if path.extension().and_then(|s| s.to_str()) != Some("tle") {
+            continue;
+        }
+
+        let stem = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s,
+            None => continue,
+        };
+        let parsed = match NaiveDateTime::parse_from_str(stem, "%Y%m%dT%H%M%S") {
+            Ok(dt) => DateTime::from_naive_utc_and_offset(dt, Utc),
+            Err(_) => continue,
+        };
+        let diff_seconds = (*target_epoch - parsed).num_seconds().abs() as f64;
+        if diff_seconds <= tolerance_seconds {
+            candidates.push((diff_seconds, path));
+        }
+    }
+
+    if candidates.is_empty() {
         #[cfg(debug_assertions)]
         eprintln!(
-            "Space-Track TLE loaded from cache: {} (epoch diff: {:.2} days)",
-            path.display(),
-            diff_seconds / 86400.0
+            "Space-Track cache TLEs too far from target ({}): > {:.2} days tolerance",
+            target_epoch, tolerance_days
         );
-        Some(TLEDataWithEpoch {
+        return None;
+    }
+
+    candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    for (_diff_seconds, path) in candidates {
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let tle = match parse_tle_string(&content) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        let tle_epoch = match extract_tle_epoch(&tle.line1) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        return Some(TLEDataWithEpoch {
             tle,
             epoch: tle_epoch,
-        })
-    } else {
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "Space-Track cache TLE epoch ({}) too far from target ({}): {:.2} days > {:.2} days tolerance",
-            tle_epoch, target_epoch, diff_seconds / 86400.0, tolerance_days
-        );
-        None
+        });
     }
+
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "Space-Track cache TLEs could not be parsed for target ({})",
+        target_epoch
+    );
+    None
 }
 
 /// Save TLE content to Space-Track cache
@@ -338,6 +384,47 @@ fn save_to_spacetrack_cache(path: &Path, content: &str) {
     if let Err(_e) = fs::File::create(path).and_then(|mut f| f.write_all(content.as_bytes())) {
         #[cfg(debug_assertions)]
         eprintln!("Warning: Failed to write TLE to Space-Track cache: {}", _e);
+    }
+}
+
+/// Prune Space-Track cache to a maximum number of entries per NORAD ID
+fn prune_spacetrack_cache(cache_dir: &Path, max_entries: usize) {
+    let entries = match fs::read_dir(cache_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    let mut cached: Vec<(DateTime<Utc>, PathBuf)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if path.extension().and_then(|s| s.to_str()) != Some("tle") {
+            continue;
+        }
+        let stem = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s,
+            None => continue,
+        };
+        let parsed = NaiveDateTime::parse_from_str(stem, "%Y%m%dT%H%M%S");
+        let epoch = match parsed {
+            Ok(dt) => DateTime::from_naive_utc_and_offset(dt, Utc),
+            Err(_) => continue,
+        };
+        cached.push((epoch, path));
+    }
+
+    if cached.len() <= max_entries {
+        return;
+    }
+
+    cached.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, path) in cached.into_iter().skip(max_entries) {
+        if let Err(_e) = fs::remove_file(&path) {
+            #[cfg(debug_assertions)]
+            eprintln!("Warning: Failed to prune Space-Track cache file: {}", _e);
+        }
     }
 }
 
@@ -385,7 +472,7 @@ fn create_spacetrack_agent(
 /// * `norad_id` - NORAD catalog ID of the satellite
 /// * `target_epoch` - The epoch for which to find the closest TLE
 /// * `credentials` - Optional credentials (will try env vars if None)
-/// * `epoch_tolerance_days` - How many days tolerance for cache matching (default: 4.0)
+/// * `epoch_tolerance_days` - How many days tolerance for cache matching (default: 2.0)
 ///
 /// # Returns
 /// TLEDataWithEpoch containing the TLE lines and epoch
@@ -395,11 +482,11 @@ pub fn fetch_tle_from_spacetrack(
     credentials: Option<SpaceTrackCredentials>,
     epoch_tolerance_days: Option<f64>,
 ) -> Result<TLEDataWithEpoch, Box<dyn Error>> {
-    let tolerance = epoch_tolerance_days.unwrap_or(DEFAULT_EPOCH_TOLERANCE_DAYS);
-    let cache_path = get_spacetrack_cache_path(norad_id);
+    let tolerance = epoch_tolerance_days.unwrap_or(*DEFAULT_EPOCH_TOLERANCE_DAYS);
+    let cache_dir = get_spacetrack_cache_dir(norad_id);
 
     // Try to use cached version if epoch is within tolerance
-    if let Some(cached) = try_read_spacetrack_cache(&cache_path, target_epoch, tolerance) {
+    if let Some(cached) = try_read_spacetrack_cache(&cache_dir, target_epoch, tolerance) {
         return Ok(cached);
     }
 
@@ -454,7 +541,10 @@ pub fn fetch_tle_from_spacetrack(
 
     // Save to cache
     let cache_content = format!("{}\n{}", best_tle.tle.line1, best_tle.tle.line2);
+    let cache_path = get_spacetrack_cache_path(norad_id, &best_tle.epoch);
     save_to_spacetrack_cache(&cache_path, &cache_content);
+
+    prune_spacetrack_cache(&cache_dir, SPACETRACK_CACHE_MAX_ENTRIES);
 
     Ok(best_tle)
 }
