@@ -74,6 +74,9 @@ from rust_ephem.constraints import (
     BodyConstraint as BodyConstraint,
 )
 from rust_ephem.constraints import (
+    BoresightOffsetConstraint as BoresightOffsetConstraint,
+)
+from rust_ephem.constraints import (
     CombinedConstraintConfig as CombinedConstraintConfig,
 )
 from rust_ephem.constraints import (
@@ -146,6 +149,7 @@ __all__ = [
     "ConstraintConfig",
     "CombinedConstraintConfig",
     "AndConstraint",
+    "BoresightOffsetConstraint",
     "OrConstraint",
     "XorConstraint",
     "NotConstraint",

@@ -132,7 +132,7 @@ moon = obs.moon
 `rust-ephem` can calculate visibilities for celestial targets. It does this
 by defining constraints, which are `True` when a target cannot be observed.
 These constraints can be combined using logical operators, and then evaluated
-using the telescope Ephemeris. Not the `|` (or) operator is used here to
+using the telescope Ephemeris. Note the `|` (or) operator is used here to
 combine the Sun and Moon constraint, as if we used `&` (and) the constraint
 would only be true if the target was too close to the Sun _and_ Moon.
 
@@ -152,6 +152,56 @@ result = constraint.evaluate(ephem, target_ra=83.63, target_dec=22.01)
 # Get visibility windows
 for window in result.visibility:
     print(f"{window.start_time} to {window.end_time}")
+```
+
+### Shared-Axis Multi-Instrument Constraints (Boresight Offsets)
+
+For observatories with multiple instruments on the same mount, you can require
+that the primary target direction is also valid for a secondary instrument whose
+boresight is offset by fixed Euler angles.
+
+Remember: constraints are `True` when the target is **not visible**. So if
+either primary or secondary instrument is blocked, the combined constraint
+should be `True` (use `|`).
+
+```python
+import rust_ephem
+from rust_ephem.constraints import SunConstraint, MoonConstraint
+
+rust_ephem.ensure_planetary_ephemeris()
+
+# Primary instrument constraints (evaluated at commanded pointing)
+primary = (
+  SunConstraint(min_angle=45.0)
+  | MoonConstraint(min_angle=12.0)
+)
+
+# Secondary instrument constraints (evaluated at boresight-offset direction)
+secondary = (
+  SunConstraint(min_angle=45.0)
+  | MoonConstraint(min_angle=12.0)
+)
+secondary_offset = secondary.boresight_offset(
+    roll_deg=0.0,
+    pitch_deg=1.2,
+    yaw_deg=-0.8,
+)
+
+# Commanded pointing is invalid if either instrument is blocked
+combined = primary | secondary_offset
+
+result = combined.evaluate(ephem, target_ra=83.63, target_dec=22.01)
+print(result.all_satisfied)
+```
+
+Pydantic constraint configs support the same pattern:
+
+```python
+from rust_ephem.constraints import SunConstraint, MoonConstraint
+
+primary = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=12.0)
+secondary = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=12.0)
+combined = primary | secondary.boresight_offset(pitch_deg=1.2, yaw_deg=-0.8)
 ```
 
 ### JPL Horizons Fallback

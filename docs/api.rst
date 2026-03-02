@@ -393,6 +393,7 @@ Classes
     * ``Constraint.or_(*constraints)`` — Combine constraints with logical OR
     * ``Constraint.xor_(*constraints)`` — Combine constraints with logical XOR (violation when exactly one sub-constraint is violated)
     * ``Constraint.not_(constraint)`` — Negate a constraint with logical NOT
+    * ``Constraint.boresight_offset(constraint, roll_deg=0.0, pitch_deg=0.0, yaw_deg=0.0)`` — Wrap a constraint with fixed boresight Euler-angle offsets
     * ``Constraint.from_json(json_str)`` — Create constraint from JSON configuration
 
   **Methods:**
