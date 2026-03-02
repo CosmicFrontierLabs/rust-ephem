@@ -336,7 +336,8 @@ fn parse_constraint_json(value: &serde_json::Value) -> PyResult<Box<dyn Constrai
                 ));
             }
 
-            let rotation_matrix = euler_zyx_rotation_matrix(roll_deg, pitch_deg, yaw_deg);
+            let rotation_matrix =
+                crate::utils::vector_math::euler_zyx_rotation_matrix(roll_deg, pitch_deg, yaw_deg);
 
             Ok(Box::new(BoresightOffsetEvaluator {
                 constraint: evaluator,
