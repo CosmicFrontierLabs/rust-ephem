@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 try:
-    import rust_ephem  # type: ignore[import-untyped]
+    import rust_ephem
 
     RUST_AVAILABLE = True
 except ImportError:
@@ -29,7 +29,7 @@ pytestmark = pytest.mark.skipif(not RUST_AVAILABLE, reason="rust_ephem not avail
 class TestUT1Provider:
     """Test UT1-UTC provider initialization and availability."""
 
-    def test_provider_initialization(self):
+    def test_provider_initialization(self) -> None:
         """Test that UT1 provider can be initialized."""
         # Check if provider is available (may be initialized already)
         is_available = rust_ephem.is_ut1_available()
@@ -43,12 +43,12 @@ class TestUT1Provider:
             # Should return a boolean
             assert isinstance(success, bool)
 
-    def test_is_ut1_available(self):
+    def test_is_ut1_available(self) -> None:
         """Test is_ut1_available() function."""
         result = rust_ephem.is_ut1_available()
         assert isinstance(result, bool)
 
-    def test_init_ut1_provider(self):
+    def test_init_ut1_provider(self) -> None:
         """Test init_ut1_provider() function."""
         result = rust_ephem.init_ut1_provider()
         assert isinstance(result, bool)
@@ -57,13 +57,13 @@ class TestUT1Provider:
 class TestUT1Offsets:
     """Test UT1-UTC offset calculations."""
 
-    def test_ut1_offset_returns_float(self):
+    def test_ut1_offset_returns_float(self) -> None:
         """Test that get_ut1_utc_offset returns a float."""
         dt = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         offset = rust_ephem.get_ut1_utc_offset(dt)
         assert isinstance(offset, float)
 
-    def test_ut1_offset_reasonable_range(self):
+    def test_ut1_offset_reasonable_range(self) -> None:
         """Test that UT1-UTC offsets are in reasonable range."""
         # Test several dates with expected IERS coverage
         test_dates = [
@@ -78,7 +78,7 @@ class TestUT1Offsets:
             # or 0.0 if data unavailable
             assert -1.0 <= offset <= 1.0, f"Offset {offset} out of range for {dt}"
 
-    def test_ut1_offset_different_dates(self):
+    def test_ut1_offset_different_dates(self) -> None:
         """Test that different dates can have different UT1-UTC offsets."""
         dt1 = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         dt2 = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
@@ -98,7 +98,7 @@ class TestUT1Offsets:
             ("2025-01-01", datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)),
         ],
     )
-    def test_ut1_offset_various_dates(self, date_tuple):
+    def test_ut1_offset_various_dates(self, date_tuple: tuple[str, datetime]) -> None:
         """Test UT1-UTC offsets for various dates."""
         date_str, dt = date_tuple
         offset = rust_ephem.get_ut1_utc_offset(dt)
@@ -111,7 +111,7 @@ class TestUT1Offsets:
 class TestUT1DataCoverage:
     """Test UT1 data coverage across different time periods."""
 
-    def test_data_coverage_ranges(self):
+    def test_data_coverage_ranges(self) -> None:
         """Test UT1 data coverage for various time ranges."""
         now = datetime.now(timezone.utc)
 
@@ -154,7 +154,7 @@ class TestUT1DataCoverage:
 class TestUT1Comparison:
     """Compare UT1-UTC offsets with astropy."""
 
-    def test_compare_with_astropy(self):
+    def test_compare_with_astropy(self) -> None:
         """Compare UT1-UTC offsets between rust_ephem and astropy."""
         now = datetime.now(timezone.utc)
 
@@ -190,7 +190,7 @@ class TestUT1Comparison:
 class TestUT1WithEphemeris:
     """Test that UT1-UTC corrections are applied in ephemeris calculations."""
 
-    def test_tle_ephemeris_with_ut1(self):
+    def test_tle_ephemeris_with_ut1(self) -> None:
         """Test that TLE ephemeris uses UT1 corrections."""
         tle1 = "1 28485U 04047A   25287.56748435  .00035474  00000+0  70906-3 0  9995"
         tle2 = "2 28485  20.5535 247.0048 0005179 187.1586 172.8782 15.44937919148530"
@@ -208,7 +208,7 @@ class TestUT1WithEphemeris:
         assert ephem.gcrs_pv is not None
         assert ephem.gcrs_pv.position is not None
 
-    def test_ut1_impact_on_position(self):
+    def test_ut1_impact_on_position(self) -> None:
         """Test the impact of UT1-UTC on position calculations."""
         test_date = datetime.now(timezone.utc)
         ut1_utc = rust_ephem.get_ut1_utc_offset(test_date)
@@ -225,7 +225,7 @@ class TestUT1WithEphemeris:
             # Position error should be reasonable (less than 500m for ±0.9s)
             assert position_error < 500.0
 
-    def test_ephemeris_accuracy_with_ut1(self):
+    def test_ephemeris_accuracy_with_ut1(self) -> None:
         """Test that ephemeris positions are reasonable with UT1 corrections."""
         tle1 = "1 28485U 04047A   25287.56748435  .00035474  00000+0  70906-3 0  9995"
         tle2 = "2 28485  20.5535 247.0048 0005179 187.1586 172.8782 15.44937919148530"
