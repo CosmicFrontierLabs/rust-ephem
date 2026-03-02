@@ -34,25 +34,6 @@ struct MoonProximityEvaluator {
 impl_proximity_evaluator!(MoonProximityEvaluator, "Moon", "Moon", moon_positions);
 
 impl MoonProximityEvaluator {
-    #[allow(dead_code)]
-    fn default_final_violation_description(&self) -> String {
-        match self.max_angle_deg {
-            Some(max) => format!(
-                "Target too close to Moon (min: {:.1}°) or too far (max: {:.1}°)",
-                self.min_angle_deg, max
-            ),
-            None => format!(
-                "Target too close to Moon (min allowed: {:.1}°)",
-                self.min_angle_deg
-            ),
-        }
-    }
-
-    #[allow(dead_code)]
-    fn default_intermediate_violation_description(&self) -> String {
-        "Target violates Moon proximity constraint".to_string()
-    }
-
     fn format_name(&self) -> String {
         match self.max_angle_deg {
             Some(max) => format!("MoonProximity(min={}°, max={}°)", self.min_angle_deg, max),
@@ -78,8 +59,17 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
             (target_ra, target_dec),
             &moon_positions_slice,
             &observer_positions_slice,
-            || self.default_final_violation_description(),
-            || self.default_intermediate_violation_description(),
+            || match self.max_angle_deg {
+                Some(max) => format!(
+                    "Target too close to Moon (min: {:.1}°) or too far (max: {:.1}°)",
+                    self.min_angle_deg, max
+                ),
+                None => format!(
+                    "Target too close to Moon (min allowed: {:.1}°)",
+                    self.min_angle_deg
+                ),
+            },
+            || "Target violates Moon proximity constraint".to_string(),
         ))
     }
 

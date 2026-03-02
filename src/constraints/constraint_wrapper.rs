@@ -88,60 +88,6 @@ impl PyConstraint {
         ))
     }
 
-    /// Internal helper to evaluate in_constraint_batch for a single target at a single time index
-    #[allow(dead_code)]
-    fn eval_in_constraint_batch_single(
-        &self,
-        py: Python,
-        ephemeris: &Py<PyAny>,
-        target_ra: f64,
-        target_dec: f64,
-        time_idx: usize,
-    ) -> PyResult<bool> {
-        let bound = ephemeris.bind(py);
-
-        if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
-            let result = self.evaluator.in_constraint_batch(
-                &*ephem as &dyn EphemerisBase,
-                &[target_ra],
-                &[target_dec],
-                Some(&[time_idx]),
-            )?;
-            return Ok(result[[0, 0]]);
-        }
-        if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
-            let result = self.evaluator.in_constraint_batch(
-                &*ephem as &dyn EphemerisBase,
-                &[target_ra],
-                &[target_dec],
-                Some(&[time_idx]),
-            )?;
-            return Ok(result[[0, 0]]);
-        }
-        if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
-            let result = self.evaluator.in_constraint_batch(
-                &*ephem as &dyn EphemerisBase,
-                &[target_ra],
-                &[target_dec],
-                Some(&[time_idx]),
-            )?;
-            return Ok(result[[0, 0]]);
-        }
-        if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
-            let result = self.evaluator.in_constraint_batch(
-                &*ephem as &dyn EphemerisBase,
-                &[target_ra],
-                &[target_dec],
-                Some(&[time_idx]),
-            )?;
-            return Ok(result[[0, 0]]);
-        }
-
-        Err(pyo3::exceptions::PyTypeError::new_err(
-            "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
-        ))
-    }
-
     /// Vectorized evaluation for moving bodies - evaluates all targets at their corresponding times
     ///
     /// For N targets at N times, this calls in_constraint_batch once with all N targets

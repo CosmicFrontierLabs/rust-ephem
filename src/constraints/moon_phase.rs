@@ -399,7 +399,23 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
                 let illumination = illuminations[i];
                 let moon_altitude = moon_altitudes[i];
                 let moon_distance = moon_distances[i];
-                let phase_name = self.get_moon_phase_name(illumination);
+                let phase_name = if illumination < 0.02 {
+                    "New Moon"
+                } else if illumination < 0.48 {
+                    "Waxing Crescent"
+                } else if illumination < 0.52 {
+                    "First Quarter"
+                } else if illumination < 0.98 {
+                    "Waxing Gibbous"
+                } else if illumination <= 1.02 {
+                    "Full Moon"
+                } else if illumination < 1.48 {
+                    "Waning Gibbous"
+                } else if illumination < 1.52 {
+                    "Last Quarter"
+                } else {
+                    "Waning Crescent"
+                };
 
                 let mut reasons = Vec::new();
 
@@ -567,29 +583,5 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
-    }
-}
-
-impl MoonPhaseEvaluator {
-    /// Get descriptive name for moon phase based on illumination
-    #[allow(dead_code)]
-    fn get_moon_phase_name(&self, illumination: f64) -> &'static str {
-        if illumination < 0.02 {
-            "New Moon"
-        } else if illumination < 0.48 {
-            "Waxing Crescent"
-        } else if illumination < 0.52 {
-            "First Quarter"
-        } else if illumination < 0.98 {
-            "Waxing Gibbous"
-        } else if illumination <= 1.02 {
-            "Full Moon"
-        } else if illumination < 1.48 {
-            "Waning Gibbous"
-        } else if illumination < 1.52 {
-            "Last Quarter"
-        } else {
-            "Waning Crescent"
-        }
     }
 }

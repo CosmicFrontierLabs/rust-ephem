@@ -46,7 +46,6 @@ struct StateVectorRecord {
 
 #[pyclass]
 pub struct OEMEphemeris {
-    #[allow(dead_code)] // Stored for debugging/inspection purposes
     oem_path: String,
     itrs: Option<Array2<f64>>,
     itrs_skycoord: OnceLock<Py<PyAny>>, // Lazy-initialized cached SkyCoord object for ITRS

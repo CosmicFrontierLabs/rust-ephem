@@ -34,25 +34,6 @@ struct SunProximityEvaluator {
 impl_proximity_evaluator!(SunProximityEvaluator, "Sun", "Sun", sun_positions);
 
 impl SunProximityEvaluator {
-    #[allow(dead_code)]
-    fn default_final_violation_description(&self) -> String {
-        match self.max_angle_deg {
-            Some(max) => format!(
-                "Target too close to Sun (min: {:.1}°) or too far (max: {:.1}°)",
-                self.min_angle_deg, max
-            ),
-            None => format!(
-                "Target too close to Sun (min allowed: {:.1}°)",
-                self.min_angle_deg
-            ),
-        }
-    }
-
-    #[allow(dead_code)]
-    fn default_intermediate_violation_description(&self) -> String {
-        "Target violates Sun proximity constraint".to_string()
-    }
-
     fn format_name(&self) -> String {
         match self.max_angle_deg {
             Some(max) => format!("SunProximity(min={}°, max={}°)", self.min_angle_deg, max),
@@ -77,8 +58,17 @@ impl ConstraintEvaluator for SunProximityEvaluator {
             (target_ra, target_dec),
             &sun_filtered,
             &obs_filtered,
-            || self.default_final_violation_description(),
-            || self.default_intermediate_violation_description(),
+            || match self.max_angle_deg {
+                Some(max) => format!(
+                    "Target too close to Sun (min: {:.1}°) or too far (max: {:.1}°)",
+                    self.min_angle_deg, max
+                ),
+                None => format!(
+                    "Target too close to Sun (min allowed: {:.1}°)",
+                    self.min_angle_deg
+                ),
+            },
+            || "Target violates Sun proximity constraint".to_string(),
         ))
     }
 

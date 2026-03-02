@@ -161,9 +161,6 @@ pub struct EphemerisData {
     pub height_cache: OnceLock<Array1<f64>>,
     pub moon_angular_radius_rad_cache: OnceLock<Py<PyAny>>,
     pub earth_angular_radius_rad_cache: OnceLock<Py<PyAny>>,
-    /// Cached Sun altitude angles (in degrees) for all times
-    #[allow(dead_code)]
-    pub sun_altitudes_cache: OnceLock<Array1<f64>>,
     /// Cached RA/Dec arrays (Nx2 arrays with RA in column 0, Dec in column 1)
     pub sun_ra_dec_deg_cache: OnceLock<Py<PyAny>>,
     pub moon_ra_dec_deg_cache: OnceLock<Py<PyAny>>,
@@ -202,7 +199,6 @@ impl EphemerisData {
             longitude_rad_cache: OnceLock::new(),
             height_km_cache: OnceLock::new(),
             height_cache: OnceLock::new(),
-            sun_altitudes_cache: OnceLock::new(),
             sun_ra_dec_deg_cache: OnceLock::new(),
             moon_ra_dec_deg_cache: OnceLock::new(),
             earth_ra_dec_deg_cache: OnceLock::new(),

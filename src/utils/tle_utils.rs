@@ -26,7 +26,6 @@ use std::time::{Duration, SystemTime};
 pub struct TLEData {
     pub line1: String,
     pub line2: String,
-    #[allow(dead_code)]
     pub name: Option<String>,
 }
 

@@ -35,27 +35,6 @@ pub struct BodyProximityEvaluator {
 
 impl_proximity_evaluator!(BodyProximityEvaluator, "Body", "body", sun_positions);
 
-impl BodyProximityEvaluator {
-    #[allow(dead_code)]
-    fn final_violation_description(&self) -> String {
-        match self.max_angle_deg {
-            Some(max) => format!(
-                "Target too close to {} (min: {:.1}°, max: {:.1}°)",
-                self.body, self.min_angle_deg, max
-            ),
-            None => format!(
-                "Target too close to {} (min allowed: {:.1}°)",
-                self.body, self.min_angle_deg
-            ),
-        }
-    }
-
-    #[allow(dead_code)]
-    fn intermediate_violation_description(&self) -> String {
-        format!("Target violates {} proximity constraint", self.body)
-    }
-}
-
 impl ConstraintEvaluator for BodyProximityEvaluator {
     fn evaluate(
         &self,
@@ -72,8 +51,17 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
             (target_ra, target_dec),
             &sun_positions_slice,
             &observer_positions_slice,
-            || self.final_violation_description(),
-            || self.intermediate_violation_description(),
+            || match self.max_angle_deg {
+                Some(max) => format!(
+                    "Target too close to {} (min: {:.1}°, max: {:.1}°)",
+                    self.body, self.min_angle_deg, max
+                ),
+                None => format!(
+                    "Target too close to {} (min allowed: {:.1}°)",
+                    self.body, self.min_angle_deg
+                ),
+            },
+            || format!("Target violates {} proximity constraint", self.body),
         );
         Ok(result)
     }

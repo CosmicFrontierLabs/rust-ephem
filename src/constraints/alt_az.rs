@@ -158,7 +158,64 @@ impl ConstraintEvaluator for AltAzEvaluator {
                 // Use the first timestamp alt/az for the description
                 let altitude_deg = altaz[[0, 0]];
                 let azimuth_deg = altaz[[0, 1]];
-                self.format_violation_description(altitude_deg, azimuth_deg)
+                let mut reasons = Vec::new();
+
+                if polygon::polygon_violation(self.polygon.as_ref(), altitude_deg, azimuth_deg) {
+                    reasons.push(format!(
+                        "outside allowed Alt/Az polygon (alt: {:.1}°, az: {:.1}°)",
+                        altitude_deg, azimuth_deg
+                    ));
+                }
+
+                if let Some(min_alt) = self.min_altitude {
+                    if altitude_deg < min_alt {
+                        reasons.push(format!(
+                            "altitude {:.1}° < min {:.1}°",
+                            altitude_deg, min_alt
+                        ));
+                    }
+                }
+                if let Some(max_altitude) = self.max_altitude {
+                    if altitude_deg > max_altitude {
+                        reasons.push(format!(
+                            "altitude {:.1}° > max {:.1}°",
+                            altitude_deg, max_altitude
+                        ));
+                    }
+                }
+
+                if let Some(min_azimuth) = self.min_azimuth {
+                    if let Some(max_azimuth) = self.max_azimuth {
+                        let az_in_range = if min_azimuth <= max_azimuth {
+                            azimuth_deg >= min_azimuth && azimuth_deg <= max_azimuth
+                        } else {
+                            azimuth_deg >= min_azimuth || azimuth_deg <= max_azimuth
+                        };
+                        if !az_in_range {
+                            reasons.push(format!(
+                                "azimuth {:.1}° outside range {:.1}°-{:1}°",
+                                azimuth_deg, min_azimuth, max_azimuth
+                            ));
+                        }
+                    } else if azimuth_deg < min_azimuth {
+                        reasons.push(format!(
+                            "azimuth {:.1}° < min {:.1}°",
+                            azimuth_deg, min_azimuth
+                        ));
+                    }
+                } else if let Some(max_azimuth) = self.max_azimuth {
+                    if azimuth_deg > max_azimuth {
+                        reasons.push(format!(
+                            "azimuth {:.1}° > max {:.1}°",
+                            azimuth_deg, max_azimuth
+                        ));
+                    }
+                }
+
+                format!(
+                    "Target position violates constraints: {}",
+                    reasons.join(", ")
+                )
             },
         );
 
@@ -250,71 +307,5 @@ impl ConstraintEvaluator for AltAzEvaluator {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
-    }
-}
-
-impl AltAzEvaluator {
-    /// Format a description of the violation based on altitude and azimuth
-    #[allow(dead_code)]
-    fn format_violation_description(&self, altitude_deg: f64, azimuth_deg: f64) -> String {
-        let mut reasons = Vec::new();
-
-        // Check polygon violation first
-        if polygon::polygon_violation(self.polygon.as_ref(), altitude_deg, azimuth_deg) {
-            reasons.push(format!(
-                "outside allowed Alt/Az polygon (alt: {:.1}°, az: {:.1}°)",
-                altitude_deg, azimuth_deg
-            ));
-        }
-
-        if let Some(min_alt) = self.min_altitude {
-            if altitude_deg < min_alt {
-                reasons.push(format!(
-                    "altitude {:.1}° < min {:.1}°",
-                    altitude_deg, min_alt
-                ));
-            }
-        }
-        if let Some(max_altitude) = self.max_altitude {
-            if altitude_deg > max_altitude {
-                reasons.push(format!(
-                    "altitude {:.1}° > max {:.1}°",
-                    altitude_deg, max_altitude
-                ));
-            }
-        }
-
-        if let Some(min_azimuth) = self.min_azimuth {
-            if let Some(max_azimuth) = self.max_azimuth {
-                let az_in_range = if min_azimuth <= max_azimuth {
-                    azimuth_deg >= min_azimuth && azimuth_deg <= max_azimuth
-                } else {
-                    azimuth_deg >= min_azimuth || azimuth_deg <= max_azimuth
-                };
-                if !az_in_range {
-                    reasons.push(format!(
-                        "azimuth {:.1}° outside range {:.1}°-{:1}°",
-                        azimuth_deg, min_azimuth, max_azimuth
-                    ));
-                }
-            } else if azimuth_deg < min_azimuth {
-                reasons.push(format!(
-                    "azimuth {:.1}° < min {:.1}°",
-                    azimuth_deg, min_azimuth
-                ));
-            }
-        } else if let Some(max_azimuth) = self.max_azimuth {
-            if azimuth_deg > max_azimuth {
-                reasons.push(format!(
-                    "azimuth {:.1}° > max {:.1}°",
-                    azimuth_deg, max_azimuth
-                ));
-            }
-        }
-
-        format!(
-            "Target position violates constraints: {}",
-            reasons.join(", ")
-        )
     }
 }

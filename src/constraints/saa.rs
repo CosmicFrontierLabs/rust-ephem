@@ -39,41 +39,6 @@ impl SAAEvaluator {
 }
 
 impl SAAEvaluator {
-    /// Evaluate the constraint with pre-computed lat/lon arrays
-    #[allow(dead_code)]
-    pub fn evaluate_with_latlon(
-        &self,
-        times: &[DateTime<Utc>],
-        lats: &[f64],
-        lons: &[f64],
-    ) -> ConstraintResult {
-        let violations = track_violations(
-            times,
-            |i| {
-                let lat = lats[i];
-                let lon = lons[i];
-                let in_saa = self.point_in_polygon(lon, lat);
-                let violated = in_saa;
-                let severity = if violated { 1.0 } else { 0.0 };
-                (violated, severity)
-            },
-            |i, _still_violated| {
-                // Description should always describe the violation (being in SAA)
-                let lat = lats[i];
-                let lon = lons[i];
-                format!("In SAA region (lat: {:.2}°, lon: {:.2}°)", lat, lon)
-            },
-        );
-
-        let all_satisfied = violations.is_empty();
-        ConstraintResult::new(
-            violations,
-            all_satisfied,
-            self.format_name(),
-            times.to_vec(),
-        )
-    }
-
     /// Batch evaluation with pre-computed lat/lon arrays
     pub fn in_constraint_batch_with_latlon(
         &self,
@@ -112,7 +77,26 @@ impl ConstraintEvaluator for SAAEvaluator {
         // Extract and filter lat/lon data
         let (times_slice, lats_slice, lons_slice) = extract_latlon_data!(ephemeris, time_indices);
 
-        let result = self.evaluate_with_latlon(&times_slice, &lats_slice, &lons_slice);
+        let violations = track_violations(
+            &times_slice,
+            |i| {
+                let lat = lats_slice[i];
+                let lon = lons_slice[i];
+                let in_saa = self.point_in_polygon(lon, lat);
+                let violated = in_saa;
+                let severity = if violated { 1.0 } else { 0.0 };
+                (violated, severity)
+            },
+            |i, _still_violated| {
+                let lat = lats_slice[i];
+                let lon = lons_slice[i];
+                format!("In SAA region (lat: {:.2}°, lon: {:.2}°)", lat, lon)
+            },
+        );
+
+        let all_satisfied = violations.is_empty();
+        let result =
+            ConstraintResult::new(violations, all_satisfied, self.format_name(), times_slice);
         Ok(result)
     }
 
