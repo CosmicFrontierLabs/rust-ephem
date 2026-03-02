@@ -1,9 +1,13 @@
-struct BoresightOffsetEvaluator {
-    constraint: Box<dyn ConstraintEvaluator>,
-    roll_deg: f64,
-    pitch_deg: f64,
-    yaw_deg: f64,
-    rotation_matrix: [[f64; 3]; 3],
+use crate::constraints::core::{ConstraintEvaluator, ConstraintResult};
+use ndarray::Array2;
+use pyo3::PyResult;
+
+pub(super) struct BoresightOffsetEvaluator {
+    pub(super) constraint: Box<dyn ConstraintEvaluator>,
+    pub(super) roll_deg: f64,
+    pub(super) pitch_deg: f64,
+    pub(super) yaw_deg: f64,
+    pub(super) rotation_matrix: [[f64; 3]; 3],
 }
 
 impl BoresightOffsetEvaluator {

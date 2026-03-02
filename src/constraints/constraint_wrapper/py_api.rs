@@ -21,11 +21,13 @@ use crate::ephemeris::OEMEphemeris;
 use crate::ephemeris::SPICEEphemeris;
 use crate::ephemeris::TLEEphemeris;
 use chrono::{DateTime, Utc};
-use ndarray::Array2;
 use numpy::{PyArray2, PyArrayMethods};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
+use pyo3::types::{PyBool, PyList};
 use std::f64::consts::PI;
+
+use super::json_parser::parse_constraint_json;
+use super::json_to_py::json_to_pyobject;
 
 /// Python-facing constraint evaluator
 ///

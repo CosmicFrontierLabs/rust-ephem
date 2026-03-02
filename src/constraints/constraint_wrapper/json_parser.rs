@@ -1,4 +1,21 @@
+use crate::constraints::airmass::AirmassConfig;
+use crate::constraints::alt_az::AltAzConfig;
+use crate::constraints::body_proximity::BodyProximityConfig;
+use crate::constraints::core::{ConstraintConfig, ConstraintEvaluator};
+use crate::constraints::daytime::{DaytimeConfig, TwilightType};
+use crate::constraints::earth_limb::EarthLimbConfig;
+use crate::constraints::eclipse::EclipseConfig;
+use crate::constraints::moon_phase::MoonPhaseConfig;
+use crate::constraints::moon_proximity::MoonProximityConfig;
+use crate::constraints::orbit_pole::OrbitPoleConfig;
+use crate::constraints::orbit_ram::OrbitRamConfig;
+use crate::constraints::saa::SAAConfig;
+use crate::constraints::sun_proximity::SunProximityConfig;
+use pyo3::PyResult;
 use serde::Deserialize;
+
+use super::boresight::BoresightOffsetEvaluator;
+use super::combinators::{AndEvaluator, AtLeastEvaluator, NotEvaluator, OrEvaluator, XorEvaluator};
 
 fn default_umbra_only() -> bool {
     true
@@ -337,7 +354,9 @@ impl ConstraintSpec {
 }
 
 // Helper function to parse constraint JSON into evaluator
-fn parse_constraint_json(value: &serde_json::Value) -> PyResult<Box<dyn ConstraintEvaluator>> {
+pub(super) fn parse_constraint_json(
+    value: &serde_json::Value,
+) -> PyResult<Box<dyn ConstraintEvaluator>> {
     let spec: ConstraintSpec = serde_json::from_value(value.clone()).map_err(|e| {
         pyo3::exceptions::PyValueError::new_err(format!("Invalid constraint JSON: {e}"))
     })?;

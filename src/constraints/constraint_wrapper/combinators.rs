@@ -1,6 +1,12 @@
 // Logical combinator evaluators
-struct AndEvaluator {
-    constraints: Vec<Box<dyn ConstraintEvaluator>>,
+use crate::constraints::core::{
+    track_violations, ConstraintEvaluator, ConstraintResult, ConstraintViolation,
+};
+use ndarray::Array2;
+use pyo3::PyResult;
+
+pub(super) struct AndEvaluator {
+    pub(super) constraints: Vec<Box<dyn ConstraintEvaluator>>,
 }
 
 impl ConstraintEvaluator for AndEvaluator {
@@ -182,8 +188,8 @@ impl ConstraintEvaluator for AndEvaluator {
     }
 }
 
-struct OrEvaluator {
-    constraints: Vec<Box<dyn ConstraintEvaluator>>,
+pub(super) struct OrEvaluator {
+    pub(super) constraints: Vec<Box<dyn ConstraintEvaluator>>,
 }
 
 impl ConstraintEvaluator for OrEvaluator {
@@ -356,8 +362,8 @@ impl ConstraintEvaluator for OrEvaluator {
     }
 }
 
-struct NotEvaluator {
-    constraint: Box<dyn ConstraintEvaluator>,
+pub(super) struct NotEvaluator {
+    pub(super) constraint: Box<dyn ConstraintEvaluator>,
 }
 
 impl ConstraintEvaluator for NotEvaluator {
@@ -487,8 +493,8 @@ impl ConstraintEvaluator for NotEvaluator {
     }
 }
 
-struct XorEvaluator {
-    constraints: Vec<Box<dyn ConstraintEvaluator>>,
+pub(super) struct XorEvaluator {
+    pub(super) constraints: Vec<Box<dyn ConstraintEvaluator>>,
 }
 
 impl ConstraintEvaluator for XorEvaluator {
@@ -655,9 +661,9 @@ impl ConstraintEvaluator for XorEvaluator {
     }
 }
 
-struct AtLeastEvaluator {
-    constraints: Vec<Box<dyn ConstraintEvaluator>>,
-    min_violated: usize,
+pub(super) struct AtLeastEvaluator {
+    pub(super) constraints: Vec<Box<dyn ConstraintEvaluator>>,
+    pub(super) min_violated: usize,
 }
 
 impl ConstraintEvaluator for AtLeastEvaluator {
