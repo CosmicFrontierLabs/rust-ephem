@@ -421,7 +421,7 @@ Classes
     * ``in_constraint(time, ephemeris, target_ra, target_dec)`` — Check if target is in-constraint at a single time
 
       - ``time`` — Python datetime object (must exist in ephemeris timestamps)
-      - Returns: ``bool`` (True if constraint is satisfied, False if violated)
+      - Returns: ``bool`` (True if constraint is violated / target is blocked, False if satisfied)
 
     * ``instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=20000)`` — Compute instantaneous visible sky solid angle
 
@@ -444,15 +444,15 @@ Classes
     * ``all_satisfied`` — Boolean indicating if constraint was satisfied for entire time range
     * ``constraint_name`` — String name/description of the constraint
     * ``timestamp`` — NumPy array of Python datetime objects (optimized with caching)
-    * ``constraint_array`` — NumPy boolean array where True means constraint satisfied (optimized with caching)
+    * ``constraint_array`` — NumPy boolean array where True means constraint violated / target blocked (optimized with caching)
     * ``visibility`` — List of ``VisibilityWindow`` objects for contiguous satisfied periods
 
   **Methods:**
     * ``total_violation_duration()`` — Get total duration of violations in seconds
-    * ``in_constraint(time)`` — Check if constraint is satisfied at a given time
+    * ``in_constraint(time)`` — Check if constraint is violated at a given time
 
       - ``time`` — Python datetime object (must exist in result timestamps)
-      - Returns: ``bool`` (True if satisfied, False if violated)
+      - Returns: ``bool`` (True if violated / target blocked, False if satisfied)
 
 **ConstraintViolation**
   Information about a specific constraint violation time window.

@@ -1437,6 +1437,29 @@ impl PyConstraint {
             index.expect("index checked above")
         };
 
+        if has_index {
+            let n_times = if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
+                ephem.get_times()?.len()
+            } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
+                ephem.get_times()?.len()
+            } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
+                ephem.get_times()?.len()
+            } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+                ephem.get_times()?.len()
+            } else {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
+                ));
+            };
+
+            if eval_index >= n_times {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "index {} out of range for ephemeris with {} timestamps",
+                    eval_index, n_times
+                )));
+            }
+        }
+
         let (target_ras, target_decs) = fibonacci_sphere_radec(n_points);
 
         let violated = if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {

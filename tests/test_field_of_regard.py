@@ -1,6 +1,8 @@
 import math
 from datetime import datetime, timezone
 
+import pytest
+
 import rust_ephem
 from rust_ephem import Constraint
 from rust_ephem.constraints import SunConstraint
@@ -30,3 +32,15 @@ def test_field_of_regard_stricter_constraint_reduces_visible_area() -> None:
     strict_sr = strict.instantaneous_field_of_regard(ephem, index=0, n_points=8000)
 
     assert strict_sr < loose_sr
+
+
+def test_field_of_regard_index_out_of_range_raises_value_error() -> None:
+    ephem = _make_ephem()
+    c = Constraint.sun_proximity(45.0)
+
+    with pytest.raises(ValueError):
+        _ = c.instantaneous_field_of_regard(
+            ephem,
+            index=len(ephem.timestamp),
+            n_points=2000,
+        )
