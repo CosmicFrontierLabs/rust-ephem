@@ -3069,50 +3069,41 @@ impl ConstraintEvaluator for AtLeastEvaluator {
         };
 
         let times_filtered: Vec<_> = indices.iter().map(|&i| times[i]).collect();
+        let n_times = times_filtered.len();
+
+        let mut violated_descriptions: Vec<Vec<String>> = vec![Vec::new(); n_times];
+        let mut is_violated: Vec<bool> = vec![false; n_times];
+        let mut severity: Vec<f64> = vec![0.0; n_times];
+
+        // Evaluate each sub-constraint once per selected time index and cache
+        // the results for both violation tracking and descriptions.
+        for (i, &original_idx) in indices.iter().enumerate() {
+            let mut violation_count = 0usize;
+            let mut max_severity = 0.0f64;
+
+            for constraint in &self.constraints {
+                let result =
+                    constraint.evaluate(ephemeris, target_ra, target_dec, Some(&[original_idx]));
+                if let Ok(ref res) = result {
+                    if !res.violations.is_empty() {
+                        violation_count += 1;
+                        for violation in &res.violations {
+                            max_severity = max_severity.max(violation.max_severity);
+                            violated_descriptions[i].push(violation.description.clone());
+                        }
+                    }
+                }
+            }
+
+            is_violated[i] = violation_count >= self.min_violated;
+            severity[i] = max_severity;
+        }
 
         let violations = track_violations(
             &times_filtered,
-            |i| {
-                let original_idx = indices[i];
-                let mut violation_count = 0usize;
-                let mut max_severity = 0.0f64;
-
-                for constraint in &self.constraints {
-                    let result = constraint.evaluate(
-                        ephemeris,
-                        target_ra,
-                        target_dec,
-                        Some(&[original_idx]),
-                    );
-                    if let Ok(ref res) = result {
-                        if !res.violations.is_empty() {
-                            violation_count += 1;
-                            for violation in &res.violations {
-                                max_severity = max_severity.max(violation.max_severity);
-                            }
-                        }
-                    }
-                }
-
-                (violation_count >= self.min_violated, max_severity)
-            },
+            |i| (is_violated[i], severity[i]),
             |i, _is_open| {
-                let original_idx = indices[i];
-                let mut descriptions = Vec::new();
-
-                for constraint in &self.constraints {
-                    let result = constraint.evaluate(
-                        ephemeris,
-                        target_ra,
-                        target_dec,
-                        Some(&[original_idx]),
-                    );
-                    if let Ok(ref res) = result {
-                        if !res.violations.is_empty() {
-                            descriptions.push(constraint.name());
-                        }
-                    }
-                }
+                let descriptions = &violated_descriptions[i];
 
                 if descriptions.is_empty() {
                     format!("AT_LEAST(k={}) violation", self.min_violated)
@@ -3163,7 +3154,15 @@ impl ConstraintEvaluator for AtLeastEvaluator {
 
         for i in 0..n_targets {
             for j in 0..n_times {
-                let violation_count = results.iter().filter(|r| r[[i, j]]).count();
+                let mut violation_count = 0usize;
+                for sub_result in &results {
+                    if sub_result[[i, j]] {
+                        violation_count += 1;
+                        if violation_count >= self.min_violated {
+                            break;
+                        }
+                    }
+                }
                 result[[i, j]] = violation_count >= self.min_violated;
             }
         }
