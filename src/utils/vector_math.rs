@@ -164,7 +164,7 @@ pub fn radec_to_unit_vectors_batch(ras_deg: &[f64], decs_deg: &[f64]) -> Array2<
 /// Build a 3x3 rotation matrix from intrinsic Z-Y-X Euler angles in degrees.
 ///
 /// Rotation order is yaw (Z), pitch (Y), roll (X):
-/// ``R = Rz(yaw) * Ry(pitch) * Rx(roll)``.
+/// `R = Rz(yaw) * Ry(pitch) * Rx(roll)`.
 pub fn euler_zyx_rotation_matrix(roll_deg: f64, pitch_deg: f64, yaw_deg: f64) -> [[f64; 3]; 3] {
     let roll = roll_deg.to_radians();
     let pitch = pitch_deg.to_radians();
