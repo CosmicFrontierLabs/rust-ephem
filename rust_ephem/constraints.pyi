@@ -121,6 +121,12 @@ class RustConstraintMixin(BaseModel):
     def or_(self, other: ConstraintConfig) -> OrConstraint: ...
     def xor_(self, other: ConstraintConfig) -> XorConstraint: ...
     def not_(self) -> NotConstraint: ...
+    def boresight_offset(
+        self,
+        roll_deg: float = 0.0,
+        pitch_deg: float = 0.0,
+        yaw_deg: float = 0.0,
+    ) -> BoresightOffsetConstraint: ...
     def __and__(self, other: ConstraintConfig) -> AndConstraint: ...
     def __or__(self, other: ConstraintConfig) -> OrConstraint: ...
     def __xor__(self, other: ConstraintConfig) -> XorConstraint: ...
@@ -209,6 +215,13 @@ class NotConstraint(RustConstraintMixin):
     type: Literal["not"] = "not"
     constraint: ConstraintConfig
 
+class BoresightOffsetConstraint(RustConstraintMixin):
+    type: Literal["boresight_offset"] = "boresight_offset"
+    constraint: ConstraintConfig
+    roll_deg: float = 0.0
+    pitch_deg: float = 0.0
+    yaw_deg: float = 0.0
+
 ConstraintConfig = (
     SunConstraint
     | MoonConstraint
@@ -226,5 +239,6 @@ ConstraintConfig = (
     | OrConstraint
     | XorConstraint
     | NotConstraint
+    | BoresightOffsetConstraint
 )
 CombinedConstraintConfig: TypeAdapter[ConstraintConfig]

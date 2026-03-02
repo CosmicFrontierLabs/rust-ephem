@@ -439,6 +439,27 @@ class Constraint:
         ...
 
     @staticmethod
+    def boresight_offset(
+        constraint: Constraint,
+        roll_deg: float = 0.0,
+        pitch_deg: float = 0.0,
+        yaw_deg: float = 0.0,
+    ) -> Constraint:
+        """
+        Wrap a constraint with a fixed boresight Euler-angle offset.
+
+        Args:
+            constraint: Inner constraint to evaluate at the offset direction
+            roll_deg: Roll angle about +X in degrees
+            pitch_deg: Pitch angle about +Y in degrees
+            yaw_deg: Yaw angle about +Z in degrees
+
+        Returns:
+            A new offset-wrapped Constraint
+        """
+        ...
+
+    @staticmethod
     def from_json(json_str: str) -> Constraint:
         """
         Create a constraint from a JSON string.
@@ -467,6 +488,7 @@ class Constraint:
             {"type": "or", "constraints": [ ... ]}
             {"type": "xor", "constraints": [ ... ]}
             {"type": "not", "constraint": { ... }}
+            {"type": "boresight_offset", "constraint": { ... }, "roll_deg": 0.0, "pitch_deg": 0.0, "yaw_deg": 1.0}
         """
         ...
 

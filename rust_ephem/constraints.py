@@ -449,6 +449,32 @@ class RustConstraintMixin(BaseModel):
         """
         return self.not_()
 
+    def boresight_offset(
+        self,
+        roll_deg: float = 0.0,
+        pitch_deg: float = 0.0,
+        yaw_deg: float = 0.0,
+    ) -> BoresightOffsetConstraint:
+        """Wrap this constraint with a fixed boresight Euler-angle offset.
+
+        This is useful for shared-axis multi-instrument systems where a secondary
+        instrument is offset from the primary pointing direction.
+
+        Args:
+            roll_deg: Roll angle about +X in degrees
+            pitch_deg: Pitch angle about +Y in degrees
+            yaw_deg: Yaw angle about +Z in degrees
+
+        Returns:
+            BoresightOffsetConstraint wrapping this constraint
+        """
+        return BoresightOffsetConstraint(
+            constraint=cast("ConstraintConfig", self),
+            roll_deg=roll_deg,
+            pitch_deg=pitch_deg,
+            yaw_deg=yaw_deg,
+        )
+
 
 class SunConstraint(RustConstraintMixin):
     """Sun proximity constraint
@@ -626,6 +652,29 @@ class NotConstraint(RustConstraintMixin):
 
     type: Literal["not"] = "not"
     constraint: ConstraintConfig = Field(..., description="Constraint to negate")
+
+
+class BoresightOffsetConstraint(RustConstraintMixin):
+    """Boresight offset wrapper for shared-axis multi-instrument constraints.
+
+    Wraps another constraint and evaluates it at a direction rotated by fixed
+    Euler angles from the primary pointing direction.
+
+    Attributes:
+        type: Always "boresight_offset"
+        constraint: Inner constraint evaluated at offset direction
+        roll_deg: Roll angle about +X in degrees
+        pitch_deg: Pitch angle about +Y in degrees
+        yaw_deg: Yaw angle about +Z in degrees
+    """
+
+    type: Literal["boresight_offset"] = "boresight_offset"
+    constraint: ConstraintConfig = Field(
+        ..., description="Inner constraint evaluated at boresight-offset direction"
+    )
+    roll_deg: float = Field(default=0.0, description="Roll angle about +X in degrees")
+    pitch_deg: float = Field(default=0.0, description="Pitch angle about +Y in degrees")
+    yaw_deg: float = Field(default=0.0, description="Yaw angle about +Z in degrees")
 
 
 class DaytimeConstraint(RustConstraintMixin):
@@ -862,6 +911,7 @@ ConstraintConfig = Union[
     OrConstraint,
     XorConstraint,
     NotConstraint,
+    BoresightOffsetConstraint,
 ]
 
 
@@ -870,6 +920,7 @@ AndConstraint.model_rebuild()
 OrConstraint.model_rebuild()
 XorConstraint.model_rebuild()
 NotConstraint.model_rebuild()
+BoresightOffsetConstraint.model_rebuild()
 
 
 # Type adapter for ConstraintConfig union

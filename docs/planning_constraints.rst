@@ -51,11 +51,15 @@ Use Python operators to combine constraints logically:
 
     result = combined.evaluate(ephem, target_ra, target_dec)
 
-    # Method 2: Using Constraint class directly
-    constraint = re.Constraint.and_(
-        re.Constraint.sun_proximity(45.0),
-        re.Constraint.moon_proximity(10.0),
-        re.Constraint.not_(re.Constraint.eclipse(umbra_only=True))
+    # Equivalent explicit construction with named intermediate constraints
+    sun = SunConstraint(min_angle=45.0)
+    moon = MoonConstraint(min_angle=10.0)
+    eclipse = EclipseConstraint(umbra_only=True)
+
+    constraint = (
+        sun
+        & moon
+        & ~eclipse
     )
 
     result = constraint.evaluate(ephem, target_ra, target_dec)
@@ -177,6 +181,63 @@ Available Constraint Types
         SunConstraint(min_angle=45),
         MoonConstraint(min_angle=10)
     ])
+
+Shared-Axis Multi-Instrument Planning
+------------------------------------
+
+Use boresight offsets when multiple instruments share the same mount axis but
+have different fixed pointing directions relative to the primary boresight.
+
+The pattern is:
+
+1. Define the primary instrument constraint(s)
+2. Define each secondary/tertiary instrument constraint
+3. Wrap secondary/tertiary constraints with a boresight offset
+4. Combine all with logical OR (blocked if any instrument is blocked)
+
+Constraints are ``True`` when a target is **not visible**. For multi-instrument
+planning, combine with ``|`` so the commanded target is marked blocked if either
+the primary or any offset secondary/tertiary instrument is blocked.
+
+.. code-block:: python
+
+    import rust_ephem as re
+    from rust_ephem.constraints import SunConstraint, MoonConstraint
+
+    re.ensure_planetary_ephemeris()
+
+    # Primary instrument constraint
+    primary = SunConstraint(min_angle=45.0)
+
+    # Secondary instrument constraint at fixed offset from primary boresight
+    secondary_offset = MoonConstraint(min_angle=12.0).boresight_offset(
+        roll_deg=0.0,
+        pitch_deg=1.2,
+        yaw_deg=-0.8,
+    )
+
+    # Commanded pointing is blocked if either instrument is blocked
+    combined = primary | secondary_offset
+    result = combined.evaluate(ephem, target_ra, target_dec)
+
+    print(result.all_satisfied)
+
+Equivalent Pydantic configuration:
+
+.. code-block:: python
+
+    from rust_ephem.constraints import SunConstraint, MoonConstraint
+
+    combined = SunConstraint(min_angle=45.0) | (
+        MoonConstraint(min_angle=12.0).boresight_offset(
+            roll_deg=0.0,
+            pitch_deg=1.2,
+            yaw_deg=-0.8,
+        )
+    )
+
+Euler angles are specified in degrees as ``roll_deg`` (+X), ``pitch_deg`` (+Y),
+and ``yaw_deg`` (+Z).
 
 JSON Serialization
 ------------------
