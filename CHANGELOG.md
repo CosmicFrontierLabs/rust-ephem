@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.4.0...v0.5.0) (2026-03-02)
+
+
+### Features
+
+* add constraint that is triggered if at least X sub constraints are violated ([#137](https://github.com/CosmicFrontierLabs/rust-ephem/issues/137)) ([00a4334](https://github.com/CosmicFrontierLabs/rust-ephem/commit/00a4334e96bd59624b254c24466eabf2f235fb75))
+* add field or regard calculation ([#135](https://github.com/CosmicFrontierLabs/rust-ephem/issues/135)) ([4de1a17](https://github.com/CosmicFrontierLabs/rust-ephem/commit/4de1a176b7ebffeb926f641dd16b6220a6f67b0c))
+* add support for adding boresight offsets to constraints ([#134](https://github.com/CosmicFrontierLabs/rust-ephem/issues/134)) ([2b34d49](https://github.com/CosmicFrontierLabs/rust-ephem/commit/2b34d499fffd11d31358087256efa85e2d3a061e))
+
 ## [0.4.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.3.2...v0.4.0) (2026-02-15)
 
 
