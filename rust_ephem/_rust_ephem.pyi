@@ -426,6 +426,25 @@ class Constraint:
         ...
 
     @staticmethod
+    def at_least(min_violated: int, constraints: list[Constraint]) -> Constraint:
+        """
+        Combine constraints with threshold k-of-n violation logic.
+
+        Args:
+            min_violated: Minimum number of violated sub-constraints required.
+            constraints: List of sub-constraints to combine.
+
+        Returns:
+            A new Constraint that is violated when at least `min_violated`
+            sub-constraints are violated.
+
+        Raises:
+            ValueError: If `constraints` is empty, `min_violated < 1`, or
+                `min_violated > len(constraints)`
+        """
+        ...
+
+    @staticmethod
     def not_(constraint: Constraint) -> Constraint:
         """
         Negate a constraint with logical NOT.
@@ -487,6 +506,7 @@ class Constraint:
             {"type": "and", "constraints": [ ... ]}
             {"type": "or", "constraints": [ ... ]}
             {"type": "xor", "constraints": [ ... ]}
+            {"type": "at_least", "min_violated": 2, "constraints": [ ... ]}
             {"type": "not", "constraint": { ... }}
             {"type": "boresight_offset", "constraint": { ... }, "roll_deg": 0.0, "pitch_deg": 0.0, "yaw_deg": 1.0}
         """

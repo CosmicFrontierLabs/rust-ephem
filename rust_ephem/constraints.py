@@ -420,6 +420,25 @@ class RustConstraintMixin(BaseModel):
         """
         return XorConstraint(constraints=[cast("ConstraintConfig", self), other])
 
+    def at_least(
+        self, min_violated: int, *others: ConstraintConfig
+    ) -> AtLeastConstraint:
+        """Combine this constraint with others using k-of-n violation logic.
+
+        Args:
+            min_violated: Minimum number of violated sub-constraints required
+                to mark the combined constraint as violated.
+            *others: Additional constraints to include with this constraint.
+
+        Returns:
+            AtLeastConstraint combining all constraints with threshold logic.
+        """
+        constraints = [cast("ConstraintConfig", self), *others]
+        return AtLeastConstraint(
+            min_violated=min_violated,
+            constraints=constraints,
+        )
+
     def not_(self) -> NotConstraint:
         """Negate this constraint using logical NOT
 
@@ -677,6 +696,36 @@ class XorConstraint(RustConstraintMixin):
         min_length=2,
         description="Constraints to XOR together (exactly one satisfied)",
     )
+
+
+class AtLeastConstraint(RustConstraintMixin):
+    """Threshold combinator (k-of-n violation logic).
+
+    The combined constraint is violated when at least ``min_violated`` of
+    the sub-constraints are violated.
+
+    Attributes:
+        type: Always "at_least"
+        min_violated: Threshold k (must be >= 1 and <= number of constraints)
+        constraints: List of constraints to evaluate
+    """
+
+    type: Literal["at_least"] = "at_least"
+    min_violated: int = Field(
+        ..., ge=1, description="Minimum violated sub-constraints required (k)"
+    )
+    constraints: list[ConstraintConfig] = Field(
+        ..., min_length=1, description="Constraints in threshold combinator"
+    )
+
+    @model_validator(mode="after")
+    def validate_min_violated(self) -> AtLeastConstraint:
+        if self.min_violated > len(self.constraints):
+            raise ValueError(
+                "min_violated cannot exceed number of constraints "
+                f"({self.min_violated} > {len(self.constraints)})"
+            )
+        return self
 
 
 class NotConstraint(RustConstraintMixin):
@@ -949,6 +998,7 @@ ConstraintConfig = Union[
     AndConstraint,
     OrConstraint,
     XorConstraint,
+    AtLeastConstraint,
     NotConstraint,
     BoresightOffsetConstraint,
 ]
@@ -958,6 +1008,7 @@ ConstraintConfig = Union[
 AndConstraint.model_rebuild()
 OrConstraint.model_rebuild()
 XorConstraint.model_rebuild()
+AtLeastConstraint.model_rebuild()
 NotConstraint.model_rebuild()
 BoresightOffsetConstraint.model_rebuild()
 

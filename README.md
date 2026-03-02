@@ -204,6 +204,31 @@ secondary = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=12.0)
 combined = primary | secondary.boresight_offset(pitch_deg=1.2, yaw_deg=-0.8)
 ```
 
+### Threshold Combinator (k-of-n Violated)
+
+Use `at_least` when you want a combined constraint to be blocked only after a
+minimum number of sub-constraints are violated.
+
+```python
+from rust_ephem.constraints import SunConstraint, MoonConstraint, EclipseConstraint
+
+sun = SunConstraint(min_angle=45.0)
+moon = MoonConstraint(min_angle=10.0)
+eclipse = EclipseConstraint(umbra_only=True)
+
+# Block target when at least 2 of these 3 constraints are violated
+constraint = sun.at_least(2, moon, eclipse)
+
+result = constraint.evaluate(ephem, target_ra=83.63, target_dec=22.01)
+print(result.all_satisfied)
+```
+
+Notes:
+
+- Constraints are `True` when blocked/not visible.
+- `min_violated=1` behaves like OR over violations.
+- `min_violated=len(constraints)` behaves like AND over violations.
+
 ### Instantaneous Field of Regard (steradians)
 
 You can compute the visible sky solid angle at a single timestamp for any
