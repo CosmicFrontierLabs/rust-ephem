@@ -594,6 +594,19 @@ class Constraint:
         """
         ...
 
+    def instantaneous_field_of_regard(
+        self,
+        ephemeris: Ephemeris,
+        time: datetime | None = None,
+        index: int | None = None,
+        n_points: int = 20000,
+    ) -> float:
+        """Compute instantaneous visible solid angle in steradians.
+
+        Exactly one of ``time`` or ``index`` must be provided.
+        """
+        ...
+
     def evaluate_moving_body(
         self,
         ephemeris: Ephemeris,

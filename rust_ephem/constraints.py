@@ -255,6 +255,45 @@ class RustConstraintMixin(BaseModel):
             target_dec,
         )
 
+    def instantaneous_field_of_regard(
+        self,
+        ephemeris: Ephemeris,
+        time: datetime | None = None,
+        index: int | None = None,
+        n_points: int = 20000,
+    ) -> float:
+        """Compute instantaneous field of regard in steradians.
+
+        Field of regard is the visible solid angle at a single timestamp,
+        where visibility is defined by constraint not violated (False).
+
+        Args:
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+            time: Specific datetime to evaluate (must exist in ephemeris)
+            index: Specific time index to evaluate
+            n_points: Number of Fibonacci-sphere samples for sky integration
+
+        Returns:
+            Visible solid angle in steradians (range [0, 4π])
+
+        Raises:
+            ValueError: If exactly one of time/index is not provided
+        """
+        if not hasattr(self, "_rust_constraint"):
+            from rust_ephem import Constraint
+
+            self._rust_constraint = Constraint.from_json(self.model_dump_json())
+
+        rust_constraint_any = cast(Any, self._rust_constraint)
+        return float(
+            rust_constraint_any.instantaneous_field_of_regard(
+                ephemeris,
+                time=time,
+                index=index,
+                n_points=n_points,
+            )
+        )
+
     def evaluate_moving_body(
         self,
         ephemeris: Ephemeris,

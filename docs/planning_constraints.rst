@@ -239,6 +239,47 @@ Equivalent Pydantic configuration:
 Euler angles are specified in degrees as ``roll_deg`` (+X), ``pitch_deg`` (+Y),
 and ``yaw_deg`` (+Z).
 
+Instantaneous Field of Regard (steradians)
+------------------------------------------
+
+For any constraint (single or combined), you can compute instantaneous visible
+sky area (solid angle) at one timestamp.
+
+The result is returned in steradians and always lies in ``[0, 4π]``.
+
+.. code-block:: python
+
+    from rust_ephem.constraints import SunConstraint, MoonConstraint
+
+    constraint = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=12.0)
+
+    # Fastest path: evaluate at an ephemeris index
+    field_sr = constraint.instantaneous_field_of_regard(
+        ephemeris=ephem,
+        index=0,
+        n_points=20000,
+    )
+
+    visible_fraction = field_sr / (4.0 * 3.141592653589793)
+    print(f"Field of regard: {field_sr:.3f} sr ({visible_fraction:.2%} of full sky)")
+
+You can also evaluate by datetime:
+
+.. code-block:: python
+
+    t0 = ephem.timestamp[0]
+    field_sr = constraint.instantaneous_field_of_regard(
+        ephemeris=ephem,
+        time=t0,
+        n_points=20000,
+    )
+
+Notes:
+
+- Exactly one of ``time`` or ``index`` must be provided.
+- ``n_points`` controls integration accuracy vs speed (higher = more accurate, slower).
+- Constraints are ``True`` when blocked/not visible, so field of regard integrates where constraint is ``False``.
+
 JSON Serialization
 ------------------
 

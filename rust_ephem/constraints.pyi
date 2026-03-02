@@ -88,6 +88,13 @@ class RustConstraintMixin(BaseModel):
         target_ra: float,
         target_dec: float,
     ) -> bool | list[bool]: ...
+    def instantaneous_field_of_regard(
+        self,
+        ephemeris: Ephemeris,
+        time: datetime | None = None,
+        index: int | None = None,
+        n_points: int = 20000,
+    ) -> float: ...
     def evaluate_moving_body(
         self,
         ephemeris: Ephemeris,
