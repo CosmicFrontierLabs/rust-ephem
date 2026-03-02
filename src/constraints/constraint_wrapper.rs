@@ -963,6 +963,7 @@ impl PyConstraint {
     ///     {"type": "and", "constraints": [...]}
     ///     {"type": "or", "constraints": [...]}
     ///     {"type": "xor", "constraints": [...]}  // exactly one violated -> violation
+    ///     {"type": "at_least", "min_violated": 2, "constraints": [...]}  // k-of-n violated -> violation
     ///     {"type": "not", "constraint": {...}}
     #[staticmethod]
     fn from_json(json_str: &str) -> PyResult<Self> {
@@ -1144,6 +1145,55 @@ impl PyConstraint {
 
         let config_json = serde_json::json!({
             "type": "xor",
+            "constraints": configs
+        })
+        .to_string();
+
+        let evaluator = parse_constraint_json(&serde_json::from_str(&config_json).unwrap())?;
+
+        Ok(PyConstraint {
+            evaluator,
+            config_json,
+        })
+    }
+
+    /// Combine constraints with threshold logic (k-of-n)
+    ///
+    /// Args:
+    ///     min_violated: Minimum number of sub-constraints that must be violated
+    ///                   for this combined constraint to be violated (k)
+    ///     constraints: List of sub-constraints (n)
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint violated when at least `min_violated` sub-constraints
+    ///         are violated
+    #[staticmethod]
+    fn at_least(min_violated: usize, constraints: Vec<PyRef<PyConstraint>>) -> PyResult<Self> {
+        if constraints.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "At least one constraint required for at_least",
+            ));
+        }
+        if min_violated == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "min_violated must be at least 1",
+            ));
+        }
+        if min_violated > constraints.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "min_violated ({min_violated}) cannot exceed number of constraints ({})",
+                constraints.len()
+            )));
+        }
+
+        let configs: Vec<serde_json::Value> = constraints
+            .iter()
+            .map(|c| serde_json::from_str(&c.config_json).unwrap())
+            .collect();
+
+        let config_json = serde_json::json!({
+            "type": "at_least",
+            "min_violated": min_violated,
             "constraints": configs
         })
         .to_string();
@@ -2216,6 +2266,49 @@ fn parse_constraint_json(value: &serde_json::Value) -> PyResult<Box<dyn Constrai
                 constraints: evaluators?,
             }))
         }
+        "at_least" => {
+            let constraints = value
+                .get("constraints")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "Missing 'constraints' array for at_least",
+                    )
+                })?;
+            if constraints.is_empty() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "at_least requires at least one sub-constraint",
+                ));
+            }
+
+            let min_violated = value
+                .get("min_violated")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "Missing or invalid 'min_violated' field for at_least",
+                    )
+                })? as usize;
+
+            if min_violated == 0 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "min_violated must be at least 1",
+                ));
+            }
+            if min_violated > constraints.len() {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "min_violated ({min_violated}) cannot exceed number of constraints ({})",
+                    constraints.len()
+                )));
+            }
+
+            let evaluators: Result<Vec<_>, _> =
+                constraints.iter().map(parse_constraint_json).collect();
+            Ok(Box::new(AtLeastEvaluator {
+                constraints: evaluators?,
+                min_violated,
+            }))
+        }
         "not" => {
             let constraint = value.get("constraint").ok_or_else(|| {
                 pyo3::exceptions::PyValueError::new_err("Missing 'constraint' field for NOT")
@@ -2941,6 +3034,173 @@ impl ConstraintEvaluator for XorEvaluator {
     fn name(&self) -> String {
         format!(
             "XOR({})",
+            self.constraints
+                .iter()
+                .map(|c| c.name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+struct AtLeastEvaluator {
+    constraints: Vec<Box<dyn ConstraintEvaluator>>,
+    min_violated: usize,
+}
+
+impl ConstraintEvaluator for AtLeastEvaluator {
+    fn evaluate(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ra: f64,
+        target_dec: f64,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<ConstraintResult> {
+        let times = ephemeris.get_times()?;
+
+        let indices: Vec<usize> = if let Some(idx) = time_indices {
+            idx.to_vec()
+        } else {
+            (0..times.len()).collect()
+        };
+
+        let times_filtered: Vec<_> = indices.iter().map(|&i| times[i]).collect();
+        let n_times = times_filtered.len();
+
+        let mut violated_descriptions: Vec<Vec<String>> = vec![Vec::new(); n_times];
+        let mut is_violated: Vec<bool> = vec![false; n_times];
+        let mut severity: Vec<f64> = vec![0.0; n_times];
+
+        // Evaluate each sub-constraint once per selected time index and cache
+        // the results for both violation tracking and descriptions.
+        for (i, &original_idx) in indices.iter().enumerate() {
+            let mut violation_count = 0usize;
+            let mut max_severity = 0.0f64;
+
+            for constraint in &self.constraints {
+                let result =
+                    constraint.evaluate(ephemeris, target_ra, target_dec, Some(&[original_idx]));
+                if let Ok(ref res) = result {
+                    if !res.violations.is_empty() {
+                        violation_count += 1;
+                        for violation in &res.violations {
+                            max_severity = max_severity.max(violation.max_severity);
+                            violated_descriptions[i].push(violation.description.clone());
+                        }
+                    }
+                }
+            }
+
+            is_violated[i] = violation_count >= self.min_violated;
+            severity[i] = max_severity;
+        }
+
+        let violations = track_violations(
+            &times_filtered,
+            |i| (is_violated[i], severity[i]),
+            |i, _is_open| {
+                let descriptions = &violated_descriptions[i];
+
+                if descriptions.is_empty() {
+                    format!("AT_LEAST(k={}) violation", self.min_violated)
+                } else {
+                    format!(
+                        "AT_LEAST(k={}) violation: {}",
+                        self.min_violated,
+                        descriptions.join("; ")
+                    )
+                }
+            },
+        );
+
+        let all_satisfied = violations.is_empty();
+        Ok(ConstraintResult::new(
+            violations,
+            all_satisfied,
+            self.name(),
+            times_filtered,
+        ))
+    }
+
+    fn in_constraint_batch(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> pyo3::PyResult<Array2<bool>> {
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+
+        let times = ephemeris.get_times()?;
+        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
+
+        let results: Result<Vec<_>, _> = self
+            .constraints
+            .iter()
+            .map(|c| c.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices))
+            .collect();
+        let results = results?;
+
+        let n_targets = target_ras.len();
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+
+        for i in 0..n_targets {
+            for j in 0..n_times {
+                let mut violation_count = 0usize;
+                for sub_result in &results {
+                    if sub_result[[i, j]] {
+                        violation_count += 1;
+                        if violation_count >= self.min_violated {
+                            break;
+                        }
+                    }
+                }
+                result[[i, j]] = violation_count >= self.min_violated;
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn in_constraint_batch_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<Vec<bool>> {
+        let n = target_ras.len();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+
+        let sub_results: Result<Vec<_>, _> = self
+            .constraints
+            .iter()
+            .map(|c| c.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs))
+            .collect();
+        let sub_results = sub_results?;
+
+        let mut result = Vec::with_capacity(n);
+        for i in 0..n {
+            let violation_count = sub_results.iter().filter(|r| r[i]).count();
+            result.push(violation_count >= self.min_violated);
+        }
+
+        Ok(result)
+    }
+
+    fn name(&self) -> String {
+        format!(
+            "AT_LEAST(k={}, {})",
+            self.min_violated,
             self.constraints
                 .iter()
                 .map(|c| c.name())

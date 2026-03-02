@@ -392,6 +392,7 @@ Classes
     * ``Constraint.and_(*constraints)`` — Combine constraints with logical AND
     * ``Constraint.or_(*constraints)`` — Combine constraints with logical OR
     * ``Constraint.xor_(*constraints)`` — Combine constraints with logical XOR (violation when exactly one sub-constraint is violated)
+    * ``Constraint.at_least(min_violated, constraints)`` — Threshold combinator (violation when at least ``min_violated`` sub-constraints are violated)
     * ``Constraint.not_(constraint)`` — Negate a constraint with logical NOT
     * ``Constraint.boresight_offset(constraint, roll_deg=0.0, pitch_deg=0.0, yaw_deg=0.0)`` — Wrap a constraint with fixed boresight Euler-angle offsets
     * ``Constraint.from_json(json_str)`` — Create constraint from JSON configuration
@@ -416,7 +417,7 @@ Classes
       - Returns: 2D NumPy boolean array of shape (n_targets, n_times) where True indicates constraint violation
       - **Performance**: 3-50x faster than calling ``evaluate()`` in a loop
       - **Optimized**: Uses vectorized operations for batch RA/Dec conversion and constraint evaluation
-      - **All constraint types supported**: Sun/Moon proximity, Earth limb, Eclipse, Body proximity, and logical combinators (AND, OR, NOT, XOR)
+      - **All constraint types supported**: Sun/Moon proximity, Earth limb, Eclipse, Body proximity, boresight offsets, and logical combinators (AND, OR, XOR, AT_LEAST, NOT)
 
     * ``in_constraint(time, ephemeris, target_ra, target_dec)`` — Check if target is in-constraint at a single time
 
@@ -723,6 +724,20 @@ The following Pydantic models are used to configure constraints. These can be se
     * ``type`` — Always "xor"
     * ``constraints`` — List of constraints (minimum 2) evaluated with XOR violation semantics
 
+**AtLeastConstraint**
+  Threshold (k-of-n) combination of constraints.
+
+  Violation semantics: The AT_LEAST constraint is violated when the number of
+  violated sub-constraints is greater than or equal to ``min_violated``.
+
+  **Constructor:**
+    ``AtLeastConstraint(min_violated=2, constraints=[constraint1, constraint2, ...])``
+
+  **Attributes:**
+    * ``type`` — Always "at_least"
+    * ``min_violated`` — Minimum number of violated sub-constraints required (>=1)
+    * ``constraints`` — List of constraints (minimum 1)
+
 **NotConstraint**
   Logical NOT (negation) of a constraint.
 
@@ -746,6 +761,10 @@ All constraint configuration classes (SunConstraint, MoonConstraint, etc.) inher
 
   - Returns: ``bool``
 
+* ``at_least(min_violated, *others)`` — Build an ``AtLeastConstraint`` from this constraint plus additional constraints
+
+  - Returns: ``AtLeastConstraint``
+
 **Constraint Operators**
 
 Constraint configurations support Python bitwise operators for convenient combination:
@@ -765,7 +784,7 @@ Usage examples are provided in the examples section of the docs.
     ConstraintConfig = (
         SunConstraint | MoonConstraint | EclipseConstraint |
         EarthLimbConstraint | BodyConstraint | AndConstraint |
-        OrConstraint | XorConstraint | NotConstraint
+      OrConstraint | XorConstraint | AtLeastConstraint | NotConstraint
     )
 
 ``CombinedConstraintConfig``

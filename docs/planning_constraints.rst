@@ -168,7 +168,7 @@ Available Constraint Types
 
     from rust_ephem.constraints import (
         SunConstraint, MoonConstraint, EclipseConstraint,
-        AndConstraint, OrConstraint, NotConstraint, XorConstraint
+        AndConstraint, OrConstraint, NotConstraint, XorConstraint, AtLeastConstraint
     )
 
     # Using operators
@@ -181,6 +181,29 @@ Available Constraint Types
         SunConstraint(min_angle=45),
         MoonConstraint(min_angle=10)
     ])
+
+    # Threshold: violated when at least k sub-constraints are violated
+    k_of_n = AtLeastConstraint(
+        min_violated=2,
+        constraints=[
+            SunConstraint(min_angle=45),
+            MoonConstraint(min_angle=10),
+            EclipseConstraint(umbra_only=True),
+        ],
+    )
+
+    # Convenience helper from any constraint instance
+    k_of_n_helper = SunConstraint(min_angle=45).at_least(
+        2,
+        MoonConstraint(min_angle=10),
+        EclipseConstraint(umbra_only=True),
+    )
+
+Threshold semantics:
+
+- Constraints evaluate to ``True`` when blocked/not visible.
+- ``min_violated=1`` is equivalent to OR over violations.
+- ``min_violated=len(constraints)`` is equivalent to AND over violations.
 
 Shared-Axis Multi-Instrument Planning
 ------------------------------------

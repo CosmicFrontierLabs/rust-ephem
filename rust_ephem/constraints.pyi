@@ -127,6 +127,9 @@ class RustConstraintMixin(BaseModel):
     def and_(self, other: ConstraintConfig) -> AndConstraint: ...
     def or_(self, other: ConstraintConfig) -> OrConstraint: ...
     def xor_(self, other: ConstraintConfig) -> XorConstraint: ...
+    def at_least(
+        self, min_violated: int, *others: ConstraintConfig
+    ) -> AtLeastConstraint: ...
     def not_(self) -> NotConstraint: ...
     def boresight_offset(
         self,
@@ -218,6 +221,11 @@ class XorConstraint(RustConstraintMixin):
     type: Literal["xor"] = "xor"
     constraints: list[ConstraintConfig]
 
+class AtLeastConstraint(RustConstraintMixin):
+    type: Literal["at_least"] = "at_least"
+    min_violated: int
+    constraints: list[ConstraintConfig]
+
 class NotConstraint(RustConstraintMixin):
     type: Literal["not"] = "not"
     constraint: ConstraintConfig
@@ -245,6 +253,7 @@ ConstraintConfig = (
     | AndConstraint
     | OrConstraint
     | XorConstraint
+    | AtLeastConstraint
     | NotConstraint
     | BoresightOffsetConstraint
 )

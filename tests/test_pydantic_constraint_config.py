@@ -9,6 +9,7 @@ import pytest
 
 from rust_ephem.constraints import (
     AndConstraint,
+    AtLeastConstraint,
     BodyConstraint,
     EarthLimbConstraint,
     EclipseConstraint,
@@ -124,6 +125,15 @@ class TestRustConstraintMixin:
         eclipse = eclipse_constraint
         expr = sun & moon | eclipse
         assert expr.constraints[1] is eclipse
+
+    def test_at_least_helper_builds_threshold_constraint(
+        self, sun_constraint, moon_constraint, eclipse_constraint
+    ):
+        """Test RustConstraintMixin.at_least helper."""
+        combined = sun_constraint.at_least(2, moon_constraint, eclipse_constraint)
+        assert isinstance(combined, AtLeastConstraint)
+        assert combined.min_violated == 2
+        assert len(combined.constraints) == 3
 
 
 class TestConstraints:
@@ -326,6 +336,40 @@ class TestConstraints:
         config = NotConstraint(constraint=sun)
         assert config.constraint is sun
 
+    def test_at_least_constraint_config_type(self, sun_constraint, moon_constraint):
+        """Test AtLeastConstraint type."""
+        config = AtLeastConstraint(
+            min_violated=1, constraints=[sun_constraint, moon_constraint]
+        )
+        assert config.type == "at_least"
+
+    def test_at_least_constraint_config_length(self, sun_constraint, moon_constraint):
+        """Test AtLeastConstraint constraints length."""
+        config = AtLeastConstraint(
+            min_violated=2, constraints=[sun_constraint, moon_constraint]
+        )
+        assert len(config.constraints) == 2
+
+    def test_at_least_constraint_validation_min_violated_too_large(
+        self, sun_constraint, moon_constraint
+    ):
+        """Test AtLeastConstraint validation when threshold exceeds list size."""
+        with pytest.raises(ValueError):
+            AtLeastConstraint(
+                min_violated=3,
+                constraints=[sun_constraint, moon_constraint],
+            )
+
+    def test_at_least_constraint_validation_min_violated_zero(
+        self, sun_constraint, moon_constraint
+    ):
+        """Test AtLeastConstraint validation when threshold is zero."""
+        with pytest.raises(ValueError):
+            AtLeastConstraint(
+                min_violated=0,
+                constraints=[sun_constraint, moon_constraint],
+            )
+
 
 class TestConstraintSerialization:
     """Test JSON serialization/deserialization of constraints."""
@@ -433,6 +477,19 @@ class TestConstraintSerialization:
 
         restored = CombinedConstraintConfig.validate_json(json_str)
         assert isinstance(restored.constraints[0], AndConstraint)
+
+    def test_at_least_constraint_deserialization_type(
+        self, sun_constraint, moon_constraint
+    ):
+        """Test AtLeastConstraint deserialization type."""
+        config = AtLeastConstraint(
+            min_violated=1, constraints=[sun_constraint, moon_constraint]
+        )
+        json_str = config.model_dump_json()
+        from rust_ephem.constraints import CombinedConstraintConfig
+
+        restored = CombinedConstraintConfig.validate_json(json_str)
+        assert isinstance(restored, AtLeastConstraint)
 
     def test_complex_constraint_deserialization_second_is_not(
         self, sun_constraint, moon_constraint, eclipse_constraint

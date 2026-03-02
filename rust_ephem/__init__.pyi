@@ -71,6 +71,9 @@ from rust_ephem.constraints import (
     AndConstraint as AndConstraint,
 )
 from rust_ephem.constraints import (
+    AtLeastConstraint as AtLeastConstraint,
+)
+from rust_ephem.constraints import (
     BodyConstraint as BodyConstraint,
 )
 from rust_ephem.constraints import (
@@ -141,6 +144,7 @@ __all__ = [
     "BodyConstraint",
     "DaytimeConstraint",
     "AirmassConstraint",
+    "AtLeastConstraint",
     "MoonPhaseConstraint",
     "SAAConstraint",
     "AltAzConstraint",
