@@ -1,15 +1,28 @@
 use serde::Deserialize;
 
-fn default_true() -> bool {
+fn default_umbra_only() -> bool {
     true
 }
 
-fn default_false() -> bool {
-    false
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+enum TwilightSpec {
+    #[default]
+    Civil,
+    Nautical,
+    Astronomical,
+    None,
 }
 
-fn default_civil() -> String {
-    "civil".to_string()
+impl From<TwilightSpec> for TwilightType {
+    fn from(value: TwilightSpec) -> Self {
+        match value {
+            TwilightSpec::Civil => TwilightType::Civil,
+            TwilightSpec::Nautical => TwilightType::Nautical,
+            TwilightSpec::Astronomical => TwilightType::Astronomical,
+            TwilightSpec::None => TwilightType::None,
+        }
+    }
 }
 
 fn default_full() -> String {
@@ -31,16 +44,16 @@ enum ConstraintSpec {
     },
     #[serde(rename = "eclipse")]
     Eclipse {
-        #[serde(default = "default_true")]
+        #[serde(default = "default_umbra_only")]
         umbra_only: bool,
     },
     #[serde(rename = "earth_limb")]
     EarthLimb {
         min_angle: f64,
         max_angle: Option<f64>,
-        #[serde(default = "default_false")]
+        #[serde(default)]
         include_refraction: bool,
-        #[serde(default = "default_false")]
+        #[serde(default)]
         horizon_dip: bool,
     },
     #[serde(rename = "body")]
@@ -51,8 +64,8 @@ enum ConstraintSpec {
     },
     #[serde(rename = "daytime")]
     Daytime {
-        #[serde(default = "default_civil")]
-        twilight: String,
+        #[serde(default)]
+        twilight: TwilightSpec,
     },
     #[serde(rename = "airmass")]
     Airmass {
@@ -65,7 +78,7 @@ enum ConstraintSpec {
         max_illumination: f64,
         min_distance: Option<f64>,
         max_distance: Option<f64>,
-        #[serde(default = "default_false")]
+        #[serde(default)]
         enforce_when_below_horizon: bool,
         #[serde(default = "default_full")]
         moon_visibility: String,
@@ -108,7 +121,7 @@ enum ConstraintSpec {
     OrbitPole {
         min_angle: f64,
         max_angle: Option<f64>,
-        #[serde(default = "default_false")]
+        #[serde(default)]
         earth_limb_pole: bool,
     },
     #[serde(rename = "orbit_ram")]
@@ -119,6 +132,15 @@ enum ConstraintSpec {
 }
 
 impl ConstraintSpec {
+    fn into_sub_evaluators(
+        constraints: Vec<ConstraintSpec>,
+    ) -> PyResult<Vec<Box<dyn ConstraintEvaluator>>> {
+        constraints
+            .into_iter()
+            .map(ConstraintSpec::into_evaluator)
+            .collect()
+    }
+
     fn into_evaluator(self) -> PyResult<Box<dyn ConstraintEvaluator>> {
         match self {
             ConstraintSpec::Sun {
@@ -162,23 +184,10 @@ impl ConstraintSpec {
                 max_angle,
             }
             .to_evaluator()),
-            ConstraintSpec::Daytime { twilight } => {
-                let twilight_type = match twilight.as_str() {
-                    "civil" => TwilightType::Civil,
-                    "nautical" => TwilightType::Nautical,
-                    "astronomical" => TwilightType::Astronomical,
-                    "none" => TwilightType::None,
-                    _ => {
-                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                            "Unknown twilight type: {twilight}"
-                        )))
-                    }
-                };
-                Ok(DaytimeConfig {
-                    twilight: twilight_type,
-                }
-                .to_evaluator())
+            ConstraintSpec::Daytime { twilight } => Ok(DaytimeConfig {
+                twilight: twilight.into(),
             }
+            .to_evaluator()),
             ConstraintSpec::Airmass {
                 min_airmass,
                 max_airmass,
@@ -224,12 +233,9 @@ impl ConstraintSpec {
                         "Missing 'constraints' array for AND",
                     ));
                 }
-                let evaluators: Result<Vec<_>, _> = constraints
-                    .into_iter()
-                    .map(ConstraintSpec::into_evaluator)
-                    .collect();
+                let evaluators = ConstraintSpec::into_sub_evaluators(constraints)?;
                 Ok(Box::new(AndEvaluator {
-                    constraints: evaluators?,
+                    constraints: evaluators,
                 }))
             }
             ConstraintSpec::Or { constraints } => {
@@ -238,12 +244,9 @@ impl ConstraintSpec {
                         "Missing 'constraints' array for OR",
                     ));
                 }
-                let evaluators: Result<Vec<_>, _> = constraints
-                    .into_iter()
-                    .map(ConstraintSpec::into_evaluator)
-                    .collect();
+                let evaluators = ConstraintSpec::into_sub_evaluators(constraints)?;
                 Ok(Box::new(OrEvaluator {
-                    constraints: evaluators?,
+                    constraints: evaluators,
                 }))
             }
             ConstraintSpec::Xor { constraints } => {
@@ -252,12 +255,9 @@ impl ConstraintSpec {
                         "XOR requires at least two sub-constraints",
                     ));
                 }
-                let evaluators: Result<Vec<_>, _> = constraints
-                    .into_iter()
-                    .map(ConstraintSpec::into_evaluator)
-                    .collect();
+                let evaluators = ConstraintSpec::into_sub_evaluators(constraints)?;
                 Ok(Box::new(XorEvaluator {
-                    constraints: evaluators?,
+                    constraints: evaluators,
                 }))
             }
             ConstraintSpec::AtLeast {
@@ -281,12 +281,9 @@ impl ConstraintSpec {
                     )));
                 }
 
-                let evaluators: Result<Vec<_>, _> = constraints
-                    .into_iter()
-                    .map(ConstraintSpec::into_evaluator)
-                    .collect();
+                let evaluators = ConstraintSpec::into_sub_evaluators(constraints)?;
                 Ok(Box::new(AtLeastEvaluator {
-                    constraints: evaluators?,
+                    constraints: evaluators,
                     min_violated,
                 }))
             }
