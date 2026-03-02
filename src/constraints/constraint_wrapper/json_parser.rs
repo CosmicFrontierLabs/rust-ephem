@@ -230,7 +230,7 @@ impl ConstraintSpec {
             ConstraintSpec::And { constraints } => {
                 if constraints.is_empty() {
                     return Err(pyo3::exceptions::PyValueError::new_err(
-                        "Missing 'constraints' array for AND",
+                        "AND requires at least one sub-constraint",
                     ));
                 }
                 let evaluators = ConstraintSpec::into_sub_evaluators(constraints)?;
@@ -241,7 +241,7 @@ impl ConstraintSpec {
             ConstraintSpec::Or { constraints } => {
                 if constraints.is_empty() {
                     return Err(pyo3::exceptions::PyValueError::new_err(
-                        "Missing 'constraints' array for OR",
+                        "OR requires at least one sub-constraint",
                     ));
                 }
                 let evaluators = ConstraintSpec::into_sub_evaluators(constraints)?;
