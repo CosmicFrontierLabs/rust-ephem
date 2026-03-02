@@ -204,6 +204,33 @@ secondary = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=12.0)
 combined = primary | secondary.boresight_offset(pitch_deg=1.2, yaw_deg=-0.8)
 ```
 
+### Instantaneous Field of Regard (steradians)
+
+You can compute the visible sky solid angle at a single timestamp for any
+constraint (single or combined):
+
+```python
+from rust_ephem.constraints import SunConstraint, MoonConstraint
+
+constraint = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=12.0)
+
+# Evaluate at a single ephemeris index (fastest path)
+field_sr = constraint.instantaneous_field_of_regard(
+  ephemeris=ephem,
+  index=0,
+  n_points=20000,
+)
+
+print(f"Field of regard: {field_sr:.3f} sr")
+print(f"Visible sky fraction: {field_sr / (4.0 * 3.141592653589793):.2%}")
+```
+
+Notes:
+
+- Exactly one of `time` or `index` must be provided.
+- Return value is in steradians, range `[0, 4π]`.
+- Constraints are `True` when blocked/not visible, so this computes area where constraints are `False`.
+
 ### JPL Horizons Fallback
 
 For bodies not available in SPICE kernels (asteroids, comets, spacecraft, etc.), enable JPL Horizons fallback with `use_horizons=True`:

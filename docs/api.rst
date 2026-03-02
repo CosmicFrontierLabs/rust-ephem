@@ -423,6 +423,16 @@ Classes
       - ``time`` — Python datetime object (must exist in ephemeris timestamps)
       - Returns: ``bool`` (True if constraint is satisfied, False if violated)
 
+    * ``instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=20000)`` — Compute instantaneous visible sky solid angle
+
+      - ``ephemeris`` — TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris object
+      - ``time`` — Optional datetime to evaluate (must exist in ephemeris)
+      - ``index`` — Optional ephemeris index to evaluate
+      - ``n_points`` — Number of sky samples (Fibonacci sphere integration)
+      - Returns: ``float`` steradians in ``[0, 4π]``
+      - Requirement: exactly one of ``time`` or ``index`` must be provided
+      - Semantics: constraints are violated when ``True``; this method integrates visible sky where constraint is ``False``
+
     * ``to_json()`` — Get constraint configuration as JSON string
     * ``to_dict()`` — Get constraint configuration as Python dictionary
 

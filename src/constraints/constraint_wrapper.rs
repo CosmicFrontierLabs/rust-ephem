@@ -25,6 +25,7 @@ use ndarray::Array2;
 use numpy::{PyArray2, PyArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
+use std::f64::consts::PI;
 
 /// Python-facing constraint evaluator
 ///
@@ -191,6 +192,40 @@ impl PyConstraint {
             ))
         }
     }
+}
+
+fn fibonacci_sphere_radec(n_points: usize) -> (Vec<f64>, Vec<f64>) {
+    let mut ras = Vec::with_capacity(n_points);
+    let mut decs = Vec::with_capacity(n_points);
+
+    if n_points == 0 {
+        return (ras, decs);
+    }
+
+    // Golden angle in radians
+    let golden_angle = PI * (3.0 - 5.0_f64.sqrt());
+    let n = n_points as f64;
+
+    for i in 0..n_points {
+        let k = i as f64 + 0.5;
+        let z = 1.0 - (2.0 * k) / n;
+        let radius_xy = (1.0 - z * z).sqrt();
+        let phi = golden_angle * i as f64;
+
+        let x = radius_xy * phi.cos();
+        let y = radius_xy * phi.sin();
+
+        let mut ra_deg = y.atan2(x).to_degrees();
+        if ra_deg < 0.0 {
+            ra_deg += 360.0;
+        }
+        let dec_deg = z.clamp(-1.0, 1.0).asin().to_degrees();
+
+        ras.push(ra_deg);
+        decs.push(dec_deg);
+    }
+
+    (ras, decs)
 }
 
 #[pymethods]
@@ -1347,6 +1382,101 @@ impl PyConstraint {
         // Convert to numpy array
         use numpy::IntoPyArray;
         Ok(result_array.into_pyarray(py).into())
+    }
+
+    /// Compute instantaneous field of regard for this constraint in steradians.
+    ///
+    /// Field of regard is the visible solid angle at a single timestamp, where
+    /// visibility is defined by `constraint == False` (not violated).
+    ///
+    /// Args:
+    ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+    ///     time (datetime, optional): Specific timestamp to evaluate (must exist in ephemeris)
+    ///     index (int, optional): Specific time index to evaluate
+    ///     n_points (int, optional): Number of sky samples (Fibonacci sphere). Default 20000.
+    ///
+    /// Returns:
+    ///     float: Instantaneous field of regard in steradians (range [0, 4π])
+    ///
+    /// Notes:
+    ///     - Exactly one of `time` or `index` must be provided.
+    ///     - Higher `n_points` improves accuracy at higher computational cost.
+    #[pyo3(signature = (ephemeris, time=None, index=None, n_points=20000))]
+    fn instantaneous_field_of_regard(
+        &self,
+        py: Python,
+        ephemeris: Py<PyAny>,
+        time: Option<&Bound<PyAny>>,
+        index: Option<usize>,
+        n_points: usize,
+    ) -> PyResult<f64> {
+        if n_points == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "n_points must be greater than 0",
+            ));
+        }
+
+        let has_time = time.is_some();
+        let has_index = index.is_some();
+        if has_time == has_index {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Specify exactly one of 'time' or 'index'",
+            ));
+        }
+
+        let bound = ephemeris.bind(py);
+        let eval_index = if let Some(t) = time {
+            let parsed = self.parse_times_to_indices(bound, t)?;
+            if parsed.len() != 1 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "'time' must be a single datetime for instantaneous evaluation",
+                ));
+            }
+            parsed[0]
+        } else {
+            index.expect("index checked above")
+        };
+
+        let (target_ras, target_decs) = fibonacci_sphere_radec(n_points);
+
+        let violated = if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
+            self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &target_ras,
+                &target_decs,
+                Some(&[eval_index]),
+            )?
+        } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
+            self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &target_ras,
+                &target_decs,
+                Some(&[eval_index]),
+            )?
+        } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
+            self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &target_ras,
+                &target_decs,
+                Some(&[eval_index]),
+            )?
+        } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+            self.evaluator.in_constraint_batch(
+                &*ephem as &dyn EphemerisBase,
+                &target_ras,
+                &target_decs,
+                Some(&[eval_index]),
+            )?
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
+            ));
+        };
+
+        let visible_count = (0..n_points).filter(|&i| !violated[[i, 0]]).count();
+        let visible_fraction = visible_count as f64 / n_points as f64;
+
+        Ok(4.0 * PI * visible_fraction)
     }
 
     /// Evaluate constraint for multiple RA/Dec positions (vectorized)
