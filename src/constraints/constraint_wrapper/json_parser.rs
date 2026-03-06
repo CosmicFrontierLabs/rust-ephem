@@ -1,7 +1,7 @@
 use crate::constraints::airmass::AirmassConfig;
 use crate::constraints::alt_az::AltAzConfig;
 use crate::constraints::body_proximity::BodyProximityConfig;
-use crate::constraints::core::{ConstraintConfig, ConstraintEvaluator};
+use crate::constraints::core::ConstraintEvaluator;
 use crate::constraints::daytime::{DaytimeConfig, TwilightType};
 use crate::constraints::earth_limb::EarthLimbConfig;
 use crate::constraints::eclipse::EclipseConfig;
