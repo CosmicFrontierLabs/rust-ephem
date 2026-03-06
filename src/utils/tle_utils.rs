@@ -114,7 +114,11 @@ pub fn read_tle_file(path: &str) -> Result<TLEData, Box<dyn Error>> {
 
 /// Download TLE from a URL
 fn download_tle(url: &str) -> Result<String, Box<dyn Error>> {
-    let mut response = ureq::get(url).call()?;
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(30)))
+        .build()
+        .into();
+    let mut response = agent.get(url).call()?;
     Ok(response.body_mut().read_to_string()?)
 }
 
@@ -174,7 +178,19 @@ pub fn download_tle_with_cache(url: &str) -> Result<TLEData, Box<dyn Error>> {
 
     // Try to use cached version
     if let Some(content) = try_read_fresh_cache(&cache_path, ttl) {
-        return parse_tle_string(&content);
+        match parse_tle_string(&content) {
+            Ok(tle) => return Ok(tle),
+            Err(_) => {
+                // Cache file is corrupt (e.g. partial write during a previous interrupted
+                // download). Remove it so the fresh download below replaces it.
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "TLE cache file corrupt, removing and re-downloading: {}",
+                    cache_path.display()
+                );
+                let _ = fs::remove_file(&cache_path);
+            }
+        }
     }
 
     // Download fresh TLE

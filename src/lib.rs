@@ -261,17 +261,23 @@ fn fetch_tle(
     )
     .map_err(pyo3::exceptions::PyValueError::new_err)?;
 
-    // Use the unified fetch function
-    let fetched = tle_utils::fetch_tle_unified(
-        tle.as_deref(),
-        norad_id,
-        norad_name.as_deref(),
-        epoch_chrono.as_ref(),
-        credentials,
-        epoch_tolerance_days,
-        enforce_source.as_deref(),
-    )
-    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    // Use the unified fetch function (release GIL during network I/O so other
+    // Python threads — e.g. a test HTTP server — can run concurrently).
+    // Error is converted to String inside the closure so the return type is Send.
+    let fetched = py
+        .detach(|| {
+            tle_utils::fetch_tle_unified(
+                tle.as_deref(),
+                norad_id,
+                norad_name.as_deref(),
+                epoch_chrono.as_ref(),
+                credentials,
+                epoch_tolerance_days,
+                enforce_source.as_deref(),
+            )
+            .map_err(|e| e.to_string())
+        })
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
 
     // Build the result dictionary
     let dict = pyo3::types::PyDict::new(py);

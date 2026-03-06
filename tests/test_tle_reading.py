@@ -556,5 +556,85 @@ class TestFetchTLE:
             os.unlink(filepath)
 
 
+class TestFetchTLECorruptCacheRecovery:
+    """Tests that fetch_tle recovers from a corrupt URL cache file.
+
+    A partial write or interrupted download can leave the cache file in a
+    state where it contains valid bytes but not a valid TLE.  The fetching
+    code should detect the parse failure, remove the stale/corrupt file,
+    and fall back to a fresh download.
+    """
+
+    @pytest.fixture(scope="class")
+    def corrupt_cache_result(self):
+        import hashlib
+        import http.server
+        import socket
+        import threading
+        from pathlib import Path
+
+        tle_content = TLE_3LINE.strip()
+
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+
+        encoded = tle_content.encode()
+
+        class _Handler(http.server.BaseHTTPRequestHandler):
+            # Use HTTP/1.0 so the server closes the connection after each
+            # response, avoiding HTTP/1.1 keep-alive blocking on the client.
+            protocol_version = "HTTP/1.0"
+
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
+            def log_message(self, *args):
+                pass  # suppress noisy output
+
+        server = http.server.HTTPServer(("127.0.0.1", port), _Handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.daemon = True
+        thread.start()
+
+        url = f"http://127.0.0.1:{port}/test.tle"
+        cache_dir = Path(rust_ephem.get_cache_dir()) / "tle_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        url_hash = hashlib.md5(url.encode()).hexdigest()
+        cache_file = cache_dir / f"{url_hash}.tle"
+
+        cache_file.write_text("this is not a valid TLE\n")
+        tle_record = rust_ephem.fetch_tle(tle=url)
+
+        yield {"tle_record": tle_record, "cache_file": cache_file}
+
+        server.shutdown()
+        if cache_file.exists():
+            cache_file.unlink()
+
+    def test_returns_a_record(self, corrupt_cache_result):
+        """fetch_tle succeeds even though the cached file was corrupt."""
+        assert corrupt_cache_result["tle_record"] is not None
+
+    def test_source_is_url(self, corrupt_cache_result):
+        """The record reports the URL as its source."""
+        assert corrupt_cache_result["tle_record"].source == "url"
+
+    def test_satellite_name(self, corrupt_cache_result):
+        """The re-downloaded TLE has the expected satellite name."""
+        assert corrupt_cache_result["tle_record"].name == "ISS (ZARYA)"
+
+    def test_cache_file_is_repopulated(self, corrupt_cache_result):
+        """After recovery the cache file exists and contains fresh data."""
+        assert corrupt_cache_result["cache_file"].exists()
+
+    def test_cache_file_contains_valid_tle(self, corrupt_cache_result):
+        """The repopulated cache file contains the TLE line 1 for this satellite."""
+        assert "1 25544" in corrupt_cache_result["cache_file"].read_text()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
