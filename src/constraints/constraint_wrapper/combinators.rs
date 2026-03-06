@@ -375,29 +375,38 @@ impl ConstraintEvaluator for NotEvaluator {
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
         let times = ephemeris.get_times()?;
+
+        // Build the filtered timeline – consistent with And/Or/AtLeast evaluators.
+        let indices: Vec<usize> = if let Some(idx) = time_indices {
+            idx.to_vec()
+        } else {
+            (0..times.len()).collect()
+        };
+        let times_filtered: Vec<_> = indices.iter().map(|&i| times[i]).collect();
+
         let result = self
             .constraint
             .evaluate(ephemeris, target_ra, target_dec, time_indices)?;
 
-        // Invert violations - find time periods NOT in violation
+        // Invert violations over times_filtered only, not the full timeline.
         let mut inverted_violations = Vec::new();
 
-        if result.violations.is_empty() {
-            // Everything was satisfied, so NOT means everything is violated
-            if !times.is_empty() {
-                inverted_violations.push(ConstraintViolation {
-                    start_time_internal: times[0],
-                    end_time_internal: times[times.len() - 1],
-                    max_severity: 1.0,
-                    description: format!(
-                        "NOT({}): inner constraint was satisfied",
-                        self.constraint.name()
-                    ),
-                });
-            }
+        if times_filtered.is_empty() {
+            // Nothing to invert.
+        } else if result.violations.is_empty() {
+            // Inner constraint was satisfied everywhere in the subset → NOT is violated everywhere.
+            inverted_violations.push(ConstraintViolation {
+                start_time_internal: times_filtered[0],
+                end_time_internal: times_filtered[times_filtered.len() - 1],
+                max_severity: 1.0,
+                description: format!(
+                    "NOT({}): inner constraint was satisfied",
+                    self.constraint.name()
+                ),
+            });
         } else {
-            // Find gaps between violations (these become new violations)
-            let mut last_end = times[0];
+            // Find gaps between violations within times_filtered (gaps become new violations).
+            let mut last_end = times_filtered[0];
 
             for violation in &result.violations {
                 if last_end < violation.start_time_internal {
@@ -414,8 +423,8 @@ impl ConstraintEvaluator for NotEvaluator {
                 last_end = violation.end_time_internal;
             }
 
-            // Check for gap after last violation
-            let final_time = times[times.len() - 1];
+            // Check for a gap after the last violation.
+            let final_time = times_filtered[times_filtered.len() - 1];
             if last_end < final_time {
                 inverted_violations.push(ConstraintViolation {
                     start_time_internal: last_end,
@@ -434,7 +443,7 @@ impl ConstraintEvaluator for NotEvaluator {
             inverted_violations,
             all_satisfied,
             self.name(),
-            times.to_vec(),
+            times_filtered,
         ))
     }
 
@@ -506,6 +515,15 @@ impl ConstraintEvaluator for XorEvaluator {
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
         let times = ephemeris.get_times()?;
+
+        // Build the filtered timeline – consistent with And/Or/Not/AtLeast evaluators.
+        let indices: Vec<usize> = if let Some(idx) = time_indices {
+            idx.to_vec()
+        } else {
+            (0..times.len()).collect()
+        };
+        let times_filtered: Vec<_> = indices.iter().map(|&i| times[i]).collect();
+
         // Evaluate all constraints
         let results: Vec<_> = self
             .constraints
@@ -517,7 +535,7 @@ impl ConstraintEvaluator for XorEvaluator {
         let mut merged_violations = Vec::new();
         let mut current_violation: Option<(usize, f64, Vec<String>)> = None;
 
-        for (i, time) in times.iter().enumerate() {
+        for (i, time) in times_filtered.iter().enumerate() {
             let mut active: Vec<&ConstraintViolation> = Vec::new();
 
             for result in &results {
@@ -550,8 +568,8 @@ impl ConstraintEvaluator for XorEvaluator {
                 }
             } else if let Some((start_idx, severity, descs)) = current_violation.take() {
                 merged_violations.push(ConstraintViolation {
-                    start_time_internal: times[start_idx],
-                    end_time_internal: times[i - 1],
+                    start_time_internal: times_filtered[start_idx],
+                    end_time_internal: times_filtered[i - 1],
                     max_severity: severity,
                     description: format!("XOR violation: {}", descs.join("; ")),
                 });
@@ -560,8 +578,8 @@ impl ConstraintEvaluator for XorEvaluator {
 
         if let Some((start_idx, severity, descs)) = current_violation {
             merged_violations.push(ConstraintViolation {
-                start_time_internal: times[start_idx],
-                end_time_internal: times[times.len() - 1],
+                start_time_internal: times_filtered[start_idx],
+                end_time_internal: times_filtered[times_filtered.len() - 1],
                 max_severity: severity,
                 description: format!("XOR violation: {}", descs.join("; ")),
             });
@@ -572,7 +590,7 @@ impl ConstraintEvaluator for XorEvaluator {
             merged_violations,
             all_satisfied,
             self.name(),
-            times.to_vec(),
+            times_filtered,
         ))
     }
 
