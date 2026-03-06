@@ -160,3 +160,55 @@ pub fn radec_to_unit_vectors_batch(ras_deg: &[f64], decs_deg: &[f64]) -> Array2<
 
     result
 }
+
+/// Build a 3x3 rotation matrix from intrinsic Z-Y-X Euler angles in degrees.
+///
+/// Rotation order is yaw (Z), pitch (Y), roll (X):
+/// `R = Rz(yaw) * Ry(pitch) * Rx(roll)`.
+pub fn euler_zyx_rotation_matrix(roll_deg: f64, pitch_deg: f64, yaw_deg: f64) -> [[f64; 3]; 3] {
+    let roll = roll_deg.to_radians();
+    let pitch = pitch_deg.to_radians();
+    let yaw = yaw_deg.to_radians();
+
+    let (sr, cr) = roll.sin_cos();
+    let (sp, cp) = pitch.sin_cos();
+    let (sy, cy) = yaw.sin_cos();
+
+    [
+        [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+        [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+        [-sp, cp * sr, cp * cr],
+    ]
+}
+
+/// Rotate an RA/Dec direction using a precomputed 3x3 rotation matrix.
+///
+/// # Arguments
+/// * `ra_deg` - Input right ascension in degrees
+/// * `dec_deg` - Input declination in degrees
+/// * `rotation_matrix` - 3x3 rotation matrix
+///
+/// # Returns
+/// Rotated `(ra_deg, dec_deg)` in degrees.
+pub fn rotate_radec_with_matrix(
+    ra_deg: f64,
+    dec_deg: f64,
+    rotation_matrix: &[[f64; 3]; 3],
+) -> (f64, f64) {
+    let v = radec_to_unit_vector(ra_deg, dec_deg);
+
+    let x =
+        rotation_matrix[0][0] * v[0] + rotation_matrix[0][1] * v[1] + rotation_matrix[0][2] * v[2];
+    let y =
+        rotation_matrix[1][0] * v[0] + rotation_matrix[1][1] * v[1] + rotation_matrix[1][2] * v[2];
+    let z =
+        rotation_matrix[2][0] * v[0] + rotation_matrix[2][1] * v[1] + rotation_matrix[2][2] * v[2];
+
+    let dec_rot = z.clamp(-1.0, 1.0).asin().to_degrees();
+    let mut ra_rot = y.atan2(x).to_degrees();
+    if ra_rot < 0.0 {
+        ra_rot += 360.0;
+    }
+
+    (ra_rot, dec_rot)
+}
