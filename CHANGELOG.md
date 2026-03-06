@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.5.0...v0.5.1) (2026-03-06)
+
+
+### Bug Fixes
+
+* constraint_wrapper.rs refactor ([#138](https://github.com/CosmicFrontierLabs/rust-ephem/issues/138)) ([74fb1e4](https://github.com/CosmicFrontierLabs/rust-ephem/commit/74fb1e4dc340775c54326b6bb1464013a4372b54))
+* timeout when reading new TLE due to corrupted cache ([#140](https://github.com/CosmicFrontierLabs/rust-ephem/issues/140)) ([6901cf0](https://github.com/CosmicFrontierLabs/rust-ephem/commit/6901cf0c6ac2f5159c97f0a9d5f5d76799b527db))
+
 ## [0.5.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.4.0...v0.5.0) (2026-03-02)
 
 
