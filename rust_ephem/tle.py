@@ -144,19 +144,27 @@ def fetch_tle(
         # Surface a clearer message when the upstream source returned no usable TLE
         message = str(exc)
         parse_failure = "Invalid TLE" in message
+        timeout_failure = "timeout" in message.lower()
+
+        if timeout_failure or parse_failure:
+            parts = []
+            if norad_id is not None:
+                parts.append(f"NORAD ID {norad_id}")
+            if norad_name:
+                parts.append(f"satellite name '{norad_name}'")
+            if tle:
+                parts.append(f"source '{tle}'")
+            context = ", ".join(parts) if parts else "the requested source"
+
+        if timeout_failure:
+            hint = (
+                f"TLE fetch timed out while retrieving {context}. "
+                "The upstream service (Space-Track.org or Celestrak) may be slow or "
+                "temporarily unavailable. Try again later, or check your network connection."
+            )
+            raise ValueError(hint) from exc
 
         if parse_failure:
-            context_parts = []
-            if norad_id is not None:
-                context_parts.append(f"NORAD ID {norad_id}")
-            if norad_name:
-                context_parts.append(f"satellite name '{norad_name}'")
-            if tle:
-                context_parts.append(f"source '{tle}'")
-
-            context = (
-                ", ".join(context_parts) if context_parts else "the requested source"
-            )
             hint = (
                 "No TLE data was returned from "
                 f"{context}; the response was not in TLE format. "
