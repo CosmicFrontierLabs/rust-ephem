@@ -897,3 +897,17 @@ fn query_and_convert_horizons_by_name(
     // The Horizons API already returns Earth-centered ICRF coordinates
     query_horizons_body_by_name(times, body_name)
 }
+
+/// Compute angular radii (radians) from an iterator of distances (km) and a physical radius (km).
+pub(crate) fn compute_angular_radii_rad(
+    radius_km: f64,
+    distances: impl IntoIterator<Item = f64>,
+) -> Vec<f64> {
+    distances
+        .into_iter()
+        .map(|distance| {
+            let ratio = (radius_km / distance).min(1.0);
+            ratio.asin()
+        })
+        .collect()
+}

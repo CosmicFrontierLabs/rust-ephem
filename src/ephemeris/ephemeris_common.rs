@@ -5,6 +5,7 @@ use pyo3::{prelude::*, types::PyDateTime};
 use std::sync::OnceLock;
 
 use crate::ephemeris::position_velocity::PositionVelocityData;
+use crate::utils::celestial::compute_angular_radii_rad;
 use crate::utils::celestial::{calculate_moon_positions, calculate_sun_positions};
 use crate::utils::config::MAX_TIMESTAMPS;
 use crate::utils::conversions::{convert_frames, Frame};
@@ -1081,17 +1082,6 @@ pub trait EphemerisBase {
         Ok(distances)
     }
 
-    /// Compute angular radii in radians from distances and a physical radius (km)
-    fn compute_angular_radii_rad(&self, radius_km: f64, distances: &[f64]) -> Vec<f64> {
-        distances
-            .iter()
-            .map(|distance| {
-                let ratio = (radius_km / distance).min(1.0);
-                ratio.asin()
-            })
-            .collect()
-    }
-
     /// Helper to compute sun angular radii in radians
     /// Returns a Vec<f64> of angular radii for each timestamp
     fn compute_sun_angular_radii(&self) -> PyResult<Vec<f64>> {
@@ -1104,7 +1094,7 @@ pub trait EphemerisBase {
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No Sun data available."))?;
 
         let distances = self.body_observer_distances(sun_geocentric)?;
-        Ok(self.compute_angular_radii_rad(SUN_RADIUS_KM, &distances))
+        Ok(compute_angular_radii_rad(SUN_RADIUS_KM, distances))
     }
 
     /// Helper to compute moon angular radii in radians
@@ -1118,7 +1108,7 @@ pub trait EphemerisBase {
             })?;
 
         let distances = self.body_observer_distances(moon_geocentric)?;
-        Ok(self.compute_angular_radii_rad(MOON_RADIUS_KM, &distances))
+        Ok(compute_angular_radii_rad(MOON_RADIUS_KM, distances))
     }
 
     /// Helper to compute earth angular radii in radians
@@ -1132,17 +1122,15 @@ pub trait EphemerisBase {
             })?;
 
         let n = gcrs_data.nrows();
-        let distances: Vec<f64> = (0..n)
-            .map(|i| {
-                let row = gcrs_data.row(i);
-                let x = row[0];
-                let y = row[1];
-                let z = row[2];
-                (x * x + y * y + z * z).sqrt()
-            })
-            .collect();
+        let distances = (0..n).map(|i| {
+            let row = gcrs_data.row(i);
+            let x = row[0];
+            let y = row[1];
+            let z = row[2];
+            (x * x + y * y + z * z).sqrt()
+        });
 
-        Ok(self.compute_angular_radii_rad(EARTH_RADIUS_KM, &distances))
+        Ok(compute_angular_radii_rad(EARTH_RADIUS_KM, distances))
     }
 
     /// Get angular radius of the Sun as seen from the observer (in degrees)
