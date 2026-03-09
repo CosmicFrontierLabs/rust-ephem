@@ -745,7 +745,7 @@ pub trait EphemerisBase {
         }))
     }
 
-    /// Ensure latitude/longitude caches are computed using pure Rust.
+    /// Ensure latitude/longitude caches are computed
     fn compute_latlon_caches(&self) -> PyResult<()> {
         // Already computed
         if self.data().latitude_deg_cache.get().is_some() {
@@ -1092,7 +1092,7 @@ pub trait EphemerisBase {
             .collect()
     }
 
-    /// Pure Rust helper to compute sun angular radii in radians
+    /// Helper to compute sun angular radii in radians
     /// Returns a Vec<f64> of angular radii for each timestamp
     fn compute_sun_angular_radii(&self) -> PyResult<Vec<f64>> {
         use crate::utils::config::SUN_RADIUS_KM;
@@ -1107,7 +1107,7 @@ pub trait EphemerisBase {
         Ok(self.compute_angular_radii_rad(SUN_RADIUS_KM, &distances))
     }
 
-    /// Pure Rust helper to compute moon angular radii in radians
+    /// Helper to compute moon angular radii in radians
     /// Returns a Vec<f64> of angular radii for each timestamp
     fn compute_moon_angular_radii(&self) -> PyResult<Vec<f64>> {
         use crate::utils::config::MOON_RADIUS_KM;
@@ -1121,7 +1121,7 @@ pub trait EphemerisBase {
         Ok(self.compute_angular_radii_rad(MOON_RADIUS_KM, &distances))
     }
 
-    /// Pure Rust helper to compute earth angular radii in radians
+    /// Helper to compute earth angular radii in radians
     /// Returns a Vec<f64> of angular radii for each timestamp
     fn compute_earth_angular_radii(&self) -> PyResult<Vec<f64>> {
         use crate::utils::config::EARTH_RADIUS_KM;
@@ -1301,7 +1301,7 @@ pub trait EphemerisBase {
 
         use numpy::PyArray1;
 
-        // Compute using pure Rust helper
+        // Compute using helper
         let angular_radii = self.compute_sun_angular_radii()?;
         let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii).to_owned().into();
 
@@ -1329,7 +1329,7 @@ pub trait EphemerisBase {
 
         use numpy::PyArray1;
 
-        // Compute using pure Rust helper
+        // Compute using helper
         let angular_radii = self.compute_moon_angular_radii()?;
         let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii).to_owned().into();
 
@@ -1357,7 +1357,7 @@ pub trait EphemerisBase {
 
         use numpy::PyArray1;
 
-        // Compute using pure Rust helper
+        // Compute using helper
         let angular_radii = self.compute_earth_angular_radii()?;
         let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii).to_owned().into();
 
