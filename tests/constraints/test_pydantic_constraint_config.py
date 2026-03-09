@@ -85,8 +85,8 @@ class TestRustConstraintMixin:
         assert expr.constraints[1] is eclipse
 
     def test_at_least_helper_builds_threshold_constraint(
-        self, sun_constraint, moon_constraint, eclipse_constraint
-    ):
+        self: Any, sun_constraint: Any, moon_constraint: Any, eclipse_constraint: Any
+    ) -> None:
         """Test RustConstraintMixin.at_least helper."""
         combined = sun_constraint.at_least(2, moon_constraint, eclipse_constraint)
         assert isinstance(combined, AtLeastConstraint)
@@ -297,14 +297,18 @@ class TestConstraints:
         config = NotConstraint(constraint=sun)
         assert config.constraint is sun
 
-    def test_at_least_constraint_config_type(self, sun_constraint, moon_constraint):
+    def test_at_least_constraint_config_type(
+        self: Any, sun_constraint: Any, moon_constraint: Any
+    ) -> None:
         """Test AtLeastConstraint type."""
         config = AtLeastConstraint(
             min_violated=1, constraints=[sun_constraint, moon_constraint]
         )
         assert config.type == "at_least"
 
-    def test_at_least_constraint_config_length(self, sun_constraint, moon_constraint):
+    def test_at_least_constraint_config_length(
+        self: Any, sun_constraint: Any, moon_constraint: Any
+    ) -> None:
         """Test AtLeastConstraint constraints length."""
         config = AtLeastConstraint(
             min_violated=2, constraints=[sun_constraint, moon_constraint]
@@ -312,8 +316,8 @@ class TestConstraints:
         assert len(config.constraints) == 2
 
     def test_at_least_constraint_validation_min_violated_too_large(
-        self, sun_constraint, moon_constraint
-    ):
+        self: Any, sun_constraint: Any, moon_constraint: Any
+    ) -> None:
         """Test AtLeastConstraint validation when threshold exceeds list size."""
         with pytest.raises(ValueError):
             AtLeastConstraint(
@@ -322,8 +326,8 @@ class TestConstraints:
             )
 
     def test_at_least_constraint_validation_min_violated_zero(
-        self, sun_constraint, moon_constraint
-    ):
+        self: Any, sun_constraint: Any, moon_constraint: Any
+    ) -> None:
         """Test AtLeastConstraint validation when threshold is zero."""
         with pytest.raises(ValueError):
             AtLeastConstraint(
@@ -437,8 +441,8 @@ class TestConstraintSerialization:
         assert isinstance(restored.constraints[0], AndConstraint)  # type: ignore[union-attr]
 
     def test_at_least_constraint_deserialization_type(
-        self, sun_constraint, moon_constraint
-    ):
+        self: Any, sun_constraint: Any, moon_constraint: Any
+    ) -> None:
         """Test AtLeastConstraint deserialization type."""
         config = AtLeastConstraint(
             min_violated=1, constraints=[sun_constraint, moon_constraint]

@@ -1,4 +1,5 @@
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Generator
 
 import numpy as np
 import pytest
@@ -39,11 +40,11 @@ def eclipse_flags(obs_pos: np.ndarray, sun_pos: np.ndarray) -> tuple[bool, bool]
     in_umbra = umbra_radius > 0.0 and dist_to_axis < umbra_radius
     in_penumbra = dist_to_axis < penumbra_radius
 
-    return in_umbra, in_penumbra
+    return bool(in_umbra), bool(in_penumbra)
 
 
 @pytest.fixture
-def tle() -> tuple:
+def tle() -> tuple[str, str]:
     tle1 = "1 28485U 04047A   25317.24527149  .00068512  00000+0  12522-2 0  9999"
     tle2 = "2 28485  20.5556  25.5469 0004740 206.7882 153.2316 15.47667717153136"
     return tle1, tle2
@@ -59,7 +60,9 @@ def begin_end_step_size() -> tuple[datetime, datetime, int]:
 
 
 @pytest.fixture
-def tle_ephem(tle, begin_end_step_size):
+def tle_ephem(
+    tle: tuple[str, str], begin_end_step_size: tuple[datetime, datetime, int]
+) -> Generator[rust_ephem.TLEEphemeris, None, None]:
     yield rust_ephem.TLEEphemeris(
         tle[0],
         tle[1],
@@ -70,22 +73,22 @@ def tle_ephem(tle, begin_end_step_size):
 
 
 @pytest.fixture
-def sun(tle_ephem) -> SkyCoord:
+def sun(tle_ephem: rust_ephem.TLEEphemeris) -> SkyCoord:
     return tle_ephem.sun[183]
 
 
 @pytest.fixture
-def moon(tle_ephem) -> SkyCoord:
+def moon(tle_ephem: rust_ephem.TLEEphemeris) -> SkyCoord:
     return tle_ephem.moon[183]
 
 
 @pytest.fixture
-def earth(tle_ephem) -> SkyCoord:
+def earth(tle_ephem: rust_ephem.TLEEphemeris) -> SkyCoord:
     return tle_ephem.earth[183]
 
 
 @pytest.fixture
-def timestamp(tle_ephem) -> datetime:
+def timestamp(tle_ephem: rust_ephem.TLEEphemeris) -> Any:
     return tle_ephem.timestamp[183]
 
 
@@ -313,7 +316,9 @@ class TestEclipseConstraints:
             f"Earth/Sun angle is at {earth_sun_angle:.1f} degrees"
         )
 
-    def test_eclipse_penumbra_expands_constraint(self, tle_ephem):
+    def test_eclipse_penumbra_expands_constraint(
+        self, tle_ephem: rust_ephem.TLEEphemeris
+    ) -> None:
         obs_positions = tle_ephem.gcrs_pv.position
         sun_positions = tle_ephem.sun_pv.position
 
@@ -335,12 +340,14 @@ class TestEclipseConstraints:
         in_umbra_only = umbra_only.in_constraint(
             ephemeris=tle_ephem, time=time, target_ra=0, target_dec=0
         )
-        in_penumbra = with_penumbra.in_constraint(
+        in_penumbra_result = with_penumbra.in_constraint(
             ephemeris=tle_ephem, time=time, target_ra=0, target_dec=0
         )
 
         assert in_umbra_only is False, "Umbra-only constraint should not match penumbra"
-        assert in_penumbra is True, "Penumbra-enabled constraint should match penumbra"
+        assert in_penumbra_result is True, (
+            "Penumbra-enabled constraint should match penumbra"
+        )
 
     @pytest.mark.parametrize(
         "offset",

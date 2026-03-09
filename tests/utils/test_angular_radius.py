@@ -379,14 +379,18 @@ class TestAngularRadiusConsistency:
 class TestAngularRadiusTopocentric:
     """Test angular radii use observer-relative distances"""
 
-    def test_sun_radius_uses_observer_distance(self, tle_ephemeris):
+    def test_sun_radius_uses_observer_distance(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
         sun_pos = tle_ephemeris.sun_pv.position[0]
         obs_pos = tle_ephemeris.gcrs_pv.position[0]
         distance = np.linalg.norm(sun_pos - obs_pos)
         expected = np.degrees(np.arcsin(SUN_RADIUS_KM / distance))
         assert np.isclose(tle_ephemeris.sun_radius_deg[0], expected, rtol=1e-7)
 
-    def test_moon_radius_uses_observer_distance(self, tle_ephemeris):
+    def test_moon_radius_uses_observer_distance(
+        self, tle_ephemeris: rust_ephem.TLEEphemeris
+    ) -> None:
         moon_pos = tle_ephemeris.moon_pv.position[0]
         obs_pos = tle_ephemeris.gcrs_pv.position[0]
         distance = np.linalg.norm(moon_pos - obs_pos)

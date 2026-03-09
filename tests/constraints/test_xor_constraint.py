@@ -17,7 +17,7 @@ class TestXorConstraint:
     def test_xor_requires_two(self) -> None:
         c1 = Constraint.sun_proximity(5.0)
         with pytest.raises(ValueError):
-            Constraint.xor_(c1)  # type: ignore[arg-type]
+            Constraint.xor_(c1)
 
 
 class TestAtLeastConstraint:
