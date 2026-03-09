@@ -5,6 +5,7 @@ use pyo3::{prelude::*, types::PyDateTime};
 use std::sync::OnceLock;
 
 use crate::ephemeris::position_velocity::PositionVelocityData;
+use crate::utils::celestial::compute_angular_radii_rad;
 use crate::utils::celestial::{calculate_moon_positions, calculate_sun_positions};
 use crate::utils::config::MAX_TIMESTAMPS;
 use crate::utils::conversions::{convert_frames, Frame};
@@ -745,7 +746,7 @@ pub trait EphemerisBase {
         }))
     }
 
-    /// Ensure latitude/longitude caches are computed using pure Rust.
+    /// Ensure latitude/longitude caches are computed
     fn compute_latlon_caches(&self) -> PyResult<()> {
         // Already computed
         if self.data().latitude_deg_cache.get().is_some() {
@@ -1081,6 +1082,57 @@ pub trait EphemerisBase {
         Ok(distances)
     }
 
+    /// Helper to compute sun angular radii in radians
+    /// Returns a Vec<f64> of angular radii for each timestamp
+    fn compute_sun_angular_radii(&self) -> PyResult<Vec<f64>> {
+        use crate::utils::config::SUN_RADIUS_KM;
+
+        let sun_geocentric = self
+            .data()
+            .sun_gcrs
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No Sun data available."))?;
+
+        let distances = self.body_observer_distances(sun_geocentric)?;
+        Ok(compute_angular_radii_rad(SUN_RADIUS_KM, distances))
+    }
+
+    /// Helper to compute moon angular radii in radians
+    /// Returns a Vec<f64> of angular radii for each timestamp
+    fn compute_moon_angular_radii(&self) -> PyResult<Vec<f64>> {
+        use crate::utils::config::MOON_RADIUS_KM;
+
+        let moon_geocentric =
+            self.data().moon_gcrs.as_ref().ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("No Moon data available.")
+            })?;
+
+        let distances = self.body_observer_distances(moon_geocentric)?;
+        Ok(compute_angular_radii_rad(MOON_RADIUS_KM, distances))
+    }
+
+    /// Helper to compute earth angular radii in radians
+    /// Returns a Vec<f64> of angular radii for each timestamp
+    fn compute_earth_angular_radii(&self) -> PyResult<Vec<f64>> {
+        use crate::utils::config::EARTH_RADIUS_KM;
+
+        let gcrs_data =
+            self.data().gcrs.as_ref().ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("No GCRS data available.")
+            })?;
+
+        let n = gcrs_data.nrows();
+        let distances = (0..n).map(|i| {
+            let row = gcrs_data.row(i);
+            let x = row[0];
+            let y = row[1];
+            let z = row[2];
+            (x * x + y * y + z * z).sqrt()
+        });
+
+        Ok(compute_angular_radii_rad(EARTH_RADIUS_KM, distances))
+    }
+
     /// Get angular radius of the Sun as seen from the observer (in degrees)
     ///
     /// Returns a NumPy array of angular radii for each timestamp.
@@ -1094,25 +1146,13 @@ pub trait EphemerisBase {
             return Ok(cached.clone_ref(py));
         }
 
-        use crate::utils::config::SUN_RADIUS_KM;
         use numpy::PyArray1;
 
-        let sun_pv_data = self
-            .data()
-            .sun_gcrs
-            .as_ref()
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No Sun data available."))?;
-
-        let distances = self.body_observer_distances(sun_pv_data)?;
-        let mut angular_radii = Vec::with_capacity(distances.len());
-
-        for distance in distances {
-            let ratio = (SUN_RADIUS_KM / distance).min(1.0);
-            let angular_radius_rad = ratio.asin();
-            angular_radii.push(angular_radius_rad.to_degrees());
-        }
-
-        let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii).to_owned().into();
+        // Compute in Rust, then convert to degrees
+        let angular_radii_rad = self.compute_sun_angular_radii()?;
+        let angular_radii_deg: Vec<f64> =
+            angular_radii_rad.iter().map(|r| r.to_degrees()).collect();
+        let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii_deg).to_owned().into();
 
         // Cache the result
         let _ = self
@@ -1136,24 +1176,13 @@ pub trait EphemerisBase {
             return Ok(cached.clone_ref(py));
         }
 
-        use crate::utils::config::MOON_RADIUS_KM;
         use numpy::PyArray1;
 
-        let moon_pv_data =
-            self.data().moon_gcrs.as_ref().ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err("No Moon data available.")
-            })?;
-
-        let distances = self.body_observer_distances(moon_pv_data)?;
-        let mut angular_radii = Vec::with_capacity(distances.len());
-
-        for distance in distances {
-            let ratio = (MOON_RADIUS_KM / distance).min(1.0);
-            let angular_radius_rad = ratio.asin();
-            angular_radii.push(angular_radius_rad.to_degrees());
-        }
-
-        let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii).to_owned().into();
+        // Compute in Rust, then convert to degrees
+        let angular_radii_rad = self.compute_moon_angular_radii()?;
+        let angular_radii_deg: Vec<f64> =
+            angular_radii_rad.iter().map(|r| r.to_degrees()).collect();
+        let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii_deg).to_owned().into();
 
         // Cache the result
         let _ = self
@@ -1177,32 +1206,13 @@ pub trait EphemerisBase {
             return Ok(cached.clone_ref(py));
         }
 
-        use crate::utils::config::EARTH_RADIUS_KM;
         use numpy::PyArray1;
 
-        let gcrs_data =
-            self.data().gcrs.as_ref().ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err("No GCRS data available.")
-            })?;
-
-        let n = gcrs_data.nrows();
-        let mut angular_radii = Vec::with_capacity(n);
-
-        for i in 0..n {
-            let row = gcrs_data.row(i);
-            let x = row[0];
-            let y = row[1];
-            let z = row[2];
-            let distance = (x * x + y * y + z * z).sqrt();
-            // Angular radius: angle from observer to visible horizon
-            // For ground observers: arcsin(R_earth / distance) < 90°
-            // Clamp ratio to [0, 1] for numerical stability
-            let ratio = (EARTH_RADIUS_KM / distance).min(1.0);
-            let angular_radius_rad = ratio.asin();
-            angular_radii.push(angular_radius_rad.to_degrees());
-        }
-
-        let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii).to_owned().into();
+        // Compute in Rust, then convert to degrees
+        let angular_radii_rad = self.compute_earth_angular_radii()?;
+        let angular_radii_deg: Vec<f64> =
+            angular_radii_rad.iter().map(|r| r.to_degrees()).collect();
+        let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii_deg).to_owned().into();
 
         // Cache the result
         let _ = self
@@ -1277,24 +1287,10 @@ pub trait EphemerisBase {
             return Ok(cached.clone_ref(py));
         }
 
-        use crate::utils::config::SUN_RADIUS_KM;
         use numpy::PyArray1;
 
-        let sun_pv_data = self
-            .data()
-            .sun_gcrs
-            .as_ref()
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No Sun data available."))?;
-
-        let distances = self.body_observer_distances(sun_pv_data)?;
-        let mut angular_radii = Vec::with_capacity(distances.len());
-
-        for distance in distances {
-            let ratio = (SUN_RADIUS_KM / distance).min(1.0);
-            let angular_radius_rad = ratio.asin();
-            angular_radii.push(angular_radius_rad);
-        }
-
+        // Compute using helper
+        let angular_radii = self.compute_sun_angular_radii()?;
         let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii).to_owned().into();
 
         // Cache the result
@@ -1319,23 +1315,10 @@ pub trait EphemerisBase {
             return Ok(cached.clone_ref(py));
         }
 
-        use crate::utils::config::MOON_RADIUS_KM;
         use numpy::PyArray1;
 
-        let moon_pv_data =
-            self.data().moon_gcrs.as_ref().ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err("No Moon data available.")
-            })?;
-
-        let distances = self.body_observer_distances(moon_pv_data)?;
-        let mut angular_radii = Vec::with_capacity(distances.len());
-
-        for distance in distances {
-            let ratio = (MOON_RADIUS_KM / distance).min(1.0);
-            let angular_radius_rad = ratio.asin();
-            angular_radii.push(angular_radius_rad);
-        }
-
+        // Compute using helper
+        let angular_radii = self.compute_moon_angular_radii()?;
         let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii).to_owned().into();
 
         // Cache the result
@@ -1360,31 +1343,10 @@ pub trait EphemerisBase {
             return Ok(cached.clone_ref(py));
         }
 
-        use crate::utils::config::EARTH_RADIUS_KM;
         use numpy::PyArray1;
 
-        let gcrs_data =
-            self.data().gcrs.as_ref().ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err("No GCRS data available.")
-            })?;
-
-        let n = gcrs_data.nrows();
-        let mut angular_radii = Vec::with_capacity(n);
-
-        for i in 0..n {
-            let row = gcrs_data.row(i);
-            let x = row[0];
-            let y = row[1];
-            let z = row[2];
-            let distance = (x * x + y * y + z * z).sqrt();
-            // Angular radius: angle from observer to visible horizon
-            // For ground observers: arcsin(R_earth / distance) < π/2
-            // Clamp ratio to [0, 1] for numerical stability
-            let ratio = (EARTH_RADIUS_KM / distance).min(1.0);
-            let angular_radius_rad = ratio.asin();
-            angular_radii.push(angular_radius_rad);
-        }
-
+        // Compute using helper
+        let angular_radii = self.compute_earth_angular_radii()?;
         let result: Py<PyAny> = PyArray1::from_vec(py, angular_radii).to_owned().into();
 
         // Cache the result
