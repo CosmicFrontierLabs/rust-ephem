@@ -5,11 +5,16 @@ parameters back as readable properties, enabling introspection of
 ephemeris configuration.
 """
 
+import os
+
+# Import constants from main conftest
+import sys
 from datetime import datetime, timezone
 
 from rust_ephem import GroundEphemeris, OEMEphemeris, SPICEEphemeris, TLEEphemeris
 
-from .conftest import BEGIN_TIME, END_TIME, STEP_SIZE, VALID_TLE1, VALID_TLE2
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from conftest import BEGIN_TIME, END_TIME, STEP_SIZE, VALID_TLE1, VALID_TLE2
 
 
 class TestTLEEphemerisParameters:

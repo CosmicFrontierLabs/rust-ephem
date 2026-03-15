@@ -11,7 +11,6 @@ from rust_ephem import (
     ConstraintViolation,
     EarthLimbConstraint,
     EclipseConstraint,
-    GroundEphemeris,
     MoonConstraint,
     SunConstraint,
     TLEEphemeris,
@@ -120,29 +119,6 @@ def body_constraint() -> BodyConstraint:
     return BodyConstraint(body="Mars", min_angle=15.0)
 
 
-@pytest.fixture
-def ground_ephemeris() -> GroundEphemeris:
-    return GroundEphemeris(
-        latitude=34.0,
-        longitude=-118.0,
-        height=100.0,
-        begin=BEGIN_TIME,
-        end=END_TIME,
-        step_size=STEP_SIZE,
-    )
-
-
-@pytest.fixture
-def tle_ephemeris() -> TLEEphemeris:
-    return TLEEphemeris(
-        tle1=VALID_TLE1,
-        tle2=VALID_TLE2,
-        begin=BEGIN_TIME,
-        end=END_TIME,
-        step_size=STEP_SIZE,
-    )
-
-
 class DummyConstraintBackend:
     created: int = 0
 
@@ -238,15 +214,6 @@ def mock_ephemeris_with_body() -> object:
             return [datetime(2024, 1, 1, 0, 0, 0)]
 
     return MockEphemeris()
-
-
-# Test data
-VALID_TLE1 = "1 25544U 98067A   08264.51782528 -.00002182  00000-0 -11606-4 0  2927"
-VALID_TLE2 = "2 25544  51.6416 247.4627 0006703 130.5360 325.0288 15.72125391563537"
-
-BEGIN_TIME = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-END_TIME = datetime(2024, 1, 1, 2, 0, 0, tzinfo=timezone.utc)
-STEP_SIZE = 120  # 2 minutes
 
 
 @pytest.fixture

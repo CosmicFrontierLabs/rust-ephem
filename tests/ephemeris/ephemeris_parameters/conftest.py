@@ -1,18 +1,16 @@
 """Fixtures for test_ephemeris_parameters tests."""
 
-from datetime import datetime, timezone
+import os
+
+# Import constants from main conftest
+import sys
 
 import pytest
 
 from rust_ephem import GroundEphemeris, OEMEphemeris, SPICEEphemeris, TLEEphemeris
 
-# Test data
-VALID_TLE1 = "1 25544U 98067A   08264.51782528 -.00002182  00000-0 -11606-4 0  2927"
-VALID_TLE2 = "2 25544  51.6416 247.4627 0006703 130.5360 325.0288 15.72125391563537"
-
-BEGIN_TIME = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-END_TIME = datetime(2024, 1, 1, 2, 0, 0, tzinfo=timezone.utc)
-STEP_SIZE = 120  # 2 minutes
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from conftest import BEGIN_TIME, END_TIME, STEP_SIZE, VALID_TLE1, VALID_TLE2
 
 
 @pytest.fixture

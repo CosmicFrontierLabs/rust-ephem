@@ -24,27 +24,21 @@ repos:
       - id: check-yaml
       - id: mixed-line-ending
   - repo: https://github.com/abravalheri/validate-pyproject
-    rev: v0.24.1
+    rev: v0.25
     hooks:
       - id: validate-pyproject
         name: Validate pyproject.toml
         description: Verify that pyproject.toml adheres to the established schema.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.8
+    # Ruff version.
+    rev: v0.15.6
     hooks:
       - id: ruff-check
         name: Lint code using ruff; sort and organize imports
-        types_or:
-          - python
-          - pyi
-        args:
-          - --extend-select
-          - I
-          - --fixable
-          - I,F
-          - --fix
+        types_or: [python, pyi]
+        args: [--extend-select, "I", --fixable, "I,F", --fix]
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.8
+    rev: v0.15.6
     hooks:
       - id: ruff-format
   - repo: local
@@ -69,7 +63,7 @@ repos:
           - -D
           - exclude_patterns=notebooks/*
   - repo: https://github.com/python-jsonschema/check-jsonschema
-    rev: 0.35.0
+    rev: 0.37.0
     hooks:
       - id: check-github-workflows
         args:
