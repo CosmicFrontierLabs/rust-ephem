@@ -49,26 +49,12 @@ pub fn parse_tle_string(content: &str) -> Result<TLEData, Box<dyn Error>> {
 
     match lines.len() {
         2 => {
-            // 2-line format
             validate_tle_lines(lines[0], lines[1])?;
-            let epoch = extract_tle_epoch(lines[0])?;
-            Ok(TLEData {
-                line1: lines[0].to_string(),
-                line2: lines[1].to_string(),
-                name: None,
-                epoch,
-            })
+            make_tle_data(lines[0], lines[1], None)
         }
         3 => {
-            // 3-line format: first line is the name
             validate_tle_lines(lines[1], lines[2])?;
-            let epoch = extract_tle_epoch(lines[1])?;
-            Ok(TLEData {
-                line1: lines[1].to_string(),
-                line2: lines[2].to_string(),
-                name: Some(lines[0].to_string()),
-                epoch,
-            })
+            make_tle_data(lines[1], lines[2], Some(lines[0].to_string()))
         }
         _ => Err(format!(
             "Invalid TLE format: expected 2 or 3 lines, got {}",
@@ -76,6 +62,20 @@ pub fn parse_tle_string(content: &str) -> Result<TLEData, Box<dyn Error>> {
         )
         .into()),
     }
+}
+
+fn make_tle_data(
+    line1: &str,
+    line2: &str,
+    name: Option<String>,
+) -> Result<TLEData, Box<dyn Error>> {
+    let epoch = extract_tle_epoch(line1)?;
+    Ok(TLEData {
+        line1: line1.to_string(),
+        line2: line2.to_string(),
+        name,
+        epoch,
+    })
 }
 
 /// Validate that two lines are valid TLE lines
@@ -304,38 +304,6 @@ impl std::fmt::Debug for SpaceTrackCredentials {
     }
 }
 
-/// Load Space-Track credentials from environment variables or .env file
-///
-/// Checks in order:
-/// 1. Environment variables SPACETRACK_USERNAME and SPACETRACK_PASSWORD
-/// 2. .env file in the current directory
-/// 3. .env file in the user's home directory
-fn spacetrack_credentials_from_env() -> Result<(String, String), Box<dyn Error>> {
-    // Try to load .env file (silently ignore if not found)
-    let _ = dotenvy::dotenv();
-
-    // Also try home directory .env
-    if let Some(home_dir) = dirs::home_dir() {
-        let home_env = home_dir.join(".env");
-        let _ = dotenvy::from_path(home_env);
-    }
-
-    let username: String = SPACETRACK_USERNAME_ENV.as_ref().cloned().ok_or_else(|| {
-        format!(
-            "Space-Track.org username not found. Set {} environment variable or pass credentials explicitly.",
-            "SPACETRACK_USERNAME"
-        )
-    })?;
-
-    let password: String = SPACETRACK_PASSWORD_ENV.as_ref().cloned().ok_or_else(|| {
-        format!(
-            "Space-Track.org password not found. Set {} environment variable or pass credentials explicitly.",
-            "SPACETRACK_PASSWORD"
-        )
-    })?;
-
-    Ok((username, password))
-}
 impl SpaceTrackCredentials {
     /// Create new credentials from explicit values
     pub fn new(username: String, password: String) -> Self {
@@ -343,7 +311,18 @@ impl SpaceTrackCredentials {
     }
 
     pub fn from_env() -> Result<Self, Box<dyn Error>> {
-        let (username, password) = spacetrack_credentials_from_env()?;
+        // Try to load .env files (silently ignore if not found)
+        let _ = dotenvy::dotenv();
+        if let Some(home_dir) = dirs::home_dir() {
+            let _ = dotenvy::from_path(home_dir.join(".env"));
+        }
+
+        let username = SPACETRACK_USERNAME_ENV.as_ref().cloned().ok_or(
+            "Space-Track.org username not found. Set SPACETRACK_USERNAME environment variable or pass credentials explicitly."
+        )?;
+        let password = SPACETRACK_PASSWORD_ENV.as_ref().cloned().ok_or(
+            "Space-Track.org password not found. Set SPACETRACK_PASSWORD environment variable or pass credentials explicitly."
+        )?;
         Ok(Self { username, password })
     }
 }
@@ -525,32 +504,30 @@ pub struct FetchedTLE {
 }
 
 impl FetchedTLE {
-    /// Create a FetchedTLE from raw TLE lines
-    ///
-    /// This is useful when you have TLE lines directly (e.g., from a TLERecord object)
-    /// and want to create a FetchedTLE without going through the fetch process.
     pub fn from_lines(
         line1: String,
         line2: String,
         name: Option<String>,
         epoch: Option<DateTime<Utc>>,
     ) -> Result<Self, Box<dyn Error>> {
-        // Validate the TLE lines
-        validate_tle_lines(&line1, &line2)?;
+        let mut tle = parse_tle_string(&format!("{line1}\n{line2}"))?;
+        if let Some(e) = epoch {
+            tle.epoch = e;
+        }
+        tle.name = name;
+        Ok(tle.into_fetched("direct"))
+    }
+}
 
-        // Extract epoch from line1 if not provided
-        let epoch = match epoch {
-            Some(e) => e,
-            None => extract_tle_epoch(&line1)?,
-        };
-
-        Ok(FetchedTLE {
-            line1,
-            line2,
-            name,
-            epoch,
-            source: "direct",
-        })
+impl TLEData {
+    pub(crate) fn into_fetched(self, source: &'static str) -> FetchedTLE {
+        FetchedTLE {
+            line1: self.line1,
+            line2: self.line2,
+            name: self.name,
+            epoch: self.epoch,
+            source,
+        }
     }
 }
 
@@ -610,50 +587,29 @@ pub fn fetch_tle_unified(
     enforce_source: Option<&str>,
 ) -> Result<FetchedTLE, Box<dyn Error>> {
     if let Some(tle_param) = tle_path {
-        // tle parameter: file path or URL
-        let (tle_data, src) =
-            if tle_param.starts_with("http://") || tle_param.starts_with("https://") {
-                let data = parse_tle_string(&download_tle(tle_param)?)?;
-                (data, "url")
-            } else {
-                let data = read_tle_file(tle_param)?;
-                (data, "file")
-            };
-        Ok(FetchedTLE {
-            epoch: tle_data.epoch,
-            line1: tle_data.line1,
-            line2: tle_data.line2,
-            name: tle_data.name,
-            source: src,
-        })
+        let src = if tle_param.starts_with("http://") || tle_param.starts_with("https://") {
+            "url"
+        } else {
+            "file"
+        };
+        let tle_data = if src == "url" {
+            parse_tle_string(&download_tle(tle_param)?)?
+        } else {
+            read_tle_file(tle_param)?
+        };
+        Ok(tle_data.into_fetched(src))
     } else if let Some(nid) = norad_id {
         match enforce_source {
-            Some("celestrak") => {
-                // Enforce Celestrak only
-                let tle_data = fetch_tle_by_norad_id(nid)?;
-                Ok(FetchedTLE {
-                    epoch: tle_data.epoch,
-                    line1: tle_data.line1,
-                    line2: tle_data.line2,
-                    name: tle_data.name,
-                    source: "celestrak",
-                })
-            }
+            Some("celestrak") => Ok(fetch_tle_by_norad_id(nid)?.into_fetched("celestrak")),
             Some("spacetrack") => {
-                // Enforce Space-Track only
                 let creds = credentials.ok_or(
                     "Space-Track.org credentials required when enforce_source='spacetrack'",
                 )?;
                 let target = target_epoch.cloned().unwrap_or_else(chrono::Utc::now);
-                let tle_with_epoch =
-                    fetch_tle_from_spacetrack(nid, &target, Some(creds), epoch_tolerance_days)?;
-                Ok(FetchedTLE {
-                    epoch: tle_with_epoch.epoch,
-                    line1: tle_with_epoch.line1,
-                    line2: tle_with_epoch.line2,
-                    name: tle_with_epoch.name,
-                    source: "spacetrack",
-                })
+                Ok(
+                    fetch_tle_from_spacetrack(nid, &target, Some(creds), epoch_tolerance_days)?
+                        .into_fetched("spacetrack"),
+                )
             }
             Some(other) => Err(format!(
                 "Invalid enforce_source value: {}. Must be 'celestrak', 'spacetrack', or None",
@@ -661,60 +617,27 @@ pub fn fetch_tle_unified(
             )
             .into()),
             None => {
-                // Default behavior: try Space-Track first, failover to Celestrak
                 if let Some(creds) = credentials {
-                    // Use provided target_epoch or current time
                     let target = target_epoch.cloned().unwrap_or_else(chrono::Utc::now);
-
                     match fetch_tle_from_spacetrack(nid, &target, Some(creds), epoch_tolerance_days)
                     {
-                        Ok(tle_with_epoch) => Ok(FetchedTLE {
-                            epoch: tle_with_epoch.epoch,
-                            line1: tle_with_epoch.line1,
-                            line2: tle_with_epoch.line2,
-                            name: tle_with_epoch.name,
-                            source: "spacetrack",
-                        }),
-                        Err(_spacetrack_err) => {
-                            // Failover to Celestrak
+                        Ok(tle) => Ok(tle.into_fetched("spacetrack")),
+                        Err(_err) => {
                             #[cfg(debug_assertions)]
                             eprintln!(
                                 "Space-Track.org fetch failed, falling back to Celestrak: {}",
-                                _spacetrack_err
+                                _err
                             );
-                            let tle_data = fetch_tle_by_norad_id(nid)?;
-                            Ok(FetchedTLE {
-                                epoch: tle_data.epoch,
-                                line1: tle_data.line1,
-                                line2: tle_data.line2,
-                                name: tle_data.name,
-                                source: "celestrak",
-                            })
+                            Ok(fetch_tle_by_norad_id(nid)?.into_fetched("celestrak"))
                         }
                     }
                 } else {
-                    // No Space-Track credentials, use Celestrak directly
-                    let tle_data = fetch_tle_by_norad_id(nid)?;
-                    Ok(FetchedTLE {
-                        epoch: tle_data.epoch,
-                        line1: tle_data.line1,
-                        line2: tle_data.line2,
-                        name: tle_data.name,
-                        source: "celestrak",
-                    })
+                    Ok(fetch_tle_by_norad_id(nid)?.into_fetched("celestrak"))
                 }
             }
         }
     } else if let Some(name_query) = norad_name {
-        // Fetch from Celestrak by satellite name
-        let tle_data = fetch_tle_by_name(name_query)?;
-        Ok(FetchedTLE {
-            epoch: tle_data.epoch,
-            line1: tle_data.line1,
-            line2: tle_data.line2,
-            name: tle_data.name,
-            source: "celestrak",
-        })
+        Ok(fetch_tle_by_name(name_query)?.into_fetched("celestrak"))
     } else {
         Err("Must provide one of: tle path/URL, norad_id, or norad_name".into())
     }
