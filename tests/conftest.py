@@ -79,7 +79,7 @@ def temp_dir() -> Any:
 def rust_ephem_available() -> bool:
     """Check if rust_ephem is available."""
     try:
-        import rust_ephem  # type: ignore[import-untyped]  # noqa: F401
+        import rust_ephem  # noqa: F401
 
         return True
     except ImportError:
@@ -108,7 +108,7 @@ def pytest_collection_modifyitems(config: Config, items: list[Any]) -> None:
 
     # Check for rust_ephem
     try:
-        import rust_ephem  # type: ignore[import-untyped]  # noqa: F401
+        import rust_ephem  # noqa: F401
 
         has_rust_ephem = True
     except ImportError:

@@ -29,7 +29,7 @@ class TestPlanetaryEphemeris:
         with pytest.raises(RuntimeError):
             rust_ephem.init_planetary_ephemeris("nonexistent_file.spk")
 
-    def test_download_planetary_ephemeris_with_valid_url(self, temp_dir) -> None:
+    def test_download_planetary_ephemeris_with_valid_url(self, temp_dir: Path) -> None:
         """Test download_planetary_ephemeris with a valid URL."""
         dest_path = temp_dir / "test.spk"
 
@@ -44,7 +44,9 @@ class TestPlanetaryEphemeris:
             # Expected if network/download fails
             pass
 
-    def test_download_planetary_ephemeris_with_invalid_url(self, temp_dir) -> None:
+    def test_download_planetary_ephemeris_with_invalid_url(
+        self, temp_dir: Path
+    ) -> None:
         """Test download_planetary_ephemeris with an invalid URL."""
         dest_path = temp_dir / "test.spk"
 
