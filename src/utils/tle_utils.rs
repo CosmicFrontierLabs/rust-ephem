@@ -117,7 +117,7 @@ pub fn read_tle_file(path: &str) -> Result<TLEData, Box<dyn Error>> {
     parse_tle_string(&content)
 }
 
-/// Download TLE from a URL
+/// Download TLE from a URL (no caching)
 fn download_tle(url: &str) -> Result<String, Box<dyn Error>> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(30)))
@@ -125,6 +125,23 @@ fn download_tle(url: &str) -> Result<String, Box<dyn Error>> {
         .into();
     let mut response = agent.get(url).call()?;
     Ok(response.body_mut().read_to_string()?)
+}
+
+/// Fetch TLE from a URL, using a TTL-based disk cache.
+///
+/// Cache key is the MD5 hash of the URL, stored in `url_cache/<md5>/`.
+/// Cache TTL is controlled by `TLE_CACHE_TTL`.
+fn fetch_tle_from_url(url: &str) -> Result<TLEData, Box<dyn Error>> {
+    let hash = format!("{:x}", md5::compute(url));
+    let cache_dir = epoch_cache_dir("url_cache", &hash);
+    if let Some(tle) = try_read_celestrak_cache(&cache_dir) {
+        return Ok(tle);
+    }
+    let content = download_tle(url)?;
+    let tle = parse_tle_string(&content)?;
+    save_tle_cache(&epoch_cache_path(&cache_dir, &tle.epoch), &content);
+    prune_tle_cache(&cache_dir, SPACETRACK_CACHE_MAX_ENTRIES);
+    Ok(tle)
 }
 
 // ============================================================================
@@ -608,7 +625,7 @@ pub fn fetch_tle_unified(
             "file"
         };
         let tle_data = if src == "url" {
-            parse_tle_string(&download_tle(tle_param)?)?
+            fetch_tle_from_url(tle_param)?
         } else {
             read_tle_file(tle_param)?
         };
