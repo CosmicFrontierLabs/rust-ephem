@@ -555,6 +555,89 @@ class TestFetchTLE:
         finally:
             os.unlink(filepath)
 
+    def test_fetch_tle_timeout_error_is_reraised_with_hint(self):
+        """A timeout ValueError from the Rust layer gets a human-friendly message."""
+        from unittest.mock import patch
+
+        from rust_ephem.tle import fetch_tle
+
+        with patch(
+            "rust_ephem.tle._fetch_tle", side_effect=ValueError("Connection timeout")
+        ):
+            with pytest.raises(ValueError, match="timed out"):
+                fetch_tle(norad_id=25544)
+
+    def test_fetch_tle_timeout_error_includes_norad_id(self):
+        """The timeout hint mentions the NORAD ID when one was supplied."""
+        from unittest.mock import patch
+
+        from rust_ephem.tle import fetch_tle
+
+        with patch(
+            "rust_ephem.tle._fetch_tle", side_effect=ValueError("connection timeout")
+        ):
+            with pytest.raises(ValueError, match="25544"):
+                fetch_tle(norad_id=25544)
+
+    def test_fetch_tle_timeout_error_with_norad_name(self):
+        """The timeout hint mentions the satellite name when supplied."""
+        from unittest.mock import patch
+
+        from rust_ephem.tle import fetch_tle
+
+        with patch(
+            "rust_ephem.tle._fetch_tle", side_effect=ValueError("TIMEOUT occurred")
+        ):
+            with pytest.raises(ValueError, match="HUBBLE"):
+                fetch_tle(norad_name="HUBBLE")
+
+    def test_fetch_tle_timeout_error_with_tle_source(self):
+        """The timeout hint mentions the source path/URL when supplied."""
+        from unittest.mock import patch
+
+        from rust_ephem.tle import fetch_tle
+
+        with patch("rust_ephem.tle._fetch_tle", side_effect=ValueError("Read Timeout")):
+            with pytest.raises(ValueError, match="myfile.tle"):
+                fetch_tle(tle="myfile.tle")
+
+    def test_fetch_tle_parse_failure_error_is_reraised_with_hint(self):
+        """An 'Invalid TLE' ValueError from the Rust layer gets a human-friendly message."""
+        from unittest.mock import patch
+
+        from rust_ephem.tle import fetch_tle
+
+        with patch(
+            "rust_ephem.tle._fetch_tle", side_effect=ValueError("Invalid TLE format")
+        ):
+            with pytest.raises(ValueError, match="No TLE data was returned"):
+                fetch_tle(norad_id=25544)
+
+    def test_fetch_tle_parse_failure_includes_norad_name(self):
+        """The parse-failure hint includes the satellite name when supplied."""
+        from unittest.mock import patch
+
+        from rust_ephem.tle import fetch_tle
+
+        with patch(
+            "rust_ephem.tle._fetch_tle", side_effect=ValueError("Invalid TLE line 1")
+        ):
+            with pytest.raises(ValueError, match="HUBBLE"):
+                fetch_tle(norad_name="HUBBLE")
+
+    def test_fetch_tle_other_valueerror_is_reraised_unchanged(self):
+        """A ValueError that is neither a timeout nor a parse failure is re-raised as-is."""
+        from unittest.mock import patch
+
+        from rust_ephem.tle import fetch_tle
+
+        with patch(
+            "rust_ephem.tle._fetch_tle",
+            side_effect=ValueError("some unexpected problem"),
+        ):
+            with pytest.raises(ValueError, match="some unexpected problem"):
+                fetch_tle(norad_id=25544)
+
 
 class TestFetchTLECorruptCacheRecovery:
     """Tests that corrupt epoch-cache files are detected, deleted, and skipped.
