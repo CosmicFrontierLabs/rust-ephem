@@ -349,7 +349,9 @@ class TestCrossCelestialBodyConsistency:
         import os
 
         test_data_path: str = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "test_data", "de440s.bsp"
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            "test_data",
+            "de440s.bsp",
         )
 
         if not os.path.exists(test_data_path):

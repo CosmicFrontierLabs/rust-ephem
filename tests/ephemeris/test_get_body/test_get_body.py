@@ -25,7 +25,9 @@ def ensure_planetary_data() -> None:
     import os
 
     test_data_path = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)), "test_data", "de440s.bsp"
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        "test_data",
+        "de440s.bsp",
     )
 
     # If file exists locally, use it without downloading
@@ -70,7 +72,9 @@ def spice_ephemeris(ensure_planetary_data: None) -> rust_ephem.SPICEEphemeris:
 
     # Use the same test data path as ensure_planetary_data
     test_data_path = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)), "test_data", "de440s.bsp"
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        "test_data",
+        "de440s.bsp",
     )
 
     # If file doesn't exist in test_data, try cache directory as fallback

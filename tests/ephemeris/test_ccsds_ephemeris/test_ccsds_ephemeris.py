@@ -11,7 +11,7 @@ from rust_ephem import OEMEphemeris
 from rust_ephem._rust_ephem import PositionVelocityData
 
 # Sample OEM data directory
-TEST_DATA_DIR: str = os.path.join(os.path.dirname(__file__), "..", "test_data")
+TEST_DATA_DIR: str = os.path.join(os.path.dirname(__file__), "..", "..", "test_data")
 
 
 def create_sample_oem(path: str) -> None:
