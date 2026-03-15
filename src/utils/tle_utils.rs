@@ -127,100 +127,161 @@ fn download_tle(url: &str) -> Result<String, Box<dyn Error>> {
     Ok(response.body_mut().read_to_string()?)
 }
 
-/// Get cache path for a URL
-fn get_url_cache_path(url: &str) -> PathBuf {
-    // Create a simple hash of the URL to use as filename
-    let hash = format!("{:x}", md5::compute(url.as_bytes()));
-    let mut path = CACHE_DIR.clone();
-    path.push("tle_cache");
-    path.push(format!("{}.tle", hash));
-    path
+// ============================================================================
+// Shared epoch-based TLE cache helpers
+// ============================================================================
+
+/// Cache directory: `~/.cache/rust_ephem/<subdir>/<key>/`
+fn epoch_cache_dir(subdir: &str, key: &str) -> PathBuf {
+    CACHE_DIR.join(subdir).join(key)
 }
 
-/// Try to read TLE from cache if it's fresh
-fn try_read_fresh_cache(path: &Path, ttl: Duration) -> Option<String> {
-    let meta = fs::metadata(path).ok()?;
-    if let Ok(modified) = meta.modified() {
-        if let Ok(age) = SystemTime::now().duration_since(modified) {
-            if age <= ttl {
-                if let Ok(content) = fs::read_to_string(path) {
-                    // Only print debug info in debug builds
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "TLE loaded from cache: {} (age: {}s)",
-                        path.display(),
-                        age.as_secs()
-                    );
-                    return Some(content);
-                }
-            }
-        }
-    }
-    None
+/// Cache file path for a TLE with the given epoch
+fn epoch_cache_path(dir: &Path, epoch: &DateTime<Utc>) -> PathBuf {
+    dir.join(format!("{}.tle", epoch.format("%Y%m%dT%H%M%S")))
 }
 
-/// Save TLE content to cache
-fn save_to_cache(path: &Path, content: &str) {
+/// Save TLE content to a cache path, creating parent directories as needed
+fn save_tle_cache(path: &Path, content: &str) {
     if let Some(parent) = path.parent() {
         if let Err(_e) = fs::create_dir_all(parent) {
-            // Log error but don't fail - caching is optional
             #[cfg(debug_assertions)]
             eprintln!("Warning: Failed to create TLE cache directory: {}", _e);
             return;
         }
     }
     if let Err(_e) = fs::File::create(path).and_then(|mut f| f.write_all(content.as_bytes())) {
-        // Log error but don't fail - caching is optional
         #[cfg(debug_assertions)]
         eprintln!("Warning: Failed to write TLE to cache: {}", _e);
     }
 }
 
-/// Download TLE from URL with caching
-pub fn download_tle_with_cache(url: &str) -> Result<TLEData, Box<dyn Error>> {
-    let cache_path = get_url_cache_path(url);
-    let ttl = Duration::from_secs(TLE_CACHE_TTL);
-
-    // Try to use cached version
-    if let Some(content) = try_read_fresh_cache(&cache_path, ttl) {
-        match parse_tle_string(&content) {
-            Ok(tle) => return Ok(tle),
-            Err(_) => {
-                // Cache file is corrupt (e.g. partial write during a previous interrupted
-                // download). Remove it so the fresh download below replaces it.
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "TLE cache file corrupt, removing and re-downloading: {}",
-                    cache_path.display()
-                );
-                let _ = fs::remove_file(&cache_path);
+/// Prune an epoch-named cache directory to at most `max_entries` files, keeping the newest
+fn prune_tle_cache(cache_dir: &Path, max_entries: usize) {
+    let entries = match fs::read_dir(cache_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    let mut cached: Vec<(DateTime<Utc>, PathBuf)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() || path.extension().and_then(|s| s.to_str()) != Some("tle") {
+            continue;
+        }
+        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+            if let Ok(dt) = NaiveDateTime::parse_from_str(stem, "%Y%m%dT%H%M%S") {
+                cached.push((DateTime::from_naive_utc_and_offset(dt, Utc), path));
             }
         }
     }
-
-    // Download fresh TLE
-    let content = download_tle(url)?;
-    save_to_cache(&cache_path, &content);
-    parse_tle_string(&content)
+    if cached.len() <= max_entries {
+        return;
+    }
+    cached.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, path) in cached.into_iter().skip(max_entries) {
+        if let Err(_e) = fs::remove_file(&path) {
+            #[cfg(debug_assertions)]
+            eprintln!("Warning: Failed to prune TLE cache file: {}", _e);
+        }
+    }
 }
+
+/// Find the cached TLE whose epoch is closest to `target_epoch` within `tolerance_days`
+fn try_read_epoch_cache(
+    cache_dir: &Path,
+    target_epoch: &DateTime<Utc>,
+    tolerance_days: f64,
+) -> Option<TLEData> {
+    let tolerance_seconds = tolerance_days * 86400.0;
+    let mut candidates: Vec<(f64, PathBuf)> = Vec::new();
+    for entry in fs::read_dir(cache_dir).ok()?.flatten() {
+        let path = entry.path();
+        if !path.is_file() || path.extension().and_then(|s| s.to_str()) != Some("tle") {
+            continue;
+        }
+        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+            if let Ok(dt) = NaiveDateTime::parse_from_str(stem, "%Y%m%dT%H%M%S") {
+                let parsed = DateTime::from_naive_utc_and_offset(dt, Utc);
+                let diff = (*target_epoch - parsed).num_seconds().abs() as f64;
+                if diff <= tolerance_seconds {
+                    candidates.push((diff, path));
+                }
+            }
+        }
+    }
+    candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    for (_, path) in candidates {
+        if let Ok(content) = fs::read_to_string(&path) {
+            if let Ok(tle) = parse_tle_string(&content) {
+                return Some(tle);
+            }
+        }
+    }
+    None
+}
+
+/// Return the most recently downloaded TLE in `cache_dir` if its file is within TTL
+fn try_read_celestrak_cache(cache_dir: &Path) -> Option<TLEData> {
+    let ttl = Duration::from_secs(TLE_CACHE_TTL);
+    let mut best: Option<(SystemTime, PathBuf)> = None;
+    for entry in fs::read_dir(cache_dir).ok()?.flatten() {
+        let path = entry.path();
+        if !path.is_file() || path.extension().and_then(|s| s.to_str()) != Some("tle") {
+            continue;
+        }
+        if let Ok(mtime) = path.metadata().and_then(|m| m.modified()) {
+            match best {
+                Some((ref bt, _)) if mtime <= *bt => {}
+                _ => best = Some((mtime, path)),
+            }
+        }
+    }
+    let (mtime, path) = best?;
+    if SystemTime::now().duration_since(mtime).ok()? > ttl {
+        return None;
+    }
+    parse_tle_string(&fs::read_to_string(&path).ok()?).ok()
+}
+
+// ============================================================================
+// Celestrak TLE fetching with epoch-based caching
+// ============================================================================
 
 /// Fetch TLE from Celestrak by NORAD ID
 pub fn fetch_tle_by_norad_id(norad_id: u32) -> Result<TLEData, Box<dyn Error>> {
+    let cache_dir = epoch_cache_dir("celestrak_cache", &norad_id.to_string());
+    if let Some(tle) = try_read_celestrak_cache(&cache_dir) {
+        return Ok(tle);
+    }
     let url = format!("{}?CATNR={}&FORMAT=TLE", CELESTRAK_API_BASE, norad_id);
-    download_tle_with_cache(&url)
+    let content = download_tle(&url)?;
+    let tle = parse_tle_string(&content)?;
+    save_tle_cache(&epoch_cache_path(&cache_dir, &tle.epoch), &content);
+    prune_tle_cache(&cache_dir, SPACETRACK_CACHE_MAX_ENTRIES);
+    Ok(tle)
 }
 
 /// Fetch TLE from Celestrak by satellite name
 pub fn fetch_tle_by_name(name: &str) -> Result<TLEData, Box<dyn Error>> {
-    // Simple URL encoding for satellite names
-    // Replace spaces and special characters
-    let encoded_name = name
+    let key: String = name
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect();
+    let cache_dir = epoch_cache_dir("celestrak_cache", &key);
+    if let Some(tle) = try_read_celestrak_cache(&cache_dir) {
+        return Ok(tle);
+    }
+    let encoded = name
         .replace(' ', "%20")
         .replace('&', "%26")
         .replace('=', "%3D")
         .replace('#', "%23");
-    let url = format!("{}?NAME={}&FORMAT=TLE", CELESTRAK_API_BASE, encoded_name);
-    download_tle_with_cache(&url)
+    let url = format!("{}?NAME={}&FORMAT=TLE", CELESTRAK_API_BASE, encoded);
+    let content = download_tle(&url)?;
+    let tle = parse_tle_string(&content)?;
+    save_tle_cache(&epoch_cache_path(&cache_dir, &tle.epoch), &content);
+    prune_tle_cache(&cache_dir, SPACETRACK_CACHE_MAX_ENTRIES);
+    Ok(tle)
 }
 
 // ============================================================================
@@ -287,154 +348,6 @@ impl SpaceTrackCredentials {
     }
 }
 
-/// Get cache directory for Space-Track TLEs with NORAD ID
-fn get_spacetrack_cache_dir(norad_id: u32) -> PathBuf {
-    let mut path = CACHE_DIR.clone();
-    path.push("spacetrack_cache");
-    path.push(norad_id.to_string());
-    path
-}
-
-/// Get cache path for a Space-Track TLE based on epoch
-fn get_spacetrack_cache_path(norad_id: u32, epoch: &DateTime<Utc>) -> PathBuf {
-    let mut path = get_spacetrack_cache_dir(norad_id);
-    let filename = format!("{}.tle", epoch.format("%Y%m%dT%H%M%S"));
-    path.push(filename);
-    path
-}
-
-/// Try to read Space-Track TLE from cache if epoch is within tolerance
-///
-/// # Arguments
-/// * `path` - Path to the cached TLE file
-/// * `target_epoch` - The target epoch we want the TLE for
-/// * `tolerance_days` - How many days off the TLE epoch can be from target
-///
-/// # Returns
-/// Some(TLEData) if cache is valid, None otherwise
-fn try_read_spacetrack_cache(
-    cache_dir: &Path,
-    target_epoch: &DateTime<Utc>,
-    tolerance_days: f64,
-) -> Option<TLEData> {
-    let entries = fs::read_dir(cache_dir).ok()?;
-    let tolerance_seconds = tolerance_days * 86400.0;
-
-    let mut candidates: Vec<(f64, PathBuf)> = Vec::new();
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        if path.extension().and_then(|s| s.to_str()) != Some("tle") {
-            continue;
-        }
-
-        let stem = match path.file_stem().and_then(|s| s.to_str()) {
-            Some(s) => s,
-            None => continue,
-        };
-        let parsed = match NaiveDateTime::parse_from_str(stem, "%Y%m%dT%H%M%S") {
-            Ok(dt) => DateTime::from_naive_utc_and_offset(dt, Utc),
-            Err(_) => continue,
-        };
-        let diff_seconds = (*target_epoch - parsed).num_seconds().abs() as f64;
-        if diff_seconds <= tolerance_seconds {
-            candidates.push((diff_seconds, path));
-        }
-    }
-
-    if candidates.is_empty() {
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "Space-Track cache TLEs too far from target ({}): > {:.2} days tolerance",
-            target_epoch, tolerance_days
-        );
-        return None;
-    }
-
-    candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-    for (_diff_seconds, path) in candidates {
-        let content = match fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let tle = match parse_tle_string(&content) {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-
-        return Some(tle);
-    }
-
-    #[cfg(debug_assertions)]
-    eprintln!(
-        "Space-Track cache TLEs could not be parsed for target ({})",
-        target_epoch
-    );
-    None
-}
-
-/// Save TLE content to Space-Track cache
-fn save_to_spacetrack_cache(path: &Path, content: &str) {
-    if let Some(parent) = path.parent() {
-        if let Err(_e) = fs::create_dir_all(parent) {
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "Warning: Failed to create Space-Track cache directory: {}",
-                _e
-            );
-            return;
-        }
-    }
-    if let Err(_e) = fs::File::create(path).and_then(|mut f| f.write_all(content.as_bytes())) {
-        #[cfg(debug_assertions)]
-        eprintln!("Warning: Failed to write TLE to Space-Track cache: {}", _e);
-    }
-}
-
-/// Prune Space-Track cache to a maximum number of entries per NORAD ID
-fn prune_spacetrack_cache(cache_dir: &Path, max_entries: usize) {
-    let entries = match fs::read_dir(cache_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    let mut cached: Vec<(DateTime<Utc>, PathBuf)> = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        if path.extension().and_then(|s| s.to_str()) != Some("tle") {
-            continue;
-        }
-        let stem = match path.file_stem().and_then(|s| s.to_str()) {
-            Some(s) => s,
-            None => continue,
-        };
-        let parsed = NaiveDateTime::parse_from_str(stem, "%Y%m%dT%H%M%S");
-        let epoch = match parsed {
-            Ok(dt) => DateTime::from_naive_utc_and_offset(dt, Utc),
-            Err(_) => continue,
-        };
-        cached.push((epoch, path));
-    }
-
-    if cached.len() <= max_entries {
-        return;
-    }
-
-    cached.sort_by(|a, b| b.0.cmp(&a.0));
-    for (_, path) in cached.into_iter().skip(max_entries) {
-        if let Err(_e) = fs::remove_file(&path) {
-            #[cfg(debug_assertions)]
-            eprintln!("Warning: Failed to prune Space-Track cache file: {}", _e);
-        }
-    }
-}
-
 /// Authenticate with Space-Track.org and create an authenticated agent
 ///
 /// Space-Track uses cookie-based session authentication.
@@ -490,10 +403,10 @@ pub fn fetch_tle_from_spacetrack(
     epoch_tolerance_days: Option<f64>,
 ) -> Result<TLEData, Box<dyn Error>> {
     let tolerance = epoch_tolerance_days.unwrap_or(*DEFAULT_EPOCH_TOLERANCE_DAYS);
-    let cache_dir = get_spacetrack_cache_dir(norad_id);
+    let cache_dir = epoch_cache_dir("spacetrack_cache", &norad_id.to_string());
 
     // Try to use cached version if epoch is within tolerance
-    if let Some(cached) = try_read_spacetrack_cache(&cache_dir, target_epoch, tolerance) {
+    if let Some(cached) = try_read_epoch_cache(&cache_dir, target_epoch, tolerance) {
         return Ok(cached);
     }
 
@@ -548,10 +461,11 @@ pub fn fetch_tle_from_spacetrack(
 
     // Save to cache
     let cache_content = format!("{}\n{}", best_tle.line1, best_tle.line2);
-    let cache_path = get_spacetrack_cache_path(norad_id, &best_tle.epoch);
-    save_to_spacetrack_cache(&cache_path, &cache_content);
-
-    prune_spacetrack_cache(&cache_dir, SPACETRACK_CACHE_MAX_ENTRIES);
+    save_tle_cache(
+        &epoch_cache_path(&cache_dir, &best_tle.epoch),
+        &cache_content,
+    );
+    prune_tle_cache(&cache_dir, SPACETRACK_CACHE_MAX_ENTRIES);
 
     Ok(best_tle)
 }
@@ -699,7 +613,7 @@ pub fn fetch_tle_unified(
         // tle parameter: file path or URL
         let (tle_data, src) =
             if tle_param.starts_with("http://") || tle_param.starts_with("https://") {
-                let data = download_tle_with_cache(tle_param)?;
+                let data = parse_tle_string(&download_tle(tle_param)?)?;
                 (data, "url")
             } else {
                 let data = read_tle_file(tle_param)?;
