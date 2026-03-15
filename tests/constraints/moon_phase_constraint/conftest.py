@@ -1,23 +1,11 @@
-"""Fixtures for test_new_constraints tests."""
+"""Fixtures for moon_phase_constraint tests."""
 
 from typing import TYPE_CHECKING
 
 import numpy as np
-import pytest
 
 if TYPE_CHECKING:
     import rust_ephem
-
-
-@pytest.fixture
-def saa_polygon() -> list[tuple[float, float]]:
-    """Simple rectangular SAA polygon for testing."""
-    return [
-        (-90.0, -50.0),  # Southwest
-        (-40.0, -50.0),  # Southeast
-        (-40.0, 0.0),  # Northeast
-        (-90.0, 0.0),  # Northwest
-    ]
 
 
 def moon_ra_dec_deg(ephem: "rust_ephem.Ephemeris", index: int) -> tuple[float, float]:

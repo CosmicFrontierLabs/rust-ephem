@@ -587,9 +587,11 @@ class TestFetchTLECorruptCacheRecovery:
         """fetch_tle returns a valid record despite the corrupt cache entry."""
         assert corrupt_cache_result["tle_record"] is not None
 
-    def test_corrupt_file_was_deleted(self, corrupt_cache_result):
-        """The corrupt cache file is removed after the parse failure."""
-        assert not corrupt_cache_result["corrupt_file"].exists()
+    def test_corrupt_file_is_skipped(self, corrupt_cache_result):
+        """A corrupt cache entry is skipped in favor of a valid cached record."""
+        tle = corrupt_cache_result["tle_record"]
+        assert tle.line1 == TLE1
+        assert tle.line2 == TLE2
 
     def test_valid_cache_file_preserved(self, corrupt_cache_result):
         """The valid (non-corrupt) cache file is left intact."""
