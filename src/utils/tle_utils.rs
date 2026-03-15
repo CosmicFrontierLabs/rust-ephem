@@ -21,13 +21,14 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
-/// Result of parsing a TLE - contains the two lines and optional satellite name
+/// Result of parsing a TLE - contains the two lines, optional satellite name, and epoch
 #[derive(Debug, Clone)]
 pub struct TLEData {
     pub line1: String,
     pub line2: String,
     #[allow(dead_code)]
     pub name: Option<String>,
+    pub epoch: DateTime<Utc>,
 }
 
 /// Parse TLE from a string that may be 2 or 3 lines
@@ -50,19 +51,23 @@ pub fn parse_tle_string(content: &str) -> Result<TLEData, Box<dyn Error>> {
         2 => {
             // 2-line format
             validate_tle_lines(lines[0], lines[1])?;
+            let epoch = extract_tle_epoch(lines[0])?;
             Ok(TLEData {
                 line1: lines[0].to_string(),
                 line2: lines[1].to_string(),
                 name: None,
+                epoch,
             })
         }
         3 => {
             // 3-line format: first line is the name
             validate_tle_lines(lines[1], lines[2])?;
+            let epoch = extract_tle_epoch(lines[1])?;
             Ok(TLEData {
                 line1: lines[1].to_string(),
                 line2: lines[2].to_string(),
                 name: Some(lines[0].to_string()),
+                epoch,
             })
         }
         _ => Err(format!(
@@ -282,13 +287,6 @@ impl SpaceTrackCredentials {
     }
 }
 
-/// Extended TLE data with epoch information for Space-Track caching
-#[derive(Debug, Clone)]
-pub struct TLEDataWithEpoch {
-    pub tle: TLEData,
-    pub epoch: DateTime<Utc>,
-}
-
 /// Get cache directory for Space-Track TLEs with NORAD ID
 fn get_spacetrack_cache_dir(norad_id: u32) -> PathBuf {
     let mut path = CACHE_DIR.clone();
@@ -313,12 +311,12 @@ fn get_spacetrack_cache_path(norad_id: u32, epoch: &DateTime<Utc>) -> PathBuf {
 /// * `tolerance_days` - How many days off the TLE epoch can be from target
 ///
 /// # Returns
-/// Some(TLEDataWithEpoch) if cache is valid, None otherwise
+/// Some(TLEData) if cache is valid, None otherwise
 fn try_read_spacetrack_cache(
     cache_dir: &Path,
     target_epoch: &DateTime<Utc>,
     tolerance_days: f64,
-) -> Option<TLEDataWithEpoch> {
+) -> Option<TLEData> {
     let entries = fs::read_dir(cache_dir).ok()?;
     let tolerance_seconds = tolerance_days * 86400.0;
 
@@ -366,15 +364,8 @@ fn try_read_spacetrack_cache(
             Ok(t) => t,
             Err(_) => continue,
         };
-        let tle_epoch = match extract_tle_epoch(&tle.line1) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
 
-        return Some(TLEDataWithEpoch {
-            tle,
-            epoch: tle_epoch,
-        });
+        return Some(tle);
     }
 
     #[cfg(debug_assertions)]
@@ -491,13 +482,13 @@ fn create_spacetrack_agent(
 /// * `epoch_tolerance_days` - How many days tolerance for cache matching (default: 2.0)
 ///
 /// # Returns
-/// TLEDataWithEpoch containing the TLE lines and epoch
+/// TLEData containing the TLE lines and epoch
 pub fn fetch_tle_from_spacetrack(
     norad_id: u32,
     target_epoch: &DateTime<Utc>,
     credentials: Option<SpaceTrackCredentials>,
     epoch_tolerance_days: Option<f64>,
-) -> Result<TLEDataWithEpoch, Box<dyn Error>> {
+) -> Result<TLEData, Box<dyn Error>> {
     let tolerance = epoch_tolerance_days.unwrap_or(*DEFAULT_EPOCH_TOLERANCE_DAYS);
     let cache_dir = get_spacetrack_cache_dir(norad_id);
 
@@ -556,7 +547,7 @@ pub fn fetch_tle_from_spacetrack(
     let best_tle = find_closest_tle_to_epoch(&body, target_epoch)?;
 
     // Save to cache
-    let cache_content = format!("{}\n{}", best_tle.tle.line1, best_tle.tle.line2);
+    let cache_content = format!("{}\n{}", best_tle.line1, best_tle.line2);
     let cache_path = get_spacetrack_cache_path(norad_id, &best_tle.epoch);
     save_to_spacetrack_cache(&cache_path, &cache_content);
 
@@ -569,7 +560,7 @@ pub fn fetch_tle_from_spacetrack(
 fn find_closest_tle_to_epoch(
     content: &str,
     target_epoch: &DateTime<Utc>,
-) -> Result<TLEDataWithEpoch, Box<dyn Error>> {
+) -> Result<TLEData, Box<dyn Error>> {
     let normalized = content.replace("\r\n", "\n");
     let lines: Vec<&str> = normalized
         .split('\n')
@@ -577,7 +568,7 @@ fn find_closest_tle_to_epoch(
         .filter(|s| !s.is_empty())
         .collect();
 
-    let mut best_tle: Option<TLEDataWithEpoch> = None;
+    let mut best_tle: Option<TLEData> = None;
     let mut best_diff = i64::MAX;
 
     // Process lines in pairs (TLE line 1 and line 2)
@@ -589,12 +580,10 @@ fn find_closest_tle_to_epoch(
         // Check if these are valid TLE lines
         if line1.starts_with('1') && line2.starts_with('2') {
             if let Ok(tle) = parse_tle_string(&format!("{}\n{}", line1, line2)) {
-                if let Ok(epoch) = extract_tle_epoch(&tle.line1) {
-                    let diff = (*target_epoch - epoch).num_seconds().abs();
-                    if diff < best_diff {
-                        best_diff = diff;
-                        best_tle = Some(TLEDataWithEpoch { tle, epoch });
-                    }
+                let diff = (*target_epoch - tle.epoch).num_seconds().abs();
+                if diff < best_diff {
+                    best_diff = diff;
+                    best_tle = Some(tle);
                 }
             }
             i += 2;
@@ -716,12 +705,11 @@ pub fn fetch_tle_unified(
                 let data = read_tle_file(tle_param)?;
                 (data, "file")
             };
-        let epoch = extract_tle_epoch(&tle_data.line1)?;
         Ok(FetchedTLE {
+            epoch: tle_data.epoch,
             line1: tle_data.line1,
             line2: tle_data.line2,
             name: tle_data.name,
-            epoch,
             source: src,
         })
     } else if let Some(nid) = norad_id {
@@ -729,12 +717,11 @@ pub fn fetch_tle_unified(
             Some("celestrak") => {
                 // Enforce Celestrak only
                 let tle_data = fetch_tle_by_norad_id(nid)?;
-                let epoch = extract_tle_epoch(&tle_data.line1)?;
                 Ok(FetchedTLE {
+                    epoch: tle_data.epoch,
                     line1: tle_data.line1,
                     line2: tle_data.line2,
                     name: tle_data.name,
-                    epoch,
                     source: "celestrak",
                 })
             }
@@ -747,10 +734,10 @@ pub fn fetch_tle_unified(
                 let tle_with_epoch =
                     fetch_tle_from_spacetrack(nid, &target, Some(creds), epoch_tolerance_days)?;
                 Ok(FetchedTLE {
-                    line1: tle_with_epoch.tle.line1,
-                    line2: tle_with_epoch.tle.line2,
-                    name: tle_with_epoch.tle.name,
                     epoch: tle_with_epoch.epoch,
+                    line1: tle_with_epoch.line1,
+                    line2: tle_with_epoch.line2,
+                    name: tle_with_epoch.name,
                     source: "spacetrack",
                 })
             }
@@ -768,10 +755,10 @@ pub fn fetch_tle_unified(
                     match fetch_tle_from_spacetrack(nid, &target, Some(creds), epoch_tolerance_days)
                     {
                         Ok(tle_with_epoch) => Ok(FetchedTLE {
-                            line1: tle_with_epoch.tle.line1,
-                            line2: tle_with_epoch.tle.line2,
-                            name: tle_with_epoch.tle.name,
                             epoch: tle_with_epoch.epoch,
+                            line1: tle_with_epoch.line1,
+                            line2: tle_with_epoch.line2,
+                            name: tle_with_epoch.name,
                             source: "spacetrack",
                         }),
                         Err(_spacetrack_err) => {
@@ -782,12 +769,11 @@ pub fn fetch_tle_unified(
                                 _spacetrack_err
                             );
                             let tle_data = fetch_tle_by_norad_id(nid)?;
-                            let epoch = extract_tle_epoch(&tle_data.line1)?;
                             Ok(FetchedTLE {
+                                epoch: tle_data.epoch,
                                 line1: tle_data.line1,
                                 line2: tle_data.line2,
                                 name: tle_data.name,
-                                epoch,
                                 source: "celestrak",
                             })
                         }
@@ -795,12 +781,11 @@ pub fn fetch_tle_unified(
                 } else {
                     // No Space-Track credentials, use Celestrak directly
                     let tle_data = fetch_tle_by_norad_id(nid)?;
-                    let epoch = extract_tle_epoch(&tle_data.line1)?;
                     Ok(FetchedTLE {
+                        epoch: tle_data.epoch,
                         line1: tle_data.line1,
                         line2: tle_data.line2,
                         name: tle_data.name,
-                        epoch,
                         source: "celestrak",
                     })
                 }
@@ -809,12 +794,11 @@ pub fn fetch_tle_unified(
     } else if let Some(name_query) = norad_name {
         // Fetch from Celestrak by satellite name
         let tle_data = fetch_tle_by_name(name_query)?;
-        let epoch = extract_tle_epoch(&tle_data.line1)?;
         Ok(FetchedTLE {
+            epoch: tle_data.epoch,
             line1: tle_data.line1,
             line2: tle_data.line2,
             name: tle_data.name,
-            epoch,
             source: "celestrak",
         })
     } else {
