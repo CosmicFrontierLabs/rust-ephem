@@ -193,10 +193,11 @@ class SAAConstraint(RustConstraintMixin):
 
 class AltAzConstraint(RustConstraintMixin):
     type: Literal["alt_az"] = "alt_az"
-    min_altitude: float
+    min_altitude: float | None = None
     max_altitude: float | None = None
     min_azimuth: float | None = None
     max_azimuth: float | None = None
+    polygon: list[tuple[float, float]] | None = None
 
 class OrbitRamConstraint(RustConstraintMixin):
     type: Literal["orbit_ram"] = "orbit_ram"

@@ -54,7 +54,7 @@ jobs:
         run: uv pip install maturin
 
       - name: Install test dependencies
-        run: uv pip install pytest numpy astropy pydantic
+        run: uv pip install pytest numpy astropy pydantic mypy
 
       - name: Build and install rust-ephem
         run: |
@@ -63,6 +63,9 @@ jobs:
 
       - name: Run cargo test
         run: cargo test --verbose
+
+      - name: Run mypy
+        run: mypy rust_ephem tests
 
       - name: Run pytest
         run: pytest tests/ -v --tb=short
