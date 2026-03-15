@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.2](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.5.1...v0.5.2) (2026-03-15)
+
+
+### Bug Fixes
+
+* **refactor:** refactor pytest directory structure ([#112](https://github.com/CosmicFrontierLabs/rust-ephem/issues/112)) ([56e8980](https://github.com/CosmicFrontierLabs/rust-ephem/commit/56e898029612b94cd8c54802fcdec0231bc4f1b7))
+* **types:** fix some typing issues ([#144](https://github.com/CosmicFrontierLabs/rust-ephem/issues/144)) ([128cbb4](https://github.com/CosmicFrontierLabs/rust-ephem/commit/128cbb4cec8fa19664177b4bca3148881129bd36))
+
 ## [0.5.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.5.0...v0.5.1) (2026-03-06)
 
 
