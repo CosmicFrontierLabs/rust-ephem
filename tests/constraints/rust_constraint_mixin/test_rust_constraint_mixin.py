@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 from rust_ephem.constraints import (
     ConstraintResult,
@@ -70,7 +71,7 @@ class TestRustConstraintMixin:
     ) -> None:
         constraint: SunConstraint = SunConstraint(min_angle=5.0)
         constraint._rust_constraint = patched_constraint()  # type: ignore[attr-defined]
-        batch: np.ndarray = constraint.in_constraint_batch(
+        batch: npt.NDArray[np.bool_] = constraint.in_constraint_batch(
             dummy_ephemeris,
             target_ras=[1.0, 2.0],
             target_decs=[3.0, 4.0],

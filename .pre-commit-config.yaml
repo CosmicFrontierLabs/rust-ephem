@@ -71,11 +71,10 @@ repos:
   - repo: local
     hooks:
       - id: mypy
-        name: mypy (python files in rust_ephem only)
+        name: mypy (rust_ephem + tests)
         entry: mypy
         language: system
-        types: [python]
-        files: ^(rust_ephem)/
-        args: [
-            "--strict", # Use mypy strict mode to enforce type hints
-          ]
+        pass_filenames: false
+        args:
+          - rust_ephem
+          - tests

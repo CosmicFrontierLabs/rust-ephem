@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Generator
 
 import numpy as np
+import numpy.typing as npt
 import pytest
 from astropy.coordinates import SkyCoord  # type:ignore[import-untyped]
 
@@ -24,7 +25,9 @@ EARTH_CONSTRAINT = 28
 SUN_CONSTRAINT = 45
 
 
-def eclipse_flags(obs_pos: np.ndarray, sun_pos: np.ndarray) -> tuple[bool, bool]:
+def eclipse_flags(
+    obs_pos: npt.NDArray[np.float64], sun_pos: npt.NDArray[np.float64]
+) -> tuple[bool, bool]:
     sun_dist = np.linalg.norm(sun_pos)
     if sun_dist <= 0.0:
         return False, False

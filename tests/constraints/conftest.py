@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Generator, List, Optional, Tuple
 
 import numpy as np
+import numpy.typing as npt
 import pytest
 from typing_extensions import Self
 
@@ -151,7 +152,7 @@ class DummyConstraintBackend:
         target_decs: object,
         times: object,
         indices: object,
-    ) -> np.ndarray:
+    ) -> npt.NDArray[np.bool_]:
         self.batch_calls.append((ephemeris, target_ras, target_decs, times, indices))
         return np.array([[True], [False]])
 
