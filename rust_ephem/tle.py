@@ -146,15 +146,14 @@ def fetch_tle(
         parse_failure = "Invalid TLE" in message
         timeout_failure = "timeout" in message.lower()
 
-        if timeout_failure or parse_failure:
-            parts = []
-            if norad_id is not None:
-                parts.append(f"NORAD ID {norad_id}")
-            if norad_name:
-                parts.append(f"satellite name '{norad_name}'")
-            if tle:
-                parts.append(f"source '{tle}'")
-            context = ", ".join(parts) if parts else "the requested source"
+        parts = []
+        if norad_id is not None:
+            parts.append(f"NORAD ID {norad_id}")
+        if norad_name:
+            parts.append(f"satellite name '{norad_name}'")
+        if tle:
+            parts.append(f"source '{tle}'")
+        context = ", ".join(parts) if parts else "the requested source"
 
         if timeout_failure:
             hint = (

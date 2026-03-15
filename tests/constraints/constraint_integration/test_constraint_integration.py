@@ -4,6 +4,7 @@ import numpy as np
 
 import rust_ephem
 from rust_ephem import AirmassConstraint
+from rust_ephem.constraints import AndConstraint, NotConstraint
 
 
 class TestConstraintIntegration:
@@ -45,7 +46,7 @@ class TestConstraintIntegration:
         sun = rust_ephem.SunConstraint(min_angle=45.0)
         airmass = AirmassConstraint(max_airmass=2.0)
         combined = sun & airmass
-        assert isinstance(combined, rust_ephem.constraints.AndConstraint)
+        assert isinstance(combined, AndConstraint)
 
     def test_constraint_operator_overloads_not_type(
         self, tle_ephemeris: "rust_ephem.TLEEphemeris"
@@ -53,7 +54,7 @@ class TestConstraintIntegration:
         """Test operator overloads NOT creates NotConstraint."""
         airmass = AirmassConstraint(max_airmass=2.0)
         not_airmass = ~airmass
-        assert isinstance(not_airmass, rust_ephem.constraints.NotConstraint)
+        assert isinstance(not_airmass, NotConstraint)
 
     def test_constraint_operator_overloads_combined_evaluation_type(
         self, tle_ephemeris: "rust_ephem.TLEEphemeris"
