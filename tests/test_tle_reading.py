@@ -555,85 +555,166 @@ class TestFetchTLE:
         finally:
             os.unlink(filepath)
 
+    def test_fetch_tle_timeout_error_is_reraised_with_hint(self):
+        """A timeout ValueError from the Rust layer gets a human-friendly message."""
+        from unittest.mock import patch
+
+        from rust_ephem.tle import fetch_tle
+
+        with patch(
+            "rust_ephem.tle._fetch_tle", side_effect=ValueError("Connection timeout")
+        ):
+            with pytest.raises(ValueError, match="timed out"):
+                fetch_tle(norad_id=25544)
+
+    def test_fetch_tle_timeout_error_includes_norad_id(self):
+        """The timeout hint mentions the NORAD ID when one was supplied."""
+        from unittest.mock import patch
+
+        from rust_ephem.tle import fetch_tle
+
+        with patch(
+            "rust_ephem.tle._fetch_tle", side_effect=ValueError("connection timeout")
+        ):
+            with pytest.raises(ValueError, match="25544"):
+                fetch_tle(norad_id=25544)
+
+    def test_fetch_tle_timeout_error_with_norad_name(self):
+        """The timeout hint mentions the satellite name when supplied."""
+        from unittest.mock import patch
+
+        from rust_ephem.tle import fetch_tle
+
+        with patch(
+            "rust_ephem.tle._fetch_tle", side_effect=ValueError("TIMEOUT occurred")
+        ):
+            with pytest.raises(ValueError, match="HUBBLE"):
+                fetch_tle(norad_name="HUBBLE")
+
+    def test_fetch_tle_timeout_error_with_tle_source(self):
+        """The timeout hint mentions the source path/URL when supplied."""
+        from unittest.mock import patch
+
+        from rust_ephem.tle import fetch_tle
+
+        with patch("rust_ephem.tle._fetch_tle", side_effect=ValueError("Read Timeout")):
+            with pytest.raises(ValueError, match="myfile.tle"):
+                fetch_tle(tle="myfile.tle")
+
+    def test_fetch_tle_parse_failure_error_is_reraised_with_hint(self):
+        """An 'Invalid TLE' ValueError from the Rust layer gets a human-friendly message."""
+        from unittest.mock import patch
+
+        from rust_ephem.tle import fetch_tle
+
+        with patch(
+            "rust_ephem.tle._fetch_tle", side_effect=ValueError("Invalid TLE format")
+        ):
+            with pytest.raises(ValueError, match="No TLE data was returned"):
+                fetch_tle(norad_id=25544)
+
+    def test_fetch_tle_parse_failure_includes_norad_name(self):
+        """The parse-failure hint includes the satellite name when supplied."""
+        from unittest.mock import patch
+
+        from rust_ephem.tle import fetch_tle
+
+        with patch(
+            "rust_ephem.tle._fetch_tle", side_effect=ValueError("Invalid TLE line 1")
+        ):
+            with pytest.raises(ValueError, match="HUBBLE"):
+                fetch_tle(norad_name="HUBBLE")
+
+    def test_fetch_tle_other_valueerror_is_reraised_unchanged(self):
+        """A ValueError that is neither a timeout nor a parse failure is re-raised as-is."""
+        from unittest.mock import patch
+
+        from rust_ephem.tle import fetch_tle
+
+        with patch(
+            "rust_ephem.tle._fetch_tle",
+            side_effect=ValueError("some unexpected problem"),
+        ):
+            with pytest.raises(ValueError, match="some unexpected problem"):
+                fetch_tle(norad_id=25544)
+
 
 class TestFetchTLECorruptCacheRecovery:
-    """Tests that fetch_tle recovers from a corrupt URL cache file.
+    """Tests that corrupt epoch-cache files are detected, deleted, and skipped.
 
-    A partial write or interrupted download can leave the cache file in a
-    state where it contains valid bytes but not a valid TLE.  The fetching
-    code should detect the parse failure, remove the stale/corrupt file,
-    and fall back to a fresh download.
+    A partial write or interrupted download can leave a cache file containing
+    invalid content.  The cache reader should detect the parse failure, remove
+    the corrupt file, and fall through to the next candidate.
+
+    This is tested via the Space-Track epoch cache path with fake credentials:
+    ``fetch_tle_from_spacetrack`` checks the on-disk cache *before* it ever
+    tries to authenticate, so a hit in the valid file returns successfully
+    without any network access.
     """
 
     @pytest.fixture(scope="class")
     def corrupt_cache_result(self):
-        import hashlib
-        import http.server
-        import socket
-        import threading
         from pathlib import Path
 
-        tle_content = TLE_3LINE.strip()
+        # Use a fake NORAD ID that will never have real cached TLEs.
+        norad_id = 99999
+        target_epoch = datetime(2025, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
 
-        with socket.socket() as sock:
-            sock.bind(("127.0.0.1", 0))
-            port = sock.getsockname()[1]
-
-        encoded = tle_content.encode()
-
-        class _Handler(http.server.BaseHTTPRequestHandler):
-            # Use HTTP/1.0 so the server closes the connection after each
-            # response, avoiding HTTP/1.1 keep-alive blocking on the client.
-            protocol_version = "HTTP/1.0"
-
-            def do_GET(self):
-                self.send_response(200)
-                self.send_header("Content-Length", str(len(encoded)))
-                self.end_headers()
-                self.wfile.write(encoded)
-
-            def log_message(self, *args):
-                pass  # suppress noisy output
-
-        server = http.server.HTTPServer(("127.0.0.1", port), _Handler)
-        thread = threading.Thread(target=server.serve_forever)
-        thread.daemon = True
-        thread.start()
-
-        url = f"http://127.0.0.1:{port}/test.tle"
-        cache_dir = Path(rust_ephem.get_cache_dir()) / "tle_cache"
+        cache_dir = (
+            Path(rust_ephem.get_cache_dir()) / "spacetrack_cache" / str(norad_id)
+        )
+        # Start from a clean slate so no pre-existing files interfere.
+        if cache_dir.exists():
+            for f in cache_dir.iterdir():
+                f.unlink()
         cache_dir.mkdir(parents=True, exist_ok=True)
-        url_hash = hashlib.md5(url.encode()).hexdigest()
-        cache_file = cache_dir / f"{url_hash}.tle"
 
-        cache_file.write_text("this is not a valid TLE\n")
-        tle_record = rust_ephem.fetch_tle(tle=url)
+        # Corrupt file is a perfect epoch match (diff = 0 s) → tried first.
+        corrupt_file = cache_dir / "20251014T000000.tle"
+        # Valid file is 60 s earlier (diff = 60 s) → tried second.
+        valid_file = cache_dir / "20251013T235900.tle"
 
-        yield {"tle_record": tle_record, "cache_file": cache_file}
+        corrupt_file.write_text("this is not a valid TLE\n")
+        valid_file.write_text(f"{TLE1}\n{TLE2}\n")
 
-        server.shutdown()
-        if cache_file.exists():
-            cache_file.unlink()
+        # fetch_tle_from_spacetrack reads the cache before touching credentials.
+        # The corrupt file is detected, deleted, and the valid file is returned —
+        # all without a network call.
+        tle_record = rust_ephem.fetch_tle(
+            norad_id=norad_id,
+            spacetrack_username="fake_user",
+            spacetrack_password="fake_pass",
+            epoch=target_epoch,
+            epoch_tolerance_days=200.0,
+        )
+
+        yield {
+            "tle_record": tle_record,
+            "corrupt_file": corrupt_file,
+            "valid_file": valid_file,
+        }
+
+        for f in [corrupt_file, valid_file]:
+            if f.exists():
+                f.unlink()
 
     def test_returns_a_record(self, corrupt_cache_result):
-        """fetch_tle succeeds even though the cached file was corrupt."""
+        """fetch_tle returns a valid record despite the corrupt cache entry."""
         assert corrupt_cache_result["tle_record"] is not None
 
-    def test_source_is_url(self, corrupt_cache_result):
-        """The record reports the URL as its source."""
-        assert corrupt_cache_result["tle_record"].source == "url"
+    def test_corrupt_file_was_deleted(self, corrupt_cache_result):
+        """The corrupt cache file is removed after the parse failure."""
+        assert not corrupt_cache_result["corrupt_file"].exists()
 
-    def test_satellite_name(self, corrupt_cache_result):
-        """The re-downloaded TLE has the expected satellite name."""
-        assert corrupt_cache_result["tle_record"].name == "ISS (ZARYA)"
+    def test_valid_cache_file_preserved(self, corrupt_cache_result):
+        """The valid (non-corrupt) cache file is left intact."""
+        assert corrupt_cache_result["valid_file"].exists()
 
-    def test_cache_file_is_repopulated(self, corrupt_cache_result):
-        """After recovery the cache file exists and contains fresh data."""
-        assert corrupt_cache_result["cache_file"].exists()
-
-    def test_cache_file_contains_valid_tle(self, corrupt_cache_result):
-        """The repopulated cache file contains the TLE line 1 for this satellite."""
-        assert "1 25544" in corrupt_cache_result["cache_file"].read_text()
+    def test_tle_data_is_correct(self, corrupt_cache_result):
+        """The returned TLE data matches the valid cached file contents."""
+        tle = corrupt_cache_result["tle_record"]
+        assert tle.line1 == TLE1
+        assert tle.line2 == TLE2
 
 
 if __name__ == "__main__":
