@@ -1,9 +1,12 @@
 """Fixtures for test_new_constraints tests."""
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import pytest
 
-import rust_ephem
+if TYPE_CHECKING:
+    import rust_ephem
 
 
 @pytest.fixture
@@ -17,7 +20,7 @@ def saa_polygon() -> list[tuple[float, float]]:
     ]
 
 
-def moon_ra_dec_deg(ephem: rust_ephem.Ephemeris, index: int) -> tuple[float, float]:
+def moon_ra_dec_deg(ephem: "rust_ephem.Ephemeris", index: int) -> tuple[float, float]:
     """Get moon RA/Dec in degrees for a given ephemeris index."""
     moon_pos = ephem.moon_pv.position[index]
     obs_pos = ephem.gcrs_pv.position[index]
@@ -30,7 +33,7 @@ def moon_ra_dec_deg(ephem: rust_ephem.Ephemeris, index: int) -> tuple[float, flo
     return ra, dec
 
 
-def moon_altitude_deg(ephem: rust_ephem.Ephemeris, index: int) -> float:
+def moon_altitude_deg(ephem: "rust_ephem.Ephemeris", index: int) -> float:
     """Get moon altitude in degrees for a given ephemeris index."""
     ra, dec = moon_ra_dec_deg(ephem, index)
     altaz = ephem.radec_to_altaz(ra, dec, time_indices=[index])

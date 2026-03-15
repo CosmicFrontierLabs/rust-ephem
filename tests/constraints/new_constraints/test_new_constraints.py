@@ -5,6 +5,7 @@ Tests AirmassConstraint, DaytimeConstraint, MoonPhaseConstraint, and SAAConstrai
 """
 
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
@@ -13,12 +14,18 @@ from pydantic import ValidationError
 import rust_ephem
 from rust_ephem.constraints import (
     AirmassConstraint,
+    AltAzConstraint,
     DaytimeConstraint,
     MoonPhaseConstraint,
+    OrbitPoleConstraint,
+    OrbitRamConstraint,
     SAAConstraint,
 )
 
 from .conftest import moon_altitude_deg, moon_ra_dec_deg
+
+if TYPE_CHECKING:
+    import rust_ephem
 
 
 class TestAirmassConstraint:
@@ -68,7 +75,7 @@ class TestAirmassConstraint:
             AirmassConstraint(max_airmass=1.5, min_airmass=2.0)
 
     def test_airmass_constraint_evaluation_zenith_satisfied(
-        self, ground_ephemeris: rust_ephem.GroundEphemeris
+        self, ground_ephemeris: "rust_ephem.GroundEphemeris"
     ) -> None:
         """Test airmass constraint evaluation with target at zenith."""
         constraint = AirmassConstraint(max_airmass=1.5)
@@ -76,7 +83,7 @@ class TestAirmassConstraint:
         assert result.all_satisfied
 
     def test_airmass_constraint_evaluation_horizon_violated(
-        self, ground_ephemeris: rust_ephem.GroundEphemeris
+        self, ground_ephemeris: "rust_ephem.GroundEphemeris"
     ) -> None:
         """Test airmass constraint evaluation with target at horizon."""
         constraint = AirmassConstraint(max_airmass=1.5)
@@ -84,7 +91,7 @@ class TestAirmassConstraint:
         assert not result.all_satisfied
 
     def test_airmass_constraint_batch_shape(
-        self, ground_ephemeris: rust_ephem.GroundEphemeris
+        self, ground_ephemeris: "rust_ephem.GroundEphemeris"
     ) -> None:
         """Test batch airmass constraint evaluation shape."""
         constraint = AirmassConstraint(max_airmass=1.5)
@@ -96,7 +103,7 @@ class TestAirmassConstraint:
         assert result.shape == (3, len(ground_ephemeris.timestamp))
 
     def test_airmass_constraint_batch_target0_satisfied(
-        self, ground_ephemeris: rust_ephem.GroundEphemeris
+        self, ground_ephemeris: "rust_ephem.GroundEphemeris"
     ) -> None:
         """Test batch airmass constraint evaluation target 0 satisfied."""
         constraint = AirmassConstraint(max_airmass=1.5)
@@ -108,7 +115,7 @@ class TestAirmassConstraint:
         assert np.all(~result[0, :])  # All False = all satisfied (not violated)
 
     # def test_airmass_constraint_batch_target1_satisfied(
-    #     self, ground_ephemeris: rust_ephem.GroundEphemeris
+    #     self, ground_ephemeris: "rust_ephem.GroundEphemeris"
     # ) -> None:
     #     """Test batch airmass constraint evaluation target 1 has some satisfied."""
     #     constraint = AirmassConstraint(max_airmass=1.5)
@@ -120,7 +127,7 @@ class TestAirmassConstraint:
     #     assert np.any(result[1, :])
 
     def test_airmass_constraint_batch_target2_some_violations(
-        self, ground_ephemeris: rust_ephem.GroundEphemeris
+        self, ground_ephemeris: "rust_ephem.GroundEphemeris"
     ) -> None:
         """Test batch airmass constraint evaluation target 2 has some violations."""
         constraint = AirmassConstraint(max_airmass=1.5)
@@ -132,7 +139,7 @@ class TestAirmassConstraint:
         assert np.any(result[2, :])  # Some True = some violated
 
     def test_airmass_batch_matches_single(
-        self, ground_ephemeris: rust_ephem.GroundEphemeris
+        self, ground_ephemeris: "rust_ephem.GroundEphemeris"
     ) -> None:
         """Test that batch constraint evaluation matches single-target evaluations."""
         constraint = AirmassConstraint(max_airmass=2.5, min_airmass=1.2)
@@ -209,7 +216,7 @@ class TestDaytimeConstraint:
             DaytimeConstraint(twilight="invalid")  # type: ignore[arg-type]
 
     def test_daytime_constraint_evaluation_type(
-        self, ground_ephemeris: rust_ephem.GroundEphemeris
+        self, ground_ephemeris: "rust_ephem.GroundEphemeris"
     ) -> None:
         """Test daytime constraint evaluation returns bool."""
         constraint = DaytimeConstraint()
@@ -219,7 +226,7 @@ class TestDaytimeConstraint:
         assert isinstance(daytime_result.all_satisfied, bool)
 
     def test_daytime_constraint_batch_shape(
-        self, ground_ephemeris: rust_ephem.GroundEphemeris
+        self, ground_ephemeris: "rust_ephem.GroundEphemeris"
     ) -> None:
         """Test batch daytime constraint evaluation shape."""
         constraint = DaytimeConstraint()
@@ -231,7 +238,7 @@ class TestDaytimeConstraint:
         assert result.shape == (3, len(ground_ephemeris.timestamp))
 
     def test_daytime_constraint_batch_dtype(
-        self, ground_ephemeris: rust_ephem.GroundEphemeris
+        self, ground_ephemeris: "rust_ephem.GroundEphemeris"
     ) -> None:
         """Test batch daytime constraint evaluation dtype."""
         constraint = DaytimeConstraint()
@@ -243,7 +250,7 @@ class TestDaytimeConstraint:
         assert result.dtype == bool
 
     def test_daytime_batch_matches_single(
-        self, ground_ephemeris: rust_ephem.GroundEphemeris
+        self, ground_ephemeris: "rust_ephem.GroundEphemeris"
     ) -> None:
         """Test that batch constraint evaluation matches single-target evaluations."""
         constraint = DaytimeConstraint(twilight="civil")
@@ -401,7 +408,7 @@ class TestMoonPhaseConstraint:
             MoonPhaseConstraint(max_illumination=0.5, moon_visibility="invalid")  # type: ignore[arg-type]
 
     def test_moon_phase_constraint_evaluation_type(
-        self, tle_ephemeris: rust_ephem.TLEEphemeris
+        self, tle_ephemeris: "rust_ephem.TLEEphemeris"
     ) -> None:
         """Test moon phase constraint evaluation returns bool."""
         constraint = MoonPhaseConstraint(max_illumination=0.5)
@@ -409,7 +416,7 @@ class TestMoonPhaseConstraint:
         assert isinstance(result.all_satisfied, bool)
 
     def test_moon_phase_constraint_batch_shape(
-        self, tle_ephemeris: rust_ephem.TLEEphemeris
+        self, tle_ephemeris: "rust_ephem.TLEEphemeris"
     ) -> None:
         """Test batch moon phase constraint evaluation shape."""
         constraint = MoonPhaseConstraint(max_illumination=0.5)
@@ -419,7 +426,7 @@ class TestMoonPhaseConstraint:
         assert result.shape == (3, len(tle_ephemeris.timestamp))
 
     def test_moon_phase_constraint_batch_dtype(
-        self, tle_ephemeris: rust_ephem.TLEEphemeris
+        self, tle_ephemeris: "rust_ephem.TLEEphemeris"
     ) -> None:
         """Test batch moon phase constraint evaluation dtype."""
         constraint = MoonPhaseConstraint(max_illumination=0.5)
@@ -429,7 +436,7 @@ class TestMoonPhaseConstraint:
         assert result.dtype == bool
 
     def test_moon_phase_constraint_illumination_violation(
-        self, tle_ephemeris: rust_ephem.TLEEphemeris
+        self, tle_ephemeris: "rust_ephem.TLEEphemeris"
     ) -> None:
         """Illumination threshold should trigger a violation."""
         illumination = tle_ephemeris.moon_illumination(time_indices=[0])[0]
@@ -450,7 +457,7 @@ class TestMoonPhaseConstraint:
         assert result.all_satisfied is False
 
     def test_moon_phase_constraint_min_distance_violation(
-        self, tle_ephemeris: rust_ephem.TLEEphemeris
+        self, tle_ephemeris: "rust_ephem.TLEEphemeris"
     ) -> None:
         """Min distance should trigger a violation when target is at the Moon."""
         ra, dec = moon_ra_dec_deg(tle_ephemeris, 0)
@@ -465,7 +472,7 @@ class TestMoonPhaseConstraint:
         assert result.all_satisfied is False
 
     def test_moon_phase_constraint_max_distance_violation(
-        self, tle_ephemeris: rust_ephem.TLEEphemeris
+        self, tle_ephemeris: "rust_ephem.TLEEphemeris"
     ) -> None:
         """Max distance should trigger a violation for a far target."""
         ra, dec = moon_ra_dec_deg(tle_ephemeris, 0)
@@ -523,7 +530,7 @@ class TestMoonPhaseConstraint:
         assert enforced.all_satisfied is False
 
     def test_moon_phase_batch_matches_single(
-        self, tle_ephemeris: rust_ephem.TLEEphemeris
+        self, tle_ephemeris: "rust_ephem.TLEEphemeris"
     ) -> None:
         """Test that batch constraint evaluation matches single-target evaluations."""
         constraint = MoonPhaseConstraint(
@@ -581,7 +588,7 @@ class TestSAAConstraint:
 
     def test_saa_constraint_evaluation_type(
         self,
-        tle_ephemeris: rust_ephem.TLEEphemeris,
+        tle_ephemeris: "rust_ephem.TLEEphemeris",
         saa_polygon: list[tuple[float, float]],
     ) -> None:
         """Test SAA constraint evaluation returns bool."""
@@ -591,7 +598,7 @@ class TestSAAConstraint:
 
     def test_saa_constraint_batch_shape(
         self,
-        tle_ephemeris: rust_ephem.TLEEphemeris,
+        tle_ephemeris: "rust_ephem.TLEEphemeris",
         saa_polygon: list[tuple[float, float]],
     ) -> None:
         """Test batch SAA constraint evaluation shape."""
@@ -603,7 +610,7 @@ class TestSAAConstraint:
 
     def test_saa_constraint_batch_dtype(
         self,
-        tle_ephemeris: rust_ephem.TLEEphemeris,
+        tle_ephemeris: "rust_ephem.TLEEphemeris",
         saa_polygon: list[tuple[float, float]],
     ) -> None:
         """Test batch SAA constraint evaluation dtype."""
@@ -615,7 +622,7 @@ class TestSAAConstraint:
 
     def test_saa_batch_matches_single(
         self,
-        tle_ephemeris: rust_ephem.TLEEphemeris,
+        tle_ephemeris: "rust_ephem.TLEEphemeris",
         saa_polygon: list[tuple[float, float]],
     ) -> None:
         """Test that batch constraint evaluation matches single-target evaluations."""
@@ -711,8 +718,8 @@ class TestConstraintIntegration:
 
     def test_combined_constraints_evaluation_type(
         self,
-        tle_ephemeris: rust_ephem.TLEEphemeris,
-        ground_ephemeris: rust_ephem.GroundEphemeris,
+        tle_ephemeris: "rust_ephem.TLEEphemeris",
+        ground_ephemeris: "rust_ephem.GroundEphemeris",
     ) -> None:
         """Test combining new constraints evaluation returns bool."""
         from rust_ephem.constraints import AndConstraint, SunConstraint
@@ -725,7 +732,7 @@ class TestConstraintIntegration:
         assert isinstance(result.all_satisfied, bool)
 
     def test_constraint_not_operation_inverts(
-        self, ground_ephemeris: rust_ephem.GroundEphemeris
+        self, ground_ephemeris: "rust_ephem.GroundEphemeris"
     ) -> None:
         """Test NOT operation inverts the result."""
 
@@ -739,7 +746,7 @@ class TestConstraintIntegration:
         )
 
     def test_constraint_operator_overloads_and_type(
-        self, tle_ephemeris: rust_ephem.TLEEphemeris
+        self, tle_ephemeris: "rust_ephem.TLEEphemeris"
     ) -> None:
         """Test operator overloads AND creates AndConstraint."""
         sun = rust_ephem.SunConstraint(min_angle=45.0)
@@ -748,7 +755,7 @@ class TestConstraintIntegration:
         assert isinstance(combined, rust_ephem.constraints.AndConstraint)
 
     def test_constraint_operator_overloads_not_type(
-        self, tle_ephemeris: rust_ephem.TLEEphemeris
+        self, tle_ephemeris: "rust_ephem.TLEEphemeris"
     ) -> None:
         """Test operator overloads NOT creates NotConstraint."""
         airmass = AirmassConstraint(max_airmass=2.0)
@@ -756,7 +763,7 @@ class TestConstraintIntegration:
         assert isinstance(not_airmass, rust_ephem.constraints.NotConstraint)
 
     def test_constraint_operator_overloads_combined_evaluation_type(
-        self, tle_ephemeris: rust_ephem.TLEEphemeris
+        self, tle_ephemeris: "rust_ephem.TLEEphemeris"
     ) -> None:
         """Test operator overloads combined evaluation returns bool."""
         sun = rust_ephem.SunConstraint(min_angle=45.0)
@@ -764,3 +771,174 @@ class TestConstraintIntegration:
         combined = sun & airmass
         result = combined.evaluate(tle_ephemeris, target_ra=0.0, target_dec=0.0)
         assert isinstance(result.all_satisfied, bool)
+
+
+class TestAltAzConstraint:
+    """Test AltAzConstraint functionality."""
+
+    def test_alt_az_constraint_creation_basic(self) -> None:
+        """Test creating alt-az constraint with basic parameters."""
+        constraint = AltAzConstraint(min_altitude=10.0, max_altitude=80.0)
+        assert constraint.min_altitude == 10.0
+        assert constraint.max_altitude == 80.0
+
+    def test_alt_az_constraint_creation_with_azimuth(self) -> None:
+        """Test creating alt-az constraint with azimuth limits."""
+        constraint = AltAzConstraint(
+            min_altitude=20.0, max_altitude=70.0, min_azimuth=90.0, max_azimuth=270.0
+        )
+        assert constraint.min_azimuth == 90.0
+        assert constraint.max_azimuth == 270.0
+
+    def test_alt_az_constraint_creation_with_polygon(self) -> None:
+        """Test creating alt-az constraint with polygon."""
+        polygon = [(10.0, 0.0), (10.0, 90.0), (80.0, 90.0), (80.0, 0.0)]
+        constraint = AltAzConstraint(polygon=polygon)
+        assert constraint.polygon == polygon
+
+    def test_alt_az_constraint_validation_valid_basic(self) -> None:
+        """Test alt-az constraint parameter validation with valid basic."""
+        AltAzConstraint(min_altitude=10.0, max_altitude=80.0)
+
+    def test_alt_az_constraint_validation_invalid_altitude_low(self) -> None:
+        """Test alt-az constraint parameter validation with invalid low altitude."""
+        with pytest.raises(ValidationError):
+            AltAzConstraint(min_altitude=-10.0)
+
+    def test_alt_az_constraint_validation_invalid_altitude_high(self) -> None:
+        """Test alt-az constraint parameter validation with invalid high altitude."""
+        with pytest.raises(ValidationError):
+            AltAzConstraint(max_altitude=100.0)
+
+    def test_alt_az_constraint_validation_invalid_azimuth_low(self) -> None:
+        """Test alt-az constraint parameter validation with invalid low azimuth."""
+        with pytest.raises(ValidationError):
+            AltAzConstraint(min_altitude=10.0, min_azimuth=-10.0)
+
+    def test_alt_az_constraint_validation_invalid_azimuth_high(self) -> None:
+        """Test alt-az constraint parameter validation with invalid high azimuth."""
+        with pytest.raises(ValidationError):
+            AltAzConstraint(min_altitude=10.0, max_azimuth=400.0)
+
+    def test_alt_az_constraint_validation_invalid_polygon_few_points(self) -> None:
+        """Test alt-az constraint with invalid polygon - should still create but may fail later."""
+        # Pydantic doesn't validate polygon, so this should create the constraint
+        constraint = AltAzConstraint(polygon=[(10.0, 0.0), (20.0, 0.0)])
+        assert constraint.polygon == [(10.0, 0.0), (20.0, 0.0)]
+
+    def test_alt_az_constraint_evaluation_type(
+        self, ground_ephemeris: "rust_ephem.GroundEphemeris"
+    ) -> None:
+        """Test alt-az constraint evaluation returns bool."""
+        constraint = AltAzConstraint(min_altitude=10.0, max_altitude=80.0)
+        result = constraint.evaluate(ground_ephemeris, target_ra=0.0, target_dec=35.0)
+        assert isinstance(result.all_satisfied, bool)
+
+    def test_alt_az_constraint_batch_shape(
+        self, ground_ephemeris: "rust_ephem.GroundEphemeris"
+    ) -> None:
+        """Test batch alt-az constraint evaluation shape."""
+        constraint = AltAzConstraint(min_altitude=10.0, max_altitude=80.0)
+        target_ras = [0.0, 90.0, 180.0]
+        target_decs = [35.0, 35.0, -27.0]
+        result = constraint.in_constraint_batch(
+            ground_ephemeris, target_ras, target_decs
+        )
+        assert result.shape == (3, len(ground_ephemeris.timestamp))
+
+
+class TestOrbitRamConstraint:
+    """Test OrbitRamConstraint functionality."""
+
+    def test_orbit_ram_constraint_creation_basic(self) -> None:
+        """Test creating orbit RAM constraint with basic parameters."""
+        constraint = OrbitRamConstraint(min_angle=30.0)
+        assert constraint.min_angle == 30.0
+
+    def test_orbit_ram_constraint_creation_with_max(self) -> None:
+        """Test creating orbit RAM constraint with max angle."""
+        constraint = OrbitRamConstraint(min_angle=15.0, max_angle=90.0)
+        assert constraint.max_angle == 90.0
+
+    def test_orbit_ram_constraint_validation_valid_basic(self) -> None:
+        """Test orbit RAM constraint parameter validation with valid basic."""
+        OrbitRamConstraint(min_angle=30.0)
+
+    def test_orbit_ram_constraint_validation_invalid_angle_low(self) -> None:
+        """Test orbit RAM constraint parameter validation with invalid low angle."""
+        with pytest.raises(ValidationError):
+            OrbitRamConstraint(min_angle=-10.0)
+
+    def test_orbit_ram_constraint_validation_invalid_angle_high(self) -> None:
+        """Test orbit RAM constraint parameter validation with invalid high angle."""
+        with pytest.raises(ValidationError):
+            OrbitRamConstraint(min_angle=30.0, max_angle=200.0)
+
+    def test_orbit_ram_constraint_evaluation_type(
+        self, tle_ephemeris: "rust_ephem.TLEEphemeris"
+    ) -> None:
+        """Test orbit RAM constraint evaluation returns bool."""
+        constraint = OrbitRamConstraint(min_angle=30.0)
+        result = constraint.evaluate(tle_ephemeris, target_ra=0.0, target_dec=0.0)
+        assert isinstance(result.all_satisfied, bool)
+
+    def test_orbit_ram_constraint_batch_shape(
+        self, tle_ephemeris: "rust_ephem.TLEEphemeris"
+    ) -> None:
+        """Test batch orbit RAM constraint evaluation shape."""
+        constraint = OrbitRamConstraint(min_angle=30.0)
+        target_ras = [0.0, 90.0, 180.0]
+        target_decs = [0.0, 30.0, -30.0]
+        result = constraint.in_constraint_batch(tle_ephemeris, target_ras, target_decs)
+        assert result.shape == (3, len(tle_ephemeris.timestamp))
+
+
+class TestOrbitPoleConstraint:
+    """Test OrbitPoleConstraint functionality."""
+
+    def test_orbit_pole_constraint_creation_basic(self) -> None:
+        """Test creating orbit pole constraint with basic parameters."""
+        constraint = OrbitPoleConstraint(min_angle=45.0)
+        assert constraint.min_angle == 45.0
+
+    def test_orbit_pole_constraint_creation_with_max(self) -> None:
+        """Test creating orbit pole constraint with max angle."""
+        constraint = OrbitPoleConstraint(min_angle=20.0, max_angle=120.0)
+        assert constraint.max_angle == 120.0
+
+    def test_orbit_pole_constraint_creation_with_earth_limb_pole(self) -> None:
+        """Test creating orbit pole constraint with earth limb pole."""
+        constraint = OrbitPoleConstraint(min_angle=30.0, earth_limb_pole=True)
+        assert constraint.earth_limb_pole is True
+
+    def test_orbit_pole_constraint_validation_valid_basic(self) -> None:
+        """Test orbit pole constraint parameter validation with valid basic."""
+        OrbitPoleConstraint(min_angle=45.0)
+
+    def test_orbit_pole_constraint_validation_invalid_angle_low(self) -> None:
+        """Test orbit pole constraint parameter validation with invalid low angle."""
+        with pytest.raises(ValidationError):
+            OrbitPoleConstraint(min_angle=-10.0)
+
+    def test_orbit_pole_constraint_validation_invalid_angle_high(self) -> None:
+        """Test orbit pole constraint parameter validation with invalid high angle."""
+        with pytest.raises(ValidationError):
+            OrbitPoleConstraint(min_angle=30.0, max_angle=200.0)
+
+    def test_orbit_pole_constraint_evaluation_type(
+        self, tle_ephemeris: "rust_ephem.TLEEphemeris"
+    ) -> None:
+        """Test orbit pole constraint evaluation returns bool."""
+        constraint = OrbitPoleConstraint(min_angle=45.0)
+        result = constraint.evaluate(tle_ephemeris, target_ra=0.0, target_dec=0.0)
+        assert isinstance(result.all_satisfied, bool)
+
+    def test_orbit_pole_constraint_batch_shape(
+        self, tle_ephemeris: "rust_ephem.TLEEphemeris"
+    ) -> None:
+        """Test batch orbit pole constraint evaluation shape."""
+        constraint = OrbitPoleConstraint(min_angle=45.0)
+        target_ras = [0.0, 90.0, 180.0]
+        target_decs = [0.0, 30.0, -30.0]
+        result = constraint.in_constraint_batch(tle_ephemeris, target_ras, target_decs)
+        assert result.shape == (3, len(tle_ephemeris.timestamp))

@@ -65,6 +65,27 @@ def ground_ephemeris(ensure_planetary_data: Any) -> Any:
     )
 
 
+@pytest.fixture
+def temp_dir() -> Any:
+    """Create a temporary directory for testing."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        yield Path(temp_dir)
+
+
+@pytest.fixture
+def rust_ephem_available() -> bool:
+    """Check if rust_ephem is available."""
+    try:
+        import rust_ephem  # type: ignore[import-untyped]  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
 def pytest_configure(config: Config) -> None:
     """Configure pytest with custom markers."""
     config.addinivalue_line(
@@ -85,9 +106,20 @@ def pytest_collection_modifyitems(config: Config, items: list[Any]) -> None:
     except ImportError:
         has_astropy = False
 
+    # Check for rust_ephem
+    try:
+        import rust_ephem  # type: ignore[import-untyped]  # noqa: F401
+
+        has_rust_ephem = True
+    except ImportError:
+        has_rust_ephem = False
+
     # Mark tests based on module imports
     skip_astropy: pytest.MarkDecorator = pytest.mark.skip(
         reason="astropy not installed"
+    )
+    skip_rust_ephem: pytest.MarkDecorator = pytest.mark.skip(
+        reason="rust_ephem extension not built"
     )
 
     for item in items:
@@ -100,3 +132,7 @@ def pytest_collection_modifyitems(config: Config, items: list[Any]) -> None:
             item.add_marker(skip_astropy)
         if not has_astropy and "sun_moon" in item.nodeid.lower():
             item.add_marker(skip_astropy)
+
+        # Check if test requires rust_ephem
+        if not has_rust_ephem and "rust_ephem" in str(item.fspath):
+            item.add_marker(skip_rust_ephem)
