@@ -2,12 +2,18 @@
 Tests for the index() method on all ephemeris types
 """
 
+import os
 from datetime import datetime
 from typing import Any
 
 import numpy as np
+import pytest
 
 from rust_ephem import SPICEEphemeris, TLEEphemeris
+
+# Check if SPICE test data is available
+TEST_SPK_PATH = "test_data/de440s.bsp"
+SKIP_SPICE_TEST = not os.path.exists(TEST_SPK_PATH)
 
 
 class TestIndexMethod:
@@ -125,6 +131,12 @@ class TestIndexMethod:
 
 class TestIndexMethodSPICE:
     """Test index() method with SPICE ephemeris"""
+
+    pytestmark = [
+        pytest.mark.skipif(
+            SKIP_SPICE_TEST, reason=f"SPICE kernel file not found at {TEST_SPK_PATH}"
+        ),
+    ]
 
     def test_index_works_with_spice(self) -> None:
         """index() should work with SPICEEphemeris"""
