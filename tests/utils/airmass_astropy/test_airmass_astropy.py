@@ -19,12 +19,11 @@ have less atmosphere above them. For example:
 - La Palma (2.4 km): airmass reduced by ~24% compared to sea level
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List
 
 import astropy.units as u  # type: ignore[import-untyped]
 import numpy as np
-import pytest
 from astropy.coordinates import (  # type: ignore[import-untyped]
     AltAz,
     EarthLocation,
@@ -39,13 +38,6 @@ RTOL_SEA_LEVEL = 0.05  # 5% relative tolerance
 ATOL_SEA_LEVEL = 0.01  # absolute tolerance
 RTOL_ALTITUDE = 0.05  # 5% relative tolerance for altitude comparisons
 ATOL_ALTITUDE = 0.01  # absolute tolerance
-
-
-@pytest.fixture
-def test_times() -> List[datetime]:
-    """Generate a sequence of test times."""
-    start = datetime(2025, 1, 15, 0, 0, 0)
-    return [start + timedelta(hours=i) for i in range(6)]
 
 
 class TestAirmassAstropyComparison:

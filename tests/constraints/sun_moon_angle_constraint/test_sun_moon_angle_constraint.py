@@ -1,5 +1,4 @@
-from datetime import datetime, timezone
-from typing import Any, Generator
+from typing import Any
 
 import numpy as np
 import pytest
@@ -7,10 +6,7 @@ from astropy.coordinates import SkyCoord  # type:ignore[import-untyped]
 
 import rust_ephem
 from rust_ephem.constraints import (
-    EarthLimbConstraint,
     EclipseConstraint,
-    MoonConstraint,
-    SunConstraint,
 )
 
 EARTH_RADIUS_KM = 6378.137
@@ -45,75 +41,6 @@ def eclipse_flags(obs_pos: np.ndarray, sun_pos: np.ndarray) -> tuple[bool, bool]
     in_penumbra = dist_to_axis < penumbra_radius
 
     return bool(in_umbra), bool(in_penumbra)
-
-
-@pytest.fixture
-def tle() -> tuple[str, str]:
-    tle1 = "1 28485U 04047A   25317.24527149  .00068512  00000+0  12522-2 0  9999"
-    tle2 = "2 28485  20.5556  25.5469 0004740 206.7882 153.2316 15.47667717153136"
-    return tle1, tle2
-
-
-@pytest.fixture
-def begin_end_step_size() -> tuple[datetime, datetime, int]:
-    # Time span and step
-    begin = datetime(2025, 9, 23, 0, 0, 0, tzinfo=timezone.utc)
-    end = datetime(2025, 9, 24, 0, 0, 0, tzinfo=timezone.utc)
-    step_s = 60  # 1 minute
-    return begin, end, step_s
-
-
-@pytest.fixture
-def tle_ephem(
-    tle: tuple[str, str], begin_end_step_size: tuple[datetime, datetime, int]
-) -> Generator[rust_ephem.TLEEphemeris, None, None]:
-    yield rust_ephem.TLEEphemeris(
-        tle[0],
-        tle[1],
-        begin_end_step_size[0],
-        begin_end_step_size[1],
-        begin_end_step_size[2],
-    )
-
-
-@pytest.fixture
-def sun(tle_ephem: rust_ephem.TLEEphemeris) -> SkyCoord:
-    return tle_ephem.sun[183]
-
-
-@pytest.fixture
-def moon(tle_ephem: rust_ephem.TLEEphemeris) -> SkyCoord:
-    return tle_ephem.moon[183]
-
-
-@pytest.fixture
-def earth(tle_ephem: rust_ephem.TLEEphemeris) -> SkyCoord:
-    return tle_ephem.earth[183]
-
-
-@pytest.fixture
-def timestamp(tle_ephem: rust_ephem.TLEEphemeris) -> Any:
-    return tle_ephem.timestamp[183]
-
-
-@pytest.fixture
-def sun_constraint() -> SunConstraint:
-    return SunConstraint(min_angle=SUN_CONSTRAINT)
-
-
-@pytest.fixture
-def moon_constraint() -> MoonConstraint:
-    return MoonConstraint(min_angle=MOON_CONSTRAINT)
-
-
-@pytest.fixture
-def earth_limb_constraint() -> EarthLimbConstraint:
-    return EarthLimbConstraint(min_angle=EARTH_CONSTRAINT)
-
-
-@pytest.fixture
-def eclipse_constraint() -> EclipseConstraint:
-    return EclipseConstraint()
 
 
 class TestSunConstraints:
