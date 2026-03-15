@@ -211,9 +211,15 @@ fn try_read_epoch_cache(
     }
     candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
     for (_, path) in candidates {
-        if let Ok(content) = fs::read_to_string(&path) {
-            if let Ok(tle) = parse_tle_string(&content) {
-                return Some(tle);
+        match fs::read_to_string(&path)
+            .ok()
+            .and_then(|c| parse_tle_string(&c).ok())
+        {
+            Some(tle) => return Some(tle),
+            None => {
+                #[cfg(debug_assertions)]
+                eprintln!("Removing corrupt TLE cache file: {}", path.display());
+                let _ = fs::remove_file(&path);
             }
         }
     }
@@ -240,7 +246,16 @@ fn try_read_celestrak_cache(cache_dir: &Path) -> Option<TLEData> {
     if SystemTime::now().duration_since(mtime).ok()? > ttl {
         return None;
     }
-    parse_tle_string(&fs::read_to_string(&path).ok()?).ok()
+    let content = fs::read_to_string(&path).ok()?;
+    match parse_tle_string(&content) {
+        Ok(tle) => Some(tle),
+        Err(_) => {
+            #[cfg(debug_assertions)]
+            eprintln!("Removing corrupt TLE cache file: {}", path.display());
+            let _ = fs::remove_file(&path);
+            None
+        }
+    }
 }
 
 // ============================================================================
