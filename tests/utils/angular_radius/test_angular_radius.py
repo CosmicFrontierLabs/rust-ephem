@@ -18,9 +18,7 @@ import numpy as np
 
 import rust_ephem
 
-# Physical radius constants (must match src/utils/config.rs)
-SUN_RADIUS_KM = 695700.0  # IAU 2015 Resolution B3 nominal solar radius
-MOON_RADIUS_KM = 1737.4
+from .conftest import MOON_RADIUS_KM, SUN_RADIUS_KM
 
 
 class TestSunAngularRadius:

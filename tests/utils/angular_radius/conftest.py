@@ -8,6 +8,10 @@ import pytest
 
 import rust_ephem
 
+# Constants for angular radius calculations
+SUN_RADIUS_KM = 695700.0  # IAU 2015 Resolution B3 nominal solar radius
+MOON_RADIUS_KM = 1737.4
+
 
 @pytest.fixture(scope="module")
 def ensure_planetary_data() -> None:

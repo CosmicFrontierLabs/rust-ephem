@@ -15,20 +15,10 @@ Build and install the Rust module first:
     pip install target/wheels/*.whl
 """
 
-from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
 import pytest
-
-from rust_ephem._rust_ephem import TLEEphemeris
-
-try:
-    import rust_ephem
-
-    RUST_EPHEM_AVAILABLE = True
-except ImportError:
-    RUST_EPHEM_AVAILABLE = False
 
 try:
     from astropy.coordinates import ITRS, SkyCoord  # type: ignore[import-untyped]
@@ -37,32 +27,9 @@ try:
 except ImportError:
     ASTROPY_AVAILABLE = False
 
-# Test TLE for NORAD ID 28485 (2004-047A)
-TLE1 = "1 28485U 04047A   25287.56748435  .00035474  00000+0  70906-3 0  9995"
-TLE2 = "2 28485  20.5535 247.0048 0005179 187.1586 172.8782 15.44937919148530"
-
-# Test times
-BEGIN = datetime(2025, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
-END = datetime(2025, 10, 14, 0, 30, 0, tzinfo=timezone.utc)
-STEP_SIZE = 60  # 1 minute
-
-# Position/velocity tolerance
-TOLERANCE = 1e-9
+from .conftest import TOLERANCE
 
 
-@pytest.fixture
-def ephem() -> TLEEphemeris:
-    return rust_ephem.TLEEphemeris(TLE1, TLE2, BEGIN, END, STEP_SIZE)
-
-
-@pytest.fixture()
-def ephem_single_point() -> TLEEphemeris:
-    return rust_ephem.TLEEphemeris(TLE1, TLE2, BEGIN, BEGIN, 1)
-
-
-@pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
-@pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-@pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
 def test_itrs_to_skycoord_is_skycoord(ephem: Any) -> None:
     """Test that itrs property returns valid SkyCoord with ITRS frame."""
@@ -143,9 +110,6 @@ def test_itrs_to_skycoord_check_velocities(ephem: Any, index: int) -> None:
     )
 
 
-@pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
-@pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-@pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
 def test_itrs_frame_conversion(ephem_single_point: Any) -> None:
     """Test that ITRS SkyCoord can be converted to other frames."""

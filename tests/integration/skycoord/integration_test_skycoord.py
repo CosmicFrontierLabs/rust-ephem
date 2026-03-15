@@ -3,7 +3,6 @@
 
 import sys
 import time
-from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
@@ -14,14 +13,7 @@ from astropy.coordinates.representation.cartesian import (  # type: ignore[impor
 )
 from astropy.time.core import Time  # type: ignore[import-untyped]
 
-from rust_ephem._rust_ephem import TLEEphemeris
-
-try:
-    import rust_ephem
-
-    RUST_EPHEM_AVAILABLE = True
-except ImportError:
-    RUST_EPHEM_AVAILABLE = False
+import rust_ephem
 
 try:
     import astropy.units as u  # type: ignore[import-untyped]
@@ -37,153 +29,103 @@ try:
 except ImportError:
     ASTROPY_AVAILABLE = False
 
-# Test TLE for NORAD ID 28485 (2004-047A)
-TLE1 = "1 28485U 04047A   25287.56748435  .00035474  00000+0  70906-3 0  9995"
-TLE2 = "2 28485  20.5535 247.0048 0005179 187.1586 172.8782 15.44937919148530"
-
-# Test times
-BEGIN = datetime(2025, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
-END = datetime(2025, 10, 14, 1, 40, 0, tzinfo=timezone.utc)
-STEP_SIZE = 60  # 1 minute = 101 points
-
-# Position/velocity tolerance (in km and km/s)
-POSITION_TOLERANCE = 1e-6  # Very tight tolerance since we're comparing our own data
-VELOCITY_TOLERANCE = 1e-6
+from .conftest import (
+    BEGIN,
+    END,
+    POSITION_TOLERANCE,
+    STEP_SIZE,
+    TLE1,
+    TLE2,
+    VELOCITY_TOLERANCE,
+)
 
 
 class TestObsGeo:
     """Single-assert tests for obsgeoloc/obsgeovel."""
 
-    @pytest.fixture
-    def ephem(self) -> TLEEphemeris:
-        return rust_ephem.TLEEphemeris(TLE1, TLE2, BEGIN, BEGIN, 1)
-
-    @pytest.mark.skipif(
-        not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available"
-    )
     @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-    def test_has_obsgeoloc_attr(self: Any, ephem: Any) -> None:
-        assert hasattr(ephem, "obsgeoloc")
+    def test_has_obsgeoloc_attr(self: Any, single_point_ephem: Any) -> None:
+        assert hasattr(single_point_ephem, "obsgeoloc")
 
-    @pytest.mark.skipif(
-        not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available"
-    )
     @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-    def test_has_obsgeovel_attr(self: Any, ephem: Any) -> None:
-        assert hasattr(ephem, "obsgeovel")
+    def test_has_obsgeovel_attr(self: Any, single_point_ephem: Any) -> None:
+        assert hasattr(single_point_ephem, "obsgeovel")
 
-    @pytest.mark.skipif(
-        not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available"
-    )
     @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-    def test_obsgeoloc_shape_matches_gcrs(self: Any, ephem: Any) -> None:
-        assert ephem.obsgeoloc.shape == ephem.gcrs_pv.position.shape
+    def test_obsgeoloc_shape_matches_gcrs(self: Any, single_point_ephem: Any) -> None:
+        assert (
+            single_point_ephem.obsgeoloc.shape
+            == single_point_ephem.gcrs_pv.position.shape
+        )
 
-    @pytest.mark.skipif(
-        not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available"
-    )
     @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-    def test_obsgeovel_shape_matches_gcrs(self: Any, ephem: Any) -> None:
-        assert ephem.obsgeovel.shape == ephem.gcrs_pv.velocity.shape
+    def test_obsgeovel_shape_matches_gcrs(self: Any, single_point_ephem: Any) -> None:
+        assert (
+            single_point_ephem.obsgeovel.shape
+            == single_point_ephem.gcrs_pv.velocity.shape
+        )
 
-    @pytest.mark.skipif(
-        not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available"
-    )
     @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-    def test_obsgeoloc_equals_gcrs_position(self: Any, ephem: Any) -> None:
-        assert np.allclose(ephem.obsgeoloc, ephem.gcrs_pv.position)
+    def test_obsgeoloc_equals_gcrs_position(self: Any, single_point_ephem: Any) -> None:
+        assert np.allclose(
+            single_point_ephem.obsgeoloc, single_point_ephem.gcrs_pv.position
+        )
 
-    @pytest.mark.skipif(
-        not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available"
-    )
     @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-    def test_obsgeovel_equals_gcrs_velocity(self: Any, ephem: Any) -> None:
-        assert np.allclose(ephem.obsgeovel, ephem.gcrs_pv.velocity)
+    def test_obsgeovel_equals_gcrs_velocity(self: Any, single_point_ephem: Any) -> None:
+        assert np.allclose(
+            single_point_ephem.obsgeovel, single_point_ephem.gcrs_pv.velocity
+        )
 
 
 class TestGCRSSkyCoord:
     """Single-assert tests for gcrs basic behavior."""
 
-    @pytest.fixture
-    def ephem(self) -> TLEEphemeris:
-        return rust_ephem.TLEEphemeris(TLE1, TLE2, BEGIN, END, STEP_SIZE)
-
-    @pytest.fixture
-    def skycoord(self, ephem: Any) -> Any:
-        return ephem.gcrs
-
-    @pytest.mark.skipif(
-        not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available"
-    )
     @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-    def test_type_is_skycoord(self: Any, skycoord: Any) -> None:
-        assert isinstance(skycoord, SkyCoord)
+    def test_type_is_skycoord(self: Any, gcrs_skycoord: Any) -> None:
+        assert isinstance(gcrs_skycoord, SkyCoord)
 
-    @pytest.mark.skipif(
-        not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available"
-    )
     @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-    def test_length_matches_timestamps(self: Any, ephem: Any, skycoord: Any) -> None:
-        assert len(skycoord) == len(ephem.timestamp)
+    def test_length_matches_timestamps(
+        self: Any, multi_point_ephem: Any, gcrs_skycoord: Any
+    ) -> None:
+        assert len(gcrs_skycoord) == len(multi_point_ephem.timestamp)
 
-    @pytest.mark.skipif(
-        not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available"
-    )
     @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-    def test_frame_is_gcrs(self: Any, skycoord: Any) -> None:
-        assert isinstance(skycoord.frame, GCRS)
+    def test_frame_is_gcrs(self: Any, gcrs_skycoord: Any) -> None:
+        assert isinstance(gcrs_skycoord.frame, GCRS)
 
-    @pytest.mark.skipif(
-        not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available"
-    )
     @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-    def test_has_velocity(self: Any, skycoord: Any) -> None:
-        assert skycoord.velocity is not None
+    def test_has_velocity(self: Any, gcrs_skycoord: Any) -> None:
+        assert gcrs_skycoord.velocity is not None
 
 
 class TestGCRSSkyCoordAccuracy:
     """Per-index, single-assert accuracy checks for gcrs."""
 
-    @pytest.fixture
-    def ephem(self) -> TLEEphemeris:
-        return rust_ephem.TLEEphemeris(TLE1, TLE2, BEGIN, END, STEP_SIZE)
-
-    @pytest.fixture
-    def skycoord(self, ephem: Any) -> Any:
-        return ephem.gcrs
-
-    @pytest.mark.skipif(
-        not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available"
-    )
     @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
     @pytest.mark.parametrize(
         "i", range(int((END - BEGIN).total_seconds() // STEP_SIZE) + 1)
     )
     def test_position_matches_gcrs(
-        self: Any, ephem: Any, skycoord: Any, i: Any
+        self: Any, multi_point_ephem: Any, gcrs_skycoord: Any, i: Any
     ) -> None:
-        expected_pos = ephem.gcrs_pv.position[i]
-        actual_pos = skycoord[i].cartesian.xyz.to(u.km).value
+        expected_pos = multi_point_ephem.gcrs_pv.position[i]
+        actual_pos = gcrs_skycoord[i].cartesian.xyz.to(u.km).value
         assert np.allclose(expected_pos, actual_pos, rtol=POSITION_TOLERANCE)
 
-    @pytest.mark.skipif(
-        not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available"
-    )
     @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
     @pytest.mark.parametrize(
         "i", range(int((END - BEGIN).total_seconds() // STEP_SIZE) + 1)
     )
     def test_velocity_matches_gcrs(
-        self: Any, ephem: Any, skycoord: Any, i: Any
+        self: Any, multi_point_ephem: Any, gcrs_skycoord: Any, i: Any
     ) -> None:
-        expected_vel = ephem.gcrs_pv.velocity[i]
-        actual_vel = skycoord[i].velocity.d_xyz.to(u.km / u.s).value
+        expected_vel = multi_point_ephem.gcrs_pv.velocity[i]
+        actual_vel = gcrs_skycoord[i].velocity.d_xyz.to(u.km / u.s).value
         assert np.allclose(expected_vel, actual_vel, rtol=VELOCITY_TOLERANCE)
 
 
-@pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
-@pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
-@pytest.mark.skipif(not RUST_EPHEM_AVAILABLE, reason="rust_ephem module not available")
 @pytest.mark.skipif(not ASTROPY_AVAILABLE, reason="astropy not available")
 def test_performance() -> None:
     """Test that gcrs_to_skycoord() is significantly faster than manual loops."""

@@ -1,5 +1,4 @@
 from abc import ABC
-from datetime import datetime, timezone
 from typing import get_type_hints
 
 import pytest
@@ -11,14 +10,6 @@ from rust_ephem import (
     SPICEEphemeris,
     TLEEphemeris,
 )
-
-# Test data (kept as module constants for backward compatibility)
-VALID_TLE1 = "1 25544U 98067A   08264.51782528 -.00002182  00000-0 -11606-4 0  2927"
-VALID_TLE2 = "2 25544  51.6416 247.4627 0006703 130.5360 325.0288 15.72125391563537"
-
-BEGIN_TIME = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-END_TIME = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-STEP_SIZE = 120  # 2 minutes
 
 
 class TestTLEEphemerisType:
@@ -38,24 +29,13 @@ class TestGroundEphemerisType:
 
 
 class TestOEMEphemerisType:
-    def test_oem_ephemeris_type(self, sample_oem_file: str) -> None:
-        ephem = OEMEphemeris(
-            sample_oem_file, begin=BEGIN_TIME, end=END_TIME, step_size=STEP_SIZE
-        )
-        assert isinstance(ephem, Ephemeris)
+    def test_oem_ephemeris_type(self, oem_ephemeris: OEMEphemeris) -> None:
+        assert isinstance(oem_ephemeris, Ephemeris)
 
 
 class TestSPICEEphemerisType:
-    def test_spice_ephemeris_type(self, spk_path: str) -> None:
-        ephem = SPICEEphemeris(
-            spk_path,
-            begin=BEGIN_TIME,
-            end=END_TIME,
-            step_size=STEP_SIZE,
-            naif_id=301,
-            center_id=399,
-        )
-        assert isinstance(ephem, Ephemeris)
+    def test_spice_ephemeris_type(self, spice_ephemeris: SPICEEphemeris) -> None:
+        assert isinstance(spice_ephemeris, Ephemeris)
 
 
 class TestEphemerisABCBehavior:

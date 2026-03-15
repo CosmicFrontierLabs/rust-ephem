@@ -5,29 +5,16 @@ import datetime
 import numpy as np
 import pytest
 
-from rust_ephem import (
-    GroundEphemeris,
-    SunConstraint,
-)
+from rust_ephem import GroundEphemeris, SunConstraint
 from rust_ephem.constraints import EarthLimbConstraint
 
 
-def test_sun_proximity_batch() -> None:
+def test_sun_proximity_batch(
+    ground_ephem_2h: GroundEphemeris, sun_constraint_45: SunConstraint
+) -> None:
     """Test batch constraint evaluation with multiple targets."""
-    # Create ephemeris for a ground station
-    begin = datetime.datetime(2024, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
-    end = datetime.datetime(2024, 1, 1, 2, 0, 0, tzinfo=datetime.timezone.utc)
-    ephem = GroundEphemeris(
-        35.0,  # latitude
-        -120.0,  # longitude
-        0.0,  # height
-        begin,
-        end,
-        3600,  # step_size: 1 hour steps -> 3 time points
-    )
-
-    # Create sun proximity constraint (45 degree exclusion)
-    constraint = SunConstraint(min_angle=45.0)
+    ephem = ground_ephem_2h
+    constraint = sun_constraint_45
 
     # Test with 4 different target positions
     # RA in degrees, Dec in degrees
@@ -58,20 +45,12 @@ def test_sun_proximity_batch() -> None:
         )
 
 
-def test_batch_with_times_filter() -> None:
+def test_batch_with_times_filter(
+    ground_ephem_5h: GroundEphemeris, sun_constraint_45: SunConstraint
+) -> None:
     """Test batch evaluation with time filtering."""
-    begin = datetime.datetime(2024, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
-    end = datetime.datetime(2024, 1, 1, 5, 0, 0, tzinfo=datetime.timezone.utc)
-    ephem = GroundEphemeris(
-        35.0,  # latitude
-        -120.0,  # longitude
-        0.0,  # height
-        begin,
-        end,
-        3600,  # step_size: 1 hour steps -> 6 time points
-    )
-
-    constraint = SunConstraint(min_angle=45.0)
+    ephem = ground_ephem_5h
+    constraint = sun_constraint_45
 
     # 3 targets
     target_ras = [0.0, 90.0, 180.0]
@@ -89,20 +68,12 @@ def test_batch_with_times_filter() -> None:
     assert result.shape == (3, 2), f"Expected shape (3, 2), got {result.shape}"
 
 
-def test_batch_with_indices_filter() -> None:
+def test_batch_with_indices_filter(
+    ground_ephem_5h: GroundEphemeris, sun_constraint_45: SunConstraint
+) -> None:
     """Test batch evaluation with index filtering."""
-    begin = datetime.datetime(2024, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
-    end = datetime.datetime(2024, 1, 1, 5, 0, 0, tzinfo=datetime.timezone.utc)
-    ephem = GroundEphemeris(
-        35.0,  # latitude
-        -120.0,  # longitude
-        0.0,  # height
-        begin,
-        end,
-        3600,  # step_size: 1 hour steps -> 6 time points
-    )
-
-    constraint = SunConstraint(min_angle=45.0)
+    ephem = ground_ephem_5h
+    constraint = sun_constraint_45
 
     # 2 targets
     target_ras = [45.0, 135.0]
@@ -119,20 +90,12 @@ def test_batch_with_indices_filter() -> None:
     assert result.shape == (2, 3), f"Expected shape (2, 3), got {result.shape}"
 
 
-def test_batch_mismatched_array_lengths() -> None:
+def test_batch_mismatched_array_lengths(
+    ground_ephem_2h: GroundEphemeris, sun_constraint_45: SunConstraint
+) -> None:
     """Test that mismatched RA/Dec array lengths raise an error."""
-    begin = datetime.datetime(2024, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
-    end = datetime.datetime(2024, 1, 1, 2, 0, 0, tzinfo=datetime.timezone.utc)
-    ephem = GroundEphemeris(
-        35.0,  # latitude
-        -120.0,  # longitude
-        0.0,  # height
-        begin,
-        end,
-        3600,
-    )
-
-    constraint = SunConstraint(min_angle=45.0)
+    ephem = ground_ephem_2h
+    constraint = sun_constraint_45
 
     # Mismatched lengths
     target_ras = [0.0, 90.0, 180.0]
@@ -144,20 +107,12 @@ def test_batch_mismatched_array_lengths() -> None:
         constraint.in_constraint_batch(ephem, target_ras, target_decs)
 
 
-def test_batch_empty_arrays() -> None:
+def test_batch_empty_arrays(
+    ground_ephem_2h: GroundEphemeris, sun_constraint_45: SunConstraint
+) -> None:
     """Test batch evaluation with empty arrays."""
-    begin = datetime.datetime(2024, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
-    end = datetime.datetime(2024, 1, 1, 2, 0, 0, tzinfo=datetime.timezone.utc)
-    ephem = GroundEphemeris(
-        35.0,  # latitude
-        -120.0,  # longitude
-        0.0,  # height
-        begin,
-        end,
-        3600,
-    )
-
-    constraint = SunConstraint(min_angle=45.0)
+    ephem = ground_ephem_2h
+    constraint = sun_constraint_45
 
     # Empty arrays
     result = constraint.in_constraint_batch(ephem, [], [])
@@ -166,20 +121,12 @@ def test_batch_empty_arrays() -> None:
     assert result.shape == (0, 3), f"Expected shape (0, 3), got {result.shape}"
 
 
-def test_batch_single_target() -> None:
+def test_batch_single_target(
+    ground_ephem_2h: GroundEphemeris, sun_constraint_45: SunConstraint
+) -> None:
     """Test batch evaluation with single target matches regular evaluation."""
-    begin = datetime.datetime(2024, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
-    end = datetime.datetime(2024, 1, 1, 2, 0, 0, tzinfo=datetime.timezone.utc)
-    ephem = GroundEphemeris(
-        35.0,  # latitude
-        -120.0,  # longitude
-        0.0,  # height
-        begin,
-        end,
-        3600,
-    )
-
-    constraint = SunConstraint(min_angle=45.0)
+    ephem = ground_ephem_2h
+    constraint = sun_constraint_45
 
     ra = 123.45
     dec = -23.67
@@ -195,22 +142,13 @@ def test_batch_single_target() -> None:
     np.testing.assert_array_equal(batch_result[0, :], single_result)
 
 
-def test_earth_limb_batch() -> None:
+def test_earth_limb_batch(
+    ground_ephem_earth_limb: GroundEphemeris,
+    earth_limb_constraint_20: EarthLimbConstraint,
+) -> None:
     """Test Earth limb constraint batch evaluation with optimized implementation."""
-    # Create ephemeris for a ground station
-    begin = datetime.datetime(2024, 6, 15, 12, 0, 0, tzinfo=datetime.timezone.utc)
-    end = datetime.datetime(2024, 6, 15, 18, 0, 0, tzinfo=datetime.timezone.utc)
-    ephem = GroundEphemeris(
-        40.0,  # latitude
-        -75.0,  # longitude
-        100.0,  # height
-        begin,
-        end,
-        3600,  # step_size: 1 hour steps -> 7 time points
-    )
-
-    # Create Earth limb constraint (20 degree margin)
-    constraint = EarthLimbConstraint(min_angle=20.0)
+    ephem = ground_ephem_earth_limb
+    constraint = earth_limb_constraint_20
 
     # Test with diverse target positions:
     # - Some near zenith (should pass)
@@ -243,21 +181,13 @@ def test_earth_limb_batch() -> None:
         )
 
 
-def test_earth_limb_batch_with_max_angle() -> None:
+def test_earth_limb_batch_with_max_angle(
+    ground_ephem_earth_limb_2h: GroundEphemeris,
+    earth_limb_constraint_20_70: EarthLimbConstraint,
+) -> None:
     """Test Earth limb constraint batch evaluation with max_angle parameter."""
-    begin = datetime.datetime(2024, 6, 15, 12, 0, 0, tzinfo=datetime.timezone.utc)
-    end = datetime.datetime(2024, 6, 15, 14, 0, 0, tzinfo=datetime.timezone.utc)
-    ephem = GroundEphemeris(
-        40.0,  # latitude
-        -75.0,  # longitude
-        100.0,  # height
-        begin,
-        end,
-        3600,  # step_size: 1 hour -> 3 time points
-    )
-
-    # Earth limb constraint with both min and max angles
-    constraint = EarthLimbConstraint(min_angle=20.0, max_angle=70.0)
+    ephem = ground_ephem_earth_limb_2h
+    constraint = earth_limb_constraint_20_70
 
     target_ras = [0.0, 90.0, 180.0, 270.0]
     target_decs = [60.0, 30.0, -30.0, 0.0]
@@ -279,20 +209,13 @@ def test_earth_limb_batch_with_max_angle() -> None:
         )
 
 
-def test_earth_limb_batch_large_scale() -> None:
+def test_earth_limb_batch_large_scale(
+    ground_ephem_earth_limb_large: GroundEphemeris,
+    earth_limb_constraint_20: EarthLimbConstraint,
+) -> None:
     """Test Earth limb batch evaluation with many targets for performance validation."""
-    begin = datetime.datetime(2024, 6, 15, 12, 0, 0, tzinfo=datetime.timezone.utc)
-    end = datetime.datetime(2024, 6, 15, 13, 0, 0, tzinfo=datetime.timezone.utc)
-    ephem = GroundEphemeris(
-        40.0,  # latitude
-        -75.0,  # longitude
-        100.0,  # height
-        begin,
-        end,
-        600,  # step_size: 10 minutes -> 7 time points
-    )
-
-    constraint = EarthLimbConstraint(min_angle=20.0)
+    ephem = ground_ephem_earth_limb_large
+    constraint = earth_limb_constraint_20
 
     # Generate a grid of RA/Dec positions
     n_ra = 36  # Every 10 degrees

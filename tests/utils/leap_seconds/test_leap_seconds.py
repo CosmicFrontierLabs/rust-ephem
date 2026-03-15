@@ -10,12 +10,7 @@ from typing import Any, Tuple
 
 import pytest
 
-try:
-    import rust_ephem
-
-    RUST_AVAILABLE = True
-except ImportError:
-    RUST_AVAILABLE = False
+import rust_ephem
 
 try:
     from astropy.time import Time  # type: ignore[import-untyped]
@@ -23,9 +18,6 @@ try:
     ASTROPY_AVAILABLE = True
 except ImportError:
     ASTROPY_AVAILABLE = False
-
-
-pytestmark = pytest.mark.skipif(not RUST_AVAILABLE, reason="rust_ephem not available")
 
 
 class TestTAIUTCOffsets:

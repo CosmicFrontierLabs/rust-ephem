@@ -9,38 +9,7 @@ from rust_ephem.constraints import (
     EclipseConstraint,
 )
 
-EARTH_RADIUS_KM = 6378.137
-SUN_RADIUS_KM = 696000.0
-
-MOON_CONSTRAINT = 21
-EARTH_CONSTRAINT = 28
-SUN_CONSTRAINT = 45
-
-
-def eclipse_flags(obs_pos: np.ndarray, sun_pos: np.ndarray) -> tuple[bool, bool]:
-    sun_dist = np.linalg.norm(sun_pos)
-    if sun_dist <= 0.0:
-        return False, False
-
-    sun_unit = sun_pos / sun_dist
-    dot = float(np.dot(obs_pos, sun_unit))
-    if dot >= 0.0:
-        return False, False
-
-    s = -dot
-    perp = obs_pos - sun_unit * dot
-    dist_to_axis = np.linalg.norm(perp)
-
-    l_umbra = EARTH_RADIUS_KM * sun_dist / (SUN_RADIUS_KM - EARTH_RADIUS_KM)
-    l_penumbra = EARTH_RADIUS_KM * sun_dist / (SUN_RADIUS_KM + EARTH_RADIUS_KM)
-
-    umbra_radius = EARTH_RADIUS_KM * (1.0 - s / l_umbra) if s <= l_umbra else 0.0
-    penumbra_radius = EARTH_RADIUS_KM * (1.0 + s / l_penumbra)
-
-    in_umbra = umbra_radius > 0.0 and dist_to_axis < umbra_radius
-    in_penumbra = dist_to_axis < penumbra_radius
-
-    return bool(in_umbra), bool(in_penumbra)
+from .conftest import EARTH_CONSTRAINT, MOON_CONSTRAINT, SUN_CONSTRAINT, eclipse_flags
 
 
 class TestSunConstraints:

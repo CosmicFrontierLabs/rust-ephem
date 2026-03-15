@@ -18,86 +18,54 @@ import pytest
 
 import rust_ephem
 
-# Test TLE data
-TLE_2LINE = """1 28485U 04047A   25287.56748435  .00035474  00000+0  70906-3 0  9995
-2 28485  20.5535 247.0048 0005179 187.1586 172.8782 15.44937919148530"""
-
-TLE_3LINE = """ISS (ZARYA)
-1 25544U 98067A   08264.51782528 -.00002182  00000-0 -11606-4 0  2927
-2 25544  51.6416 247.4627 0006703 130.5360 325.0288 15.72125391563537"""
-
-TLE1 = "1 28485U 04047A   25287.56748435  .00035474  00000+0  70906-3 0  9995"
-TLE2 = "2 28485  20.5535 247.0048 0005179 187.1586 172.8782 15.44937919148530"
-
-# Test time range
-BEGIN = datetime(2025, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
-END = datetime(2025, 10, 14, 1, 0, 0, tzinfo=timezone.utc)
-STEP_SIZE = 60
+from .conftest import BEGIN, END, STEP_SIZE, TLE1, TLE2
 
 
 class TestLegacyTLEMethod:
     """Test backward compatibility with original tle1/tle2 parameters."""
 
-    def test_legacy_tle1_tle2(self) -> None:
+    def test_legacy_tle1_tle2(self, legacy_ephem) -> None:
         """Test that the legacy tle1/tle2 method still works."""
-        ephem = rust_ephem.TLEEphemeris(TLE1, TLE2, BEGIN, END, STEP_SIZE)
-        assert ephem is not None
-        assert ephem.timestamp is not None
-        assert len(ephem.timestamp) == 61  # 0 to 60 minutes inclusive
+        assert legacy_ephem is not None
+        assert legacy_ephem.timestamp is not None
+        assert len(legacy_ephem.timestamp) == 61  # 0 to 60 minutes inclusive
 
-    def test_legacy_with_tle_epoch(self) -> None:
+    def test_legacy_with_tle_epoch(self, legacy_ephem) -> None:
         """Test that tle_epoch is available with legacy method."""
-        ephem = rust_ephem.TLEEphemeris(TLE1, TLE2, BEGIN, END, STEP_SIZE)
-        assert ephem.tle_epoch is not None
+        assert legacy_ephem.tle_epoch is not None
         # TLE epoch should be Oct 14, 2025 (day 287)
-        assert ephem.tle_epoch.year == 2025
-        assert ephem.tle_epoch.month == 10
-        assert ephem.tle_epoch.day == 14
+        assert legacy_ephem.tle_epoch.year == 2025
+        assert legacy_ephem.tle_epoch.month == 10
+        assert legacy_ephem.tle_epoch.day == 14
         # Check it has timezone info
-        assert ephem.tle_epoch.tzinfo is not None
+        assert legacy_ephem.tle_epoch.tzinfo is not None
 
 
 class TestFileReading:
     """Test reading TLEs from files."""
 
-    def test_read_2line_tle_file(self) -> None:
+    def test_read_2line_tle_file(self, tle_2line_file) -> None:
         """Test reading a 2-line TLE file."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
-            f.write(TLE_2LINE)
-            f.flush()
-            filepath = f.name
+        ephem = rust_ephem.TLEEphemeris(
+            tle=tle_2line_file, begin=BEGIN, end=END, step_size=STEP_SIZE
+        )
+        assert ephem is not None
+        assert ephem.timestamp is not None
+        assert len(ephem.timestamp) == 61
+        assert ephem.tle_epoch is not None
+        assert ephem.tle_epoch.year == 2025
 
-        try:
-            ephem = rust_ephem.TLEEphemeris(
-                tle=filepath, begin=BEGIN, end=END, step_size=STEP_SIZE
-            )
-            assert ephem is not None
-            assert ephem.timestamp is not None
-            assert len(ephem.timestamp) == 61
-            assert ephem.tle_epoch is not None
-            assert ephem.tle_epoch.year == 2025
-        finally:
-            os.unlink(filepath)
-
-    def test_read_3line_tle_file(self) -> None:
+    def test_read_3line_tle_file(self, tle_3line_file) -> None:
         """Test reading a 3-line TLE file (with satellite name)."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
-            f.write(TLE_3LINE)
-            f.flush()
-            filepath = f.name
-
-        try:
-            ephem = rust_ephem.TLEEphemeris(
-                tle=filepath, begin=BEGIN, end=END, step_size=STEP_SIZE
-            )
-            assert ephem is not None
-            assert ephem.timestamp is not None
-            assert len(ephem.timestamp) == 61
-            # This TLE is from 2008
-            assert ephem.tle_epoch is not None
-            assert ephem.tle_epoch.year == 2008
-        finally:
-            os.unlink(filepath)
+        ephem = rust_ephem.TLEEphemeris(
+            tle=tle_3line_file, begin=BEGIN, end=END, step_size=STEP_SIZE
+        )
+        assert ephem is not None
+        assert ephem.timestamp is not None
+        assert len(ephem.timestamp) == 61
+        # This TLE is from 2008
+        assert ephem.tle_epoch is not None
+        assert ephem.tle_epoch.year == 2008
 
     def test_file_not_found(self) -> None:
         """Test error handling when file doesn't exist."""
@@ -127,10 +95,9 @@ class TestFileReading:
 class TestTLEEpoch:
     """Test TLE epoch extraction."""
 
-    def test_tle_epoch_format(self) -> None:
+    def test_tle_epoch_format(self, legacy_ephem) -> None:
         """Test that tle_epoch returns a proper datetime object."""
-        ephem = rust_ephem.TLEEphemeris(TLE1, TLE2, BEGIN, END, STEP_SIZE)
-        epoch = ephem.tle_epoch
+        epoch = legacy_ephem.tle_epoch
 
         assert epoch is not None
         assert isinstance(epoch, datetime)
@@ -174,84 +141,59 @@ class TestParameterValidation:
         with pytest.raises(ValueError, match="Must provide either"):
             rust_ephem.TLEEphemeris(begin=BEGIN, end=END, step_size=STEP_SIZE)
 
-    def test_conflicting_parameters(self) -> None:
+    def test_conflicting_parameters(self, tle_2line_file) -> None:
         """Test that only one TLE source should be used (documented behavior)."""
         # The constructor should use the first method it finds
         # Priority: tle1/tle2, then tle, then norad_id, then norad_name
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
-            f.write(TLE_2LINE)
-            f.flush()
-            filepath = f.name
-
-        try:
-            # This should work - uses tle1/tle2 and ignores tle parameter
-            ephem = rust_ephem.TLEEphemeris(
-                tle1=TLE1,
-                tle2=TLE2,
-                tle=filepath,  # This should be ignored
-                begin=BEGIN,
-                end=END,
-                step_size=STEP_SIZE,
-            )
-            assert ephem is not None
-        finally:
-            os.unlink(filepath)
+        # This should work - uses tle1/tle2 and ignores tle parameter
+        ephem = rust_ephem.TLEEphemeris(
+            tle1=TLE1,
+            tle2=TLE2,
+            tle=tle_2line_file,  # This should be ignored
+            begin=BEGIN,
+            end=END,
+            step_size=STEP_SIZE,
+        )
+        assert ephem is not None
 
 
 class TestDataConsistency:
     """Test that all methods produce consistent results."""
 
-    def test_legacy_vs_file_consistency(self) -> None:
+    def test_legacy_vs_file_consistency(self, legacy_ephem, tle_2line_file) -> None:
         """Test that legacy and file methods produce the same results."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
-            f.write(TLE_2LINE)
-            f.flush()
-            filepath = f.name
+        ephem2 = rust_ephem.TLEEphemeris(
+            tle=tle_2line_file, begin=BEGIN, end=END, step_size=STEP_SIZE
+        )
 
-        try:
-            ephem1 = rust_ephem.TLEEphemeris(TLE1, TLE2, BEGIN, END, STEP_SIZE)
-            ephem2 = rust_ephem.TLEEphemeris(
-                tle=filepath, begin=BEGIN, end=END, step_size=STEP_SIZE
-            )
+        # Check that epochs match
+        assert legacy_ephem.tle_epoch == ephem2.tle_epoch
 
-            # Check that epochs match
-            assert ephem1.tle_epoch == ephem2.tle_epoch
+        # Check that they produce the same number of timestamps
+        assert len(legacy_ephem.timestamp) == len(ephem2.timestamp)
 
-            # Check that they produce the same number of timestamps
-            assert len(ephem1.timestamp) == len(ephem2.timestamp)
+        # Check GCRS positions match (allowing for small numerical differences)
+        import numpy as np
 
-            # Check GCRS positions match (allowing for small numerical differences)
-            import numpy as np
-
-            pos1 = ephem1.gcrs_pv.position
-            pos2 = ephem2.gcrs_pv.position
-            assert np.allclose(pos1, pos2, rtol=1e-10)
-        finally:
-            os.unlink(filepath)
+        pos1 = legacy_ephem.gcrs_pv.position
+        pos2 = ephem2.gcrs_pv.position
+        assert np.allclose(pos1, pos2, rtol=1e-10)
 
 
 class TestPolarMotionParameter:
     """Test that polar_motion parameter works with new TLE methods."""
 
-    def test_polar_motion_with_file(self) -> None:
+    def test_polar_motion_with_file(self, tle_2line_file) -> None:
         """Test polar_motion parameter with file reading."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
-            f.write(TLE_2LINE)
-            f.flush()
-            filepath = f.name
-
-        try:
-            ephem = rust_ephem.TLEEphemeris(
-                tle=filepath,
-                begin=BEGIN,
-                end=END,
-                step_size=STEP_SIZE,
-                polar_motion=True,
-            )
-            assert ephem is not None
-            assert ephem.timestamp is not None
-        finally:
-            os.unlink(filepath)
+        ephem = rust_ephem.TLEEphemeris(
+            tle=tle_2line_file,
+            begin=BEGIN,
+            end=END,
+            step_size=STEP_SIZE,
+            polar_motion=True,
+        )
+        assert ephem is not None
+        assert ephem.timestamp is not None
 
 
 # Note: URL and Celestrak tests require network access and would need to be
@@ -418,142 +360,85 @@ class TestSpaceTrackIntegration:
 class TestFetchTLE:
     """Test the fetch_tle function and TLERecord class."""
 
-    def test_fetch_tle_from_file(self) -> None:
+    def test_fetch_tle_from_file(self, tle_3line_file) -> None:
         """Test fetch_tle from a file."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
-            f.write(TLE_3LINE)
-            f.flush()
-            filepath = f.name
+        tle_record = rust_ephem.fetch_tle(tle=tle_3line_file)
+        assert tle_record is not None
+        assert tle_record.line1.startswith("1 ")
+        assert tle_record.line2.startswith("2 ")
+        assert tle_record.source == "file"
+        assert tle_record.epoch is not None
+        assert tle_record.name == "ISS (ZARYA)"
 
-        try:
-            tle_record = rust_ephem.fetch_tle(tle=filepath)
-            assert tle_record is not None
-            assert tle_record.line1.startswith("1 ")
-            assert tle_record.line2.startswith("2 ")
-            assert tle_record.source == "file"
-            assert tle_record.epoch is not None
-            assert tle_record.name == "ISS (ZARYA)"
-        finally:
-            os.unlink(filepath)
-
-    def test_tle_record_properties(self) -> None:
+    def test_tle_record_properties(self, tle_3line_file) -> None:
         """Test TLERecord computed properties."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
-            f.write(TLE_3LINE)
-            f.flush()
-            filepath = f.name
+        tle_record = rust_ephem.fetch_tle(tle=tle_3line_file)
+        # Test computed properties
+        assert tle_record.norad_id == 25544
+        assert tle_record.classification == "U"  # Unclassified
+        assert "98067A" in tle_record.international_designator
 
-        try:
-            tle_record = rust_ephem.fetch_tle(tle=filepath)
-            # Test computed properties
-            assert tle_record.norad_id == 25544
-            assert tle_record.classification == "U"  # Unclassified
-            assert "98067A" in tle_record.international_designator
-        finally:
-            os.unlink(filepath)
-
-    def test_tle_record_to_string(self) -> None:
+    def test_tle_record_to_string(self, tle_3line_file) -> None:
         """Test TLERecord to_tle_string method."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
-            f.write(TLE_3LINE)
-            f.flush()
-            filepath = f.name
+        tle_record = rust_ephem.fetch_tle(tle=tle_3line_file)
+        tle_string = tle_record.to_tle_string()
+        # Should have 3 lines (name + line1 + line2)
+        lines = tle_string.strip().split("\n")
+        assert len(lines) == 3
+        assert lines[0] == "ISS (ZARYA)"
 
-        try:
-            tle_record = rust_ephem.fetch_tle(tle=filepath)
-            tle_string = tle_record.to_tle_string()
-            # Should have 3 lines (name + line1 + line2)
-            lines = tle_string.strip().split("\n")
-            assert len(lines) == 3
-            assert lines[0] == "ISS (ZARYA)"
-        finally:
-            os.unlink(filepath)
-
-    def test_tle_record_to_string_2line(self) -> None:
+    def test_tle_record_to_string_2line(self, tle_2line_file) -> None:
         """Test TLERecord to_tle_string method for 2-line TLE."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
-            f.write(TLE_2LINE)
-            f.flush()
-            filepath = f.name
+        tle_record = rust_ephem.fetch_tle(tle=tle_2line_file)
+        tle_string = tle_record.to_tle_string()
+        # Should have 2 lines (line1 + line2, no name)
+        lines = tle_string.strip().split("\n")
+        assert len(lines) == 2
+        assert lines[0].startswith("1 ")
+        assert lines[1].startswith("2 ")
 
-        try:
-            tle_record = rust_ephem.fetch_tle(tle=filepath)
-            tle_string = tle_record.to_tle_string()
-            # Should have 2 lines (line1 + line2, no name)
-            lines = tle_string.strip().split("\n")
-            assert len(lines) == 2
-            assert lines[0].startswith("1 ")
-            assert lines[1].startswith("2 ")
-        finally:
-            os.unlink(filepath)
-
-    def test_tle_record_json_serialization(self) -> None:
+    def test_tle_record_json_serialization(self, tle_3line_file) -> None:
         """Test TLERecord can be serialized to JSON."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
-            f.write(TLE_3LINE)
-            f.flush()
-            filepath = f.name
+        tle_record = rust_ephem.fetch_tle(tle=tle_3line_file)
+        json_str = tle_record.model_dump_json()
+        assert "line1" in json_str
+        assert "line2" in json_str
+        assert "epoch" in json_str
 
-        try:
-            tle_record = rust_ephem.fetch_tle(tle=filepath)
-            json_str = tle_record.model_dump_json()
-            assert "line1" in json_str
-            assert "line2" in json_str
-            assert "epoch" in json_str
+        # Test round-trip
+        from rust_ephem import TLERecord
 
-            # Test round-trip
-            from rust_ephem import TLERecord
+        reconstructed = TLERecord.model_validate_json(json_str)
+        assert reconstructed.line1 == tle_record.line1
+        assert reconstructed.line2 == tle_record.line2
 
-            reconstructed = TLERecord.model_validate_json(json_str)
-            assert reconstructed.line1 == tle_record.line1
-            assert reconstructed.line2 == tle_record.line2
-        finally:
-            os.unlink(filepath)
-
-    def test_tle_record_with_ephemeris(self) -> None:
+    def test_tle_record_with_ephemeris(self, tle_3line_file) -> None:
         """Test passing TLERecord to TLEEphemeris."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
-            f.write(TLE_3LINE)
-            f.flush()
-            filepath = f.name
+        tle_record = rust_ephem.fetch_tle(tle=tle_3line_file)
 
-        try:
-            # Fetch TLE
-            tle_record = rust_ephem.fetch_tle(tle=filepath)
-
-            # Use TLERecord with TLEEphemeris
-            ephem = rust_ephem.TLEEphemeris(
-                tle=tle_record, begin=BEGIN, end=END, step_size=STEP_SIZE
-            )
-            assert ephem is not None
-            assert ephem.timestamp is not None
-            assert len(ephem.timestamp) == 61
-            # Epoch should match
-            assert ephem.tle_epoch.year == tle_record.epoch.year
-        finally:
-            os.unlink(filepath)
+        # Use TLERecord with TLEEphemeris
+        ephem = rust_ephem.TLEEphemeris(
+            tle=tle_record, begin=BEGIN, end=END, step_size=STEP_SIZE
+        )
+        assert ephem is not None
+        assert ephem.timestamp is not None
+        assert len(ephem.timestamp) == 61
+        # Epoch should match
+        assert ephem.tle_epoch.year == tle_record.epoch.year
 
     def test_fetch_tle_missing_params(self) -> None:
         """Test that fetch_tle raises error with no params."""
         with pytest.raises(ValueError):
             rust_ephem.fetch_tle()
 
-    def test_tle_record_immutable(self) -> None:
+    def test_tle_record_immutable(self, tle_3line_file) -> None:
         """Test that TLERecord is immutable (frozen)."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".tle", delete=False) as f:
-            f.write(TLE_3LINE)
-            f.flush()
-            filepath = f.name
+        tle_record = rust_ephem.fetch_tle(tle=tle_3line_file)
+        # Should raise error when trying to modify
+        from pydantic import ValidationError
 
-        try:
-            tle_record = rust_ephem.fetch_tle(tle=filepath)
-            # Should raise error when trying to modify
-            from pydantic import ValidationError
-
-            with pytest.raises(ValidationError):
-                tle_record.line1 = "modified"
-        finally:
-            os.unlink(filepath)
+        with pytest.raises(ValidationError):
+            tle_record.line1 = "modified"
 
     def test_fetch_tle_timeout_error_is_reraised_with_hint(self):
         """A timeout ValueError from the Rust layer gets a human-friendly message."""
