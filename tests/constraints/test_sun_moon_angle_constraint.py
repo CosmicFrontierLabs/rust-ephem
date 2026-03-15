@@ -16,6 +16,10 @@ from rust_ephem.constraints import (
 EARTH_RADIUS_KM = 6378.137
 SUN_RADIUS_KM = 696000.0
 
+MOON_CONSTRAINT = 21
+EARTH_CONSTRAINT = 28
+SUN_CONSTRAINT = 45
+
 
 def eclipse_flags(obs_pos: np.ndarray, sun_pos: np.ndarray) -> tuple[bool, bool]:
     sun_dist = np.linalg.norm(sun_pos)
@@ -94,17 +98,17 @@ def timestamp(tle_ephem: rust_ephem.TLEEphemeris) -> Any:
 
 @pytest.fixture
 def sun_constraint() -> SunConstraint:
-    return SunConstraint(min_angle=45)
+    return SunConstraint(min_angle=SUN_CONSTRAINT)
 
 
 @pytest.fixture
 def moon_constraint() -> MoonConstraint:
-    return MoonConstraint(min_angle=21)
+    return MoonConstraint(min_angle=MOON_CONSTRAINT)
 
 
 @pytest.fixture
 def earth_limb_constraint() -> EarthLimbConstraint:
-    return EarthLimbConstraint(min_angle=21)
+    return EarthLimbConstraint(min_angle=EARTH_CONSTRAINT)
 
 
 @pytest.fixture
@@ -129,7 +133,7 @@ class TestSunConstraints:
             target_ra=(sun.ra.deg + offset) % 360,
             target_dec=sun.dec.deg,
         )
-        if offset < 45:
+        if offset < SUN_CONSTRAINT:
             assert not_vis is True, "Sun should be Sun Constrained"
         else:
             assert not_vis is False, "Sun should not be Sun Constrained"
@@ -147,7 +151,7 @@ class TestSunConstraints:
             target_ra=(sun.ra.deg + offset) % 360,
             target_dec=sun.dec.deg,
         ).constraint_array[0]
-        if offset < 45:
+        if offset < SUN_CONSTRAINT:
             assert not_vis is True, "Sun should be Sun Constrained"
         else:
             assert not_vis is False, "Sun should not be Sun Constrained"
@@ -184,7 +188,7 @@ class TestMoonConstraints:
             target_ra=(moon.ra.deg + offset) % 360,
             target_dec=moon.dec.deg,
         )
-        if offset <= 30:
+        if offset <= MOON_CONSTRAINT:
             assert not_vis is True, "Moon should be Moon Constrained"
         else:
             assert not_vis is False, "Moon should not be Moon Constrained"
@@ -211,9 +215,9 @@ class TestMoonConstraints:
             SkyCoord(moon.ra.deg, moon.dec.deg, unit="deg")
             .separation(SkyCoord(moon.ra.deg + offset, moon.dec.deg, unit="deg"))
             .deg
-            <= 30
+            <= MOON_CONSTRAINT
         )
-        assert in_moon_cons == not_vis
+        assert in_moon_cons == not_vis, f"Moon is at {in_moon_cons:.1f} degrees"
 
     @pytest.mark.parametrize(
         "offset",
@@ -238,7 +242,7 @@ class TestMoonConstraints:
             .separation(SkyCoord(moon.ra.deg + offset, moon.dec.deg, unit="deg"))
             .deg
         )
-        in_moon_cons = moon_angle <= 30
+        in_moon_cons = moon_angle <= MOON_CONSTRAINT
         assert in_moon_cons == not_vis, f"Moon is at {moon_angle:.1f} degrees"
 
 
@@ -266,7 +270,7 @@ class TestEarthLimbConstraints:
             .separation(SkyCoord(earth.ra.deg + offset, earth.dec.deg, unit="deg"))
             .deg
         )
-        in_earth_cons = earth_angle < tle_ephem.earth_radius_deg[0] + 10
+        in_earth_cons = earth_angle < tle_ephem.earth_radius_deg[0] + EARTH_CONSTRAINT
         assert in_earth_cons == not_vis, f"Earth is at {earth_angle:.1f} degrees"
 
     @pytest.mark.parametrize(
@@ -292,7 +296,7 @@ class TestEarthLimbConstraints:
             .separation(SkyCoord(earth.ra.deg + offset, earth.dec.deg, unit="deg"))
             .deg
         )
-        in_earth_cons = earth_angle < tle_ephem.earth_radius_deg[0] + 10
+        in_earth_cons = earth_angle < tle_ephem.earth_radius_deg[0] + EARTH_CONSTRAINT
         assert in_earth_cons == not_vis, f"Earth is at {earth_angle:.1f} degrees"
 
 
