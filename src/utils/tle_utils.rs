@@ -12,7 +12,7 @@
 use crate::utils::config::{
     CACHE_DIR, CELESTRAK_API_BASE, DEFAULT_EPOCH_TOLERANCE_DAYS, SPACETRACK_API_BASE,
     SPACETRACK_CACHE_MAX_ENTRIES, SPACETRACK_LOGIN_URL, SPACETRACK_PASSWORD_ENV,
-    SPACETRACK_USERNAME_ENV, TLE_CACHE_TTL,
+    SPACETRACK_USERNAME_ENV, TLE_CACHE_MAX_ENTRIES, TLE_CACHE_TTL,
 };
 #[allow(unused_imports)]
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Utc};
@@ -140,7 +140,7 @@ fn fetch_tle_from_url(url: &str) -> Result<TLEData, Box<dyn Error>> {
     let content = download_tle(url)?;
     let tle = parse_tle_string(&content)?;
     save_tle_cache(&epoch_cache_path(&cache_dir, &tle.epoch), &content);
-    prune_tle_cache(&cache_dir, SPACETRACK_CACHE_MAX_ENTRIES);
+    prune_tle_cache(&cache_dir, TLE_CACHE_MAX_ENTRIES);
     Ok(tle)
 }
 
@@ -289,7 +289,7 @@ pub fn fetch_tle_by_norad_id(norad_id: u32) -> Result<TLEData, Box<dyn Error>> {
     let content = download_tle(&url)?;
     let tle = parse_tle_string(&content)?;
     save_tle_cache(&epoch_cache_path(&cache_dir, &tle.epoch), &content);
-    prune_tle_cache(&cache_dir, SPACETRACK_CACHE_MAX_ENTRIES);
+    prune_tle_cache(&cache_dir, TLE_CACHE_MAX_ENTRIES);
     Ok(tle)
 }
 
@@ -312,7 +312,7 @@ pub fn fetch_tle_by_name(name: &str) -> Result<TLEData, Box<dyn Error>> {
     let content = download_tle(&url)?;
     let tle = parse_tle_string(&content)?;
     save_tle_cache(&epoch_cache_path(&cache_dir, &tle.epoch), &content);
-    prune_tle_cache(&cache_dir, SPACETRACK_CACHE_MAX_ENTRIES);
+    prune_tle_cache(&cache_dir, TLE_CACHE_MAX_ENTRIES);
     Ok(tle)
 }
 

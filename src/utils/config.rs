@@ -93,7 +93,10 @@ pub static DEFAULT_EPOCH_TOLERANCE_DAYS: Lazy<f64> = Lazy::new(|| {
         .unwrap_or(4.0)
 });
 
-/// Maximum number of cached Space-Track TLEs per NORAD ID
+/// Maximum number of cached TLEs per key for Celestrak and URL caches
+pub const TLE_CACHE_MAX_ENTRIES: usize = 10;
+
+/// Maximum number of cached Space-Track TLEs per NORAD ID (one per historical epoch queried)
 pub const SPACETRACK_CACHE_MAX_ENTRIES: usize = 1000;
 
 /// TTL for cached TLE downloads (24 hours)
