@@ -1188,7 +1188,7 @@ impl PyConstraint {
     ///
     /// Args:
     ///     constraint (Constraint): Inner constraint to evaluate at offset direction
-    ///     roll_deg (float | None): Fixed boresight roll offset about +X in degrees
+    ///     roll_deg (float): Fixed boresight roll offset about +X in degrees (default 0.0)
     ///     roll_clockwise (bool): If True, positive fixed boresight roll is clockwise
     ///         when looking along +X. If False, positive is counterclockwise.
     ///     roll_reference (str): Roll-zero reference axis: "sun" (default) or "north".

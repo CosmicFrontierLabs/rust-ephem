@@ -235,6 +235,11 @@ class RustConstraintMixin(BaseModel):
             target_dec: Target declination in degrees (ICRS/J2000)
             times: Optional specific time(s) to evaluate
             indices: Optional specific time index/indices to evaluate
+            target_roll: Optional additional roll about the target boresight in
+                degrees. Positive values follow the right-hand rule about the
+                line of sight (looking from the observer toward the target).
+                This is applied in addition to any fixed ``boresight_offset``
+                configured for the constraint; it does not replace that offset.
 
         Returns:
             ConstraintResult containing violation windows

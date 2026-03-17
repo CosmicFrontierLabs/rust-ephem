@@ -55,7 +55,7 @@ def test_boresight_offset_roll_optional_when_no_offset(
 
     base = Constraint.sun_proximity(45.0)
     wrapped = Constraint.boresight_offset(
-        base, roll_deg=0.0, pitch_deg=0.0, yaw_deg=0.0
+        base, pitch_deg=0.0, yaw_deg=0.0
     )
 
     target_ras = [5.0, 45.0, 135.0, 225.0, 315.0]

@@ -399,24 +399,22 @@ Classes
     * ``Constraint.from_json(json_str)`` — Create constraint from JSON configuration
 
   **Methods:**
-    * ``evaluate(ephemeris, target_ra, target_dec, times=None, indices=None, target_roll=None)`` — Evaluate constraint against ephemeris data
+    * ``evaluate(ephemeris, target_ra, target_dec, times=None, indices=None)`` — Evaluate constraint against ephemeris data
 
       - ``ephemeris`` — TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris object
       - ``target_ra`` — Target right ascension in degrees (ICRS/J2000)
       - ``target_dec`` — Target declination in degrees (ICRS/J2000)
       - ``times`` — Optional: specific datetime(s) to evaluate (must exist in ephemeris)
       - ``indices`` — Optional: specific time index/indices to evaluate
-      - ``target_roll`` — Optional: spacecraft roll about +X (deg), applied at evaluation time
       - Returns: ``ConstraintResult`` object
 
-    * ``in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_roll=None)`` — **[Recommended]** Vectorized batch evaluation for multiple targets
+    * ``in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None)`` — **[Recommended]** Vectorized batch evaluation for multiple targets
 
       - ``ephemeris`` — TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris object
       - ``target_ras`` — List/array of target right ascensions in degrees (ICRS/J2000)
       - ``target_decs`` — List/array of target declinations in degrees (ICRS/J2000)
       - ``times`` — Optional: specific datetime(s) to evaluate (must exist in ephemeris)
       - ``indices`` — Optional: specific time index/indices to evaluate
-      - ``target_roll`` — Optional: spacecraft roll about +X (deg), applied at evaluation time
       - Returns: 2D NumPy boolean array of shape (n_targets, n_times) where True indicates constraint violation
       - **Performance**: 3-50x faster than calling ``evaluate()`` in a loop
       - **Optimized**: Uses vectorized operations for batch RA/Dec conversion and constraint evaluation
