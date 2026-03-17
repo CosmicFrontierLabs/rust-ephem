@@ -89,7 +89,11 @@ def test_shared_axis_combination_constructs() -> None:
 def test_eval_accepts_default_spacecraft_roll_for_offset_sensitive_boresight(
     tle_ephem: rust_ephem.TLEEphemeris,
 ) -> None:
-    config = SunConstraint(min_angle=45.0).boresight_offset(pitch_deg=1.5, yaw_deg=-0.7)
+    config = SunConstraint(min_angle=45.0).boresight_offset(
+        pitch_deg=1.5,
+        yaw_deg=-0.7,
+        roll_reference="north",
+    )
     default_result = config.evaluate(tle_ephem, target_ra=10.0, target_dec=5.0)
     assert isinstance(default_result.all_satisfied, bool)
 
@@ -97,9 +101,7 @@ def test_eval_accepts_default_spacecraft_roll_for_offset_sensitive_boresight(
         tle_ephem,
         target_ra=10.0,
         target_dec=5.0,
-        roll_deg=12.0,
-        roll_clockwise=False,
-        roll_reference="north",
+        target_roll=12.0,
     )
     assert isinstance(result.all_satisfied, bool)
 

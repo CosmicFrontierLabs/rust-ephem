@@ -164,7 +164,7 @@ Two roll concepts are supported:
 
 - ``boresight_offset(..., roll_deg=..., pitch_deg=..., yaw_deg=...)`` defines
   the instrument's **fixed mechanical offset** relative to +X.
-- ``evaluate(..., roll_deg=..., roll_clockwise=...)`` applies **spacecraft roll
+- ``evaluate(..., target_roll=...)`` applies **spacecraft roll
   at evaluation time** for the commanded pointing.
 
 Remember: constraints are `True` when the target is **not visible**. So if
@@ -205,8 +205,7 @@ result_roll = combined.evaluate(
   ephem,
   target_ra=83.63,
   target_dec=22.01,
-  roll_deg=95.0,
-  roll_clockwise=False,
+  target_roll=95.0,
 )
 print(result_roll.all_satisfied)
 ```
@@ -221,7 +220,7 @@ secondary = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=12.0)
 combined = primary | secondary.boresight_offset(pitch_deg=1.2, yaw_deg=-0.8)
 
 # Apply spacecraft roll at evaluation time
-result = combined.evaluate(ephem, target_ra=83.63, target_dec=22.01, roll_deg=95.0)
+result = combined.evaluate(ephem, target_ra=83.63, target_dec=22.01, target_roll=95.0)
 ```
 
 ### Threshold Combinator (k-of-n Violated)

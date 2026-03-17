@@ -271,8 +271,7 @@ at evaluation time:
         ephem,
         target_ra,
         target_dec,
-        roll_deg=95.0,
-        roll_clockwise=False,
+        target_roll=95.0,
     )
 
 This lets you keep one fixed boresight definition while evaluating different

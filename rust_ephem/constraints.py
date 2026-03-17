@@ -138,24 +138,18 @@ class RustConstraintMixin(BaseModel):
 
     def _resolve_rust_constraint(
         self,
-        roll_deg: float | None,
-        roll_clockwise: bool,
-        roll_reference: RollReference,
+        target_roll: float | None,
     ) -> Any:
         """Use cached backend unless evaluation-time roll is explicitly provided."""
-        if roll_deg is None and not roll_clockwise and roll_reference == "sun":
+        if target_roll is None:
             return self._get_cached_rust_constraint()
         return self._to_rust_constraint(
-            roll_deg=roll_deg,
-            roll_clockwise=roll_clockwise,
-            roll_reference=roll_reference,
+            target_roll=target_roll,
         )
 
     def _to_rust_constraint(
         self,
-        roll_deg: float | None = None,
-        roll_clockwise: bool = False,
-        roll_reference: RollReference = "sun",
+        target_roll: float | None = None,
     ) -> Any:
         """Build a Rust Constraint, injecting evaluation-time roll if needed."""
         from rust_ephem import Constraint
@@ -181,16 +175,15 @@ class RustConstraintMixin(BaseModel):
                     raise ValueError("roll_reference must be either 'sun' or 'north'")
                 base_ccw = -base_roll if base_clockwise else base_roll
 
-                if roll_deg is not None:
-                    if abs(base_ccw) > 1.0e-12 and base_reference != roll_reference:
-                        raise ValueError(
-                            "Cannot combine fixed boresight roll and evaluation-time roll with different roll_reference values"
-                        )
-                    eval_ccw = -float(roll_deg) if roll_clockwise else float(roll_deg)
+                if target_roll is not None:
+                    # Evaluation-time roll uses the boresight-defined roll direction.
+                    eval_ccw = (
+                        -float(target_roll) if base_clockwise else float(target_roll)
+                    )
                     total_ccw = base_ccw + eval_ccw
                     node["roll_deg"] = total_ccw
                     node["roll_clockwise"] = False
-                    node["roll_reference"] = roll_reference
+                    node["roll_reference"] = base_reference
                 else:
                     node["roll_deg"] = base_roll
                     node["roll_clockwise"] = base_clockwise
@@ -214,9 +207,9 @@ class RustConstraintMixin(BaseModel):
             return False
 
         requires_roll = apply_eval_roll(config)
-        if requires_roll and roll_deg is None:
+        if requires_roll and target_roll is None:
             raise ValueError(
-                "roll_deg must be provided at evaluation time when boresight pitch/yaw offsets are non-zero"
+                "target_roll must be provided at evaluation time when boresight pitch/yaw offsets are non-zero"
             )
 
         return Constraint.from_json(json.dumps(config))
@@ -228,9 +221,7 @@ class RustConstraintMixin(BaseModel):
         target_dec: float,
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-        roll_deg: float | None = None,
-        roll_clockwise: bool = False,
-        roll_reference: RollReference = "sun",
+        target_roll: float | None = None,
     ) -> ConstraintResult:
         """
         Evaluate the constraint using the Rust backend.
@@ -249,9 +240,7 @@ class RustConstraintMixin(BaseModel):
             ConstraintResult containing violation windows
         """
         rust_constraint = self._resolve_rust_constraint(
-            roll_deg=roll_deg,
-            roll_clockwise=roll_clockwise,
-            roll_reference=roll_reference,
+            target_roll=target_roll,
         )
 
         # Get the Rust result
@@ -286,9 +275,7 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-        roll_deg: float | None = None,
-        roll_clockwise: bool = False,
-        roll_reference: RollReference = "sun",
+        target_roll: float | None = None,
     ) -> npt.NDArray[np.bool_]:
         """
         Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
@@ -307,9 +294,7 @@ class RustConstraintMixin(BaseModel):
             2D numpy array of shape (n_targets, n_times) with boolean violation status
         """
         rust_constraint = self._resolve_rust_constraint(
-            roll_deg=roll_deg,
-            roll_clockwise=roll_clockwise,
-            roll_reference=roll_reference,
+            target_roll=target_roll,
         )
         return cast(
             npt.NDArray[np.bool_],
@@ -328,9 +313,7 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
-        roll_deg: float | None = None,
-        roll_clockwise: bool = False,
-        roll_reference: RollReference = "sun",
+        target_roll: float | None = None,
     ) -> bool | list[bool]:
         """Check if target is in-constraint at given time(s).
 
@@ -355,9 +338,7 @@ class RustConstraintMixin(BaseModel):
             Returns a single bool for a single time, or a list of bools for multiple times.
         """
         rust_constraint = self._resolve_rust_constraint(
-            roll_deg=roll_deg,
-            roll_clockwise=roll_clockwise,
-            roll_reference=roll_reference,
+            target_roll=target_roll,
         )
         return cast(
             bool | list[bool],
@@ -375,9 +356,7 @@ class RustConstraintMixin(BaseModel):
         time: datetime | None = None,
         index: int | None = None,
         n_points: int = 20000,
-        roll_deg: float | None = None,
-        roll_clockwise: bool = False,
-        roll_reference: RollReference = "sun",
+        target_roll: float | None = None,
     ) -> float:
         """Compute instantaneous field of regard in steradians.
 
@@ -399,9 +378,7 @@ class RustConstraintMixin(BaseModel):
         rust_constraint_any = cast(
             Any,
             self._resolve_rust_constraint(
-                roll_deg=roll_deg,
-                roll_clockwise=roll_clockwise,
-                roll_reference=roll_reference,
+                target_roll=target_roll,
             ),
         )
         return float(
@@ -422,9 +399,7 @@ class RustConstraintMixin(BaseModel):
         body: str | int | None = None,
         use_horizons: bool = False,
         spice_kernel: str | None = None,
-        roll_deg: float | None = None,
-        roll_clockwise: bool = False,
-        roll_reference: RollReference = "sun",
+        target_roll: float | None = None,
     ) -> MovingVisibilityResult:
         """Evaluate constraint for a moving body (varying RA/Dec over time).
 
@@ -461,9 +436,7 @@ class RustConstraintMixin(BaseModel):
             ... )
         """
         rust_constraint = self._resolve_rust_constraint(
-            roll_deg=roll_deg,
-            roll_clockwise=roll_clockwise,
-            roll_reference=roll_reference,
+            target_roll=target_roll,
         )
 
         # Convert array-like to lists of floats if needed

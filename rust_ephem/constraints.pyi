@@ -74,9 +74,7 @@ class RustConstraintMixin(BaseModel):
         target_dec: float,
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-        roll_deg: float | None = None,
-        roll_clockwise: bool = False,
-        roll_reference: RollReference = "sun",
+        target_roll: float | None = None,
     ) -> ConstraintResult: ...
     def in_constraint_batch(
         self,
@@ -85,9 +83,7 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-        roll_deg: float | None = None,
-        roll_clockwise: bool = False,
-        roll_reference: RollReference = "sun",
+        target_roll: float | None = None,
     ) -> npt.NDArray[np.bool_]: ...
     def in_constraint(
         self,
@@ -95,9 +91,7 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
-        roll_deg: float | None = None,
-        roll_clockwise: bool = False,
-        roll_reference: RollReference = "sun",
+        target_roll: float | None = None,
     ) -> bool | list[bool]: ...
     def instantaneous_field_of_regard(
         self,
@@ -105,9 +99,7 @@ class RustConstraintMixin(BaseModel):
         time: datetime | None = None,
         index: int | None = None,
         n_points: int = 20000,
-        roll_deg: float | None = None,
-        roll_clockwise: bool = False,
-        roll_reference: RollReference = "sun",
+        target_roll: float | None = None,
     ) -> float: ...
     def evaluate_moving_body(
         self,
@@ -118,9 +110,7 @@ class RustConstraintMixin(BaseModel):
         body: str | int | None = None,
         use_horizons: bool = False,
         spice_kernel: str | None = None,
-        roll_deg: float | None = None,
-        roll_clockwise: bool = False,
-        roll_reference: RollReference = "sun",
+        target_roll: float | None = None,
     ) -> MovingVisibilityResult:
         """
         Evaluate constraint for a moving body (varying RA/Dec over time).
