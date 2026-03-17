@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
 import numpy as np
@@ -122,7 +123,12 @@ class ConstraintResult(BaseModel):
 if TYPE_CHECKING:
     pass
 
-RollReference = Literal["sun", "north"]
+
+class RollReference(str, Enum):
+    """Roll-zero reference axis for boresight offsets."""
+
+    SUN = "sun"
+    NORTH = "north"
 
 
 class RustConstraintMixin(BaseModel):
@@ -170,7 +176,9 @@ class RustConstraintMixin(BaseModel):
 
                 base_roll = float(node.get("roll_deg", 0.0) or 0.0)
                 base_clockwise = bool(node.get("roll_clockwise", False))
-                base_reference = str(node.get("roll_reference", "sun") or "sun").lower()
+                base_reference = str(
+                    node.get("roll_reference", "north") or "north"
+                ).lower()
                 if base_reference not in {"sun", "north"}:
                     raise ValueError("roll_reference must be either 'sun' or 'north'")
                 base_ccw = -base_roll if base_clockwise else base_roll
@@ -612,7 +620,7 @@ class RustConstraintMixin(BaseModel):
         self,
         roll_deg: float = 0.0,
         roll_clockwise: bool = False,
-        roll_reference: RollReference = "sun",
+        roll_reference: RollReference = RollReference.NORTH,
         pitch_deg: float = 0.0,
         yaw_deg: float = 0.0,
     ) -> BoresightOffsetConstraint:
@@ -625,9 +633,10 @@ class RustConstraintMixin(BaseModel):
             roll_deg: Fixed boresight roll offset about +X in degrees
             roll_clockwise: If True, positive fixed boresight roll is clockwise
                 looking along +X.
-            roll_reference: Roll-zero reference axis. "sun" sets roll=0 where
-                +Z is Sun-projected in the boresight-normal plane. "north" sets
-                roll=0 where +Z is celestial-north projected in that plane.
+            roll_reference: Roll-zero reference axis. "north" (default) sets
+                roll=0 where +Z is celestial-north projected in the boresight-
+                normal plane. "sun" sets roll=0 where +Z is Sun-projected in
+                that plane.
             pitch_deg: Pitch angle about +Y in degrees
             yaw_deg: Yaw angle about +Z in degrees
 
@@ -882,7 +891,7 @@ class BoresightOffsetConstraint(RustConstraintMixin):
         description="Interpret positive fixed boresight roll as clockwise looking along +X",
     )
     roll_reference: RollReference = Field(
-        default="sun",
+        default=RollReference.NORTH,
         description="Roll-zero reference axis: 'sun' or 'north'",
     )
     pitch_deg: float = Field(default=0.0, description="Pitch angle about +Y in degrees")

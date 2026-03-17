@@ -92,7 +92,7 @@ impl PyConstraint {
                 "constraint": config,
                 "roll_deg": target_roll_deg,
                 "roll_clockwise": false,
-                "roll_reference": "sun",
+                "roll_reference": "north",
                 "pitch_deg": 0.0,
                 "yaw_deg": 0.0
             });
@@ -1255,14 +1255,14 @@ impl PyConstraint {
     ///     roll_deg (float): Fixed boresight roll offset about +X in degrees (default 0.0)
     ///     roll_clockwise (bool): If True, positive fixed boresight roll is clockwise
     ///         when looking along +X. If False, positive is counterclockwise.
-    ///     roll_reference (str): Roll-zero reference axis: "sun" (default) or "north".
+    ///     roll_reference (str): Roll-zero reference axis: "north" (default) or "sun".
     ///     pitch_deg (float): Pitch angle about +Y in degrees
     ///     yaw_deg (float): Yaw angle about +Z in degrees
     ///
     /// Returns:
     ///     Constraint: A new boresight-offset wrapped constraint
     #[staticmethod]
-    #[pyo3(signature = (constraint, roll_deg=0.0, roll_clockwise=false, roll_reference="sun", pitch_deg=0.0, yaw_deg=0.0))]
+    #[pyo3(signature = (constraint, roll_deg=0.0, roll_clockwise=false, roll_reference="north", pitch_deg=0.0, yaw_deg=0.0))]
     fn boresight_offset(
         constraint: PyRef<PyConstraint>,
         roll_deg: f64,

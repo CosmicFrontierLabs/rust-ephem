@@ -462,7 +462,7 @@ class Constraint:
         constraint: Constraint,
         roll_deg: float = 0.0,
         roll_clockwise: bool = False,
-        roll_reference: Literal["sun", "north"] = "sun",
+        roll_reference: Literal["sun", "north"] = "north",
         pitch_deg: float = 0.0,
         yaw_deg: float = 0.0,
     ) -> Constraint:
@@ -474,7 +474,7 @@ class Constraint:
             roll_deg: Fixed boresight roll offset about +X in degrees
             roll_clockwise: If True, positive fixed boresight roll is clockwise
                 looking along +X.
-            roll_reference: Roll-zero reference axis: "sun" or "north".
+            roll_reference: Roll-zero reference axis: "north" or "sun".
             pitch_deg: Pitch angle about +Y in degrees
             yaw_deg: Yaw angle about +Z in degrees
 

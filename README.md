@@ -164,6 +164,9 @@ Two roll concepts are supported:
 
 - ``boresight_offset(..., roll_deg=..., pitch_deg=..., yaw_deg=...)`` defines
   the instrument's **fixed mechanical offset** relative to +X.
+- ``boresight_offset(..., roll_reference=...)`` defaults to ``"north"``
+  (celestial-north-projected +Z at roll=0). Use ``"sun"`` if you need
+  Sun-projected +Z at roll=0.
 - ``evaluate(..., target_roll=...)`` applies **spacecraft roll
   at evaluation time** for the commanded pointing.
 

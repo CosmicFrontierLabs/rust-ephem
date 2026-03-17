@@ -9,6 +9,7 @@ to configure the Rust constraint evaluators.
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -23,7 +24,9 @@ if TYPE_CHECKING:
 if TYPE_CHECKING:
     pass
 
-RollReference = Literal["sun", "north"]
+class RollReference(str, Enum):
+    SUN = "sun"
+    NORTH = "north"
 
 class ConstraintViolation(BaseModel):
     """A time window where a constraint was violated."""
@@ -142,7 +145,7 @@ class RustConstraintMixin(BaseModel):
         self,
         roll_deg: float = 0.0,
         roll_clockwise: bool = False,
-        roll_reference: RollReference = "sun",
+        roll_reference: RollReference = RollReference.NORTH,
         pitch_deg: float = 0.0,
         yaw_deg: float = 0.0,
     ) -> BoresightOffsetConstraint: ...
@@ -245,7 +248,7 @@ class BoresightOffsetConstraint(RustConstraintMixin):
     constraint: ConstraintConfig
     roll_deg: float = 0.0
     roll_clockwise: bool = False
-    roll_reference: RollReference = "sun"
+    roll_reference: RollReference = RollReference.NORTH
     pitch_deg: float = 0.0
     yaw_deg: float = 0.0
 

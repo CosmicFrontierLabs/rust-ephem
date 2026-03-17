@@ -50,8 +50,8 @@ fn default_full() -> String {
 #[serde(rename_all = "lowercase")]
 enum RollReferenceSpec {
     #[default]
-    Sun,
     North,
+    Sun,
 }
 
 impl From<RollReferenceSpec> for RollReference {

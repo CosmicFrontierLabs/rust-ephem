@@ -2,7 +2,11 @@ import numpy as np
 
 import rust_ephem
 from rust_ephem import Constraint
-from rust_ephem.constraints import BoresightOffsetConstraint, SunConstraint
+from rust_ephem.constraints import (
+    BoresightOffsetConstraint,
+    RollReference,
+    SunConstraint,
+)
 
 
 def test_boresight_offset_pydantic_json_roundtrip() -> None:
@@ -26,7 +30,7 @@ def test_boresight_offset_definition_accepts_fixed_roll_pitch_yaw() -> None:
     config = SunConstraint(min_angle=45.0).boresight_offset(
         roll_deg=1.5,
         roll_clockwise=True,
-        roll_reference="north",
+        roll_reference=RollReference.NORTH,
         pitch_deg=0.8,
         yaw_deg=-0.4,
     )
@@ -39,7 +43,7 @@ def test_boresight_offset_roll_reference_serializes() -> None:
     config = SunConstraint(min_angle=45.0).boresight_offset(
         roll_deg=5.0,
         roll_clockwise=False,
-        roll_reference="north",
+        roll_reference=RollReference.NORTH,
         pitch_deg=0.5,
         yaw_deg=1.0,
     )
@@ -90,7 +94,7 @@ def test_eval_accepts_default_spacecraft_roll_for_offset_sensitive_boresight(
     config = SunConstraint(min_angle=45.0).boresight_offset(
         pitch_deg=1.5,
         yaw_deg=-0.7,
-        roll_reference="north",
+        roll_reference=RollReference.NORTH,
     )
     default_result = config.evaluate(tle_ephem, target_ra=10.0, target_dec=5.0)
     assert isinstance(default_result.all_satisfied, bool)

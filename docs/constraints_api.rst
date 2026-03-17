@@ -1314,13 +1314,13 @@ All Pydantic constraint models inherit these methods:
              for a single time, or a list of bools for multiple times.
    :rtype: bool or list[bool]
 
-.. py:method:: boresight_offset(roll_deg=0.0, roll_clockwise=False, roll_reference="sun", pitch_deg=0.0, yaw_deg=0.0)
+.. py:method:: boresight_offset(roll_deg=0.0, roll_clockwise=False, roll_reference="north", pitch_deg=0.0, yaw_deg=0.0)
 
    Wrap this constraint with a fixed boresight Euler-angle offset.
 
    :param float roll_deg: Fixed boresight roll offset about +X in degrees
    :param bool roll_clockwise: If True, positive fixed boresight roll is clockwise looking along +X
-   :param str roll_reference: Roll-zero reference axis. Use ``"sun"`` for Sun-projected +Z zero-roll, or ``"north"`` for celestial-north-projected +Z zero-roll.
+   :param str roll_reference: Roll-zero reference axis. Default is ``"north"`` for celestial-north-projected +Z zero-roll. Use ``"sun"`` for Sun-projected +Z zero-roll.
    :param float pitch_deg: Fixed boresight pitch offset about +Y in degrees
    :param float yaw_deg: Fixed boresight yaw offset about +Z in degrees
    :returns: BoresightOffsetConstraint wrapping this constraint
