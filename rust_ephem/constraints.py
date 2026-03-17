@@ -8,6 +8,7 @@ to configure the Rust constraint evaluators.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
@@ -125,6 +126,86 @@ if TYPE_CHECKING:
 class RustConstraintMixin(BaseModel):
     """Base class for Rust constraint configurations"""
 
+    def _get_cached_rust_constraint(self) -> Any:
+        """Return lazily cached Rust backend constraint for definition-only config."""
+        if getattr(self, "_rust_constraint", None) is None:
+            from rust_ephem import Constraint
+
+            self._rust_constraint = Constraint.from_json(self.model_dump_json())
+        return self._rust_constraint
+
+    def _resolve_rust_constraint(
+        self,
+        roll_deg: float | None,
+        roll_clockwise: bool,
+    ) -> Any:
+        """Use cached backend unless evaluation-time roll is explicitly provided."""
+        if roll_deg is None and not roll_clockwise:
+            return self._get_cached_rust_constraint()
+        return self._to_rust_constraint(
+            roll_deg=roll_deg, roll_clockwise=roll_clockwise
+        )
+
+    def _to_rust_constraint(
+        self,
+        roll_deg: float | None = None,
+        roll_clockwise: bool = False,
+    ) -> Any:
+        """Build a Rust Constraint, injecting evaluation-time roll if needed."""
+        from rust_ephem import Constraint
+
+        config = self.model_dump(mode="json")
+
+        def apply_eval_roll(node: Any) -> bool:
+            if not isinstance(node, dict):
+                return False
+
+            node_type = node.get("type")
+            requires_roll = False
+
+            if node_type == "boresight_offset":
+                pitch = float(node.get("pitch_deg", 0.0) or 0.0)
+                yaw = float(node.get("yaw_deg", 0.0) or 0.0)
+                requires_roll = abs(pitch) > 1.0e-12 or abs(yaw) > 1.0e-12
+
+                base_roll = float(node.get("roll_deg", 0.0) or 0.0)
+                base_clockwise = bool(node.get("roll_clockwise", False))
+                base_ccw = -base_roll if base_clockwise else base_roll
+
+                if roll_deg is not None:
+                    eval_ccw = -float(roll_deg) if roll_clockwise else float(roll_deg)
+                    total_ccw = base_ccw + eval_ccw
+                    node["roll_deg"] = total_ccw
+                    node["roll_clockwise"] = False
+                else:
+                    node["roll_deg"] = base_roll
+                    node["roll_clockwise"] = base_clockwise
+
+                inner = node.get("constraint")
+                if isinstance(inner, dict):
+                    requires_roll = apply_eval_roll(inner) or requires_roll
+
+                return requires_roll
+
+            if node_type in {"and", "or", "xor", "at_least"}:
+                child_requires_roll = False
+                for child in node.get("constraints", []):
+                    child_requires_roll = apply_eval_roll(child) or child_requires_roll
+                return child_requires_roll
+
+            if node_type == "not":
+                return apply_eval_roll(node.get("constraint"))
+
+            return False
+
+        requires_roll = apply_eval_roll(config)
+        if requires_roll and roll_deg is None:
+            raise ValueError(
+                "roll_deg must be provided at evaluation time when boresight pitch/yaw offsets are non-zero"
+            )
+
+        return Constraint.from_json(json.dumps(config))
+
     def evaluate(
         self,
         ephemeris: Ephemeris,
@@ -132,6 +213,8 @@ class RustConstraintMixin(BaseModel):
         target_dec: float,
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
+        roll_deg: float | None = None,
+        roll_clockwise: bool = False,
     ) -> ConstraintResult:
         """
         Evaluate the constraint using the Rust backend.
@@ -149,13 +232,13 @@ class RustConstraintMixin(BaseModel):
         Returns:
             ConstraintResult containing violation windows
         """
-        if getattr(self, "_rust_constraint", None) is None:
-            from rust_ephem import Constraint
-
-            self._rust_constraint = Constraint.from_json(self.model_dump_json())
+        rust_constraint = self._resolve_rust_constraint(
+            roll_deg=roll_deg,
+            roll_clockwise=roll_clockwise,
+        )
 
         # Get the Rust result
-        rust_result = self._rust_constraint.evaluate(
+        rust_result = rust_constraint.evaluate(
             ephemeris,
             target_ra,
             target_dec,
@@ -186,6 +269,8 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
+        roll_deg: float | None = None,
+        roll_clockwise: bool = False,
     ) -> npt.NDArray[np.bool_]:
         """
         Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
@@ -203,16 +288,19 @@ class RustConstraintMixin(BaseModel):
         Returns:
             2D numpy array of shape (n_targets, n_times) with boolean violation status
         """
-        if getattr(self, "_rust_constraint", None) is None:
-            from rust_ephem import Constraint
-
-            self._rust_constraint = Constraint.from_json(self.model_dump_json())
-        return self._rust_constraint.in_constraint_batch(
-            ephemeris,
-            target_ras,
-            target_decs,
-            times,
-            indices,
+        rust_constraint = self._resolve_rust_constraint(
+            roll_deg=roll_deg,
+            roll_clockwise=roll_clockwise,
+        )
+        return cast(
+            npt.NDArray[np.bool_],
+            rust_constraint.in_constraint_batch(
+                ephemeris,
+                target_ras,
+                target_decs,
+                times,
+                indices,
+            ),
         )
 
     def in_constraint(
@@ -221,6 +309,8 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
+        roll_deg: float | None = None,
+        roll_clockwise: bool = False,
     ) -> bool | list[bool]:
         """Check if target is in-constraint at given time(s).
 
@@ -244,15 +334,18 @@ class RustConstraintMixin(BaseModel):
             False if constraint is satisfied (out-of-constraint).
             Returns a single bool for a single time, or a list of bools for multiple times.
         """
-        if getattr(self, "_rust_constraint", None) is None:
-            from rust_ephem import Constraint
-
-            self._rust_constraint = Constraint.from_json(self.model_dump_json())
-        return self._rust_constraint.in_constraint(
-            time,
-            ephemeris,
-            target_ra,
-            target_dec,
+        rust_constraint = self._resolve_rust_constraint(
+            roll_deg=roll_deg,
+            roll_clockwise=roll_clockwise,
+        )
+        return cast(
+            bool | list[bool],
+            rust_constraint.in_constraint(
+                time,
+                ephemeris,
+                target_ra,
+                target_dec,
+            ),
         )
 
     def instantaneous_field_of_regard(
@@ -261,6 +354,8 @@ class RustConstraintMixin(BaseModel):
         time: datetime | None = None,
         index: int | None = None,
         n_points: int = 20000,
+        roll_deg: float | None = None,
+        roll_clockwise: bool = False,
     ) -> float:
         """Compute instantaneous field of regard in steradians.
 
@@ -279,12 +374,13 @@ class RustConstraintMixin(BaseModel):
         Raises:
             ValueError: If exactly one of time/index is not provided
         """
-        if not hasattr(self, "_rust_constraint"):
-            from rust_ephem import Constraint
-
-            self._rust_constraint = Constraint.from_json(self.model_dump_json())
-
-        rust_constraint_any = cast(Any, self._rust_constraint)
+        rust_constraint_any = cast(
+            Any,
+            self._resolve_rust_constraint(
+                roll_deg=roll_deg,
+                roll_clockwise=roll_clockwise,
+            ),
+        )
         return float(
             rust_constraint_any.instantaneous_field_of_regard(
                 ephemeris,
@@ -303,6 +399,8 @@ class RustConstraintMixin(BaseModel):
         body: str | int | None = None,
         use_horizons: bool = False,
         spice_kernel: str | None = None,
+        roll_deg: float | None = None,
+        roll_clockwise: bool = False,
     ) -> MovingVisibilityResult:
         """Evaluate constraint for a moving body (varying RA/Dec over time).
 
@@ -338,10 +436,10 @@ class RustConstraintMixin(BaseModel):
             ...     ephem, body="2000001", spice_kernel="/path/to/ceres.bsp"
             ... )
         """
-        if getattr(self, "_rust_constraint", None) is None:
-            from rust_ephem import Constraint
-
-            self._rust_constraint = Constraint.from_json(self.model_dump_json())
+        rust_constraint = self._resolve_rust_constraint(
+            roll_deg=roll_deg,
+            roll_clockwise=roll_clockwise,
+        )
 
         # Convert array-like to lists of floats if needed
         ras_list: list[float] | None = None
@@ -353,7 +451,7 @@ class RustConstraintMixin(BaseModel):
         body_str = str(body) if body is not None else None
 
         # Call Rust implementation - returns MovingBodyResult object
-        rust_result = self._rust_constraint.evaluate_moving_body(
+        rust_result = rust_constraint.evaluate_moving_body(
             ephemeris,
             ras_list,
             decs_list,
@@ -510,6 +608,7 @@ class RustConstraintMixin(BaseModel):
     def boresight_offset(
         self,
         roll_deg: float = 0.0,
+        roll_clockwise: bool = False,
         pitch_deg: float = 0.0,
         yaw_deg: float = 0.0,
     ) -> BoresightOffsetConstraint:
@@ -519,7 +618,9 @@ class RustConstraintMixin(BaseModel):
         instrument is offset from the primary pointing direction.
 
         Args:
-            roll_deg: Roll angle about +X in degrees
+            roll_deg: Fixed boresight roll offset about +X in degrees
+            roll_clockwise: If True, positive fixed boresight roll is clockwise
+                looking along +X.
             pitch_deg: Pitch angle about +Y in degrees
             yaw_deg: Yaw angle about +Z in degrees
 
@@ -529,6 +630,7 @@ class RustConstraintMixin(BaseModel):
         return BoresightOffsetConstraint(
             constraint=cast("ConstraintConfig", self),
             roll_deg=roll_deg,
+            roll_clockwise=roll_clockwise,
             pitch_deg=pitch_deg,
             yaw_deg=yaw_deg,
         )
@@ -751,7 +853,9 @@ class BoresightOffsetConstraint(RustConstraintMixin):
     Attributes:
         type: Always "boresight_offset"
         constraint: Inner constraint evaluated at offset direction
-        roll_deg: Roll angle about +X in degrees
+        roll_deg: Fixed boresight roll offset about +X in degrees
+        roll_clockwise: If True, positive fixed boresight roll is clockwise
+            looking along +X.
         pitch_deg: Pitch angle about +Y in degrees
         yaw_deg: Yaw angle about +Z in degrees
     """
@@ -760,7 +864,14 @@ class BoresightOffsetConstraint(RustConstraintMixin):
     constraint: ConstraintConfig = Field(
         ..., description="Inner constraint evaluated at boresight-offset direction"
     )
-    roll_deg: float = Field(default=0.0, description="Roll angle about +X in degrees")
+    roll_deg: float = Field(
+        default=0.0,
+        description="Fixed boresight roll offset about +X in degrees",
+    )
+    roll_clockwise: bool = Field(
+        default=False,
+        description="Interpret positive fixed boresight roll as clockwise looking along +X",
+    )
     pitch_deg: float = Field(default=0.0, description="Pitch angle about +Y in degrees")
     yaw_deg: float = Field(default=0.0, description="Yaw angle about +Z in degrees")
 

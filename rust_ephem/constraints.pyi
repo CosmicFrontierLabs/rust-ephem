@@ -72,6 +72,8 @@ class RustConstraintMixin(BaseModel):
         target_dec: float,
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
+        roll_deg: float | None = None,
+        roll_clockwise: bool = False,
     ) -> ConstraintResult: ...
     def in_constraint_batch(
         self,
@@ -80,6 +82,8 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
+        roll_deg: float | None = None,
+        roll_clockwise: bool = False,
     ) -> npt.NDArray[np.bool_]: ...
     def in_constraint(
         self,
@@ -87,6 +91,8 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
+        roll_deg: float | None = None,
+        roll_clockwise: bool = False,
     ) -> bool | list[bool]: ...
     def instantaneous_field_of_regard(
         self,
@@ -94,6 +100,8 @@ class RustConstraintMixin(BaseModel):
         time: datetime | None = None,
         index: int | None = None,
         n_points: int = 20000,
+        roll_deg: float | None = None,
+        roll_clockwise: bool = False,
     ) -> float: ...
     def evaluate_moving_body(
         self,
@@ -104,6 +112,8 @@ class RustConstraintMixin(BaseModel):
         body: str | int | None = None,
         use_horizons: bool = False,
         spice_kernel: str | None = None,
+        roll_deg: float | None = None,
+        roll_clockwise: bool = False,
     ) -> MovingVisibilityResult:
         """
         Evaluate constraint for a moving body (varying RA/Dec over time).
@@ -134,6 +144,7 @@ class RustConstraintMixin(BaseModel):
     def boresight_offset(
         self,
         roll_deg: float = 0.0,
+        roll_clockwise: bool = False,
         pitch_deg: float = 0.0,
         yaw_deg: float = 0.0,
     ) -> BoresightOffsetConstraint: ...
@@ -235,6 +246,7 @@ class BoresightOffsetConstraint(RustConstraintMixin):
     type: Literal["boresight_offset"] = "boresight_offset"
     constraint: ConstraintConfig
     roll_deg: float = 0.0
+    roll_clockwise: bool = False
     pitch_deg: float = 0.0
     yaw_deg: float = 0.0
 

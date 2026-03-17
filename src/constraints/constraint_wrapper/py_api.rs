@@ -1188,23 +1188,31 @@ impl PyConstraint {
     ///
     /// Args:
     ///     constraint (Constraint): Inner constraint to evaluate at offset direction
-    ///     roll_deg (float): Roll angle about +X in degrees
+    ///     roll_deg (float | None): Fixed boresight roll offset about +X in degrees
+    ///     roll_clockwise (bool): If True, positive fixed boresight roll is clockwise
+    ///         when looking along +X. If False, positive is counterclockwise.
     ///     pitch_deg (float): Pitch angle about +Y in degrees
     ///     yaw_deg (float): Yaw angle about +Z in degrees
     ///
     /// Returns:
     ///     Constraint: A new boresight-offset wrapped constraint
     #[staticmethod]
-    #[pyo3(signature = (constraint, roll_deg=0.0, pitch_deg=0.0, yaw_deg=0.0))]
+    #[pyo3(signature = (constraint, roll_deg=0.0, roll_clockwise=false, pitch_deg=0.0, yaw_deg=0.0))]
     fn boresight_offset(
         constraint: PyRef<PyConstraint>,
         roll_deg: f64,
+        roll_clockwise: bool,
         pitch_deg: f64,
         yaw_deg: f64,
     ) -> PyResult<Self> {
-        if !roll_deg.is_finite() || !pitch_deg.is_finite() || !yaw_deg.is_finite() {
+        if !roll_deg.is_finite() {
             return Err(pyo3::exceptions::PyValueError::new_err(
-                "roll_deg, pitch_deg, and yaw_deg must be finite numbers",
+                "roll_deg must be a finite number",
+            ));
+        }
+        if !pitch_deg.is_finite() || !yaw_deg.is_finite() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "pitch_deg and yaw_deg must be finite numbers",
             ));
         }
 
@@ -1214,6 +1222,7 @@ impl PyConstraint {
             "type": "boresight_offset",
             "constraint": config,
             "roll_deg": roll_deg,
+            "roll_clockwise": roll_clockwise,
             "pitch_deg": pitch_deg,
             "yaw_deg": yaw_deg
         })

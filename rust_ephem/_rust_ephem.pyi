@@ -461,6 +461,7 @@ class Constraint:
     def boresight_offset(
         constraint: Constraint,
         roll_deg: float = 0.0,
+        roll_clockwise: bool = False,
         pitch_deg: float = 0.0,
         yaw_deg: float = 0.0,
     ) -> Constraint:
@@ -469,7 +470,9 @@ class Constraint:
 
         Args:
             constraint: Inner constraint to evaluate at the offset direction
-            roll_deg: Roll angle about +X in degrees
+            roll_deg: Fixed boresight roll offset about +X in degrees
+            roll_clockwise: If True, positive fixed boresight roll is clockwise
+                looking along +X.
             pitch_deg: Pitch angle about +Y in degrees
             yaw_deg: Yaw angle about +Z in degrees
 
