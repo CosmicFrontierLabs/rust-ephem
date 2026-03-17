@@ -18,6 +18,11 @@ pub(super) struct BoresightOffsetEvaluator {
 }
 
 impl BoresightOffsetEvaluator {
+    fn rotated_target_for_north_reference(&self, target_unit: &[f64; 3]) -> PyResult<(f64, f64)> {
+        // For North roll reference, rotated target does not depend on time/Sun geometry.
+        self.rotated_target_for_time(target_unit, &[0.0, 0.0, 0.0])
+    }
+
     fn cross(a: &[f64; 3], b: &[f64; 3]) -> [f64; 3] {
         [
             a[1] * b[2] - a[2] * b[1],
@@ -152,6 +157,23 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         target_dec: f64,
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
+        if matches!(self.roll_reference, RollReference::North) {
+            let target_unit =
+                crate::utils::vector_math::radec_to_unit_vector(target_ra, target_dec);
+            let (rotated_ra, rotated_dec) =
+                self.rotated_target_for_north_reference(&target_unit)?;
+            let inner =
+                self.constraint
+                    .evaluate(ephemeris, rotated_ra, rotated_dec, time_indices)?;
+
+            return Ok(ConstraintResult::new(
+                inner.violations,
+                inner.all_satisfied,
+                self.name(),
+                inner.times,
+            ));
+        }
+
         let all_times = ephemeris.get_times()?;
         let indices: Vec<usize> = if let Some(subset) = time_indices {
             subset.to_vec()
@@ -239,6 +261,30 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
             ));
         }
 
+        if matches!(self.roll_reference, RollReference::North) {
+            let n_targets = target_ras.len();
+            let target_units: Vec<[f64; 3]> = target_ras
+                .iter()
+                .zip(target_decs.iter())
+                .map(|(&ra, &dec)| crate::utils::vector_math::radec_to_unit_vector(ra, dec))
+                .collect();
+
+            let mut rotated_ras = Vec::with_capacity(n_targets);
+            let mut rotated_decs = Vec::with_capacity(n_targets);
+            for target_unit in &target_units {
+                let (ra, dec) = self.rotated_target_for_north_reference(target_unit)?;
+                rotated_ras.push(ra);
+                rotated_decs.push(dec);
+            }
+
+            return self.constraint.in_constraint_batch(
+                ephemeris,
+                &rotated_ras,
+                &rotated_decs,
+                time_indices,
+            );
+        }
+
         let all_times = ephemeris.get_times()?;
         let indices: Vec<usize> = if let Some(subset) = time_indices {
             subset.to_vec()
@@ -312,6 +358,24 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         let n = target_ras.len();
         if n == 0 {
             return Ok(Vec::new());
+        }
+
+        if matches!(self.roll_reference, RollReference::North) {
+            let mut rotated_ras = Vec::with_capacity(n);
+            let mut rotated_decs = Vec::with_capacity(n);
+            for i in 0..n {
+                let target_unit =
+                    crate::utils::vector_math::radec_to_unit_vector(target_ras[i], target_decs[i]);
+                let (ra, dec) = self.rotated_target_for_north_reference(&target_unit)?;
+                rotated_ras.push(ra);
+                rotated_decs.push(dec);
+            }
+
+            return self.constraint.in_constraint_batch_diagonal(
+                ephemeris,
+                &rotated_ras,
+                &rotated_decs,
+            );
         }
 
         let sun_positions = ephemeris.get_sun_positions()?;
