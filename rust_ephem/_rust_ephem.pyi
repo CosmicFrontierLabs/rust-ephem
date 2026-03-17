@@ -1,7 +1,7 @@
 """Type stubs for the Rust extension module _rust_ephem"""
 
 from datetime import datetime
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 import numpy as np
 import numpy.typing as npt
@@ -461,6 +461,8 @@ class Constraint:
     def boresight_offset(
         constraint: Constraint,
         roll_deg: float = 0.0,
+        roll_clockwise: bool = False,
+        roll_reference: Literal["sun", "north"] = "north",
         pitch_deg: float = 0.0,
         yaw_deg: float = 0.0,
     ) -> Constraint:
@@ -469,7 +471,10 @@ class Constraint:
 
         Args:
             constraint: Inner constraint to evaluate at the offset direction
-            roll_deg: Roll angle about +X in degrees
+            roll_deg: Fixed boresight roll offset about +X in degrees
+            roll_clockwise: If True, positive fixed boresight roll is clockwise
+                looking along +X.
+            roll_reference: Roll-zero reference axis: "north" or "sun".
             pitch_deg: Pitch angle about +Y in degrees
             yaw_deg: Yaw angle about +Z in degrees
 
@@ -519,6 +524,7 @@ class Constraint:
         target_dec: float,
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
+        target_roll: float | None = None,
     ) -> Any:
         """
         Evaluate constraint against ephemeris data.
@@ -532,6 +538,8 @@ class Constraint:
                    evaluated (must exist in the ephemeris).
             indices: Optional specific time index/indices to evaluate. Can be a
                      single index or list of indices into the ephemeris timestamp array.
+                 target_roll: Optional spacecraft roll angle about +X in degrees,
+                       applied at evaluation time.
 
         Returns:
             ConstraintResult containing violation windows
@@ -554,6 +562,7 @@ class Constraint:
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
+        target_roll: float | None = None,
     ) -> npt.NDArray[np.bool_]:
         """
         Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
@@ -570,6 +579,8 @@ class Constraint:
                    evaluated (must exist in the ephemeris).
             indices: Optional specific time index/indices to evaluate. Can be a
                      single index or list of indices into the ephemeris timestamp array.
+            target_roll: Optional spacecraft roll angle about +X in degrees,
+                         applied at evaluation time.
 
         Returns:
             2D numpy boolean array of shape (n_targets, n_times) where True indicates
@@ -593,6 +604,7 @@ class Constraint:
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
+        target_roll: float | None = None,
     ) -> bool | list[bool]:
         """
         Check if the target is in-constraint at given time(s).
@@ -603,6 +615,8 @@ class Constraint:
             ephemeris: One of TLEEphemeris, SPICEEphemeris, or GroundEphemeris
             target_ra: Target right ascension in degrees (ICRS/J2000)
             target_dec: Target declination in degrees (ICRS/J2000)
+            target_roll: Optional spacecraft roll angle about +X in degrees,
+                        applied at evaluation time.
 
         Returns:
             True if constraint is violated at the given time(s). Returns a single bool

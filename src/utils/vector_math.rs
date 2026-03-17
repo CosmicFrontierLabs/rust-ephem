@@ -11,7 +11,6 @@
 ///
 /// # Returns
 /// Unit vector [x, y, z] in ICRS/J2000 frame
-#[allow(dead_code)]
 pub fn radec_to_unit_vector(ra_deg: f64, dec_deg: f64) -> [f64; 3] {
     let ra_rad = ra_deg.to_radians();
     let dec_rad = dec_deg.to_radians();
@@ -165,6 +164,7 @@ pub fn radec_to_unit_vectors_batch(ras_deg: &[f64], decs_deg: &[f64]) -> Array2<
 ///
 /// Rotation order is yaw (Z), pitch (Y), roll (X):
 /// `R = Rz(yaw) * Ry(pitch) * Rx(roll)`.
+#[allow(dead_code)]
 pub fn euler_zyx_rotation_matrix(roll_deg: f64, pitch_deg: f64, yaw_deg: f64) -> [[f64; 3]; 3] {
     let roll = roll_deg.to_radians();
     let pitch = pitch_deg.to_radians();
@@ -190,6 +190,7 @@ pub fn euler_zyx_rotation_matrix(roll_deg: f64, pitch_deg: f64, yaw_deg: f64) ->
 ///
 /// # Returns
 /// Rotated `(ra_deg, dec_deg)` in degrees.
+#[allow(dead_code)]
 pub fn rotate_radec_with_matrix(
     ra_deg: f64,
     dec_deg: f64,

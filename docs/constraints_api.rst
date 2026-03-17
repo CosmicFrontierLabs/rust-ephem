@@ -518,7 +518,7 @@ Logical Combinators
 Evaluation Methods
 ^^^^^^^^^^^^^^^^^^
 
-.. py:method:: Constraint.evaluate(ephemeris, target_ra, target_dec, times=None, indices=None)
+.. py:method:: Constraint.evaluate(ephemeris, target_ra, target_dec, times=None, indices=None, target_roll=None)
 
    Evaluate constraint against ephemeris data.
 
@@ -527,6 +527,7 @@ Evaluation Methods
    :param float target_dec: Target declination in degrees (ICRS/J2000)
    :param times: Optional specific time(s) to evaluate (datetime or list of datetimes)
    :param indices: Optional specific time index/indices to evaluate (int or list of ints)
+   :param float target_roll: Optional spacecraft roll angle about +X (degrees), applied at evaluation time
    :returns: ConstraintResult containing violation windows
    :rtype: ConstraintResult
    :raises ValueError: If both times and indices are provided, or if times/indices not found
@@ -549,7 +550,7 @@ Evaluation Methods
       # Evaluate at specific indices
       result = constraint.evaluate(ephem, 83.63, 22.01, indices=[0, 10, 20])
 
-.. py:method:: Constraint.in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None)
+.. py:method:: Constraint.in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_roll=None)
 
    Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
 
@@ -561,6 +562,7 @@ Evaluation Methods
    :param list target_decs: List of target declinations in degrees (ICRS/J2000)
    :param times: Optional specific time(s) to evaluate
    :param indices: Optional specific time index/indices to evaluate
+   :param float target_roll: Optional spacecraft roll angle about +X (degrees), applied at evaluation time
    :returns: 2D numpy boolean array of shape (n_targets, n_times)
    :rtype: numpy.ndarray
 
@@ -591,7 +593,7 @@ Evaluation Methods
       # Find targets that never violate
       always_visible = np.where(violation_counts == 0)[0]
 
-.. py:method:: Constraint.in_constraint(time, ephemeris, target_ra, target_dec)
+.. py:method:: Constraint.in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None)
 
    Check if the target satisfies the constraint at given time(s).
 
@@ -604,6 +606,7 @@ Evaluation Methods
    :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
    :param float target_ra: Target right ascension in degrees (ICRS/J2000)
    :param float target_dec: Target declination in degrees (ICRS/J2000)
+   :param float target_roll: Optional spacecraft roll angle about +X (degrees), applied at evaluation time
    :returns: True if constraint is satisfied at the given time(s).
              Returns a single bool for a single time, or a list of bools for multiple times.
    :rtype: bool or list[bool]
@@ -1268,7 +1271,7 @@ Common Methods (RustConstraintMixin)
 
 All Pydantic constraint models inherit these methods:
 
-.. py:method:: evaluate(ephemeris, target_ra, target_dec, times=None, indices=None)
+.. py:method:: evaluate(ephemeris, target_ra, target_dec, times=None, indices=None, target_roll=None)
 
    Evaluate the constraint using the Rust backend.
 
@@ -1279,10 +1282,11 @@ All Pydantic constraint models inherit these methods:
    :param float target_dec: Target declination in degrees (ICRS/J2000)
    :param times: Optional specific time(s) to evaluate
    :param indices: Optional specific time index/indices to evaluate
+   :param float target_roll: Optional spacecraft roll angle about +X (degrees), applied at evaluation time
    :returns: ConstraintResult containing violation windows
    :rtype: ConstraintResult
 
-.. py:method:: in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None)
+.. py:method:: in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_roll=None)
 
    Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
 
@@ -1291,10 +1295,11 @@ All Pydantic constraint models inherit these methods:
    :param list target_decs: List of target declinations in degrees
    :param times: Optional specific time(s) to evaluate
    :param indices: Optional specific time index/indices to evaluate
+   :param float target_roll: Optional spacecraft roll angle about +X (degrees), applied at evaluation time
    :returns: 2D numpy array of shape (n_targets, n_times) with boolean violation status
    :rtype: numpy.ndarray
 
-.. py:method:: in_constraint(time, ephemeris, target_ra, target_dec)
+.. py:method:: in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None)
 
    Check if target violates the constraint at given time(s).
 
@@ -1304,9 +1309,22 @@ All Pydantic constraint models inherit these methods:
    :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
    :param float target_ra: Target right ascension in degrees
    :param float target_dec: Target declination in degrees
+   :param float target_roll: Optional spacecraft roll angle about +X (degrees), applied at evaluation time
    :returns: True if constraint is satisfied at the given time(s). Returns a single bool
              for a single time, or a list of bools for multiple times.
    :rtype: bool or list[bool]
+
+.. py:method:: boresight_offset(roll_deg=0.0, roll_clockwise=False, roll_reference="north", pitch_deg=0.0, yaw_deg=0.0)
+
+   Wrap this constraint with a fixed boresight Euler-angle offset.
+
+   :param float roll_deg: Fixed boresight roll offset about +X in degrees
+   :param bool roll_clockwise: If True, positive fixed boresight roll is clockwise looking along +X
+   :param str roll_reference: Roll-zero reference axis. Default is ``"north"`` for celestial-north-projected +Z zero-roll. Use ``"sun"`` for Sun-projected +Z zero-roll.
+   :param float pitch_deg: Fixed boresight pitch offset about +Y in degrees
+   :param float yaw_deg: Fixed boresight yaw offset about +Z in degrees
+   :returns: BoresightOffsetConstraint wrapping this constraint
+   :rtype: BoresightOffsetConstraint
 
 .. py:method:: and_(other)
 

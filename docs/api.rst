@@ -394,7 +394,8 @@ Classes
     * ``Constraint.xor_(*constraints)`` — Combine constraints with logical XOR (violation when exactly one sub-constraint is violated)
     * ``Constraint.at_least(min_violated, constraints)`` — Threshold combinator (violation when at least ``min_violated`` sub-constraints are violated)
     * ``Constraint.not_(constraint)`` — Negate a constraint with logical NOT
-    * ``Constraint.boresight_offset(constraint, roll_deg=0.0, pitch_deg=0.0, yaw_deg=0.0)`` — Wrap a constraint with fixed boresight Euler-angle offsets
+    * ``Constraint.boresight_offset(constraint, roll_deg=0.0, roll_clockwise=False, roll_reference="north", pitch_deg=0.0, yaw_deg=0.0)`` — Wrap a constraint with fixed boresight Euler-angle offsets
+      - ``roll_reference`` — Optional: roll-zero reference axis for boresight offsets. Default is ``"north"`` (celestial-north-projected +Z zero-roll). Use ``"sun"`` for Sun-projected +Z zero-roll when needed.
     * ``Constraint.from_json(json_str)`` — Create constraint from JSON configuration
 
   **Methods:**

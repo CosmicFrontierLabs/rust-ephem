@@ -262,6 +262,21 @@ Equivalent Pydantic configuration:
 Euler angles are specified in degrees as ``roll_deg`` (+X), ``pitch_deg`` (+Y),
 and ``yaw_deg`` (+Z).
 
+Spacecraft roll is separate from fixed instrument offsets. Pass spacecraft roll
+at evaluation time:
+
+.. code-block:: python
+
+    result = combined.evaluate(
+        ephem,
+        target_ra,
+        target_dec,
+        target_roll=95.0,
+    )
+
+This lets you keep one fixed boresight definition while evaluating different
+commanded roll states for the same RA/Dec pointing.
+
 Instantaneous Field of Regard (steradians)
 ------------------------------------------
 

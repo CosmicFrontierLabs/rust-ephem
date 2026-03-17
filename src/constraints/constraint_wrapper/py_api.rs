@@ -39,10 +39,74 @@ pub struct PyConstraint {
 }
 
 impl PyConstraint {
+    fn with_effective_evaluator<T, F>(&self, target_roll: Option<f64>, f: F) -> PyResult<T>
+    where
+        F: FnOnce(&dyn ConstraintEvaluator) -> PyResult<T>,
+    {
+        let Some(target_roll_deg) = target_roll else {
+            return f(&*self.evaluator);
+        };
+
+        if !target_roll_deg.is_finite() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_roll must be a finite number",
+            ));
+        }
+
+        let mut config: serde_json::Value = serde_json::from_str(&self.config_json)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+
+        let is_boresight_offset = config
+            .get("type")
+            .and_then(|v| v.as_str())
+            .map(|t| t == "boresight_offset")
+            .unwrap_or(false);
+
+        if is_boresight_offset {
+            let base_roll_deg = config
+                .get("roll_deg")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let base_clockwise = config
+                .get("roll_clockwise")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            // Match RustConstraintMixin semantics: add evaluation-time roll in the
+            // configured command convention.
+            let signed_target_roll = if base_clockwise {
+                -target_roll_deg
+            } else {
+                target_roll_deg
+            };
+
+            if let Some(obj) = config.as_object_mut() {
+                obj.insert(
+                    "roll_deg".to_string(),
+                    serde_json::json!(base_roll_deg + signed_target_roll),
+                );
+            }
+        } else {
+            config = serde_json::json!({
+                "type": "boresight_offset",
+                "constraint": config,
+                "roll_deg": target_roll_deg,
+                "roll_clockwise": false,
+                "roll_reference": "north",
+                "pitch_deg": 0.0,
+                "yaw_deg": 0.0
+            });
+        }
+
+        let evaluator = parse_constraint_json(&config)?;
+        f(&*evaluator)
+    }
+
     /// Internal helper to evaluate against any Ephemeris implementing EphemerisBase
     #[allow(deprecated)]
     fn eval_with_ephemeris<E: EphemerisBase>(
         &self,
+        evaluator: &dyn ConstraintEvaluator,
         ephemeris: &E,
         target_ra: f64,
         target_dec: f64,
@@ -53,7 +117,7 @@ impl PyConstraint {
         // use in_constraint_batch() which is 1700x faster, then construct violations from the result
 
         // Call the fast batch evaluation for single target
-        let violation_array = self.evaluator.in_constraint_batch(
+        let violation_array = evaluator.in_constraint_batch(
             ephemeris,
             &[target_ra],
             &[target_dec],
@@ -78,14 +142,14 @@ impl PyConstraint {
         let violations = crate::constraints::core::track_violations(
             &times,
             |i| (violated[i], if violated[i] { 1.0 } else { 0.0 }),
-            |_i, _is_open| self.evaluator.name(),
+            |_i, _is_open| evaluator.name(),
         );
 
         let all_satisfied = violations.is_empty();
         Ok(ConstraintResult::new(
             violations,
             all_satisfied,
-            self.evaluator.name(),
+            evaluator.name(),
             times,
         ))
     }
@@ -1188,23 +1252,40 @@ impl PyConstraint {
     ///
     /// Args:
     ///     constraint (Constraint): Inner constraint to evaluate at offset direction
-    ///     roll_deg (float): Roll angle about +X in degrees
+    ///     roll_deg (float): Fixed boresight roll offset about +X in degrees (default 0.0)
+    ///     roll_clockwise (bool): If True, positive fixed boresight roll is clockwise
+    ///         when looking along +X. If False, positive is counterclockwise.
+    ///     roll_reference (str): Roll-zero reference axis: "north" (default) or "sun".
     ///     pitch_deg (float): Pitch angle about +Y in degrees
     ///     yaw_deg (float): Yaw angle about +Z in degrees
     ///
     /// Returns:
     ///     Constraint: A new boresight-offset wrapped constraint
     #[staticmethod]
-    #[pyo3(signature = (constraint, roll_deg=0.0, pitch_deg=0.0, yaw_deg=0.0))]
+    #[pyo3(signature = (constraint, roll_deg=0.0, roll_clockwise=false, roll_reference="north", pitch_deg=0.0, yaw_deg=0.0))]
     fn boresight_offset(
         constraint: PyRef<PyConstraint>,
         roll_deg: f64,
+        roll_clockwise: bool,
+        roll_reference: &str,
         pitch_deg: f64,
         yaw_deg: f64,
     ) -> PyResult<Self> {
-        if !roll_deg.is_finite() || !pitch_deg.is_finite() || !yaw_deg.is_finite() {
+        if !roll_deg.is_finite() {
             return Err(pyo3::exceptions::PyValueError::new_err(
-                "roll_deg, pitch_deg, and yaw_deg must be finite numbers",
+                "roll_deg must be a finite number",
+            ));
+        }
+        if !pitch_deg.is_finite() || !yaw_deg.is_finite() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "pitch_deg and yaw_deg must be finite numbers",
+            ));
+        }
+
+        let roll_reference_normalized = roll_reference.to_ascii_lowercase();
+        if roll_reference_normalized != "sun" && roll_reference_normalized != "north" {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "roll_reference must be either 'sun' or 'north'",
             ));
         }
 
@@ -1214,6 +1295,8 @@ impl PyConstraint {
             "type": "boresight_offset",
             "constraint": config,
             "roll_deg": roll_deg,
+            "roll_clockwise": roll_clockwise,
+            "roll_reference": roll_reference_normalized,
             "pitch_deg": pitch_deg,
             "yaw_deg": yaw_deg
         })
@@ -1245,7 +1328,8 @@ impl PyConstraint {
     /// Note:
     ///     Only one of `times` or `indices` should be provided. If neither is provided,
     ///     all ephemeris times are evaluated.
-    #[pyo3(signature = (ephemeris, target_ra, target_dec, times=None, indices=None))]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (ephemeris, target_ra, target_dec, times=None, indices=None, target_roll=None))]
     fn evaluate(
         &self,
         py: Python,
@@ -1254,6 +1338,7 @@ impl PyConstraint {
         target_dec: f64,
         times: Option<&Bound<PyAny>>,
         indices: Option<&Bound<PyAny>>,
+        target_roll: Option<f64>,
     ) -> PyResult<ConstraintResult> {
         // Parse time filtering options
         let bound = ephemeris.bind(py);
@@ -1270,22 +1355,48 @@ impl PyConstraint {
             None
         };
 
-        if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
-            return self.eval_with_ephemeris(&*ephem, target_ra, target_dec, time_indices);
-        }
-        if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
-            return self.eval_with_ephemeris(&*ephem, target_ra, target_dec, time_indices);
-        }
-        if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
-            return self.eval_with_ephemeris(&*ephem, target_ra, target_dec, time_indices);
-        }
-        if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
-            return self.eval_with_ephemeris(&*ephem, target_ra, target_dec, time_indices);
-        }
+        self.with_effective_evaluator(target_roll, |evaluator| {
+            if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
+                return self.eval_with_ephemeris(
+                    evaluator,
+                    &*ephem,
+                    target_ra,
+                    target_dec,
+                    time_indices.clone(),
+                );
+            }
+            if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
+                return self.eval_with_ephemeris(
+                    evaluator,
+                    &*ephem,
+                    target_ra,
+                    target_dec,
+                    time_indices.clone(),
+                );
+            }
+            if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
+                return self.eval_with_ephemeris(
+                    evaluator,
+                    &*ephem,
+                    target_ra,
+                    target_dec,
+                    time_indices.clone(),
+                );
+            }
+            if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+                return self.eval_with_ephemeris(
+                    evaluator,
+                    &*ephem,
+                    target_ra,
+                    target_dec,
+                    time_indices.clone(),
+                );
+            }
 
-        Err(pyo3::exceptions::PyTypeError::new_err(
-            "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
-        ))
+            Err(pyo3::exceptions::PyTypeError::new_err(
+                "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
+            ))
+        })
     }
 
     /// Check if targets are in-constraint for multiple RA/Dec positions (vectorized)
@@ -1311,7 +1422,8 @@ impl PyConstraint {
     ///     >>> violations = constraint.in_constraint_batch(ephem, ras, decs)
     ///     >>> violations.shape  # (3, n_times)
     ///     >>> violations[0, :]  # Violations for first target across all times
-    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None))]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None, target_roll=None))]
     fn in_constraint_batch(
         &self,
         py: Python,
@@ -1320,6 +1432,7 @@ impl PyConstraint {
         target_decs: Vec<f64>,
         times: Option<&Bound<PyAny>>,
         indices: Option<&Bound<PyAny>>,
+        target_roll: Option<f64>,
     ) -> PyResult<Py<PyAny>> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1343,39 +1456,44 @@ impl PyConstraint {
         };
 
         // Call batch evaluation with ephemeris based on type
-        let result_array = if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
-            self.evaluator.in_constraint_batch(
-                &*ephem as &dyn EphemerisBase,
-                &target_ras,
-                &target_decs,
-                time_indices.as_deref(),
-            )?
-        } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
-            self.evaluator.in_constraint_batch(
-                &*ephem as &dyn EphemerisBase,
-                &target_ras,
-                &target_decs,
-                time_indices.as_deref(),
-            )?
-        } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
-            self.evaluator.in_constraint_batch(
-                &*ephem as &dyn EphemerisBase,
-                &target_ras,
-                &target_decs,
-                time_indices.as_deref(),
-            )?
-        } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
-            self.evaluator.in_constraint_batch(
-                &*ephem as &dyn EphemerisBase,
-                &target_ras,
-                &target_decs,
-                time_indices.as_deref(),
-            )?
-        } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
+        let result_array = self.with_effective_evaluator(target_roll, |evaluator| {
+            if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
+                return evaluator.in_constraint_batch(
+                    &*ephem as &dyn EphemerisBase,
+                    &target_ras,
+                    &target_decs,
+                    time_indices.as_deref(),
+                );
+            }
+            if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
+                return evaluator.in_constraint_batch(
+                    &*ephem as &dyn EphemerisBase,
+                    &target_ras,
+                    &target_decs,
+                    time_indices.as_deref(),
+                );
+            }
+            if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
+                return evaluator.in_constraint_batch(
+                    &*ephem as &dyn EphemerisBase,
+                    &target_ras,
+                    &target_decs,
+                    time_indices.as_deref(),
+                );
+            }
+            if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+                return evaluator.in_constraint_batch(
+                    &*ephem as &dyn EphemerisBase,
+                    &target_ras,
+                    &target_decs,
+                    time_indices.as_deref(),
+                );
+            }
+
+            Err(pyo3::exceptions::PyTypeError::new_err(
                 "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
-            ));
-        };
+            ))
+        })?;
 
         // Convert to numpy array
         use numpy::IntoPyArray;
@@ -1656,7 +1774,7 @@ impl PyConstraint {
     ///
     /// # Returns
     /// A boolean if a single time is provided, or a list of booleans if multiple times are provided
-    #[pyo3(signature = (time, ephemeris, target_ra, target_dec))]
+    #[pyo3(signature = (time, ephemeris, target_ra, target_dec, target_roll=None))]
     fn in_constraint(
         &self,
         py: Python,
@@ -1664,6 +1782,7 @@ impl PyConstraint {
         ephemeris: Py<PyAny>,
         target_ra: f64,
         target_dec: f64,
+        target_roll: Option<f64>,
     ) -> PyResult<Py<PyAny>> {
         // Check if time is a single value or a sequence
         let bound_time = time.bind(py);
@@ -1685,6 +1804,7 @@ impl PyConstraint {
             target_decs,
             Some(bound_time),
             None,
+            target_roll,
         )?;
 
         // Extract the results for the single target (first row)

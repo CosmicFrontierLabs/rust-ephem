@@ -9,6 +9,7 @@ to configure the Rust constraint evaluators.
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -22,6 +23,10 @@ if TYPE_CHECKING:
 
 if TYPE_CHECKING:
     pass
+
+class RollReference(str, Enum):
+    SUN = "sun"
+    NORTH = "north"
 
 class ConstraintViolation(BaseModel):
     """A time window where a constraint was violated."""
@@ -72,6 +77,7 @@ class RustConstraintMixin(BaseModel):
         target_dec: float,
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
+        target_roll: float | None = None,
     ) -> ConstraintResult: ...
     def in_constraint_batch(
         self,
@@ -80,6 +86,7 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
+        target_roll: float | None = None,
     ) -> npt.NDArray[np.bool_]: ...
     def in_constraint(
         self,
@@ -87,6 +94,7 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
+        target_roll: float | None = None,
     ) -> bool | list[bool]: ...
     def instantaneous_field_of_regard(
         self,
@@ -94,6 +102,7 @@ class RustConstraintMixin(BaseModel):
         time: datetime | None = None,
         index: int | None = None,
         n_points: int = 20000,
+        target_roll: float | None = None,
     ) -> float: ...
     def evaluate_moving_body(
         self,
@@ -104,6 +113,7 @@ class RustConstraintMixin(BaseModel):
         body: str | int | None = None,
         use_horizons: bool = False,
         spice_kernel: str | None = None,
+        target_roll: float | None = None,
     ) -> MovingVisibilityResult:
         """
         Evaluate constraint for a moving body (varying RA/Dec over time).
@@ -134,6 +144,8 @@ class RustConstraintMixin(BaseModel):
     def boresight_offset(
         self,
         roll_deg: float = 0.0,
+        roll_clockwise: bool = False,
+        roll_reference: RollReference = RollReference.NORTH,
         pitch_deg: float = 0.0,
         yaw_deg: float = 0.0,
     ) -> BoresightOffsetConstraint: ...
@@ -235,6 +247,8 @@ class BoresightOffsetConstraint(RustConstraintMixin):
     type: Literal["boresight_offset"] = "boresight_offset"
     constraint: ConstraintConfig
     roll_deg: float = 0.0
+    roll_clockwise: bool = False
+    roll_reference: RollReference = RollReference.NORTH
     pitch_deg: float = 0.0
     yaw_deg: float = 0.0
 

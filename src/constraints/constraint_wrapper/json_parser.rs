@@ -14,7 +14,7 @@ use crate::constraints::sun_proximity::SunProximityConfig;
 use pyo3::PyResult;
 use serde::Deserialize;
 
-use super::boresight::BoresightOffsetEvaluator;
+use super::boresight::{BoresightOffsetEvaluator, RollReference};
 use super::combinators::{AndEvaluator, AtLeastEvaluator, NotEvaluator, OrEvaluator, XorEvaluator};
 
 fn default_umbra_only() -> bool {
@@ -44,6 +44,23 @@ impl From<TwilightSpec> for TwilightType {
 
 fn default_full() -> String {
     "full".to_string()
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+enum RollReferenceSpec {
+    #[default]
+    North,
+    Sun,
+}
+
+impl From<RollReferenceSpec> for RollReference {
+    fn from(value: RollReferenceSpec) -> Self {
+        match value {
+            RollReferenceSpec::Sun => RollReference::Sun,
+            RollReferenceSpec::North => RollReference::North,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,7 +145,11 @@ enum ConstraintSpec {
     BoresightOffset {
         constraint: Box<ConstraintSpec>,
         #[serde(default)]
-        roll_deg: f64,
+        roll_deg: Option<f64>,
+        #[serde(default)]
+        roll_clockwise: bool,
+        #[serde(default)]
+        roll_reference: RollReferenceSpec,
         #[serde(default)]
         pitch_deg: f64,
         #[serde(default)]
@@ -310,25 +331,31 @@ impl ConstraintSpec {
             ConstraintSpec::BoresightOffset {
                 constraint,
                 roll_deg,
+                roll_clockwise,
+                roll_reference,
                 pitch_deg,
                 yaw_deg,
             } => {
-                if !roll_deg.is_finite() || !pitch_deg.is_finite() || !yaw_deg.is_finite() {
+                if let Some(roll) = roll_deg {
+                    if !roll.is_finite() {
+                        return Err(pyo3::exceptions::PyValueError::new_err(
+                            "roll_deg must be a finite number when provided",
+                        ));
+                    }
+                }
+                if !pitch_deg.is_finite() || !yaw_deg.is_finite() {
                     return Err(pyo3::exceptions::PyValueError::new_err(
-                        "roll_deg, pitch_deg, and yaw_deg must be finite numbers",
+                        "pitch_deg and yaw_deg must be finite numbers",
                     ));
                 }
-
-                let rotation_matrix = crate::utils::vector_math::euler_zyx_rotation_matrix(
-                    roll_deg, pitch_deg, yaw_deg,
-                );
 
                 Ok(Box::new(BoresightOffsetEvaluator {
                     constraint: constraint.into_evaluator()?,
                     roll_deg,
+                    roll_clockwise,
+                    roll_reference: roll_reference.into(),
                     pitch_deg,
                     yaw_deg,
-                    rotation_matrix,
                 }))
             }
             ConstraintSpec::OrbitPole {
