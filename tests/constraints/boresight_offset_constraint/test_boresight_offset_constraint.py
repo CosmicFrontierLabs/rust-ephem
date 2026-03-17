@@ -26,11 +26,26 @@ def test_boresight_offset_definition_accepts_fixed_roll_pitch_yaw() -> None:
     config = SunConstraint(min_angle=45.0).boresight_offset(
         roll_deg=1.5,
         roll_clockwise=True,
+        roll_reference="north",
         pitch_deg=0.8,
         yaw_deg=-0.4,
     )
     assert config.roll_deg == 1.5
     assert config.roll_clockwise is True
+    assert config.roll_reference == "north"
+
+
+def test_boresight_offset_roll_reference_serializes() -> None:
+    config = SunConstraint(min_angle=45.0).boresight_offset(
+        roll_deg=5.0,
+        roll_clockwise=False,
+        roll_reference="north",
+        pitch_deg=0.5,
+        yaw_deg=1.0,
+    )
+
+    js = config.model_dump_json().replace(" ", "")
+    assert '"roll_reference":"north"' in js
 
 
 def test_boresight_offset_roll_optional_when_no_offset(
@@ -84,6 +99,7 @@ def test_eval_accepts_default_spacecraft_roll_for_offset_sensitive_boresight(
         target_dec=5.0,
         roll_deg=12.0,
         roll_clockwise=False,
+        roll_reference="north",
     )
     assert isinstance(result.all_satisfied, bool)
 

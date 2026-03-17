@@ -1,7 +1,7 @@
 """Type stubs for the Rust extension module _rust_ephem"""
 
 from datetime import datetime
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 import numpy as np
 import numpy.typing as npt
@@ -462,6 +462,7 @@ class Constraint:
         constraint: Constraint,
         roll_deg: float = 0.0,
         roll_clockwise: bool = False,
+        roll_reference: Literal["sun", "north"] = "sun",
         pitch_deg: float = 0.0,
         yaw_deg: float = 0.0,
     ) -> Constraint:
@@ -473,6 +474,7 @@ class Constraint:
             roll_deg: Fixed boresight roll offset about +X in degrees
             roll_clockwise: If True, positive fixed boresight roll is clockwise
                 looking along +X.
+            roll_reference: Roll-zero reference axis: "sun" or "north".
             pitch_deg: Pitch angle about +Y in degrees
             yaw_deg: Yaw angle about +Z in degrees
 

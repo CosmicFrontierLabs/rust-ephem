@@ -2,12 +2,19 @@ use crate::constraints::core::{track_violations, ConstraintEvaluator, Constraint
 use ndarray::Array2;
 use pyo3::PyResult;
 
+#[derive(Debug, Clone, Copy)]
+pub(super) enum RollReference {
+    Sun,
+    North,
+}
+
 pub(super) struct BoresightOffsetEvaluator {
     pub(super) constraint: Box<dyn ConstraintEvaluator>,
     pub(super) roll_deg: Option<f64>,
     pub(super) pitch_deg: f64,
     pub(super) yaw_deg: f64,
     pub(super) roll_clockwise: bool,
+    pub(super) roll_reference: RollReference,
 }
 
 impl BoresightOffsetEvaluator {
@@ -57,13 +64,18 @@ impl BoresightOffsetEvaluator {
     ) -> PyResult<(f64, f64)> {
         let x_axis = *target_unit;
 
-        // Roll=0 is defined by +Z as close as possible to Sun, projected onto
-        // the plane perpendicular to boresight (+X).
-        let sun_dot_x = x_axis[0] * sun_rel[0] + x_axis[1] * sun_rel[1] + x_axis[2] * sun_rel[2];
+        // Roll=0 frame basis:
+        // - Sun reference: +Z is Sun direction projected into plane normal to +X.
+        // - North reference: +Z is celestial north projected into plane normal to +X.
+        let z_ref = match self.roll_reference {
+            RollReference::Sun => *sun_rel,
+            RollReference::North => [0.0, 0.0, 1.0],
+        };
+        let zref_dot_x = x_axis[0] * z_ref[0] + x_axis[1] * z_ref[1] + x_axis[2] * z_ref[2];
         let mut z_axis = [
-            sun_rel[0] - sun_dot_x * x_axis[0],
-            sun_rel[1] - sun_dot_x * x_axis[1],
-            sun_rel[2] - sun_dot_x * x_axis[2],
+            z_ref[0] - zref_dot_x * x_axis[0],
+            z_ref[1] - zref_dot_x * x_axis[1],
+            z_ref[2] - zref_dot_x * x_axis[2],
         ];
 
         if Self::norm(&z_axis) <= 1.0e-12 {
@@ -294,10 +306,14 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
 
     fn name(&self) -> String {
         format!(
-            "BoresightOffset({}, roll={:.3}°, roll_clockwise={}, pitch={:.3}°, yaw={:.3}°)",
+            "BoresightOffset({}, roll={:.3}°, roll_clockwise={}, roll_reference={}, pitch={:.3}°, yaw={:.3}°)",
             self.constraint.name(),
             self.roll_deg.unwrap_or(0.0),
             self.roll_clockwise,
+            match self.roll_reference {
+                RollReference::Sun => "sun",
+                RollReference::North => "north",
+            },
             self.pitch_deg,
             self.yaw_deg
         )

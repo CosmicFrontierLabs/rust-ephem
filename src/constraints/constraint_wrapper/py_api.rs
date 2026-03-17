@@ -1191,17 +1191,19 @@ impl PyConstraint {
     ///     roll_deg (float | None): Fixed boresight roll offset about +X in degrees
     ///     roll_clockwise (bool): If True, positive fixed boresight roll is clockwise
     ///         when looking along +X. If False, positive is counterclockwise.
+    ///     roll_reference (str): Roll-zero reference axis: "sun" (default) or "north".
     ///     pitch_deg (float): Pitch angle about +Y in degrees
     ///     yaw_deg (float): Yaw angle about +Z in degrees
     ///
     /// Returns:
     ///     Constraint: A new boresight-offset wrapped constraint
     #[staticmethod]
-    #[pyo3(signature = (constraint, roll_deg=0.0, roll_clockwise=false, pitch_deg=0.0, yaw_deg=0.0))]
+    #[pyo3(signature = (constraint, roll_deg=0.0, roll_clockwise=false, roll_reference="sun", pitch_deg=0.0, yaw_deg=0.0))]
     fn boresight_offset(
         constraint: PyRef<PyConstraint>,
         roll_deg: f64,
         roll_clockwise: bool,
+        roll_reference: &str,
         pitch_deg: f64,
         yaw_deg: f64,
     ) -> PyResult<Self> {
@@ -1216,6 +1218,13 @@ impl PyConstraint {
             ));
         }
 
+        let roll_reference_normalized = roll_reference.to_ascii_lowercase();
+        if roll_reference_normalized != "sun" && roll_reference_normalized != "north" {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "roll_reference must be either 'sun' or 'north'",
+            ));
+        }
+
         let config: serde_json::Value = serde_json::from_str(&constraint.config_json).unwrap();
 
         let config_json = serde_json::json!({
@@ -1223,6 +1232,7 @@ impl PyConstraint {
             "constraint": config,
             "roll_deg": roll_deg,
             "roll_clockwise": roll_clockwise,
+            "roll_reference": roll_reference_normalized,
             "pitch_deg": pitch_deg,
             "yaw_deg": yaw_deg
         })

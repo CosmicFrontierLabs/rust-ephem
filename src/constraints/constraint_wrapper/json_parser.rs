@@ -14,7 +14,7 @@ use crate::constraints::sun_proximity::SunProximityConfig;
 use pyo3::PyResult;
 use serde::Deserialize;
 
-use super::boresight::BoresightOffsetEvaluator;
+use super::boresight::{BoresightOffsetEvaluator, RollReference};
 use super::combinators::{AndEvaluator, AtLeastEvaluator, NotEvaluator, OrEvaluator, XorEvaluator};
 
 fn default_umbra_only() -> bool {
@@ -44,6 +44,23 @@ impl From<TwilightSpec> for TwilightType {
 
 fn default_full() -> String {
     "full".to_string()
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+enum RollReferenceSpec {
+    #[default]
+    Sun,
+    North,
+}
+
+impl From<RollReferenceSpec> for RollReference {
+    fn from(value: RollReferenceSpec) -> Self {
+        match value {
+            RollReferenceSpec::Sun => RollReference::Sun,
+            RollReferenceSpec::North => RollReference::North,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,6 +148,8 @@ enum ConstraintSpec {
         roll_deg: Option<f64>,
         #[serde(default)]
         roll_clockwise: bool,
+        #[serde(default)]
+        roll_reference: RollReferenceSpec,
         #[serde(default)]
         pitch_deg: f64,
         #[serde(default)]
@@ -313,6 +332,7 @@ impl ConstraintSpec {
                 constraint,
                 roll_deg,
                 roll_clockwise,
+                roll_reference,
                 pitch_deg,
                 yaw_deg,
             } => {
@@ -333,6 +353,7 @@ impl ConstraintSpec {
                     constraint: constraint.into_evaluator()?,
                     roll_deg,
                     roll_clockwise,
+                    roll_reference: roll_reference.into(),
                     pitch_deg,
                     yaw_deg,
                 }))

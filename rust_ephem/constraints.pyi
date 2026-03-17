@@ -23,6 +23,8 @@ if TYPE_CHECKING:
 if TYPE_CHECKING:
     pass
 
+RollReference = Literal["sun", "north"]
+
 class ConstraintViolation(BaseModel):
     """A time window where a constraint was violated."""
 
@@ -74,6 +76,7 @@ class RustConstraintMixin(BaseModel):
         indices: int | list[int] | None = None,
         roll_deg: float | None = None,
         roll_clockwise: bool = False,
+        roll_reference: RollReference = "sun",
     ) -> ConstraintResult: ...
     def in_constraint_batch(
         self,
@@ -84,6 +87,7 @@ class RustConstraintMixin(BaseModel):
         indices: int | list[int] | None = None,
         roll_deg: float | None = None,
         roll_clockwise: bool = False,
+        roll_reference: RollReference = "sun",
     ) -> npt.NDArray[np.bool_]: ...
     def in_constraint(
         self,
@@ -93,6 +97,7 @@ class RustConstraintMixin(BaseModel):
         target_dec: float,
         roll_deg: float | None = None,
         roll_clockwise: bool = False,
+        roll_reference: RollReference = "sun",
     ) -> bool | list[bool]: ...
     def instantaneous_field_of_regard(
         self,
@@ -102,6 +107,7 @@ class RustConstraintMixin(BaseModel):
         n_points: int = 20000,
         roll_deg: float | None = None,
         roll_clockwise: bool = False,
+        roll_reference: RollReference = "sun",
     ) -> float: ...
     def evaluate_moving_body(
         self,
@@ -114,6 +120,7 @@ class RustConstraintMixin(BaseModel):
         spice_kernel: str | None = None,
         roll_deg: float | None = None,
         roll_clockwise: bool = False,
+        roll_reference: RollReference = "sun",
     ) -> MovingVisibilityResult:
         """
         Evaluate constraint for a moving body (varying RA/Dec over time).
@@ -145,6 +152,7 @@ class RustConstraintMixin(BaseModel):
         self,
         roll_deg: float = 0.0,
         roll_clockwise: bool = False,
+        roll_reference: RollReference = "sun",
         pitch_deg: float = 0.0,
         yaw_deg: float = 0.0,
     ) -> BoresightOffsetConstraint: ...
@@ -247,6 +255,7 @@ class BoresightOffsetConstraint(RustConstraintMixin):
     constraint: ConstraintConfig
     roll_deg: float = 0.0
     roll_clockwise: bool = False
+    roll_reference: RollReference = "sun"
     pitch_deg: float = 0.0
     yaw_deg: float = 0.0
 
