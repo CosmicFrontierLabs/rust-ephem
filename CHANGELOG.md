@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.5.2...v0.6.0) (2026-03-17)
+
+
+### Features
+
+* **constraints:** correctly handle roll angle for spacecraft ([#146](https://github.com/CosmicFrontierLabs/rust-ephem/issues/146)) ([7708df7](https://github.com/CosmicFrontierLabs/rust-ephem/commit/7708df7243c18e92c9e68326dca309709dd320df))
+
 ## [0.5.2](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.5.1...v0.5.2) (2026-03-15)
 
 
