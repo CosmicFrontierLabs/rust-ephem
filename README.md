@@ -160,6 +160,13 @@ For observatories with multiple instruments on the same mount, you can require
 that the primary target direction is also valid for a secondary instrument whose
 boresight is offset by fixed Euler angles.
 
+Two roll concepts are supported:
+
+- ``boresight_offset(..., roll_deg=..., pitch_deg=..., yaw_deg=...)`` defines
+  the instrument's **fixed mechanical offset** relative to +X.
+- ``evaluate(..., roll_deg=..., roll_clockwise=...)`` applies **spacecraft roll
+  at evaluation time** for the commanded pointing.
+
 Remember: constraints are `True` when the target is **not visible**. So if
 either primary or secondary instrument is blocked, the combined constraint
 should be `True` (use `|`).
@@ -192,6 +199,16 @@ combined = primary | secondary_offset
 
 result = combined.evaluate(ephem, target_ra=83.63, target_dec=22.01)
 print(result.all_satisfied)
+
+# Evaluate same pointing at a specific spacecraft roll state
+result_roll = combined.evaluate(
+  ephem,
+  target_ra=83.63,
+  target_dec=22.01,
+  roll_deg=95.0,
+  roll_clockwise=False,
+)
+print(result_roll.all_satisfied)
 ```
 
 Pydantic constraint configs support the same pattern:
@@ -202,6 +219,9 @@ from rust_ephem.constraints import SunConstraint, MoonConstraint
 primary = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=12.0)
 secondary = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=12.0)
 combined = primary | secondary.boresight_offset(pitch_deg=1.2, yaw_deg=-0.8)
+
+# Apply spacecraft roll at evaluation time
+result = combined.evaluate(ephem, target_ra=83.63, target_dec=22.01, roll_deg=95.0)
 ```
 
 ### Threshold Combinator (k-of-n Violated)
