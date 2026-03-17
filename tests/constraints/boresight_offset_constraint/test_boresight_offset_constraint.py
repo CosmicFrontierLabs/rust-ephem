@@ -54,9 +54,7 @@ def test_boresight_offset_roll_optional_when_no_offset(
     ephem = tle_ephem
 
     base = Constraint.sun_proximity(45.0)
-    wrapped = Constraint.boresight_offset(
-        base, pitch_deg=0.0, yaw_deg=0.0
-    )
+    wrapped = Constraint.boresight_offset(base, pitch_deg=0.0, yaw_deg=0.0)
 
     target_ras = [5.0, 45.0, 135.0, 225.0, 315.0]
     target_decs = [-20.0, -5.0, 0.0, 10.0, 25.0]
@@ -137,3 +135,40 @@ def test_boresight_offset_roll_direction_is_configurable(
     assert ccw_result.shape == cw_result.shape
     assert '"roll_clockwise":false' in wrapped_ccw.to_json().replace(" ", "")
     assert '"roll_clockwise":true' in wrapped_cw.to_json().replace(" ", "")
+
+
+def test_low_level_constraint_api_accepts_target_roll(
+    tle_ephem: rust_ephem.TLEEphemeris,
+) -> None:
+    ephem = tle_ephem
+    target_ras = [15.0, 73.0, 149.0, 251.0, 332.0]
+    target_decs = [-40.0, -12.0, 5.0, 22.0, 58.0]
+
+    # Base boresight config with clockwise command convention.
+    base = Constraint.boresight_offset(
+        Constraint.sun_proximity(45.0),
+        roll_deg=5.0,
+        roll_clockwise=True,
+        roll_reference="north",
+        pitch_deg=2.5,
+        yaw_deg=-1.5,
+    )
+
+    via_target_roll = base.in_constraint_batch(
+        ephem,
+        target_ras,
+        target_decs,
+        target_roll=12.0,
+    )
+
+    # With clockwise=True, target_roll is added with opposite sign.
+    expected = Constraint.boresight_offset(
+        Constraint.sun_proximity(45.0),
+        roll_deg=5.0 - 12.0,
+        roll_clockwise=True,
+        roll_reference="north",
+        pitch_deg=2.5,
+        yaw_deg=-1.5,
+    ).in_constraint_batch(ephem, target_ras, target_decs)
+
+    assert np.array_equal(via_target_roll, expected)
