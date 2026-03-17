@@ -152,23 +152,61 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         target_dec: f64,
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
-        let rotated =
-            self.in_constraint_batch(ephemeris, &[target_ra], &[target_dec], time_indices)?;
-
         let all_times = ephemeris.get_times()?;
-        let times_filtered: Vec<_> = if let Some(indices) = time_indices {
-            indices.iter().map(|&idx| all_times[idx]).collect()
+        let indices: Vec<usize> = if let Some(subset) = time_indices {
+            subset.to_vec()
         } else {
-            all_times.to_vec()
+            (0..all_times.len()).collect()
         };
+        let times_filtered: Vec<_> = indices.iter().map(|&idx| all_times[idx]).collect();
+
+        let target_unit = crate::utils::vector_math::radec_to_unit_vector(target_ra, target_dec);
+        let sun_positions = ephemeris.get_sun_positions()?;
+        let observer_positions = ephemeris.get_gcrs_positions()?;
+
+        // Preserve wrapped-constraint metadata by evaluating one timestamp at a time
+        // after boresight rotation and carrying forward the inner severity/description.
+        let mut per_time_eval = Vec::with_capacity(indices.len());
+        for &time_idx in &indices {
+            let sun_rel = [
+                sun_positions[[time_idx, 0]] - observer_positions[[time_idx, 0]],
+                sun_positions[[time_idx, 1]] - observer_positions[[time_idx, 1]],
+                sun_positions[[time_idx, 2]] - observer_positions[[time_idx, 2]],
+            ];
+
+            let (rotated_ra, rotated_dec) = self.rotated_target_for_time(&target_unit, &sun_rel)?;
+            let inner =
+                self.constraint
+                    .evaluate(ephemeris, rotated_ra, rotated_dec, Some(&[time_idx]))?;
+
+            if inner.violations.is_empty() {
+                per_time_eval.push((false, 0.0f64, String::new()));
+            } else {
+                let severity = inner
+                    .violations
+                    .iter()
+                    .map(|v| v.max_severity)
+                    .fold(0.0f64, f64::max);
+                let description = inner
+                    .violations
+                    .iter()
+                    .map(|v| v.description.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                per_time_eval.push((true, severity, description));
+            }
+        }
 
         let violations = track_violations(
             &times_filtered,
-            |i| {
-                let violated = rotated[[0, i]];
-                (violated, if violated { 1.0 } else { 0.0 })
+            |i| (per_time_eval[i].0, per_time_eval[i].1),
+            |i, _is_open| {
+                if per_time_eval[i].2.is_empty() {
+                    self.name()
+                } else {
+                    per_time_eval[i].2.clone()
+                }
             },
-            |_i, _is_open| self.name(),
         );
         let all_satisfied = violations.is_empty();
 
