@@ -190,13 +190,18 @@ impl ConstraintEvaluator for AndEvaluator {
         let results = results?;
 
         let n_targets = target_ras.len();
-        let mut result = Array2::from_elem((n_targets, n_times), false);
 
-        // AND logic: violated only if ALL sub-constraints are violated
-        for i in 0..n_targets {
-            for j in 0..n_times {
-                let all_violated = results.iter().all(|r| r[[i, j]]);
-                result[[i, j]] = all_violated;
+        // Preserve vacuous truth: AND over zero constraints is true everywhere.
+        if results.is_empty() {
+            return Ok(Array2::from_elem((n_targets, n_times), true));
+        }
+
+        let mut result = results[0].clone();
+        for sub_result in &results[1..] {
+            for i in 0..n_targets {
+                for j in 0..n_times {
+                    result[[i, j]] = result[[i, j]] && sub_result[[i, j]];
+                }
             }
         }
 
@@ -225,12 +230,17 @@ impl ConstraintEvaluator for AndEvaluator {
         };
 
         let n_targets = target_unit_vectors.nrows();
-        let mut result = Array2::from_elem((n_targets, n_times), false);
 
-        // AND logic: violated only if ALL sub-constraints are violated
-        for i in 0..n_targets {
-            for j in 0..n_times {
-                result[[i, j]] = results.iter().all(|r| r[[i, j]]);
+        if results.is_empty() {
+            return Ok(Some(Array2::from_elem((n_targets, n_times), true)));
+        }
+
+        let mut result = results[0].clone();
+        for sub_result in &results[1..] {
+            for i in 0..n_targets {
+                for j in 0..n_times {
+                    result[[i, j]] = result[[i, j]] && sub_result[[i, j]];
+                }
             }
         }
 
@@ -398,13 +408,18 @@ impl ConstraintEvaluator for OrEvaluator {
         let results = results?;
 
         let n_targets = target_ras.len();
-        let mut result = Array2::from_elem((n_targets, n_times), false);
 
-        // OR logic: violated if ANY sub-constraint is violated
-        for i in 0..n_targets {
-            for j in 0..n_times {
-                let any_violated = results.iter().any(|r| r[[i, j]]);
-                result[[i, j]] = any_violated;
+        // Preserve identity: OR over zero constraints is false everywhere.
+        if results.is_empty() {
+            return Ok(Array2::from_elem((n_targets, n_times), false));
+        }
+
+        let mut result = results[0].clone();
+        for sub_result in &results[1..] {
+            for i in 0..n_targets {
+                for j in 0..n_times {
+                    result[[i, j]] = result[[i, j]] || sub_result[[i, j]];
+                }
             }
         }
 
@@ -433,12 +448,17 @@ impl ConstraintEvaluator for OrEvaluator {
         };
 
         let n_targets = target_unit_vectors.nrows();
-        let mut result = Array2::from_elem((n_targets, n_times), false);
 
-        // OR logic: violated if ANY sub-constraint is violated
-        for i in 0..n_targets {
-            for j in 0..n_times {
-                result[[i, j]] = results.iter().any(|r| r[[i, j]]);
+        if results.is_empty() {
+            return Ok(Some(Array2::from_elem((n_targets, n_times), false)));
+        }
+
+        let mut result = results[0].clone();
+        for sub_result in &results[1..] {
+            for i in 0..n_targets {
+                for j in 0..n_times {
+                    result[[i, j]] = result[[i, j]] || sub_result[[i, j]];
+                }
             }
         }
 
