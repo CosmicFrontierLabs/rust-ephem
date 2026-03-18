@@ -175,25 +175,45 @@ pub fn unit_vectors_to_radec_batch(unit_vectors: &Array2<f64>) -> (Vec<f64>, Vec
     );
 
     let n = unit_vectors.nrows();
-    let mut ras = Vec::with_capacity(n);
-    let mut decs = Vec::with_capacity(n);
+    if let Some(slice) = unit_vectors.as_slice_memory_order() {
+        let mut ras = Vec::with_capacity(n);
+        let mut decs = Vec::with_capacity(n);
+        for xyz in slice.chunks_exact(3) {
+            let x = xyz[0];
+            let y = xyz[1];
+            let z = xyz[2].clamp(-1.0, 1.0);
 
-    for i in 0..n {
-        let x = unit_vectors[[i, 0]];
-        let y = unit_vectors[[i, 1]];
-        let z = unit_vectors[[i, 2]].clamp(-1.0, 1.0);
+            let mut ra_deg = y.atan2(x).to_degrees();
+            if ra_deg < 0.0 {
+                ra_deg += 360.0;
+            }
+            let dec_deg = z.asin().to_degrees();
 
-        let mut ra_deg = y.atan2(x).to_degrees();
-        if ra_deg < 0.0 {
-            ra_deg += 360.0;
+            ras.push(ra_deg);
+            decs.push(dec_deg);
         }
-        let dec_deg = z.asin().to_degrees();
 
-        ras.push(ra_deg);
-        decs.push(dec_deg);
+        (ras, decs)
+    } else {
+        let mut ras = Vec::with_capacity(n);
+        let mut decs = Vec::with_capacity(n);
+        for i in 0..n {
+            let x = unit_vectors[[i, 0]];
+            let y = unit_vectors[[i, 1]];
+            let z = unit_vectors[[i, 2]].clamp(-1.0, 1.0);
+
+            let mut ra_deg = y.atan2(x).to_degrees();
+            if ra_deg < 0.0 {
+                ra_deg += 360.0;
+            }
+            let dec_deg = z.asin().to_degrees();
+
+            ras.push(ra_deg);
+            decs.push(dec_deg);
+        }
+
+        (ras, decs)
     }
-
-    (ras, decs)
 }
 
 /// Build a 3x3 rotation matrix from intrinsic Z-Y-X Euler angles in degrees.
