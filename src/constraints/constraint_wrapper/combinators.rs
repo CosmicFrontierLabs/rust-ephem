@@ -2,6 +2,7 @@
 use crate::constraints::core::{
     track_violations, ConstraintEvaluator, ConstraintResult, ConstraintViolation,
 };
+use crate::utils::vector_math::unit_vectors_to_radec_batch;
 use ndarray::Array2;
 use pyo3::PyResult;
 
@@ -140,6 +141,53 @@ impl ConstraintEvaluator for AndEvaluator {
         }
 
         Ok(result)
+    }
+
+    fn in_constraint_batch_unit_vectors(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<Array2<bool>>> {
+        if target_unit_vectors.ncols() != 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_unit_vectors must have shape (N, 3)",
+            ));
+        }
+
+        let times = ephemeris.get_times()?;
+        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
+
+        let mut fallback_radec: Option<(Vec<f64>, Vec<f64>)> = None;
+        let mut results = Vec::with_capacity(self.constraints.len());
+        for c in &self.constraints {
+            if let Some(r) =
+                c.in_constraint_batch_unit_vectors(ephemeris, target_unit_vectors, time_indices)?
+            {
+                results.push(r);
+            } else {
+                let (target_ras, target_decs) = fallback_radec
+                    .get_or_insert_with(|| unit_vectors_to_radec_batch(target_unit_vectors));
+                results.push(c.in_constraint_batch(
+                    ephemeris,
+                    target_ras,
+                    target_decs,
+                    time_indices,
+                )?);
+            }
+        }
+
+        let n_targets = target_unit_vectors.nrows();
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+
+        // AND logic: violated only if ALL sub-constraints are violated
+        for i in 0..n_targets {
+            for j in 0..n_times {
+                result[[i, j]] = results.iter().all(|r| r[[i, j]]);
+            }
+        }
+
+        Ok(Some(result))
     }
 
     /// Optimized diagonal evaluation for AND - uses O(N) diagonal from each sub-constraint
@@ -316,6 +364,53 @@ impl ConstraintEvaluator for OrEvaluator {
         Ok(result)
     }
 
+    fn in_constraint_batch_unit_vectors(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<Array2<bool>>> {
+        if target_unit_vectors.ncols() != 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_unit_vectors must have shape (N, 3)",
+            ));
+        }
+
+        let times = ephemeris.get_times()?;
+        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
+
+        let mut fallback_radec: Option<(Vec<f64>, Vec<f64>)> = None;
+        let mut results = Vec::with_capacity(self.constraints.len());
+        for c in &self.constraints {
+            if let Some(r) =
+                c.in_constraint_batch_unit_vectors(ephemeris, target_unit_vectors, time_indices)?
+            {
+                results.push(r);
+            } else {
+                let (target_ras, target_decs) = fallback_radec
+                    .get_or_insert_with(|| unit_vectors_to_radec_batch(target_unit_vectors));
+                results.push(c.in_constraint_batch(
+                    ephemeris,
+                    target_ras,
+                    target_decs,
+                    time_indices,
+                )?);
+            }
+        }
+
+        let n_targets = target_unit_vectors.nrows();
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+
+        // OR logic: violated if ANY sub-constraint is violated
+        for i in 0..n_targets {
+            for j in 0..n_times {
+                result[[i, j]] = results.iter().any(|r| r[[i, j]]);
+            }
+        }
+
+        Ok(Some(result))
+    }
+
     /// Optimized diagonal evaluation for OR - uses O(N) diagonal from each sub-constraint
     fn in_constraint_batch_diagonal(
         &self,
@@ -478,6 +573,42 @@ impl ConstraintEvaluator for NotEvaluator {
         Ok(result)
     }
 
+    fn in_constraint_batch_unit_vectors(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<Array2<bool>>> {
+        let sub_result = if let Some(r) = self.constraint.in_constraint_batch_unit_vectors(
+            ephemeris,
+            target_unit_vectors,
+            time_indices,
+        )? {
+            r
+        } else {
+            let (target_ras, target_decs) = unit_vectors_to_radec_batch(target_unit_vectors);
+            self.constraint.in_constraint_batch(
+                ephemeris,
+                &target_ras,
+                &target_decs,
+                time_indices,
+            )?
+        };
+
+        let n_targets = sub_result.nrows();
+        let n_times = sub_result.ncols();
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+
+        // NOT logic: invert all values
+        for i in 0..n_targets {
+            for j in 0..n_times {
+                result[[i, j]] = !sub_result[[i, j]];
+            }
+        }
+
+        Ok(Some(result))
+    }
+
     /// Optimized diagonal evaluation for NOT - uses O(N) diagonal from sub-constraint
     fn in_constraint_batch_diagonal(
         &self,
@@ -631,6 +762,54 @@ impl ConstraintEvaluator for XorEvaluator {
         }
 
         Ok(result)
+    }
+
+    fn in_constraint_batch_unit_vectors(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<Array2<bool>>> {
+        if target_unit_vectors.ncols() != 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_unit_vectors must have shape (N, 3)",
+            ));
+        }
+
+        let times = ephemeris.get_times()?;
+        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
+
+        let mut fallback_radec: Option<(Vec<f64>, Vec<f64>)> = None;
+        let mut results = Vec::with_capacity(self.constraints.len());
+        for c in &self.constraints {
+            if let Some(r) =
+                c.in_constraint_batch_unit_vectors(ephemeris, target_unit_vectors, time_indices)?
+            {
+                results.push(r);
+            } else {
+                let (target_ras, target_decs) = fallback_radec
+                    .get_or_insert_with(|| unit_vectors_to_radec_batch(target_unit_vectors));
+                results.push(c.in_constraint_batch(
+                    ephemeris,
+                    target_ras,
+                    target_decs,
+                    time_indices,
+                )?);
+            }
+        }
+
+        let n_targets = target_unit_vectors.nrows();
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+
+        // XOR logic: violated when EXACTLY ONE sub-constraint is violated
+        for i in 0..n_targets {
+            for j in 0..n_times {
+                let violation_count = results.iter().filter(|r| r[[i, j]]).count();
+                result[[i, j]] = violation_count == 1;
+            }
+        }
+
+        Ok(Some(result))
     }
 
     /// Optimized diagonal evaluation for XOR - uses O(N) diagonal from each sub-constraint
@@ -800,6 +979,61 @@ impl ConstraintEvaluator for AtLeastEvaluator {
         }
 
         Ok(result)
+    }
+
+    fn in_constraint_batch_unit_vectors(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<Array2<bool>>> {
+        if target_unit_vectors.ncols() != 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_unit_vectors must have shape (N, 3)",
+            ));
+        }
+
+        let times = ephemeris.get_times()?;
+        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
+
+        let mut fallback_radec: Option<(Vec<f64>, Vec<f64>)> = None;
+        let mut results = Vec::with_capacity(self.constraints.len());
+        for c in &self.constraints {
+            if let Some(r) =
+                c.in_constraint_batch_unit_vectors(ephemeris, target_unit_vectors, time_indices)?
+            {
+                results.push(r);
+            } else {
+                let (target_ras, target_decs) = fallback_radec
+                    .get_or_insert_with(|| unit_vectors_to_radec_batch(target_unit_vectors));
+                results.push(c.in_constraint_batch(
+                    ephemeris,
+                    target_ras,
+                    target_decs,
+                    time_indices,
+                )?);
+            }
+        }
+
+        let n_targets = target_unit_vectors.nrows();
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+
+        for i in 0..n_targets {
+            for j in 0..n_times {
+                let mut violation_count = 0usize;
+                for sub_result in &results {
+                    if sub_result[[i, j]] {
+                        violation_count += 1;
+                        if violation_count >= self.min_violated {
+                            break;
+                        }
+                    }
+                }
+                result[[i, j]] = violation_count >= self.min_violated;
+            }
+        }
+
+        Ok(Some(result))
     }
 
     fn in_constraint_batch_diagonal(

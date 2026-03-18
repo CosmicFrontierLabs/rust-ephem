@@ -4,14 +4,22 @@ use crate::ephemeris::GroundEphemeris;
 use crate::ephemeris::OEMEphemeris;
 use crate::ephemeris::SPICEEphemeris;
 use crate::ephemeris::TLEEphemeris;
+use crate::utils::vector_math::unit_vectors_to_radec_batch;
+use ndarray::Array2;
 use pyo3::prelude::*;
 use std::f64::consts::PI;
 use std::sync::{Arc, OnceLock, RwLock};
 
-#[derive(Clone)]
 struct SkySamples {
-    ras: Vec<f64>,
-    decs: Vec<f64>,
+    unit_vectors: Array2<f64>,
+    radec_cache: OnceLock<(Vec<f64>, Vec<f64>)>,
+}
+
+impl SkySamples {
+    fn radec(&self) -> &(Vec<f64>, Vec<f64>) {
+        self.radec_cache
+            .get_or_init(|| unit_vectors_to_radec_batch(&self.unit_vectors))
+    }
 }
 
 type SkySampleCache = std::collections::HashMap<usize, Arc<SkySamples>>;
@@ -21,12 +29,12 @@ fn fibonacci_samples_cache() -> &'static RwLock<SkySampleCache> {
     FIBONACCI_SAMPLES_CACHE.get_or_init(|| RwLock::new(std::collections::HashMap::new()))
 }
 
-fn fibonacci_sphere_radec(n_points: usize) -> SkySamples {
-    let mut ras = Vec::with_capacity(n_points);
-    let mut decs = Vec::with_capacity(n_points);
-
+fn fibonacci_sphere_unit_vectors(n_points: usize) -> SkySamples {
     if n_points == 0 {
-        return SkySamples { ras, decs };
+        return SkySamples {
+            unit_vectors: Array2::zeros((0, 3)),
+            radec_cache: OnceLock::new(),
+        };
     }
 
     // Golden angle in radians
@@ -35,6 +43,7 @@ fn fibonacci_sphere_radec(n_points: usize) -> SkySamples {
     let mut sin_phi = 0.0;
     let mut cos_phi = 1.0;
     let n = n_points as f64;
+    let mut unit_vectors = Array2::<f64>::zeros((n_points, 3));
 
     for i in 0..n_points {
         let k = i as f64 + 0.5;
@@ -44,14 +53,9 @@ fn fibonacci_sphere_radec(n_points: usize) -> SkySamples {
         let x = radius_xy * cos_phi;
         let y = radius_xy * sin_phi;
 
-        let mut ra_deg = y.atan2(x).to_degrees();
-        if ra_deg < 0.0 {
-            ra_deg += 360.0;
-        }
-        let dec_deg = z.clamp(-1.0, 1.0).asin().to_degrees();
-
-        ras.push(ra_deg);
-        decs.push(dec_deg);
+        unit_vectors[[i, 0]] = x;
+        unit_vectors[[i, 1]] = y;
+        unit_vectors[[i, 2]] = z;
 
         // Advance phi by golden_angle using a cheap rotation recurrence.
         if i + 1 < n_points {
@@ -62,7 +66,10 @@ fn fibonacci_sphere_radec(n_points: usize) -> SkySamples {
         }
     }
 
-    SkySamples { ras, decs }
+    SkySamples {
+        unit_vectors,
+        radec_cache: OnceLock::new(),
+    }
 }
 
 fn cached_fibonacci_sphere_radec(n_points: usize) -> Arc<SkySamples> {
@@ -75,7 +82,7 @@ fn cached_fibonacci_sphere_radec(n_points: usize) -> Arc<SkySamples> {
         }
     }
 
-    let new_samples = Arc::new(fibonacci_sphere_radec(n_points));
+    let new_samples = Arc::new(fibonacci_sphere_unit_vectors(n_points));
     let mut cache = fibonacci_samples_cache()
         .write()
         .expect("fibonacci sample cache lock poisoned");
@@ -150,34 +157,27 @@ where
 
     let sky_samples = cached_fibonacci_sphere_radec(n_points);
 
+    let evaluate_batch = |ephem: &dyn EphemerisBase| -> PyResult<Array2<bool>> {
+        if let Some(result) = evaluator.in_constraint_batch_unit_vectors(
+            ephem,
+            &sky_samples.unit_vectors,
+            Some(&[eval_index]),
+        )? {
+            return Ok(result);
+        }
+
+        let (target_ras, target_decs) = sky_samples.radec();
+        evaluator.in_constraint_batch(ephem, target_ras, target_decs, Some(&[eval_index]))
+    };
+
     let violated = if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
-        evaluator.in_constraint_batch(
-            &*ephem as &dyn EphemerisBase,
-            &sky_samples.ras,
-            &sky_samples.decs,
-            Some(&[eval_index]),
-        )?
+        evaluate_batch(&*ephem as &dyn EphemerisBase)?
     } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
-        evaluator.in_constraint_batch(
-            &*ephem as &dyn EphemerisBase,
-            &sky_samples.ras,
-            &sky_samples.decs,
-            Some(&[eval_index]),
-        )?
+        evaluate_batch(&*ephem as &dyn EphemerisBase)?
     } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
-        evaluator.in_constraint_batch(
-            &*ephem as &dyn EphemerisBase,
-            &sky_samples.ras,
-            &sky_samples.decs,
-            Some(&[eval_index]),
-        )?
+        evaluate_batch(&*ephem as &dyn EphemerisBase)?
     } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
-        evaluator.in_constraint_batch(
-            &*ephem as &dyn EphemerisBase,
-            &sky_samples.ras,
-            &sky_samples.decs,
-            Some(&[eval_index]),
-        )?
+        evaluate_batch(&*ephem as &dyn EphemerisBase)?
     } else {
         return Err(pyo3::exceptions::PyTypeError::new_err(
             "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",

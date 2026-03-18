@@ -228,6 +228,30 @@ impl ConstraintEvaluator for EclipseEvaluator {
         Ok(result)
     }
 
+    fn in_constraint_batch_unit_vectors(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<Array2<bool>>> {
+        if target_unit_vectors.ncols() != 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_unit_vectors must have shape (N, 3)",
+            ));
+        }
+
+        let (times_filtered, sun_filtered, obs_filtered) =
+            extract_standard_ephemeris_data!(ephemeris, time_indices);
+
+        let n_targets = target_unit_vectors.nrows();
+        let n_times = times_filtered.len();
+
+        let time_results = self.compute_eclipse_mask(&times_filtered, &sun_filtered, &obs_filtered);
+        let result = Array2::from_shape_fn((n_targets, n_times), |(_, j)| time_results[j]);
+
+        Ok(Some(result))
+    }
+
     fn name(&self) -> String {
         format!(
             "Eclipse({})",

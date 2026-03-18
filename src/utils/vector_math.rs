@@ -160,6 +160,42 @@ pub fn radec_to_unit_vectors_batch(ras_deg: &[f64], decs_deg: &[f64]) -> Array2<
     result
 }
 
+/// Convert multiple unit vectors to RA/Dec coordinates (vectorized)
+///
+/// # Arguments
+/// * `unit_vectors` - Array2 with shape (N, 3) containing [x, y, z] rows
+///
+/// # Returns
+/// Tuple of `(ras_deg, decs_deg)` vectors, each length N
+pub fn unit_vectors_to_radec_batch(unit_vectors: &Array2<f64>) -> (Vec<f64>, Vec<f64>) {
+    assert_eq!(
+        unit_vectors.ncols(),
+        3,
+        "unit_vectors must have shape (N, 3)"
+    );
+
+    let n = unit_vectors.nrows();
+    let mut ras = Vec::with_capacity(n);
+    let mut decs = Vec::with_capacity(n);
+
+    for i in 0..n {
+        let x = unit_vectors[[i, 0]];
+        let y = unit_vectors[[i, 1]];
+        let z = unit_vectors[[i, 2]].clamp(-1.0, 1.0);
+
+        let mut ra_deg = y.atan2(x).to_degrees();
+        if ra_deg < 0.0 {
+            ra_deg += 360.0;
+        }
+        let dec_deg = z.asin().to_degrees();
+
+        ras.push(ra_deg);
+        decs.push(dec_deg);
+    }
+
+    (ras, decs)
+}
+
 /// Build a 3x3 rotation matrix from intrinsic Z-Y-X Euler angles in degrees.
 ///
 /// Rotation order is yaw (Z), pitch (Y), roll (X):

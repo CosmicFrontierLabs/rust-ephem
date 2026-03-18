@@ -130,6 +130,26 @@ impl ConstraintEvaluator for SAAEvaluator {
         Ok(result)
     }
 
+    fn in_constraint_batch_unit_vectors(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<Array2<bool>>> {
+        if target_unit_vectors.ncols() != 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_unit_vectors must have shape (N, 3)",
+            ));
+        }
+
+        let (_times_slice, lats_slice, lons_slice) = extract_latlon_data!(ephemeris, time_indices);
+        let n_targets = target_unit_vectors.nrows();
+        let dummy_targets = vec![0.0; n_targets];
+
+        let result = self.in_constraint_batch_with_latlon(&dummy_targets, &lats_slice, &lons_slice);
+        Ok(Some(result))
+    }
+
     /// Optimized diagonal evaluation for SAA - O(N) since SAA only depends on time
     ///
     /// SAA constraint doesn't depend on target position, only on spacecraft lat/lon.

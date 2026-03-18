@@ -13,7 +13,9 @@ use std::sync::{Arc, Mutex};
 use crate::utils::conversions::{convert_frames, Frame};
 use crate::utils::geo::ecef_to_geodetic_deg;
 use crate::utils::time_utils::datetime_to_jd_utc;
-use crate::utils::vector_math::{radec_to_unit_vector, radec_to_unit_vectors_batch};
+use crate::utils::vector_math::{
+    radec_to_unit_vector, radec_to_unit_vectors_batch, unit_vectors_to_radec_batch,
+};
 use crate::utils::{eop_provider, ut1_provider};
 
 // Global cache for moon altitudes to avoid recomputing for same ephemeris
@@ -559,6 +561,24 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
         }
 
         Ok(result)
+    }
+
+    fn in_constraint_batch_unit_vectors(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<Array2<bool>>> {
+        if target_unit_vectors.ncols() != 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_unit_vectors must have shape (N, 3)",
+            ));
+        }
+
+        let (target_ras, target_decs) = unit_vectors_to_radec_batch(target_unit_vectors);
+        let result =
+            self.in_constraint_batch(ephemeris, &target_ras, &target_decs, time_indices)?;
+        Ok(Some(result))
     }
 
     fn name(&self) -> String {

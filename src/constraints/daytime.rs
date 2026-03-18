@@ -147,6 +147,36 @@ impl ConstraintEvaluator for DaytimeEvaluator {
         Ok(result)
     }
 
+    fn in_constraint_batch_unit_vectors(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<Array2<bool>>> {
+        if target_unit_vectors.ncols() != 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_unit_vectors must have shape (N, 3)",
+            ));
+        }
+
+        let sun_altitudes =
+            crate::utils::celestial::calculate_sun_altitudes_batch_fast(ephemeris, time_indices);
+
+        let n_targets = target_unit_vectors.nrows();
+        let n_times = sun_altitudes.len();
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+
+        let twilight_angle = self.twilight_angle();
+        for i in 0..n_times {
+            let violated = sun_altitudes[i] > twilight_angle;
+            for j in 0..n_targets {
+                result[[j, i]] = violated;
+            }
+        }
+
+        Ok(Some(result))
+    }
+
     fn name(&self) -> String {
         self.format_name()
     }
