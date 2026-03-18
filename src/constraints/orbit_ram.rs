@@ -175,20 +175,18 @@ impl ConstraintEvaluator for OrbitRamEvaluator {
             ));
         }
 
-        // Filter velocities if time indices provided
-        let velocities_filtered = if let Some(indices) = time_indices {
-            gcrs_data.select(ndarray::Axis(0), indices)
-        } else {
-            gcrs_data.clone()
-        };
-
         // Create RAM direction vectors for all times
         let mut ram_directions = Array2::<f64>::zeros((n_times, 3));
         for i in 0..n_times {
+            let source_i = if let Some(indices) = time_indices {
+                indices[i]
+            } else {
+                i
+            };
             let velocity = [
-                velocities_filtered[[i, 3]],
-                velocities_filtered[[i, 4]],
-                velocities_filtered[[i, 5]],
+                gcrs_data[[source_i, 3]],
+                gcrs_data[[source_i, 4]],
+                gcrs_data[[source_i, 5]],
             ];
             let ram_unit = crate::utils::vector_math::normalize_vector(&velocity);
             ram_directions[[i, 0]] = ram_unit[0];
@@ -268,18 +266,17 @@ impl ConstraintEvaluator for OrbitRamEvaluator {
             ));
         }
 
-        let velocities_filtered = if let Some(indices) = time_indices {
-            gcrs_data.select(ndarray::Axis(0), indices)
-        } else {
-            gcrs_data.clone()
-        };
-
         let mut ram_directions = Array2::<f64>::zeros((n_times, 3));
         for i in 0..n_times {
+            let source_i = if let Some(indices) = time_indices {
+                indices[i]
+            } else {
+                i
+            };
             let velocity = [
-                velocities_filtered[[i, 3]],
-                velocities_filtered[[i, 4]],
-                velocities_filtered[[i, 5]],
+                gcrs_data[[source_i, 3]],
+                gcrs_data[[source_i, 4]],
+                gcrs_data[[source_i, 5]],
             ];
             let ram_unit = crate::utils::vector_math::normalize_vector(&velocity);
             ram_directions[[i, 0]] = ram_unit[0];

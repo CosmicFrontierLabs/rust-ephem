@@ -22,7 +22,11 @@ impl SkySamples {
     }
 }
 
+const MAX_FIBONACCI_CACHE_ENTRIES: usize = 32;
+const MAX_CACHEABLE_FIBONACCI_POINTS: usize = 200_000;
+
 type SkySampleCache = std::collections::HashMap<usize, Arc<SkySamples>>;
+
 static FIBONACCI_SAMPLES_CACHE: OnceLock<RwLock<SkySampleCache>> = OnceLock::new();
 
 fn fibonacci_samples_cache() -> &'static RwLock<SkySampleCache> {
@@ -73,24 +77,46 @@ fn fibonacci_sphere_unit_vectors(n_points: usize) -> SkySamples {
 }
 
 fn cached_fibonacci_sphere_radec(n_points: usize) -> Arc<SkySamples> {
+    // Very large sample grids are expensive to retain globally; skip cache for these.
+    if n_points > MAX_CACHEABLE_FIBONACCI_POINTS {
+        return Arc::new(fibonacci_sphere_unit_vectors(n_points));
+    }
+
     {
         let cache = fibonacci_samples_cache()
             .read()
-            .expect("fibonacci sample cache lock poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
         if let Some(samples) = cache.get(&n_points) {
             return Arc::clone(samples);
         }
     }
 
-    let new_samples = Arc::new(fibonacci_sphere_unit_vectors(n_points));
     let mut cache = fibonacci_samples_cache()
         .write()
-        .expect("fibonacci sample cache lock poisoned");
-    Arc::clone(
-        cache
-            .entry(n_points)
-            .or_insert_with(|| Arc::clone(&new_samples)),
-    )
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    if let Some(samples) = cache.get(&n_points) {
+        return Arc::clone(samples);
+    }
+
+    if cache.len() >= MAX_FIBONACCI_CACHE_ENTRIES {
+        if let Some(key_to_remove) = cache.keys().next().copied() {
+            cache.remove(&key_to_remove);
+        }
+    }
+
+    let new_samples = Arc::new(fibonacci_sphere_unit_vectors(n_points));
+    cache.insert(n_points, Arc::clone(&new_samples));
+    new_samples
+}
+
+#[allow(dead_code)]
+pub(super) fn clear_fibonacci_samples_cache() {
+    let mut cache = fibonacci_samples_cache()
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    cache.clear();
 }
 
 pub(super) fn instantaneous_field_of_regard_impl<F>(

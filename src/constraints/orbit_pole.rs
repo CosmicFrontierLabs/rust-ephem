@@ -263,26 +263,24 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
             ));
         }
 
-        // Filter data if time indices provided
-        let gcrs_filtered = if let Some(indices) = time_indices {
-            gcrs_data.select(ndarray::Axis(0), indices)
-        } else {
-            gcrs_data.clone()
-        };
-
         // Create orbital pole direction vectors for all times (both north and south)
         let mut north_pole_directions = Array2::<f64>::zeros((n_times, 3));
         let mut south_pole_directions = Array2::<f64>::zeros((n_times, 3));
         for i in 0..n_times {
+            let source_i = if let Some(indices) = time_indices {
+                indices[i]
+            } else {
+                i
+            };
             let position = [
-                gcrs_filtered[[i, 0]], // x
-                gcrs_filtered[[i, 1]], // y
-                gcrs_filtered[[i, 2]], // z
+                gcrs_data[[source_i, 0]], // x
+                gcrs_data[[source_i, 1]], // y
+                gcrs_data[[source_i, 2]], // z
             ];
             let velocity = [
-                gcrs_filtered[[i, 3]], // vx
-                gcrs_filtered[[i, 4]], // vy
-                gcrs_filtered[[i, 5]], // vz
+                gcrs_data[[source_i, 3]], // vx
+                gcrs_data[[source_i, 4]], // vy
+                gcrs_data[[source_i, 5]], // vz
             ];
 
             // Calculate both orbital pole unit vectors
@@ -303,12 +301,17 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
             self.max_angle_deg.map(|_| vec![0.0; n_times]);
 
         for i in 0..n_times {
+            let source_i = if let Some(indices) = time_indices {
+                indices[i]
+            } else {
+                i
+            };
             // Calculate effective minimum angle for this time
             let effective_min_angle = if self.earth_limb_pole {
                 let position = [
-                    gcrs_filtered[[i, 0]], // x
-                    gcrs_filtered[[i, 1]], // y
-                    gcrs_filtered[[i, 2]], // z
+                    gcrs_data[[source_i, 0]], // x
+                    gcrs_data[[source_i, 1]], // y
+                    gcrs_data[[source_i, 2]], // z
                 ];
                 let distance = (position[0] * position[0]
                     + position[1] * position[1]
@@ -410,24 +413,23 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
             ));
         }
 
-        let gcrs_filtered = if let Some(indices) = time_indices {
-            gcrs_data.select(ndarray::Axis(0), indices)
-        } else {
-            gcrs_data.clone()
-        };
-
         let mut north_pole_directions = Array2::<f64>::zeros((n_times, 3));
         let mut south_pole_directions = Array2::<f64>::zeros((n_times, 3));
         for i in 0..n_times {
+            let source_i = if let Some(indices) = time_indices {
+                indices[i]
+            } else {
+                i
+            };
             let position = [
-                gcrs_filtered[[i, 0]],
-                gcrs_filtered[[i, 1]],
-                gcrs_filtered[[i, 2]],
+                gcrs_data[[source_i, 0]],
+                gcrs_data[[source_i, 1]],
+                gcrs_data[[source_i, 2]],
             ];
             let velocity = [
-                gcrs_filtered[[i, 3]],
-                gcrs_filtered[[i, 4]],
-                gcrs_filtered[[i, 5]],
+                gcrs_data[[source_i, 3]],
+                gcrs_data[[source_i, 4]],
+                gcrs_data[[source_i, 5]],
             ];
 
             let (north_pole, south_pole) = self.calculate_orbital_poles(&position, &velocity);
@@ -444,11 +446,16 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
             self.max_angle_deg.map(|_| vec![0.0; n_times]);
 
         for i in 0..n_times {
+            let source_i = if let Some(indices) = time_indices {
+                indices[i]
+            } else {
+                i
+            };
             let effective_min_angle = if self.earth_limb_pole {
                 let position = [
-                    gcrs_filtered[[i, 0]],
-                    gcrs_filtered[[i, 1]],
-                    gcrs_filtered[[i, 2]],
+                    gcrs_data[[source_i, 0]],
+                    gcrs_data[[source_i, 1]],
+                    gcrs_data[[source_i, 2]],
                 ];
                 let distance = (position[0] * position[0]
                     + position[1] * position[1]
