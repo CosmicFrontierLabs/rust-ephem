@@ -332,6 +332,7 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
             .zip(target_decs.iter())
             .map(|(&ra, &dec)| crate::utils::vector_math::radec_to_unit_vector(ra, dec))
             .collect();
+        let mut rotated_units = Array2::<f64>::zeros((n_targets, 3));
 
         for (col, &time_idx) in indices.iter().enumerate() {
             let sun_rel = [
@@ -340,7 +341,6 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
                 sun_positions[[time_idx, 2]] - observer_positions[[time_idx, 2]],
             ];
 
-            let mut rotated_units = Array2::<f64>::zeros((n_targets, 3));
             for (i, target_unit) in target_units.iter().enumerate() {
                 let rotated =
                     self.rotated_target_for_time_with_params(target_unit, &sun_rel, params)?;
