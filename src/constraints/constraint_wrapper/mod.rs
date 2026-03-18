@@ -4,6 +4,8 @@
 mod py_api;
 pub use py_api::*;
 
+mod field_of_regard;
+
 mod json_parser;
 
 mod combinators;
