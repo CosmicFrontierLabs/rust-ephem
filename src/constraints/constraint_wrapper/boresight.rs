@@ -503,6 +503,43 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         let sun_positions = ephemeris.get_sun_positions()?;
         let observer_positions = ephemeris.get_gcrs_positions()?;
 
+        if indices.len() == 1 {
+            let time_idx = indices[0];
+            let sun_rel = [
+                sun_positions[[time_idx, 0]] - observer_positions[[time_idx, 0]],
+                sun_positions[[time_idx, 1]] - observer_positions[[time_idx, 1]],
+                sun_positions[[time_idx, 2]] - observer_positions[[time_idx, 2]],
+            ];
+
+            let mut rotated_units = Array2::<f64>::zeros((n_targets, 3));
+            for i in 0..n_targets {
+                let target_unit = [
+                    target_unit_vectors[[i, 0]],
+                    target_unit_vectors[[i, 1]],
+                    target_unit_vectors[[i, 2]],
+                ];
+                let rotated =
+                    self.rotated_target_for_time_with_params(&target_unit, &sun_rel, params)?;
+                rotated_units[[i, 0]] = rotated[0];
+                rotated_units[[i, 1]] = rotated[1];
+                rotated_units[[i, 2]] = rotated[2];
+            }
+
+            if let Some(result) = self.constraint.in_constraint_batch_unit_vectors(
+                ephemeris,
+                &rotated_units,
+                Some(&[time_idx]),
+            )? {
+                return Ok(Some(result));
+            }
+
+            let (target_ras, target_decs) = unit_vectors_to_radec_batch(&rotated_units);
+            return self
+                .constraint
+                .in_constraint_batch(ephemeris, &target_ras, &target_decs, Some(&[time_idx]))
+                .map(Some);
+        }
+
         let n_times = indices.len();
         let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
 

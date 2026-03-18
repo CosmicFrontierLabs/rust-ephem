@@ -1,7 +1,6 @@
 /// Airmass constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
 use crate::utils::celestial::calculate_airmass_batch_fast;
-use crate::utils::vector_math::unit_vectors_to_radec_batch;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
@@ -136,24 +135,6 @@ impl ConstraintEvaluator for AirmassEvaluator {
         });
 
         Ok(result)
-    }
-
-    fn in_constraint_batch_unit_vectors(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_unit_vectors: &Array2<f64>,
-        time_indices: Option<&[usize]>,
-    ) -> PyResult<Option<Array2<bool>>> {
-        if target_unit_vectors.ncols() != 3 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_unit_vectors must have shape (N, 3)",
-            ));
-        }
-
-        let (target_ras, target_decs) = unit_vectors_to_radec_batch(target_unit_vectors);
-        let result =
-            self.in_constraint_batch(ephemeris, &target_ras, &target_decs, time_indices)?;
-        Ok(Some(result))
     }
 
     fn name(&self) -> String {

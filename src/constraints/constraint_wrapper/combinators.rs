@@ -6,6 +6,66 @@ use crate::utils::vector_math::unit_vectors_to_radec_batch;
 use ndarray::Array2;
 use pyo3::PyResult;
 
+fn validate_unit_vector_shape(target_unit_vectors: &Array2<f64>) -> PyResult<()> {
+    if target_unit_vectors.ncols() != 3 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "target_unit_vectors must have shape (N, 3)",
+        ));
+    }
+    Ok(())
+}
+
+fn eval_constraint_batch_from_unit_vectors(
+    constraint: &dyn ConstraintEvaluator,
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    target_unit_vectors: &Array2<f64>,
+    time_indices: Option<&[usize]>,
+) -> PyResult<Array2<bool>> {
+    validate_unit_vector_shape(target_unit_vectors)?;
+
+    if let Some(result) =
+        constraint.in_constraint_batch_unit_vectors(ephemeris, target_unit_vectors, time_indices)?
+    {
+        return Ok(result);
+    }
+
+    let (target_ras, target_decs) = unit_vectors_to_radec_batch(target_unit_vectors);
+    constraint.in_constraint_batch(ephemeris, &target_ras, &target_decs, time_indices)
+}
+
+fn eval_constraints_batch_from_unit_vectors(
+    constraints: &[Box<dyn ConstraintEvaluator>],
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    target_unit_vectors: &Array2<f64>,
+    time_indices: Option<&[usize]>,
+) -> PyResult<Vec<Array2<bool>>> {
+    validate_unit_vector_shape(target_unit_vectors)?;
+
+    let mut fallback_radec: Option<(Vec<f64>, Vec<f64>)> = None;
+    let mut results = Vec::with_capacity(constraints.len());
+
+    for constraint in constraints {
+        if let Some(result) = constraint.in_constraint_batch_unit_vectors(
+            ephemeris,
+            target_unit_vectors,
+            time_indices,
+        )? {
+            results.push(result);
+        } else {
+            let (target_ras, target_decs) = fallback_radec
+                .get_or_insert_with(|| unit_vectors_to_radec_batch(target_unit_vectors));
+            results.push(constraint.in_constraint_batch(
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices,
+            )?);
+        }
+    }
+
+    Ok(results)
+}
+
 pub(super) struct AndEvaluator {
     pub(super) constraints: Vec<Box<dyn ConstraintEvaluator>>,
 }
@@ -149,33 +209,20 @@ impl ConstraintEvaluator for AndEvaluator {
         target_unit_vectors: &Array2<f64>,
         time_indices: Option<&[usize]>,
     ) -> PyResult<Option<Array2<bool>>> {
-        if target_unit_vectors.ncols() != 3 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_unit_vectors must have shape (N, 3)",
-            ));
-        }
+        let results = eval_constraints_batch_from_unit_vectors(
+            &self.constraints,
+            ephemeris,
+            target_unit_vectors,
+            time_indices,
+        )?;
 
-        let times = ephemeris.get_times()?;
-        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
-
-        let mut fallback_radec: Option<(Vec<f64>, Vec<f64>)> = None;
-        let mut results = Vec::with_capacity(self.constraints.len());
-        for c in &self.constraints {
-            if let Some(r) =
-                c.in_constraint_batch_unit_vectors(ephemeris, target_unit_vectors, time_indices)?
-            {
-                results.push(r);
-            } else {
-                let (target_ras, target_decs) = fallback_radec
-                    .get_or_insert_with(|| unit_vectors_to_radec_batch(target_unit_vectors));
-                results.push(c.in_constraint_batch(
-                    ephemeris,
-                    target_ras,
-                    target_decs,
-                    time_indices,
-                )?);
-            }
-        }
+        let n_times = if let Some(first) = results.first() {
+            first.ncols()
+        } else {
+            time_indices
+                .map(|idx| idx.len())
+                .unwrap_or(ephemeris.get_times()?.len())
+        };
 
         let n_targets = target_unit_vectors.nrows();
         let mut result = Array2::from_elem((n_targets, n_times), false);
@@ -370,33 +417,20 @@ impl ConstraintEvaluator for OrEvaluator {
         target_unit_vectors: &Array2<f64>,
         time_indices: Option<&[usize]>,
     ) -> PyResult<Option<Array2<bool>>> {
-        if target_unit_vectors.ncols() != 3 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_unit_vectors must have shape (N, 3)",
-            ));
-        }
+        let results = eval_constraints_batch_from_unit_vectors(
+            &self.constraints,
+            ephemeris,
+            target_unit_vectors,
+            time_indices,
+        )?;
 
-        let times = ephemeris.get_times()?;
-        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
-
-        let mut fallback_radec: Option<(Vec<f64>, Vec<f64>)> = None;
-        let mut results = Vec::with_capacity(self.constraints.len());
-        for c in &self.constraints {
-            if let Some(r) =
-                c.in_constraint_batch_unit_vectors(ephemeris, target_unit_vectors, time_indices)?
-            {
-                results.push(r);
-            } else {
-                let (target_ras, target_decs) = fallback_radec
-                    .get_or_insert_with(|| unit_vectors_to_radec_batch(target_unit_vectors));
-                results.push(c.in_constraint_batch(
-                    ephemeris,
-                    target_ras,
-                    target_decs,
-                    time_indices,
-                )?);
-            }
-        }
+        let n_times = if let Some(first) = results.first() {
+            first.ncols()
+        } else {
+            time_indices
+                .map(|idx| idx.len())
+                .unwrap_or(ephemeris.get_times()?.len())
+        };
 
         let n_targets = target_unit_vectors.nrows();
         let mut result = Array2::from_elem((n_targets, n_times), false);
@@ -579,21 +613,12 @@ impl ConstraintEvaluator for NotEvaluator {
         target_unit_vectors: &Array2<f64>,
         time_indices: Option<&[usize]>,
     ) -> PyResult<Option<Array2<bool>>> {
-        let sub_result = if let Some(r) = self.constraint.in_constraint_batch_unit_vectors(
+        let sub_result = eval_constraint_batch_from_unit_vectors(
+            self.constraint.as_ref(),
             ephemeris,
             target_unit_vectors,
             time_indices,
-        )? {
-            r
-        } else {
-            let (target_ras, target_decs) = unit_vectors_to_radec_batch(target_unit_vectors);
-            self.constraint.in_constraint_batch(
-                ephemeris,
-                &target_ras,
-                &target_decs,
-                time_indices,
-            )?
-        };
+        )?;
 
         let n_targets = sub_result.nrows();
         let n_times = sub_result.ncols();
@@ -770,33 +795,20 @@ impl ConstraintEvaluator for XorEvaluator {
         target_unit_vectors: &Array2<f64>,
         time_indices: Option<&[usize]>,
     ) -> PyResult<Option<Array2<bool>>> {
-        if target_unit_vectors.ncols() != 3 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_unit_vectors must have shape (N, 3)",
-            ));
-        }
+        let results = eval_constraints_batch_from_unit_vectors(
+            &self.constraints,
+            ephemeris,
+            target_unit_vectors,
+            time_indices,
+        )?;
 
-        let times = ephemeris.get_times()?;
-        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
-
-        let mut fallback_radec: Option<(Vec<f64>, Vec<f64>)> = None;
-        let mut results = Vec::with_capacity(self.constraints.len());
-        for c in &self.constraints {
-            if let Some(r) =
-                c.in_constraint_batch_unit_vectors(ephemeris, target_unit_vectors, time_indices)?
-            {
-                results.push(r);
-            } else {
-                let (target_ras, target_decs) = fallback_radec
-                    .get_or_insert_with(|| unit_vectors_to_radec_batch(target_unit_vectors));
-                results.push(c.in_constraint_batch(
-                    ephemeris,
-                    target_ras,
-                    target_decs,
-                    time_indices,
-                )?);
-            }
-        }
+        let n_times = if let Some(first) = results.first() {
+            first.ncols()
+        } else {
+            time_indices
+                .map(|idx| idx.len())
+                .unwrap_or(ephemeris.get_times()?.len())
+        };
 
         let n_targets = target_unit_vectors.nrows();
         let mut result = Array2::from_elem((n_targets, n_times), false);
@@ -987,33 +999,20 @@ impl ConstraintEvaluator for AtLeastEvaluator {
         target_unit_vectors: &Array2<f64>,
         time_indices: Option<&[usize]>,
     ) -> PyResult<Option<Array2<bool>>> {
-        if target_unit_vectors.ncols() != 3 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_unit_vectors must have shape (N, 3)",
-            ));
-        }
+        let results = eval_constraints_batch_from_unit_vectors(
+            &self.constraints,
+            ephemeris,
+            target_unit_vectors,
+            time_indices,
+        )?;
 
-        let times = ephemeris.get_times()?;
-        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
-
-        let mut fallback_radec: Option<(Vec<f64>, Vec<f64>)> = None;
-        let mut results = Vec::with_capacity(self.constraints.len());
-        for c in &self.constraints {
-            if let Some(r) =
-                c.in_constraint_batch_unit_vectors(ephemeris, target_unit_vectors, time_indices)?
-            {
-                results.push(r);
-            } else {
-                let (target_ras, target_decs) = fallback_radec
-                    .get_or_insert_with(|| unit_vectors_to_radec_batch(target_unit_vectors));
-                results.push(c.in_constraint_batch(
-                    ephemeris,
-                    target_ras,
-                    target_decs,
-                    time_indices,
-                )?);
-            }
-        }
+        let n_times = if let Some(first) = results.first() {
+            first.ncols()
+        } else {
+            time_indices
+                .map(|idx| idx.len())
+                .unwrap_or(ephemeris.get_times()?.len())
+        };
 
         let n_targets = target_unit_vectors.nrows();
         let mut result = Array2::from_elem((n_targets, n_times), false);
