@@ -1,4 +1,5 @@
 use crate::constraints::core::{track_violations, ConstraintEvaluator, ConstraintResult};
+use crate::utils::vector_math::unit_vectors_to_radec_batch;
 use ndarray::Array2;
 use pyo3::PyResult;
 
@@ -17,10 +18,35 @@ pub(super) struct BoresightOffsetEvaluator {
     pub(super) roll_reference: RollReference,
 }
 
+#[derive(Clone, Copy)]
+struct RotationParams {
+    sr: f64,
+    cr: f64,
+    local_x: f64,
+    local_y: f64,
+    local_z: f64,
+}
+
 impl BoresightOffsetEvaluator {
-    fn rotated_target_for_north_reference(&self, target_unit: &[f64; 3]) -> PyResult<(f64, f64)> {
-        // For North roll reference, rotated target does not depend on time/Sun geometry.
-        self.rotated_target_for_time(target_unit, &[0.0, 0.0, 0.0])
+    fn rotation_params(&self) -> RotationParams {
+        let mut signed_roll_deg = self.roll_deg.unwrap_or(0.0);
+        if self.roll_clockwise {
+            signed_roll_deg = -signed_roll_deg;
+        }
+        let (sr, cr) = signed_roll_deg.to_radians().sin_cos();
+
+        // Apply yaw then pitch in the rolled local frame (same sign convention
+        // as existing Euler usage in this codebase).
+        let (sp, cp) = self.pitch_deg.to_radians().sin_cos();
+        let (sy, cy) = self.yaw_deg.to_radians().sin_cos();
+
+        RotationParams {
+            sr,
+            cr,
+            local_x: cp * cy,
+            local_y: cp * sy,
+            local_z: -sp,
+        }
     }
 
     fn cross(a: &[f64; 3], b: &[f64; 3]) -> [f64; 3] {
@@ -62,11 +88,12 @@ impl BoresightOffsetEvaluator {
         (ra_deg, dec_deg)
     }
 
-    fn rotated_target_for_time(
+    fn rotated_target_for_time_with_params(
         &self,
         target_unit: &[f64; 3],
         sun_rel: &[f64; 3],
-    ) -> PyResult<(f64, f64)> {
+        params: RotationParams,
+    ) -> PyResult<[f64; 3]> {
         let x_axis = *target_unit;
 
         // Roll=0 frame basis:
@@ -109,43 +136,23 @@ impl BoresightOffsetEvaluator {
         // Recompute Z from X and Y to enforce an orthonormal right-handed frame.
         let z_axis = Self::cross(&x_axis, &y_axis);
 
-        let mut signed_roll_deg = self.roll_deg.unwrap_or(0.0);
-        if self.roll_clockwise {
-            signed_roll_deg = -signed_roll_deg;
-        }
-        let roll = signed_roll_deg.to_radians();
-        let (sr, cr) = roll.sin_cos();
-
         // Rotate local +Y/+Z around +X by roll.
         let y_roll = [
-            y_axis[0] * cr + z_axis[0] * sr,
-            y_axis[1] * cr + z_axis[1] * sr,
-            y_axis[2] * cr + z_axis[2] * sr,
+            y_axis[0] * params.cr + z_axis[0] * params.sr,
+            y_axis[1] * params.cr + z_axis[1] * params.sr,
+            y_axis[2] * params.cr + z_axis[2] * params.sr,
         ];
         let z_roll = [
-            -y_axis[0] * sr + z_axis[0] * cr,
-            -y_axis[1] * sr + z_axis[1] * cr,
-            -y_axis[2] * sr + z_axis[2] * cr,
+            -y_axis[0] * params.sr + z_axis[0] * params.cr,
+            -y_axis[1] * params.sr + z_axis[1] * params.cr,
+            -y_axis[2] * params.sr + z_axis[2] * params.cr,
         ];
 
-        // Apply yaw then pitch in the rolled local frame (same sign convention
-        // as existing Euler usage in this codebase).
-        let pitch = self.pitch_deg.to_radians();
-        let yaw = self.yaw_deg.to_radians();
-        let (sp, cp) = pitch.sin_cos();
-        let (sy, cy) = yaw.sin_cos();
-
-        let local_x = cp * cy;
-        let local_y = cp * sy;
-        let local_z = -sp;
-
-        let rotated = [
-            local_x * x_axis[0] + local_y * y_roll[0] + local_z * z_roll[0],
-            local_x * x_axis[1] + local_y * y_roll[1] + local_z * z_roll[1],
-            local_x * x_axis[2] + local_y * y_roll[2] + local_z * z_roll[2],
-        ];
-
-        Ok(Self::unit_vector_to_radec(&rotated))
+        Ok([
+            params.local_x * x_axis[0] + params.local_y * y_roll[0] + params.local_z * z_roll[0],
+            params.local_x * x_axis[1] + params.local_y * y_roll[1] + params.local_z * z_roll[1],
+            params.local_x * x_axis[2] + params.local_y * y_roll[2] + params.local_z * z_roll[2],
+        ])
     }
 }
 
@@ -157,11 +164,14 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         target_dec: f64,
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
+        let params = self.rotation_params();
+
         if matches!(self.roll_reference, RollReference::North) {
             let target_unit =
                 crate::utils::vector_math::radec_to_unit_vector(target_ra, target_dec);
-            let (rotated_ra, rotated_dec) =
-                self.rotated_target_for_north_reference(&target_unit)?;
+            let rotated =
+                self.rotated_target_for_time_with_params(&target_unit, &[0.0, 0.0, 0.0], params)?;
+            let (rotated_ra, rotated_dec) = Self::unit_vector_to_radec(&rotated);
             let inner =
                 self.constraint
                     .evaluate(ephemeris, rotated_ra, rotated_dec, time_indices)?;
@@ -196,7 +206,9 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
                 sun_positions[[time_idx, 2]] - observer_positions[[time_idx, 2]],
             ];
 
-            let (rotated_ra, rotated_dec) = self.rotated_target_for_time(&target_unit, &sun_rel)?;
+            let rotated =
+                self.rotated_target_for_time_with_params(&target_unit, &sun_rel, params)?;
+            let (rotated_ra, rotated_dec) = Self::unit_vector_to_radec(&rotated);
             let inner =
                 self.constraint
                     .evaluate(ephemeris, rotated_ra, rotated_dec, Some(&[time_idx]))?;
@@ -247,6 +259,8 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
+        let params = self.rotation_params();
+
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "target_ras and target_decs must have the same length",
@@ -269,13 +283,27 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
                 .map(|(&ra, &dec)| crate::utils::vector_math::radec_to_unit_vector(ra, dec))
                 .collect();
 
-            let mut rotated_ras = Vec::with_capacity(n_targets);
-            let mut rotated_decs = Vec::with_capacity(n_targets);
-            for target_unit in &target_units {
-                let (ra, dec) = self.rotated_target_for_north_reference(target_unit)?;
-                rotated_ras.push(ra);
-                rotated_decs.push(dec);
+            let mut rotated_units = Array2::<f64>::zeros((n_targets, 3));
+            for (i, target_unit) in target_units.iter().enumerate() {
+                let rotated = self.rotated_target_for_time_with_params(
+                    target_unit,
+                    &[0.0, 0.0, 0.0],
+                    params,
+                )?;
+                rotated_units[[i, 0]] = rotated[0];
+                rotated_units[[i, 1]] = rotated[1];
+                rotated_units[[i, 2]] = rotated[2];
             }
+
+            if let Some(result) = self.constraint.in_constraint_batch_unit_vectors(
+                ephemeris,
+                &rotated_units,
+                time_indices,
+            )? {
+                return Ok(result);
+            }
+
+            let (rotated_ras, rotated_decs) = unit_vectors_to_radec_batch(&rotated_units);
 
             return self.constraint.in_constraint_batch(
                 ephemeris,
@@ -304,6 +332,7 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
             .zip(target_decs.iter())
             .map(|(&ra, &dec)| crate::utils::vector_math::radec_to_unit_vector(ra, dec))
             .collect();
+        let mut rotated_units = Array2::<f64>::zeros((n_targets, 3));
 
         for (col, &time_idx) in indices.iter().enumerate() {
             let sun_rel = [
@@ -312,20 +341,29 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
                 sun_positions[[time_idx, 2]] - observer_positions[[time_idx, 2]],
             ];
 
-            let mut rotated_ras = Vec::with_capacity(n_targets);
-            let mut rotated_decs = Vec::with_capacity(n_targets);
-            for target_unit in &target_units {
-                let (ra, dec) = self.rotated_target_for_time(target_unit, &sun_rel)?;
-                rotated_ras.push(ra);
-                rotated_decs.push(dec);
+            for (i, target_unit) in target_units.iter().enumerate() {
+                let rotated =
+                    self.rotated_target_for_time_with_params(target_unit, &sun_rel, params)?;
+                rotated_units[[i, 0]] = rotated[0];
+                rotated_units[[i, 1]] = rotated[1];
+                rotated_units[[i, 2]] = rotated[2];
             }
 
-            let one_col = self.constraint.in_constraint_batch(
+            let one_col = if let Some(r) = self.constraint.in_constraint_batch_unit_vectors(
                 ephemeris,
-                &rotated_ras,
-                &rotated_decs,
+                &rotated_units,
                 Some(&[time_idx]),
-            )?;
+            )? {
+                r
+            } else {
+                let (rotated_ras, rotated_decs) = unit_vectors_to_radec_batch(&rotated_units);
+                self.constraint.in_constraint_batch(
+                    ephemeris,
+                    &rotated_ras,
+                    &rotated_decs,
+                    Some(&[time_idx]),
+                )?
+            };
 
             for row in 0..n_targets {
                 result[[row, col]] = one_col[[row, 0]];
@@ -341,6 +379,8 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
     ) -> PyResult<Vec<bool>> {
+        let params = self.rotation_params();
+
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "target_ras and target_decs must have the same length",
@@ -366,7 +406,12 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
             for i in 0..n {
                 let target_unit =
                     crate::utils::vector_math::radec_to_unit_vector(target_ras[i], target_decs[i]);
-                let (ra, dec) = self.rotated_target_for_north_reference(&target_unit)?;
+                let rotated = self.rotated_target_for_time_with_params(
+                    &target_unit,
+                    &[0.0, 0.0, 0.0],
+                    params,
+                )?;
+                let (ra, dec) = Self::unit_vector_to_radec(&rotated);
                 rotated_ras.push(ra);
                 rotated_decs.push(dec);
             }
@@ -397,13 +442,167 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
                 sun_positions[[i, 1]] - observer_positions[[i, 1]],
                 sun_positions[[i, 2]] - observer_positions[[i, 2]],
             ];
-            let (ra, dec) = self.rotated_target_for_time(&target_unit, &sun_rel)?;
+            let rotated =
+                self.rotated_target_for_time_with_params(&target_unit, &sun_rel, params)?;
+            let (ra, dec) = Self::unit_vector_to_radec(&rotated);
             rotated_ras.push(ra);
             rotated_decs.push(dec);
         }
 
         self.constraint
             .in_constraint_batch_diagonal(ephemeris, &rotated_ras, &rotated_decs)
+    }
+
+    fn in_constraint_batch_unit_vectors(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<Array2<bool>>> {
+        let params = self.rotation_params();
+
+        if target_unit_vectors.ncols() != 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_unit_vectors must have shape (N, 3)",
+            ));
+        }
+
+        if self.roll_deg.is_none()
+            && (self.pitch_deg.abs() > 1.0e-12 || self.yaw_deg.abs() > 1.0e-12)
+        {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "roll_deg is required when boresight offsets (pitch_deg or yaw_deg) are non-zero",
+            ));
+        }
+
+        let n_targets = target_unit_vectors.nrows();
+
+        if matches!(self.roll_reference, RollReference::North) {
+            let mut rotated_units = Array2::<f64>::zeros((n_targets, 3));
+            for i in 0..n_targets {
+                let target_unit = [
+                    target_unit_vectors[[i, 0]],
+                    target_unit_vectors[[i, 1]],
+                    target_unit_vectors[[i, 2]],
+                ];
+                let rotated = self.rotated_target_for_time_with_params(
+                    &target_unit,
+                    &[0.0, 0.0, 0.0],
+                    params,
+                )?;
+                rotated_units[[i, 0]] = rotated[0];
+                rotated_units[[i, 1]] = rotated[1];
+                rotated_units[[i, 2]] = rotated[2];
+            }
+
+            if let Some(result) = self.constraint.in_constraint_batch_unit_vectors(
+                ephemeris,
+                &rotated_units,
+                time_indices,
+            )? {
+                return Ok(Some(result));
+            }
+
+            let (target_ras, target_decs) = unit_vectors_to_radec_batch(&rotated_units);
+            return self
+                .constraint
+                .in_constraint_batch(ephemeris, &target_ras, &target_decs, time_indices)
+                .map(Some);
+        }
+
+        let all_times = ephemeris.get_times()?;
+        let indices: Vec<usize> = if let Some(subset) = time_indices {
+            subset.to_vec()
+        } else {
+            (0..all_times.len()).collect()
+        };
+
+        let sun_positions = ephemeris.get_sun_positions()?;
+        let observer_positions = ephemeris.get_gcrs_positions()?;
+
+        if indices.len() == 1 {
+            let time_idx = indices[0];
+            let sun_rel = [
+                sun_positions[[time_idx, 0]] - observer_positions[[time_idx, 0]],
+                sun_positions[[time_idx, 1]] - observer_positions[[time_idx, 1]],
+                sun_positions[[time_idx, 2]] - observer_positions[[time_idx, 2]],
+            ];
+
+            let mut rotated_units = Array2::<f64>::zeros((n_targets, 3));
+            for i in 0..n_targets {
+                let target_unit = [
+                    target_unit_vectors[[i, 0]],
+                    target_unit_vectors[[i, 1]],
+                    target_unit_vectors[[i, 2]],
+                ];
+                let rotated =
+                    self.rotated_target_for_time_with_params(&target_unit, &sun_rel, params)?;
+                rotated_units[[i, 0]] = rotated[0];
+                rotated_units[[i, 1]] = rotated[1];
+                rotated_units[[i, 2]] = rotated[2];
+            }
+
+            if let Some(result) = self.constraint.in_constraint_batch_unit_vectors(
+                ephemeris,
+                &rotated_units,
+                Some(&[time_idx]),
+            )? {
+                return Ok(Some(result));
+            }
+
+            let (target_ras, target_decs) = unit_vectors_to_radec_batch(&rotated_units);
+            return self
+                .constraint
+                .in_constraint_batch(ephemeris, &target_ras, &target_decs, Some(&[time_idx]))
+                .map(Some);
+        }
+
+        let n_times = indices.len();
+        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
+        let mut rotated_units = Array2::<f64>::zeros((n_targets, 3));
+
+        for (col, &time_idx) in indices.iter().enumerate() {
+            let sun_rel = [
+                sun_positions[[time_idx, 0]] - observer_positions[[time_idx, 0]],
+                sun_positions[[time_idx, 1]] - observer_positions[[time_idx, 1]],
+                sun_positions[[time_idx, 2]] - observer_positions[[time_idx, 2]],
+            ];
+
+            for i in 0..n_targets {
+                let target_unit = [
+                    target_unit_vectors[[i, 0]],
+                    target_unit_vectors[[i, 1]],
+                    target_unit_vectors[[i, 2]],
+                ];
+                let rotated =
+                    self.rotated_target_for_time_with_params(&target_unit, &sun_rel, params)?;
+                rotated_units[[i, 0]] = rotated[0];
+                rotated_units[[i, 1]] = rotated[1];
+                rotated_units[[i, 2]] = rotated[2];
+            }
+
+            let one_col = if let Some(r) = self.constraint.in_constraint_batch_unit_vectors(
+                ephemeris,
+                &rotated_units,
+                Some(&[time_idx]),
+            )? {
+                r
+            } else {
+                let (target_ras, target_decs) = unit_vectors_to_radec_batch(&rotated_units);
+                self.constraint.in_constraint_batch(
+                    ephemeris,
+                    &target_ras,
+                    &target_decs,
+                    Some(&[time_idx]),
+                )?
+            };
+
+            for row in 0..n_targets {
+                result[[row, col]] = one_col[[row, 0]];
+            }
+        }
+
+        Ok(Some(result))
     }
 
     fn name(&self) -> String {

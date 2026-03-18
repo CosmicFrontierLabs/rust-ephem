@@ -182,6 +182,80 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
         Ok(result)
     }
 
+    fn in_constraint_batch_unit_vectors(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<Array2<bool>>> {
+        if target_unit_vectors.ncols() != 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_unit_vectors must have shape (N, 3)",
+            ));
+        }
+
+        let times = ephemeris.get_times()?;
+        let (moon_positions_slice, observer_positions_slice, n_times) =
+            if let Some(indices) = time_indices {
+                let moon_filtered = ephemeris
+                    .get_moon_positions()?
+                    .select(ndarray::Axis(0), indices);
+                let obs_filtered = ephemeris
+                    .get_gcrs_positions()?
+                    .select(ndarray::Axis(0), indices);
+                (moon_filtered, obs_filtered, indices.len())
+            } else {
+                let moon_positions = ephemeris.get_moon_positions()?;
+                let observer_positions = ephemeris.get_gcrs_positions()?;
+                (moon_positions, observer_positions, times.len())
+            };
+
+        let n_targets = target_unit_vectors.nrows();
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+
+        let min_cos_threshold = self.min_angle_deg.to_radians().cos();
+        let max_cos_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
+
+        for t in 0..n_times {
+            let moon_pos = [
+                moon_positions_slice[[t, 0]],
+                moon_positions_slice[[t, 1]],
+                moon_positions_slice[[t, 2]],
+            ];
+            let obs_pos = [
+                observer_positions_slice[[t, 0]],
+                observer_positions_slice[[t, 1]],
+                observer_positions_slice[[t, 2]],
+            ];
+
+            let moon_rel = [
+                moon_pos[0] - obs_pos[0],
+                moon_pos[1] - obs_pos[1],
+                moon_pos[2] - obs_pos[2],
+            ];
+            let moon_dist =
+                (moon_rel[0] * moon_rel[0] + moon_rel[1] * moon_rel[1] + moon_rel[2] * moon_rel[2])
+                    .sqrt();
+            let moon_unit = [
+                moon_rel[0] / moon_dist,
+                moon_rel[1] / moon_dist,
+                moon_rel[2] / moon_dist,
+            ];
+
+            for target_idx in 0..n_targets {
+                let cos_angle = target_unit_vectors[[target_idx, 0]] * moon_unit[0]
+                    + target_unit_vectors[[target_idx, 1]] * moon_unit[1]
+                    + target_unit_vectors[[target_idx, 2]] * moon_unit[2];
+
+                let too_close = cos_angle > min_cos_threshold;
+                let too_far = max_cos_threshold.is_some_and(|max_thresh| cos_angle < max_thresh);
+                result[[target_idx, t]] = too_close || too_far;
+            }
+        }
+
+        Ok(Some(result))
+    }
+
     /// Optimized diagonal evaluation for moving bodies - O(N) instead of O(N²)
     fn in_constraint_batch_diagonal(
         &self,

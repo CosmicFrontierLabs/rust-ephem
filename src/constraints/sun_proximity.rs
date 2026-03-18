@@ -167,6 +167,68 @@ impl ConstraintEvaluator for SunProximityEvaluator {
         Ok(result)
     }
 
+    fn in_constraint_batch_unit_vectors(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<Array2<bool>>> {
+        if target_unit_vectors.ncols() != 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_unit_vectors must have shape (N, 3)",
+            ));
+        }
+
+        let (times_filtered, sun_filtered, obs_filtered) =
+            extract_standard_ephemeris_data!(ephemeris, time_indices);
+
+        let n_targets = target_unit_vectors.nrows();
+        let n_times = times_filtered.len();
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+
+        let min_cos_threshold = self.min_angle_deg.to_radians().cos();
+        let max_cos_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
+
+        for t in 0..n_times {
+            let sun_pos = [
+                sun_filtered[[t, 0]],
+                sun_filtered[[t, 1]],
+                sun_filtered[[t, 2]],
+            ];
+            let obs_pos = [
+                obs_filtered[[t, 0]],
+                obs_filtered[[t, 1]],
+                obs_filtered[[t, 2]],
+            ];
+
+            let sun_rel = [
+                sun_pos[0] - obs_pos[0],
+                sun_pos[1] - obs_pos[1],
+                sun_pos[2] - obs_pos[2],
+            ];
+            let sun_dist =
+                (sun_rel[0] * sun_rel[0] + sun_rel[1] * sun_rel[1] + sun_rel[2] * sun_rel[2])
+                    .sqrt();
+            let sun_unit = [
+                sun_rel[0] / sun_dist,
+                sun_rel[1] / sun_dist,
+                sun_rel[2] / sun_dist,
+            ];
+
+            for target_idx in 0..n_targets {
+                let cos_angle = target_unit_vectors[[target_idx, 0]] * sun_unit[0]
+                    + target_unit_vectors[[target_idx, 1]] * sun_unit[1]
+                    + target_unit_vectors[[target_idx, 2]] * sun_unit[2];
+
+                let too_close = cos_angle > min_cos_threshold;
+                let too_far = max_cos_threshold.is_some_and(|max_thresh| cos_angle < max_thresh);
+                result[[target_idx, t]] = too_close || too_far;
+            }
+        }
+
+        Ok(Some(result))
+    }
+
     /// Optimized diagonal evaluation for moving bodies - O(N) instead of O(N²)
     ///
     /// For moving bodies, we only need target_i at time_i (diagonal of M×N matrix).

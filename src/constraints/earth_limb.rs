@@ -293,4 +293,76 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
 
         Ok(result)
     }
+
+    fn in_constraint_batch_unit_vectors(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<Array2<bool>>> {
+        // Extract and filter ephemeris data
+        let (times_filtered, obs_filtered) =
+            extract_observer_ephemeris_data!(ephemeris, time_indices);
+        // Earth radius in km
+        const EARTH_RADIUS: f64 = 6378.137;
+
+        if target_unit_vectors.ncols() != 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_unit_vectors must have shape (N, 3)",
+            ));
+        }
+
+        let n_targets = target_unit_vectors.nrows();
+        let n_times = times_filtered.len();
+        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
+
+        // Pre-compute cosine thresholds and center unit vectors for each time point.
+        let mut cos_thresholds = vec![0.0; n_times];
+        let cos_max_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
+        let mut center_units = vec![[0.0; 3]; n_times];
+
+        for t in 0..n_times {
+            let obs_pos = [
+                obs_filtered[[t, 0]],
+                obs_filtered[[t, 1]],
+                obs_filtered[[t, 2]],
+            ];
+
+            let r = vector_magnitude(&obs_pos);
+            let ratio = (EARTH_RADIUS / r).clamp(-1.0, 1.0);
+            let earth_ang_radius_deg = ratio.asin().to_degrees();
+
+            let horizon_dip_correction = if self.horizon_dip && (r - EARTH_RADIUS).abs() < 100.0 {
+                let dip_angle_deg = (EARTH_RADIUS / r).clamp(-1.0, 1.0).acos().to_degrees();
+                let refraction = if self.include_refraction { 0.57 } else { 0.0 };
+                dip_angle_deg + refraction
+            } else {
+                0.0
+            };
+
+            let threshold_deg = earth_ang_radius_deg + self.min_angle_deg + horizon_dip_correction;
+            cos_thresholds[t] = threshold_deg.to_radians().cos();
+            center_units[t] = normalize_vector(&[-obs_pos[0], -obs_pos[1], -obs_pos[2]]);
+        }
+
+        for i in 0..n_targets {
+            let target_vec = [
+                target_unit_vectors[[i, 0]],
+                target_unit_vectors[[i, 1]],
+                target_unit_vectors[[i, 2]],
+            ];
+
+            for t in 0..n_times {
+                let cos_angle = dot_product(&target_vec, &center_units[t]);
+                let is_violated = if let Some(cos_max) = cos_max_threshold {
+                    cos_angle > cos_thresholds[t] || cos_angle < cos_max
+                } else {
+                    cos_angle > cos_thresholds[t]
+                };
+                result[[i, t]] = is_violated;
+            }
+        }
+
+        Ok(Some(result))
+    }
 }

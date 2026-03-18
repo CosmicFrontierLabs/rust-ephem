@@ -580,6 +580,25 @@ pub trait ConstraintEvaluator: Send + Sync {
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>>;
 
+    /// Optional vectorized batch evaluation using precomputed unit vectors.
+    ///
+    /// # Arguments
+    /// * `ephemeris` - Ephemeris object providing all positional data
+    /// * `target_unit_vectors` - Array of shape (M, 3) containing target unit vectors
+    /// * `time_indices` - Optional subset of time indices to evaluate
+    ///
+    /// # Returns
+    /// `Ok(Some(result))` when a specialized implementation is available,
+    /// otherwise `Ok(None)` to request fallback to RA/Dec batch evaluation.
+    fn in_constraint_batch_unit_vectors(
+        &self,
+        _ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        _target_unit_vectors: &Array2<f64>,
+        _time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<Array2<bool>>> {
+        Ok(None)
+    }
+
     /// Evaluate constraint for moving body (diagonal evaluation)
     ///
     /// For moving bodies, we need to evaluate target_i at time_i only (diagonal).

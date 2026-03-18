@@ -175,20 +175,18 @@ impl ConstraintEvaluator for OrbitRamEvaluator {
             ));
         }
 
-        // Filter velocities if time indices provided
-        let velocities_filtered = if let Some(indices) = time_indices {
-            gcrs_data.select(ndarray::Axis(0), indices)
-        } else {
-            gcrs_data.clone()
-        };
-
         // Create RAM direction vectors for all times
         let mut ram_directions = Array2::<f64>::zeros((n_times, 3));
         for i in 0..n_times {
+            let source_i = if let Some(indices) = time_indices {
+                indices[i]
+            } else {
+                i
+            };
             let velocity = [
-                velocities_filtered[[i, 3]],
-                velocities_filtered[[i, 4]],
-                velocities_filtered[[i, 5]],
+                gcrs_data[[source_i, 3]],
+                gcrs_data[[source_i, 4]],
+                gcrs_data[[source_i, 5]],
             ];
             let ram_unit = crate::utils::vector_math::normalize_vector(&velocity);
             ram_directions[[i, 0]] = ram_unit[0];
@@ -238,6 +236,88 @@ impl ConstraintEvaluator for OrbitRamEvaluator {
         }
 
         Ok(result)
+    }
+
+    fn in_constraint_batch_unit_vectors(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<Array2<bool>>> {
+        let (times_filtered,) = extract_time_data!(ephemeris, time_indices);
+
+        if target_unit_vectors.ncols() != 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_unit_vectors must have shape (N, 3)",
+            ));
+        }
+
+        let n_targets = target_unit_vectors.nrows();
+        let n_times = times_filtered.len();
+        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
+
+        let gcrs_data = ephemeris.data().gcrs.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("GCRS data not available in ephemeris")
+        })?;
+
+        if gcrs_data.ncols() < 6 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Velocity data not available in ephemeris - orbit RAM constraint requires position and velocity data"
+            ));
+        }
+
+        let mut ram_directions = Array2::<f64>::zeros((n_times, 3));
+        for i in 0..n_times {
+            let source_i = if let Some(indices) = time_indices {
+                indices[i]
+            } else {
+                i
+            };
+            let velocity = [
+                gcrs_data[[source_i, 3]],
+                gcrs_data[[source_i, 4]],
+                gcrs_data[[source_i, 5]],
+            ];
+            let ram_unit = crate::utils::vector_math::normalize_vector(&velocity);
+            ram_directions[[i, 0]] = ram_unit[0];
+            ram_directions[[i, 1]] = ram_unit[1];
+            ram_directions[[i, 2]] = ram_unit[2];
+        }
+
+        let cos_min_threshold = self.min_angle_deg.to_radians().cos();
+        let cos_max_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
+
+        for j in 0..n_targets {
+            let target_vec = [
+                target_unit_vectors[[j, 0]],
+                target_unit_vectors[[j, 1]],
+                target_unit_vectors[[j, 2]],
+            ];
+
+            for i in 0..n_times {
+                let ram_vec = [
+                    ram_directions[[i, 0]],
+                    ram_directions[[i, 1]],
+                    ram_directions[[i, 2]],
+                ];
+
+                let cos_angle = crate::utils::vector_math::dot_product(&target_vec, &ram_vec);
+
+                let mut violated = false;
+                if cos_angle > cos_min_threshold {
+                    violated = true;
+                }
+                if let Some(cos_max) = cos_max_threshold {
+                    if cos_angle < cos_max {
+                        violated = true;
+                    }
+                }
+
+                result[[j, i]] = violated;
+            }
+        }
+
+        Ok(Some(result))
     }
 
     fn name(&self) -> String {
