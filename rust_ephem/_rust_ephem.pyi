@@ -634,6 +634,38 @@ class Constraint:
         """
         ...
 
+    def roll_range(
+        self,
+        time: datetime,
+        ephemeris: Ephemeris,
+        target_ra: float,
+        target_dec: float,
+        n_roll_samples: int = 360,
+    ) -> list[tuple[float, float]]:
+        """Return contiguous roll-angle intervals where the constraint is satisfied.
+
+        Sweeps ``n_roll_samples`` uniformly-spaced spacecraft roll angles over [0°, 360°),
+        identifies those where the constraint is *not* violated, and collapses adjacent
+        valid samples into ``(min_deg, max_deg)`` intervals.
+
+        Args:
+            time: Timestamp to evaluate (must exist in ephemeris).
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+            target_ra: Target right ascension in degrees (ICRS/J2000)
+            target_dec: Target declination in degrees (ICRS/J2000)
+            n_roll_samples: Number of uniformly-spaced roll angles to test over [0°, 360°).
+                Default 360 (1° resolution).
+
+        Returns:
+            List of (min_deg, max_deg) tuples for each contiguous valid roll interval.
+            Empty list if no roll is valid.
+
+        Raises:
+            ValueError: If time is not found in the ephemeris.
+            TypeError: If ephemeris type is not supported.
+        """
+        ...
+
     def instantaneous_field_of_regard(
         self,
         ephemeris: Ephemeris,

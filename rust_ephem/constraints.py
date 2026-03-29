@@ -554,31 +554,9 @@ class RustConstraintMixin(BaseModel):
             List of ``(min_deg, max_deg)`` tuples, one per contiguous valid interval.
             Empty list if no roll is valid.
         """
-        step = 360.0 / n_roll_samples
-        rolls = np.arange(n_roll_samples) * step
-        violated = np.array(
-            [
-                self._resolve_rust_constraint(target_roll=float(r)).in_constraint(
-                    time, ephemeris, target_ra, target_dec
-                )
-                for r in rolls
-            ],
-            dtype=bool,
+        return self._get_cached_rust_constraint().roll_range(
+            time, ephemeris, target_ra, target_dec, n_roll_samples
         )
-        valid = ~violated
-        intervals: list[tuple[float, float]] = []
-        i = 0
-        n = len(valid)
-        while i < n:
-            if not valid[i]:
-                i += 1
-                continue
-            lo = rolls[i]
-            while i + 1 < n and valid[i + 1]:
-                i += 1
-            intervals.append((float(lo), float(rolls[i])))
-            i += 1
-        return intervals
 
     def instantaneous_field_of_regard(
         self,

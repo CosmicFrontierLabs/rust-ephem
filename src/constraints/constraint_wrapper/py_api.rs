@@ -31,6 +31,71 @@ use super::field_of_regard::DEFAULT_N_ROLL_SAMPLES;
 use super::json_parser::parse_constraint_json;
 use super::json_to_py::json_to_pyobject;
 
+/// Recursively walk a constraint JSON tree and bake a spacecraft roll angle into every
+/// ``boresight_offset`` node.  Mirrors Python's ``_to_rust_constraint(target_roll=roll)``
+/// tree-walking logic so that compound constraints (``or``/``and``/etc.) composed of
+/// multiple ``boresight_offset`` nodes all receive the correct spacecraft roll.
+fn apply_spacecraft_roll_to_json(config: &mut serde_json::Value, target_roll_deg: f64) {
+    let Some(obj) = config.as_object_mut() else {
+        return;
+    };
+    let node_type = obj
+        .get("type")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    match node_type.as_deref() {
+        Some("boresight_offset") => {
+            let base_roll = obj.get("roll_deg").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let base_clockwise = obj
+                .get("roll_clockwise")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let reference = obj
+                .get("roll_reference")
+                .and_then(|v| v.as_str())
+                .unwrap_or("north")
+                .to_string();
+
+            let base_ccw = if base_clockwise {
+                -base_roll
+            } else {
+                base_roll
+            };
+            let eval_ccw = if base_clockwise {
+                -target_roll_deg
+            } else {
+                target_roll_deg
+            };
+            let total_ccw = base_ccw + eval_ccw;
+
+            obj.insert("roll_deg".to_string(), serde_json::json!(total_ccw));
+            obj.insert("roll_clockwise".to_string(), serde_json::json!(false));
+            obj.insert("roll_reference".to_string(), serde_json::json!(reference));
+
+            // Recurse into the inner constraint if present
+            if let Some(inner) = obj.get_mut("constraint") {
+                apply_spacecraft_roll_to_json(inner, target_roll_deg);
+            }
+        }
+        Some("and") | Some("or") | Some("xor") | Some("at_least") => {
+            if let Some(constraints) = obj.get_mut("constraints") {
+                if let Some(arr) = constraints.as_array_mut() {
+                    for child in arr {
+                        apply_spacecraft_roll_to_json(child, target_roll_deg);
+                    }
+                }
+            }
+        }
+        Some("not") => {
+            if let Some(inner) = obj.get_mut("constraint") {
+                apply_spacecraft_roll_to_json(inner, target_roll_deg);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Python-facing constraint evaluator
 ///
 /// This wraps the Rust constraint system and provides a convenient Python API.
@@ -1736,6 +1801,124 @@ impl PyConstraint {
         } else {
             Ok(PyBool::new(py, results[0]).as_any().clone().unbind())
         }
+    }
+
+    /// Return contiguous roll-angle intervals where the constraint is satisfied.
+    ///
+    /// Sweeps ``n_roll_samples`` uniformly-spaced spacecraft roll angles over [0°, 360°),
+    /// identifies those where the constraint is *not* violated, and collapses adjacent
+    /// valid samples into ``(min_deg, max_deg)`` intervals.
+    ///
+    /// Args:
+    ///     time (datetime): Timestamp to evaluate (must exist in ephemeris).
+    ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+    ///     target_ra (float): Target right ascension in degrees (ICRS/J2000)
+    ///     target_dec (float): Target declination in degrees (ICRS/J2000)
+    ///     n_roll_samples (int, optional): Number of roll angles to sweep uniformly over
+    ///         [0°, 360°). Default 360 (1° resolution).
+    ///
+    /// Returns:
+    ///     list[tuple[float, float]]: Contiguous ``(min_deg, max_deg)`` intervals of valid
+    ///     roll angles. Empty list if no roll is valid.
+    ///
+    /// Raises:
+    ///     ValueError: If time is not found in the ephemeris or n_roll_samples is 0.
+    ///     TypeError: If ephemeris type is not supported.
+    #[pyo3(signature = (time, ephemeris, target_ra, target_dec, n_roll_samples=360))]
+    fn roll_range(
+        &self,
+        py: Python,
+        time: &Bound<PyAny>,
+        ephemeris: Py<PyAny>,
+        target_ra: f64,
+        target_dec: f64,
+        n_roll_samples: usize,
+    ) -> PyResult<Vec<(f64, f64)>> {
+        if n_roll_samples == 0 {
+            return Ok(Vec::new());
+        }
+
+        let bound = ephemeris.bind(py);
+
+        // Resolve the single input time to an ephemeris index
+        let time_indices = self.parse_times_to_indices(bound, time)?;
+        let time_idx = *time_indices.first().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("time not found in ephemeris")
+        })?;
+
+        let base_config: serde_json::Value = serde_json::from_str(&self.config_json)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+
+        let step = 360.0_f64 / n_roll_samples as f64;
+        let mut valid = Vec::with_capacity(n_roll_samples);
+
+        for i in 0..n_roll_samples {
+            let roll = i as f64 * step;
+
+            // Walk the JSON tree and bake the spacecraft roll into each boresight_offset
+            // node — same logic as Python's _to_rust_constraint(target_roll=roll).
+            let mut config = base_config.clone();
+            apply_spacecraft_roll_to_json(&mut config, roll);
+            let evaluator = parse_constraint_json(&config)?;
+
+            let violated = if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
+                let arr = evaluator.in_constraint_batch(
+                    &*ephem as &dyn EphemerisBase,
+                    &[target_ra],
+                    &[target_dec],
+                    Some(&[time_idx]),
+                )?;
+                arr[[0, 0]]
+            } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
+                let arr = evaluator.in_constraint_batch(
+                    &*ephem as &dyn EphemerisBase,
+                    &[target_ra],
+                    &[target_dec],
+                    Some(&[time_idx]),
+                )?;
+                arr[[0, 0]]
+            } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
+                let arr = evaluator.in_constraint_batch(
+                    &*ephem as &dyn EphemerisBase,
+                    &[target_ra],
+                    &[target_dec],
+                    Some(&[time_idx]),
+                )?;
+                arr[[0, 0]]
+            } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+                let arr = evaluator.in_constraint_batch(
+                    &*ephem as &dyn EphemerisBase,
+                    &[target_ra],
+                    &[target_dec],
+                    Some(&[time_idx]),
+                )?;
+                arr[[0, 0]]
+            } else {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
+                ));
+            };
+            valid.push(!violated);
+        }
+
+        // Collapse adjacent valid samples into (lo, hi) intervals
+        let mut intervals: Vec<(f64, f64)> = Vec::new();
+        let mut i = 0;
+        while i < n_roll_samples {
+            if !valid[i] {
+                i += 1;
+                continue;
+            }
+            let lo = i as f64 * step;
+            while i + 1 < n_roll_samples && valid[i + 1] {
+                i += 1;
+            }
+            let hi = i as f64 * step;
+            intervals.push((lo, hi));
+            i += 1;
+        }
+
+        Ok(intervals)
     }
 
     /// Evaluate constraint for a moving body (varying RA/Dec over time)
