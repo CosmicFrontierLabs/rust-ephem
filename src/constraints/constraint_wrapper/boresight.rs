@@ -3,6 +3,9 @@ use crate::utils::vector_math::unit_vectors_to_radec_batch;
 use ndarray::Array2;
 use pyo3::PyResult;
 
+/// Threshold below which a vector norm or angle (in degrees) is treated as zero.
+const NEAR_ZERO: f64 = 1.0e-12;
+
 #[derive(Debug, Clone, Copy)]
 pub(super) enum RollReference {
     Sun,
@@ -117,7 +120,7 @@ impl BoresightOffsetEvaluator {
             z_ref[2] - zref_dot_x * x_axis[2],
         ];
 
-        if Self::norm(&z_axis) <= 1.0e-12 {
+        if Self::norm(&z_axis) <= NEAR_ZERO {
             let reference = Self::choose_perpendicular_reference(&x_axis);
             let dot_ref_x =
                 x_axis[0] * reference[0] + x_axis[1] * reference[1] + x_axis[2] * reference[2];
@@ -600,7 +603,7 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         // When roll is fixed (Some) or there is no pitch/yaw offset, roll either does
         // not affect the result or is already pinned – use the standard single-roll path.
         if self.roll_deg.is_some()
-            || (self.pitch_deg.abs() <= 1.0e-12 && self.yaw_deg.abs() <= 1.0e-12)
+            || (self.pitch_deg.abs() <= NEAR_ZERO && self.yaw_deg.abs() <= NEAR_ZERO)
         {
             if let Some(result) = self.in_constraint_batch_unit_vectors(
                 ephemeris,
