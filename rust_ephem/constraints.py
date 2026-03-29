@@ -535,15 +535,12 @@ class RustConstraintMixin(BaseModel):
         target_ra: float,
         target_dec: float,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
-    ) -> npt.NDArray[np.float64]:
-        """Return the roll angles (degrees) at which the constraint is satisfied (target visible).
+    ) -> list[tuple[float, float]]:
+        """Return contiguous roll-angle intervals (degrees) where the constraint is satisfied.
 
-        Sweeps ``n_roll_samples`` spacecraft roll angles uniformly over [0°, 360°) and
-        returns those for which ``in_constraint`` is ``False`` (constraint not violated).
-
-        This is equivalent to evaluating the constraint at a single time across a dense
-        roll grid and keeping the valid entries.  Useful for finding operationally
-        acceptable roll windows for a fixed pointing and time.
+        Sweeps ``n_roll_samples`` uniformly-spaced spacecraft roll angles over [0°, 360°),
+        identifies those where the constraint is ``False`` (not violated), and collapses
+        adjacent valid samples into ``(min_deg, max_deg)`` intervals.
 
         Args:
             time: A single datetime to evaluate (must exist in ephemeris).
@@ -554,8 +551,8 @@ class RustConstraintMixin(BaseModel):
                 Default 72 (5° resolution).
 
         Returns:
-            1-D numpy array of roll angles in degrees where the constraint is **not**
-            violated (i.e. target is visible).  Empty array if no roll is valid.
+            List of ``(min_deg, max_deg)`` tuples, one per contiguous valid interval.
+            Empty list if no roll is valid.
         """
         step = 360.0 / n_roll_samples
         rolls = np.arange(n_roll_samples) * step
@@ -568,7 +565,20 @@ class RustConstraintMixin(BaseModel):
             ],
             dtype=bool,
         )
-        return rolls[~violated]
+        valid = ~violated
+        intervals: list[tuple[float, float]] = []
+        i = 0
+        n = len(valid)
+        while i < n:
+            if not valid[i]:
+                i += 1
+                continue
+            lo = rolls[i]
+            while i + 1 < n and valid[i + 1]:
+                i += 1
+            intervals.append((float(lo), float(rolls[i])))
+            i += 1
+        return intervals
 
     def instantaneous_field_of_regard(
         self,

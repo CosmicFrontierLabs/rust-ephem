@@ -109,7 +109,7 @@ class RustConstraintMixin(BaseModel):
         target_ra: float,
         target_dec: float,
         n_roll_samples: int = 360,
-    ) -> npt.NDArray[np.float64]: ...
+    ) -> list[tuple[float, float]]: ...
     def instantaneous_field_of_regard(
         self,
         ephemeris: Ephemeris,

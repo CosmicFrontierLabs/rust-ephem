@@ -658,10 +658,11 @@ Evaluation Methods
 
 .. py:method:: Constraint.roll_range(time, ephemeris, target_ra, target_dec, n_roll_samples=360)
 
-   Return the roll angles at which the constraint is satisfied (target visible).
+   Return contiguous roll-angle intervals where the constraint is satisfied (target visible).
 
-   Sweeps ``n_roll_samples`` uniformly-spaced spacecraft roll angles over [0°, 360°)
-   and returns those where the constraint is ``False`` (not violated).
+   Sweeps ``n_roll_samples`` uniformly-spaced spacecraft roll angles over [0°, 360°),
+   identifies those where the constraint is ``False`` (not violated), and collapses
+   adjacent valid samples into ``(min_deg, max_deg)`` intervals.
 
    :param time: A single datetime to evaluate (must exist in ephemeris).
    :type time: datetime
@@ -670,19 +671,21 @@ Evaluation Methods
    :param float target_dec: Target declination in degrees (ICRS/J2000)
    :param int n_roll_samples: Number of uniformly-spaced roll angles to test over [0°, 360°).
       Default 360 (1° resolution).
-   :returns: 1-D numpy array of roll angles in degrees where the constraint is satisfied.
-      Empty array if no roll is valid.
-   :rtype: numpy.ndarray
+   :returns: List of ``(min_deg, max_deg)`` tuples, one per contiguous valid interval.
+      Empty list if no roll is valid.
+   :rtype: list[tuple[float, float]]
 
    **Example:**
 
    .. code-block:: python
 
-      valid_rolls = constraint.roll_range(
+      ranges = constraint.roll_range(
           ephem.timestamp[0], ephem,
           target_ra=83.63, target_dec=22.01,
       )
-      print(f"Valid rolls: {valid_rolls}")  # e.g. [ 12.  13. ... 47. ]
+      # e.g. [(12.0, 47.0), (193.0, 228.0)]
+      for lo, hi in ranges:
+          print(f"Valid rolls: {lo:.1f}° – {hi:.1f}°")
 
 .. py:method:: Constraint.instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
 
@@ -1410,10 +1413,11 @@ All Pydantic constraint models inherit these methods:
 
 .. py:method:: roll_range(time, ephemeris, target_ra, target_dec, n_roll_samples=360)
 
-   Return the roll angles at which the constraint is satisfied (target visible).
+   Return contiguous roll-angle intervals where the constraint is satisfied (target visible).
 
-   Sweeps ``n_roll_samples`` uniformly-spaced spacecraft roll angles over [0°, 360°)
-   and returns those where the constraint is ``False`` (not violated).
+   Sweeps ``n_roll_samples`` uniformly-spaced spacecraft roll angles over [0°, 360°),
+   identifies those where the constraint is ``False`` (not violated), and collapses
+   adjacent valid samples into ``(min_deg, max_deg)`` intervals.
 
    :param time: A single datetime to evaluate (must exist in ephemeris).
    :type time: datetime
@@ -1422,9 +1426,9 @@ All Pydantic constraint models inherit these methods:
    :param float target_dec: Target declination in degrees (ICRS/J2000)
    :param int n_roll_samples: Number of uniformly-spaced roll angles to test over [0°, 360°).
       Default 360 (1° resolution).
-   :returns: 1-D numpy array of roll angles in degrees where the constraint is satisfied.
-      Empty array if no roll is valid.
-   :rtype: numpy.ndarray
+   :returns: List of ``(min_deg, max_deg)`` tuples, one per contiguous valid interval.
+      Empty list if no roll is valid.
+   :rtype: list[tuple[float, float]]
 
 .. py:method:: instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, target_roll=None)
 
