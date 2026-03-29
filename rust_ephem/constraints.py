@@ -284,6 +284,7 @@ class RustConstraintMixin(BaseModel):
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
         target_roll: float | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> ConstraintResult:
         """
         Evaluate the constraint using the Rust backend.
@@ -299,10 +300,13 @@ class RustConstraintMixin(BaseModel):
             indices: Optional specific time index/indices to evaluate
             target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and
                 the constraint has a boresight offset with non-zero pitch/yaw, sweeps
-                ``DEFAULT_N_ROLL_SAMPLES`` roll angles and returns violations only at
+                ``n_roll_samples`` roll angles and returns violations only at
                 timestamps where the target is blocked at **every** possible roll (i.e.
                 no valid spacecraft orientation exists).  Pass an explicit roll value to
                 evaluate at a fixed spacecraft roll.
+            n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
+                and the constraint is roll-dependent.  Uniformly spaced over [0°, 360°).
+                Default :data:`DEFAULT_N_ROLL_SAMPLES` (72 ≈ 5° resolution).
 
         Returns:
             ConstraintResult containing violation windows
@@ -310,12 +314,12 @@ class RustConstraintMixin(BaseModel):
         if target_roll is None and self._is_roll_dependent():
             # Sweep all spacecraft roll angles; a timestamp is violated only if
             # blocked at every possible roll (no valid orientation exists).
-            roll_step = 360.0 / DEFAULT_N_ROLL_SAMPLES
+            roll_step = 360.0 / n_roll_samples
             rust_results = [
                 self._resolve_rust_constraint(target_roll=i * roll_step).evaluate(
                     ephemeris, target_ra, target_dec, times, indices
                 )
-                for i in range(DEFAULT_N_ROLL_SAMPLES)
+                for i in range(n_roll_samples)
             ]
             arrays = [np.asarray(r.constraint_array, dtype=bool) for r in rust_results]
             combined: npt.NDArray[np.bool_] = arrays[0].copy()
@@ -395,6 +399,7 @@ class RustConstraintMixin(BaseModel):
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
         target_roll: float | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> npt.NDArray[np.bool_]:
         """
         Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
@@ -410,8 +415,11 @@ class RustConstraintMixin(BaseModel):
             indices: Optional specific time index/indices to evaluate
             target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and
                 the constraint has a boresight offset with non-zero pitch/yaw, sweeps
-                ``DEFAULT_N_ROLL_SAMPLES`` roll angles and returns ``True`` (violated)
+                ``n_roll_samples`` roll angles and returns ``True`` (violated)
                 only if violated at **every** possible roll (i.e. no valid roll exists).
+            n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
+                and the constraint is roll-dependent.  Uniformly spaced over [0°, 360°).
+                Default :data:`DEFAULT_N_ROLL_SAMPLES` (72 ≈ 5° resolution).
 
         Returns:
             2D numpy array of shape (n_targets, n_times) with boolean violation status
@@ -419,9 +427,9 @@ class RustConstraintMixin(BaseModel):
         if target_roll is None and self._is_roll_dependent():
             # Sweep all spacecraft roll angles; a cell is violated only if blocked at
             # every roll (AND across the sweep).
-            roll_step = 360.0 / DEFAULT_N_ROLL_SAMPLES
+            roll_step = 360.0 / n_roll_samples
             combined: npt.NDArray[np.bool_] | None = None
-            for i in range(DEFAULT_N_ROLL_SAMPLES):
+            for i in range(n_roll_samples):
                 r = i * roll_step
                 arr = np.asarray(
                     self._resolve_rust_constraint(target_roll=r).in_constraint_batch(
@@ -462,6 +470,7 @@ class RustConstraintMixin(BaseModel):
         target_ra: float,
         target_dec: float,
         target_roll: float | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> bool | list[bool]:
         """Check if target is in-constraint at given time(s).
 
@@ -481,8 +490,11 @@ class RustConstraintMixin(BaseModel):
             target_dec: Target declination in degrees (ICRS/J2000)
             target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and
                 the constraint has a boresight offset with non-zero pitch/yaw, sweeps
-                ``DEFAULT_N_ROLL_SAMPLES`` roll angles and returns ``True`` (violated)
+                ``n_roll_samples`` roll angles and returns ``True`` (violated)
                 only if violated at **every** possible roll (i.e. no valid roll exists).
+            n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
+                and the constraint is roll-dependent.  Uniformly spaced over [0°, 360°).
+                Default :data:`DEFAULT_N_ROLL_SAMPLES` (72 ≈ 5° resolution).
 
         Returns:
             True if constraint is violated at the given time(s) (in-constraint).
@@ -491,12 +503,12 @@ class RustConstraintMixin(BaseModel):
         """
         if target_roll is None and self._is_roll_dependent():
             # Sweep all spacecraft roll angles; violated only if blocked at every roll.
-            roll_step = 360.0 / DEFAULT_N_ROLL_SAMPLES
+            roll_step = 360.0 / n_roll_samples
             parts: list[Any] = [
                 self._resolve_rust_constraint(target_roll=i * roll_step).in_constraint(
                     time, ephemeris, target_ra, target_dec
                 )
-                for i in range(DEFAULT_N_ROLL_SAMPLES)
+                for i in range(n_roll_samples)
             ]
             if isinstance(parts[0], bool):
                 return all(parts)
@@ -515,6 +527,48 @@ class RustConstraintMixin(BaseModel):
                 target_dec,
             ),
         )
+
+    def roll_range(
+        self,
+        time: datetime,
+        ephemeris: Ephemeris,
+        target_ra: float,
+        target_dec: float,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+    ) -> npt.NDArray[np.float64]:
+        """Return the roll angles (degrees) at which the constraint is satisfied (target visible).
+
+        Sweeps ``n_roll_samples`` spacecraft roll angles uniformly over [0°, 360°) and
+        returns those for which ``in_constraint`` is ``False`` (constraint not violated).
+
+        This is equivalent to evaluating the constraint at a single time across a dense
+        roll grid and keeping the valid entries.  Useful for finding operationally
+        acceptable roll windows for a fixed pointing and time.
+
+        Args:
+            time: A single datetime to evaluate (must exist in ephemeris).
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+            target_ra: Target right ascension in degrees (ICRS/J2000)
+            target_dec: Target declination in degrees (ICRS/J2000)
+            n_roll_samples: Number of uniformly-spaced roll angles to test over [0°, 360°).
+                Default 72 (5° resolution).
+
+        Returns:
+            1-D numpy array of roll angles in degrees where the constraint is **not**
+            violated (i.e. target is visible).  Empty array if no roll is valid.
+        """
+        step = 360.0 / n_roll_samples
+        rolls = np.arange(n_roll_samples) * step
+        violated = np.array(
+            [
+                self._resolve_rust_constraint(target_roll=float(r)).in_constraint(
+                    time, ephemeris, target_ra, target_dec
+                )
+                for r in rolls
+            ],
+            dtype=bool,
+        )
+        return rolls[~violated]
 
     def instantaneous_field_of_regard(
         self,

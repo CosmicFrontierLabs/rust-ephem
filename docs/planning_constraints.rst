@@ -281,11 +281,12 @@ commanded roll states for the same RA/Dec pointing.
 When ``target_roll`` is omitted (or ``None``) and the constraint contains a
 boresight offset with non-zero pitch/yaw, all three evaluation methods
 (``evaluate``, ``in_constraint``, ``in_constraint_batch``) automatically sweep
-:data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES` spacecraft roll angles
-(72 uniformly-spaced angles, 5° resolution) and report a target as blocked only
-when **every** possible roll is blocked — i.e., no valid spacecraft orientation
-exists.  This is the conservative "is there any viable roll?" check.  Pass an
-explicit ``target_roll`` value to evaluate against a single commanded roll.
+roll angles and report a target as blocked only when **every** possible roll is
+blocked — i.e., no valid spacecraft orientation exists.  The sweep resolution is
+controlled by the ``n_roll_samples`` parameter (default
+:data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES` = 72 ≈ 5° resolution).
+This is the conservative "is there any viable roll?" check.  Pass an explicit
+``target_roll`` value to evaluate against a single commanded roll.
 
 Instantaneous Field of Regard (steradians)
 ------------------------------------------
