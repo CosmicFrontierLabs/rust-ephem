@@ -757,8 +757,8 @@ impl ConstraintEvaluator for NotEvaluator {
             time_index,
             n_roll_samples,
         )?;
-        // NOT logic: invert the sub-constraint's accessibility.
-        Ok(sub.into_iter().map(|v| !v).collect())
+        // NOTE: Do not negate here: inner result is already aggregated over roll freedom.
+        Ok(sub)
     }
 
     fn name(&self) -> String {
