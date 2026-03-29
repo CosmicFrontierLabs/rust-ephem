@@ -527,7 +527,12 @@ Evaluation Methods
    :param float target_dec: Target declination in degrees (ICRS/J2000)
    :param times: Optional specific time(s) to evaluate (datetime or list of datetimes)
    :param indices: Optional specific time index/indices to evaluate (int or list of ints)
-   :param float target_roll: Optional spacecraft roll angle about +X (degrees), applied at evaluation time
+   :param target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and the
+      constraint contains a boresight offset with non-zero pitch/yaw, sweeps
+      :data:`DEFAULT_N_ROLL_SAMPLES` roll angles uniformly and marks a timestamp as
+      violated only when **every** roll is blocked (no valid spacecraft orientation exists).
+      Pass an explicit float to evaluate at a fixed roll.
+   :type target_roll: float or None
    :returns: ConstraintResult containing violation windows
    :rtype: ConstraintResult
    :raises ValueError: If both times and indices are provided, or if times/indices not found
@@ -562,7 +567,12 @@ Evaluation Methods
    :param list target_decs: List of target declinations in degrees (ICRS/J2000)
    :param times: Optional specific time(s) to evaluate
    :param indices: Optional specific time index/indices to evaluate
-   :param float target_roll: Optional spacecraft roll angle about +X (degrees), applied at evaluation time
+   :param target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and the
+      constraint contains a boresight offset with non-zero pitch/yaw, sweeps
+      :data:`DEFAULT_N_ROLL_SAMPLES` roll angles and returns ``True`` only when all
+      rolls are blocked (no valid spacecraft orientation exists).  Pass an explicit
+      float to evaluate at a fixed roll.
+   :type target_roll: float or None
    :returns: 2D numpy boolean array of shape (n_targets, n_times)
    :rtype: numpy.ndarray
 
@@ -606,7 +616,12 @@ Evaluation Methods
    :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
    :param float target_ra: Target right ascension in degrees (ICRS/J2000)
    :param float target_dec: Target declination in degrees (ICRS/J2000)
-   :param float target_roll: Optional spacecraft roll angle about +X (degrees), applied at evaluation time
+   :param target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and the
+      constraint contains a boresight offset with non-zero pitch/yaw, sweeps
+      :data:`DEFAULT_N_ROLL_SAMPLES` roll angles and returns ``True`` only when
+      **every** roll is blocked (no valid spacecraft orientation exists).  Pass an
+      explicit float to evaluate at a fixed roll.
+   :type target_roll: float or None
    :returns: True if constraint is satisfied at the given time(s).
              Returns a single bool for a single time, or a list of bools for multiple times.
    :rtype: bool or list[bool]
@@ -1300,7 +1315,12 @@ All Pydantic constraint models inherit these methods:
    :param float target_dec: Target declination in degrees (ICRS/J2000)
    :param times: Optional specific time(s) to evaluate
    :param indices: Optional specific time index/indices to evaluate
-   :param float target_roll: Optional spacecraft roll angle about +X (degrees), applied at evaluation time
+   :param target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and the
+      constraint contains a boresight offset with non-zero pitch/yaw, sweeps
+      :data:`DEFAULT_N_ROLL_SAMPLES` roll angles and marks a timestamp as violated
+      only when **every** roll is blocked (no valid spacecraft orientation exists).
+      Pass an explicit float to evaluate at a fixed roll.
+   :type target_roll: float or None
    :returns: ConstraintResult containing violation windows
    :rtype: ConstraintResult
 
@@ -1313,7 +1333,12 @@ All Pydantic constraint models inherit these methods:
    :param list target_decs: List of target declinations in degrees
    :param times: Optional specific time(s) to evaluate
    :param indices: Optional specific time index/indices to evaluate
-   :param float target_roll: Optional spacecraft roll angle about +X (degrees), applied at evaluation time
+   :param target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and the
+      constraint contains a boresight offset with non-zero pitch/yaw, sweeps
+      :data:`DEFAULT_N_ROLL_SAMPLES` roll angles and returns ``True`` only when all
+      rolls are blocked (no valid spacecraft orientation exists).  Pass an explicit
+      float to evaluate at a fixed roll.
+   :type target_roll: float or None
    :returns: 2D numpy array of shape (n_targets, n_times) with boolean violation status
    :rtype: numpy.ndarray
 
@@ -1327,7 +1352,12 @@ All Pydantic constraint models inherit these methods:
    :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
    :param float target_ra: Target right ascension in degrees
    :param float target_dec: Target declination in degrees
-   :param float target_roll: Optional spacecraft roll angle about +X (degrees), applied at evaluation time
+   :param target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and the
+      constraint contains a boresight offset with non-zero pitch/yaw, sweeps
+      :data:`DEFAULT_N_ROLL_SAMPLES` roll angles and returns ``True`` only when
+      **every** roll is blocked (no valid spacecraft orientation exists).  Pass an
+      explicit float to evaluate at a fixed roll.
+   :type target_roll: float or None
    :returns: True if constraint is satisfied at the given time(s). Returns a single bool
              for a single time, or a list of bools for multiple times.
    :rtype: bool or list[bool]

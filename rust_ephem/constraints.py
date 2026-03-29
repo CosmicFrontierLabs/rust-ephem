@@ -61,10 +61,17 @@ class ConstraintResult(BaseModel):
     def __init__(self, **data: Any) -> None:
         super().__init__(**data)
         self._rust_result_ref = data.get("_rust_result_ref", None)
+        # Populated when evaluate() sweeps all roll angles instead of a single Rust result.
+        self._swept_timestamps: list[datetime] | None = data.get(
+            "_swept_timestamps", None
+        )
+        self._swept_array: list[bool] | None = data.get("_swept_array", None)
 
     @property
     def timestamps(self) -> npt.NDArray[np.datetime64] | list[datetime]:
         """Evaluation timestamps (lazily accessed from Rust result)."""
+        if self._swept_timestamps is not None:
+            return self._swept_timestamps
         if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
             return cast(
                 npt.NDArray[np.datetime64] | list[datetime],
@@ -83,6 +90,8 @@ class ConstraintResult(BaseModel):
             Boolean array where True indicates the constraint is violated at that time,
             and False indicates the constraint is satisfied.
         """
+        if self._swept_array is not None:
+            return self._swept_array
         if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
             return cast(list[bool], self._rust_result_ref.constraint_array)
         return []
@@ -119,6 +128,12 @@ class ConstraintResult(BaseModel):
         Raises:
             ValueError: If the time is not found in evaluated timestamps
         """
+        if self._swept_timestamps is not None and self._swept_array is not None:
+            try:
+                idx = self._swept_timestamps.index(time)
+                return self._swept_array[idx]
+            except ValueError:
+                raise ValueError(f"Time {time} not found in evaluated timestamps")
         if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
             return cast(bool, self._rust_result_ref.in_constraint(time))
         raise ValueError(
@@ -282,15 +297,67 @@ class RustConstraintMixin(BaseModel):
             target_dec: Target declination in degrees (ICRS/J2000)
             times: Optional specific time(s) to evaluate
             indices: Optional specific time index/indices to evaluate
-            target_roll: Optional additional roll about the target boresight in
-                degrees. Positive values follow the right-hand rule about the
-                line of sight (looking from the observer toward the target).
-                This is applied in addition to any fixed ``boresight_offset``
-                configured for the constraint; it does not replace that offset.
+            target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and
+                the constraint has a boresight offset with non-zero pitch/yaw, sweeps
+                ``DEFAULT_N_ROLL_SAMPLES`` roll angles and returns violations only at
+                timestamps where the target is blocked at **every** possible roll (i.e.
+                no valid spacecraft orientation exists).  Pass an explicit roll value to
+                evaluate at a fixed spacecraft roll.
 
         Returns:
             ConstraintResult containing violation windows
         """
+        if target_roll is None and self._is_roll_dependent():
+            # Sweep all spacecraft roll angles; a timestamp is violated only if
+            # blocked at every possible roll (no valid orientation exists).
+            roll_step = 360.0 / DEFAULT_N_ROLL_SAMPLES
+            rust_results = [
+                self._resolve_rust_constraint(target_roll=i * roll_step).evaluate(
+                    ephemeris, target_ra, target_dec, times, indices
+                )
+                for i in range(DEFAULT_N_ROLL_SAMPLES)
+            ]
+            arrays = [np.asarray(r.constraint_array, dtype=bool) for r in rust_results]
+            combined: npt.NDArray[np.bool_] = arrays[0].copy()
+            for arr in arrays[1:]:
+                combined &= arr
+            swept_timestamps = list(rust_results[0].timestamp)
+            constraint_name = rust_results[0].constraint_name
+            # Reconstruct violation windows from the AND'd boolean array.
+            violations: list[ConstraintViolation] = []
+            in_viol = False
+            viol_start: datetime | None = None
+            for dt, flag in zip(swept_timestamps, combined):
+                if flag and not in_viol:
+                    in_viol = True
+                    viol_start = dt
+                elif not flag and in_viol:
+                    in_viol = False
+                    violations.append(
+                        ConstraintViolation(
+                            start_time=cast(datetime, viol_start),
+                            end_time=dt,
+                            max_severity=1.0,
+                            description=constraint_name,
+                        )
+                    )
+            if in_viol and viol_start is not None and swept_timestamps:
+                violations.append(
+                    ConstraintViolation(
+                        start_time=viol_start,
+                        end_time=swept_timestamps[-1],
+                        max_severity=1.0,
+                        description=constraint_name,
+                    )
+                )
+            return ConstraintResult(
+                violations=violations,
+                all_satisfied=not bool(combined.any()),
+                constraint_name=constraint_name,
+                _swept_timestamps=swept_timestamps,
+                _swept_array=combined.tolist(),
+            )
+
         rust_constraint = self._resolve_rust_constraint(
             target_roll=target_roll,
         )
