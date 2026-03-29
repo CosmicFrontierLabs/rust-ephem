@@ -460,7 +460,7 @@ class Constraint:
     @staticmethod
     def boresight_offset(
         constraint: Constraint,
-        roll_deg: float = 0.0,
+        roll_deg: float | None = None,
         roll_clockwise: bool = False,
         roll_reference: Literal["sun", "north"] = "north",
         pitch_deg: float = 0.0,

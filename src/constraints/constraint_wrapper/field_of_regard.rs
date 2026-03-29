@@ -4,22 +4,19 @@ use crate::ephemeris::GroundEphemeris;
 use crate::ephemeris::OEMEphemeris;
 use crate::ephemeris::SPICEEphemeris;
 use crate::ephemeris::TLEEphemeris;
-use crate::utils::vector_math::unit_vectors_to_radec_batch;
 use ndarray::Array2;
 use pyo3::prelude::*;
 use std::f64::consts::PI;
 use std::sync::{Arc, OnceLock, RwLock};
 
+/// Number of roll-angle samples used when sweeping roll in field-of-regard
+/// evaluation for a `BoresightOffsetEvaluator` with a free (unspecified) roll.
+/// 72 samples gives 5° resolution, which is fine for the typical accuracy of
+/// the Fibonacci-sphere sky integration.
+const FOR_ROLL_SAMPLES: usize = 72;
+
 struct SkySamples {
     unit_vectors: Array2<f64>,
-    radec_cache: OnceLock<(Vec<f64>, Vec<f64>)>,
-}
-
-impl SkySamples {
-    fn radec(&self) -> &(Vec<f64>, Vec<f64>) {
-        self.radec_cache
-            .get_or_init(|| unit_vectors_to_radec_batch(&self.unit_vectors))
-    }
 }
 
 const MAX_FIBONACCI_CACHE_ENTRIES: usize = 32;
@@ -37,7 +34,6 @@ fn fibonacci_sphere_unit_vectors(n_points: usize) -> SkySamples {
     if n_points == 0 {
         return SkySamples {
             unit_vectors: Array2::zeros((0, 3)),
-            radec_cache: OnceLock::new(),
         };
     }
 
@@ -70,10 +66,7 @@ fn fibonacci_sphere_unit_vectors(n_points: usize) -> SkySamples {
         }
     }
 
-    SkySamples {
-        unit_vectors,
-        radec_cache: OnceLock::new(),
-    }
+    SkySamples { unit_vectors }
 }
 
 fn cached_fibonacci_sphere_radec(n_points: usize) -> Arc<SkySamples> {
@@ -183,20 +176,16 @@ where
 
     let sky_samples = cached_fibonacci_sphere_radec(n_points);
 
-    let evaluate_batch = |ephem: &dyn EphemerisBase| -> PyResult<Array2<bool>> {
-        if let Some(result) = evaluator.in_constraint_batch_unit_vectors(
+    let evaluate_batch = |ephem: &dyn EphemerisBase| -> PyResult<Vec<bool>> {
+        evaluator.field_of_regard_violated_batch(
             ephem,
             &sky_samples.unit_vectors,
-            Some(&[eval_index]),
-        )? {
-            return Ok(result);
-        }
-
-        let (target_ras, target_decs) = sky_samples.radec();
-        evaluator.in_constraint_batch(ephem, target_ras, target_decs, Some(&[eval_index]))
+            eval_index,
+            FOR_ROLL_SAMPLES,
+        )
     };
 
-    let violated = if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
+    let violated: Vec<bool> = if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
         evaluate_batch(&*ephem as &dyn EphemerisBase)?
     } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
         evaluate_batch(&*ephem as &dyn EphemerisBase)?
@@ -210,11 +199,7 @@ where
         ));
     };
 
-    let visible_count = violated
-        .column(0)
-        .iter()
-        .filter(|&&is_violated| !is_violated)
-        .count();
+    let visible_count = violated.iter().filter(|&&is_violated| !is_violated).count();
     let visible_fraction = visible_count as f64 / n_points as f64;
 
     Ok(4.0 * PI * visible_fraction)

@@ -1228,19 +1228,21 @@ impl PyConstraint {
     /// Returns:
     ///     Constraint: A new boresight-offset wrapped constraint
     #[staticmethod]
-    #[pyo3(signature = (constraint, roll_deg=0.0, roll_clockwise=false, roll_reference="north", pitch_deg=0.0, yaw_deg=0.0))]
+    #[pyo3(signature = (constraint, roll_deg=None, roll_clockwise=false, roll_reference="north", pitch_deg=0.0, yaw_deg=0.0))]
     fn boresight_offset(
         constraint: PyRef<PyConstraint>,
-        roll_deg: f64,
+        roll_deg: Option<f64>,
         roll_clockwise: bool,
         roll_reference: &str,
         pitch_deg: f64,
         yaw_deg: f64,
     ) -> PyResult<Self> {
-        if !roll_deg.is_finite() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "roll_deg must be a finite number",
-            ));
+        if let Some(r) = roll_deg {
+            if !r.is_finite() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "roll_deg must be a finite number",
+                ));
+            }
         }
         if !pitch_deg.is_finite() || !yaw_deg.is_finite() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1257,17 +1259,20 @@ impl PyConstraint {
 
         let config: serde_json::Value = serde_json::from_str(&constraint.config_json).unwrap();
 
-        let config_json = serde_json::json!({
+        let mut config_obj = serde_json::json!({
             "type": "boresight_offset",
             "constraint": config,
-            "roll_deg": roll_deg,
             "roll_clockwise": roll_clockwise,
             "roll_reference": roll_reference_normalized,
             "pitch_deg": pitch_deg,
             "yaw_deg": yaw_deg
-        })
-        .to_string();
+        });
 
+        if let Some(r) = roll_deg {
+            config_obj["roll_deg"] = serde_json::json!(r);
+        }
+
+        let config_json = config_obj.to_string();
         let evaluator = parse_constraint_json(&serde_json::from_str(&config_json).unwrap())?;
 
         Ok(PyConstraint {

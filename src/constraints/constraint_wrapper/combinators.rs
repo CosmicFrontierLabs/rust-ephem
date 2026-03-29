@@ -277,6 +277,44 @@ impl ConstraintEvaluator for AndEvaluator {
         Ok(result)
     }
 
+    fn field_of_regard_violated_batch(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_index: usize,
+        n_roll_samples: usize,
+    ) -> PyResult<Vec<bool>> {
+        let n_targets = target_unit_vectors.nrows();
+
+        // Vacuously violated (AND over zero constraints is all-violated, matching
+        // in_constraint_batch which returns all-true for an empty AND).
+        if self.constraints.is_empty() {
+            return Ok(vec![true; n_targets]);
+        }
+
+        let mut result = self.constraints[0].field_of_regard_violated_batch(
+            ephemeris,
+            target_unit_vectors,
+            time_index,
+            n_roll_samples,
+        )?;
+
+        for constraint in &self.constraints[1..] {
+            let sub = constraint.field_of_regard_violated_batch(
+                ephemeris,
+                target_unit_vectors,
+                time_index,
+                n_roll_samples,
+            )?;
+            // AND logic: violated when ALL sub-constraints are violated.
+            for i in 0..n_targets {
+                result[i] = result[i] && sub[i];
+            }
+        }
+
+        Ok(result)
+    }
+
     fn name(&self) -> String {
         format!(
             "AND({})",
@@ -495,6 +533,43 @@ impl ConstraintEvaluator for OrEvaluator {
         Ok(result)
     }
 
+    fn field_of_regard_violated_batch(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_index: usize,
+        n_roll_samples: usize,
+    ) -> PyResult<Vec<bool>> {
+        let n_targets = target_unit_vectors.nrows();
+
+        // Identity: OR over zero constraints is never violated.
+        if self.constraints.is_empty() {
+            return Ok(vec![false; n_targets]);
+        }
+
+        let mut result = self.constraints[0].field_of_regard_violated_batch(
+            ephemeris,
+            target_unit_vectors,
+            time_index,
+            n_roll_samples,
+        )?;
+
+        for constraint in &self.constraints[1..] {
+            let sub = constraint.field_of_regard_violated_batch(
+                ephemeris,
+                target_unit_vectors,
+                time_index,
+                n_roll_samples,
+            )?;
+            // OR logic: violated when ANY sub-constraint is violated.
+            for i in 0..n_targets {
+                result[i] = result[i] || sub[i];
+            }
+        }
+
+        Ok(result)
+    }
+
     fn name(&self) -> String {
         format!(
             "OR({})",
@@ -667,6 +742,23 @@ impl ConstraintEvaluator for NotEvaluator {
 
         // NOT logic: invert all values
         Ok(sub_result.into_iter().map(|v| !v).collect())
+    }
+
+    fn field_of_regard_violated_batch(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_index: usize,
+        n_roll_samples: usize,
+    ) -> PyResult<Vec<bool>> {
+        let sub = self.constraint.field_of_regard_violated_batch(
+            ephemeris,
+            target_unit_vectors,
+            time_index,
+            n_roll_samples,
+        )?;
+        // NOT logic: invert the sub-constraint's accessibility.
+        Ok(sub.into_iter().map(|v| !v).collect())
     }
 
     fn name(&self) -> String {

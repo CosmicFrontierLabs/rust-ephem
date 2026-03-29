@@ -174,7 +174,7 @@ class RustConstraintMixin(BaseModel):
                 yaw = float(node.get("yaw_deg", 0.0) or 0.0)
                 requires_roll = abs(pitch) > 1.0e-12 or abs(yaw) > 1.0e-12
 
-                base_roll = float(node.get("roll_deg", 0.0) or 0.0)
+                base_roll = float(node.get("roll_deg") or 0.0)
                 base_clockwise = bool(node.get("roll_clockwise", False))
                 base_reference = str(
                     node.get("roll_reference", "north") or "north"
@@ -618,7 +618,7 @@ class RustConstraintMixin(BaseModel):
 
     def boresight_offset(
         self,
-        roll_deg: float = 0.0,
+        roll_deg: float | None = None,
         roll_clockwise: bool = False,
         roll_reference: RollReference = RollReference.NORTH,
         pitch_deg: float = 0.0,
@@ -882,9 +882,9 @@ class BoresightOffsetConstraint(RustConstraintMixin):
     constraint: ConstraintConfig = Field(
         ..., description="Inner constraint evaluated at boresight-offset direction"
     )
-    roll_deg: float = Field(
-        default=0.0,
-        description="Fixed boresight roll offset about +X in degrees",
+    roll_deg: float | None = Field(
+        default=None,
+        description="Fixed boresight roll offset about +X in degrees (None = free roll)",
     )
     roll_clockwise: bool = Field(
         default=False,

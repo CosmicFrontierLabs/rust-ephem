@@ -628,6 +628,56 @@ pub trait ConstraintEvaluator: Send + Sync {
         Ok((0..n).map(|i| full[[i, i]]).collect())
     }
 
+    /// For field-of-regard evaluation: determine which sky directions are inaccessible,
+    /// sweeping over roll angles where applicable.
+    ///
+    /// Returns one bool per target direction:
+    ///   - `true`  → violated / inaccessible (blocked for every applicable configuration)
+    ///   - `false` → accessible for at least one valid configuration
+    ///
+    /// `time_index` is the single ephemeris timestamp to evaluate at.
+    /// `n_roll_samples` is the number of roll angles to sample over [0°, 360°) for
+    /// evaluators that depend on spacecraft roll; constraints without roll dependence
+    /// may ignore this parameter.
+    ///
+    /// Default: delegates to `in_constraint_batch_unit_vectors` / `in_constraint_batch`
+    /// at the fixed configured roll (correct for constraints independent of roll).
+    /// `BoresightOffsetEvaluator` overrides this to sweep all roll angles when roll
+    /// is unspecified, so that the field of regard reflects every accessible pointing.
+    fn field_of_regard_violated_batch(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_index: usize,
+        _n_roll_samples: usize,
+    ) -> PyResult<Vec<bool>> {
+        let n_targets = target_unit_vectors.nrows();
+
+        if let Some(result) = self.in_constraint_batch_unit_vectors(
+            ephemeris,
+            target_unit_vectors,
+            Some(&[time_index]),
+        )? {
+            return Ok((0..n_targets).map(|i| result[[i, 0]]).collect());
+        }
+
+        // Fallback: convert unit vectors to RA/Dec inline and use the scalar batch path.
+        let mut ras = Vec::with_capacity(n_targets);
+        let mut decs = Vec::with_capacity(n_targets);
+        for i in 0..n_targets {
+            let x = target_unit_vectors[[i, 0]];
+            let y = target_unit_vectors[[i, 1]];
+            let z = target_unit_vectors[[i, 2]];
+            let ra = y.atan2(x).to_degrees().rem_euclid(360.0);
+            let dec = z.clamp(-1.0, 1.0).asin().to_degrees();
+            ras.push(ra);
+            decs.push(dec);
+        }
+
+        let result = self.in_constraint_batch(ephemeris, &ras, &decs, Some(&[time_index]))?;
+        Ok((0..n_targets).map(|i| result[[i, 0]]).collect())
+    }
+
     /// Get constraint name
     fn name(&self) -> String;
 
