@@ -426,12 +426,13 @@ Classes
       - ``time`` — Python datetime object (must exist in ephemeris timestamps)
       - Returns: ``bool`` (True if constraint is violated / target is blocked, False if satisfied)
 
-    * ``instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=20000)`` — Compute instantaneous visible sky solid angle. For ``boresight_offset`` constraints with ``roll_deg=None`` (free roll), sweeps 72 roll angles so the result reflects all accessible pointings.
+    * ``instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)`` — Compute instantaneous visible sky solid angle. For ``boresight_offset`` constraints with ``roll_deg=None`` (free roll), sweeps ``n_roll_samples`` roll angles so the result reflects all accessible pointings.
 
       - ``ephemeris`` — TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris object
       - ``time`` — Optional datetime to evaluate (must exist in ephemeris)
       - ``index`` — Optional ephemeris index to evaluate
-      - ``n_points`` — Number of sky samples (Fibonacci sphere integration)
+      - ``n_points`` — Number of sky samples (Fibonacci sphere integration, default :data:`DEFAULT_N_POINTS`)
+      - ``n_roll_samples`` — Roll angles to sweep for free-roll boresight-offset constraints (default :data:`DEFAULT_N_ROLL_SAMPLES` = 72, i.e. 5° resolution). Reduce for speed; ignored for fixed-roll or roll-independent constraints.
       - Returns: ``float`` steradians in ``[0, 4π]``
       - Requirement: exactly one of ``time`` or ``index`` must be provided
       - Semantics: constraints are violated when ``True``; this method integrates visible sky where constraint is ``False``

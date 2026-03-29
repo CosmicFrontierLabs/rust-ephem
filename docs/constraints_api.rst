@@ -638,6 +638,23 @@ Evaluation Methods
 Serialization Methods
 ^^^^^^^^^^^^^^^^^^^^^
 
+.. py:method:: Constraint.instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+
+   Compute instantaneous field of regard in steradians.
+
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param time: Optional datetime to evaluate (must exist in ephemeris)
+   :type time: datetime or None
+   :param index: Optional ephemeris index to evaluate
+   :type index: int or None
+   :param int n_points: Number of Fibonacci-sphere sky samples (default :data:`DEFAULT_N_POINTS`)
+   :param int n_roll_samples: Roll angles swept for free-roll boresight-offset constraints
+      (default :data:`DEFAULT_N_ROLL_SAMPLES`). Ignored for fixed-roll or roll-independent
+      constraints.
+   :returns: Visible solid angle in steradians, range ``[0, 4π]``
+   :rtype: float
+   :raises ValueError: If exactly one of ``time`` or ``index`` is not provided
+
 .. py:method:: Constraint.to_json()
 
    Get constraint configuration as JSON string.
@@ -1314,13 +1331,41 @@ All Pydantic constraint models inherit these methods:
              for a single time, or a list of bools for multiple times.
    :rtype: bool or list[bool]
 
+.. py:method:: instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, target_roll=None)
+
+   Compute instantaneous field of regard in steradians.
+
+   Field of regard is the visible solid angle at a single timestamp, where visibility
+   is defined by the constraint not being violated (``False``).
+
+   For ``boresight_offset`` constraints with ``roll_deg=None`` (free roll) and non-zero
+   pitch/yaw, sweeps ``n_roll_samples`` roll angles uniformly over [0°, 360°) and counts
+   a sky direction as accessible if *any* roll satisfies the inner constraint.
+
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param time: Specific datetime to evaluate (must exist in ephemeris)
+   :type time: datetime or None
+   :param index: Specific time index to evaluate
+   :type index: int or None
+   :param int n_points: Number of Fibonacci-sphere sky samples. Higher values improve
+      accuracy at the cost of speed. Default :data:`~rust_ephem.constraints.DEFAULT_N_POINTS`.
+   :param int n_roll_samples: Number of roll angles to sweep for free-roll boresight-offset
+      constraints (uniformly spaced over [0°, 360°)). Ignored for fixed-roll or
+      roll-independent constraints. Default :data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES`
+      (72 ≈ 5° resolution). Reduce to speed up; increase for large pitch/yaw offsets.
+   :param float target_roll: Optional spacecraft roll angle about +X (degrees)
+   :returns: Visible solid angle in steradians, range ``[0, 4π]``
+   :rtype: float
+   :raises ValueError: If exactly one of ``time`` or ``index`` is not provided
+
 .. py:method:: boresight_offset(roll_deg=None, roll_clockwise=False, roll_reference="north", pitch_deg=0.0, yaw_deg=0.0)
 
    Wrap this constraint with a fixed boresight Euler-angle offset.
 
    :param roll_deg: Fixed boresight roll offset about +X in degrees, or ``None`` (default)
       for free roll. When ``None`` and ``pitch_deg`` or ``yaw_deg`` are non-zero,
-      :py:meth:`instantaneous_field_of_regard` sweeps 72 roll angles uniformly over
+      :py:meth:`instantaneous_field_of_regard` sweeps ``n_roll_samples`` roll angles
+      (default ``DEFAULT_N_ROLL_SAMPLES`` = 72, i.e. 5° resolution) uniformly over
       [0°, 360°) and counts a sky direction accessible if *any* roll satisfies the
       inner constraint. Pass an explicit ``float`` to pin roll to a commanded angle.
    :type roll_deg: float or None
