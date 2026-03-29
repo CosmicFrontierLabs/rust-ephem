@@ -461,7 +461,7 @@ class Constraint:
     @staticmethod
     def boresight_offset(
         constraint: Constraint,
-        roll_deg: float | None = None,
+        roll_deg: float = 0.0,
         roll_clockwise: bool = False,
         roll_reference: Literal["sun", "north"] = "north",
         pitch_deg: float = 0.0,
@@ -470,11 +470,16 @@ class Constraint:
         """
         Wrap a constraint with a fixed boresight Euler-angle offset.
 
+        ``roll_deg`` is the fixed mechanical roll of the instrument relative to the
+        spacecraft coordinate frame (default ``0.0``).
+        Spacecraft roll at observation time is applied separately via ``target_roll``
+        on the evaluation methods.
+
         Args:
             constraint: Inner constraint to evaluate at the offset direction
-            roll_deg: Fixed boresight roll offset about +X in degrees
-            roll_clockwise: If True, positive fixed boresight roll is clockwise
-                looking along +X.
+            roll_deg: Fixed instrument roll offset about boresight +X relative to
+                spacecraft frame, in degrees. Default 0.0.
+            roll_clockwise: If True, positive roll is clockwise looking along +X.
             roll_reference: Roll-zero reference axis: "north" or "sun".
             pitch_deg: Pitch angle about +Y in degrees
             yaw_deg: Yaw angle about +Z in degrees

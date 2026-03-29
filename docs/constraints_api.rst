@@ -645,9 +645,10 @@ Evaluation Methods
    :param index: Optional ephemeris index to evaluate
    :type index: int or None
    :param int n_points: Number of Fibonacci-sphere sky samples (default :data:`DEFAULT_N_POINTS`)
-   :param int n_roll_samples: Roll angles swept for free-roll boresight-offset constraints
-      (default :data:`DEFAULT_N_ROLL_SAMPLES`). Ignored for fixed-roll or roll-independent
-      constraints.
+   :param int n_roll_samples: Spacecraft roll angles to sweep when computing FoR over all
+      roll states for boresight-offset constraints with non-zero pitch/yaw
+      (default :data:`DEFAULT_N_ROLL_SAMPLES`). Ignored when ``target_roll`` is specified
+      or when no pitch/yaw offset is present.
    :returns: Visible solid angle in steradians, range ``[0, 4π]``
    :rtype: float
    :raises ValueError: If exactly one of ``time`` or ``index`` is not provided
@@ -1338,9 +1339,11 @@ All Pydantic constraint models inherit these methods:
    Field of regard is the visible solid angle at a single timestamp, where visibility
    is defined by the constraint not being violated (``False``).
 
-   For ``boresight_offset`` constraints with ``roll_deg=None`` (free roll) and non-zero
-   pitch/yaw, sweeps ``n_roll_samples`` roll angles uniformly over [0°, 360°) and counts
-   a sky direction as accessible if *any* roll satisfies the inner constraint.
+   When ``target_roll`` is not specified (the default), boresight-offset constraints with
+   non-zero pitch/yaw sweep ``n_roll_samples`` spacecraft roll angles uniformly over
+   [0°, 360°) and count a sky direction as accessible if *any* roll satisfies the inner
+   constraint.  This gives the maximum accessible sky over all possible spacecraft
+   orientations.  Pass ``target_roll`` to evaluate at a specific spacecraft roll angle.
 
    :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
    :param time: Specific datetime to evaluate (must exist in ephemeris)
@@ -1349,27 +1352,28 @@ All Pydantic constraint models inherit these methods:
    :type index: int or None
    :param int n_points: Number of Fibonacci-sphere sky samples. Higher values improve
       accuracy at the cost of speed. Default :data:`~rust_ephem.constraints.DEFAULT_N_POINTS`.
-   :param int n_roll_samples: Number of roll angles to sweep for free-roll boresight-offset
-      constraints (uniformly spaced over [0°, 360°)). Ignored for fixed-roll or
-      roll-independent constraints. Default :data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES`
-      (72 ≈ 5° resolution). Reduce to speed up; increase for large pitch/yaw offsets.
-   :param float target_roll: Optional spacecraft roll angle about +X (degrees)
+   :param int n_roll_samples: Number of spacecraft roll angles to sweep when ``target_roll``
+      is not specified (uniformly spaced over [0°, 360°)). Ignored when ``target_roll`` is
+      given or no pitch/yaw offset is present. Default
+      :data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES` (72 ≈ 5° resolution).
+   :param float target_roll: Spacecraft roll angle about +X (degrees).  When ``None``
+      (default), sweeps all roll angles for boresight-offset FoR.
    :returns: Visible solid angle in steradians, range ``[0, 4π]``
    :rtype: float
    :raises ValueError: If exactly one of ``time`` or ``index`` is not provided
 
-.. py:method:: boresight_offset(roll_deg=None, roll_clockwise=False, roll_reference="north", pitch_deg=0.0, yaw_deg=0.0)
+.. py:method:: boresight_offset(roll_deg=0.0, roll_clockwise=False, roll_reference="north", pitch_deg=0.0, yaw_deg=0.0)
 
    Wrap this constraint with a fixed boresight Euler-angle offset.
 
-   :param roll_deg: Fixed boresight roll offset about +X in degrees, or ``None`` (default)
-      for free roll. When ``None`` and ``pitch_deg`` or ``yaw_deg`` are non-zero,
-      :py:meth:`instantaneous_field_of_regard` sweeps ``n_roll_samples`` roll angles
-      (default ``DEFAULT_N_ROLL_SAMPLES`` = 72, i.e. 5° resolution) uniformly over
-      [0°, 360°) and counts a sky direction accessible if *any* roll satisfies the
-      inner constraint. Pass an explicit ``float`` to pin roll to a commanded angle.
-   :type roll_deg: float or None
-   :param bool roll_clockwise: If True, positive fixed boresight roll is clockwise looking along +X
+   ``roll_deg`` is the fixed mechanical roll of the instrument relative to the spacecraft
+   coordinate frame.  It defaults to ``0.0`` (instrument aligned with spacecraft).
+   Spacecraft roll at observation time is applied separately via ``target_roll`` on the
+   evaluation methods.
+
+   :param float roll_deg: Fixed instrument roll offset about boresight +X in degrees,
+      relative to the spacecraft's nominal roll frame.  Default ``0.0``.
+   :param bool roll_clockwise: If True, positive roll is clockwise looking along +X.
    :param str roll_reference: Roll-zero reference axis. Default is ``"north"`` for celestial-north-projected +Z zero-roll. Use ``"sun"`` for Sun-projected +Z zero-roll.
    :param float pitch_deg: Fixed boresight pitch offset about +Y in degrees
    :param float yaw_deg: Fixed boresight yaw offset about +Z in degrees
