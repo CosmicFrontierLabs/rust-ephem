@@ -635,9 +635,6 @@ Evaluation Methods
       results = constraint.in_constraint(times_array, ephem, 83.63, 22.01)
       # Returns: [bool, bool, bool]
 
-Serialization Methods
-^^^^^^^^^^^^^^^^^^^^^
-
 .. py:method:: Constraint.instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
 
    Compute instantaneous field of regard in steradians.
@@ -654,6 +651,9 @@ Serialization Methods
    :returns: Visible solid angle in steradians, range ``[0, 4π]``
    :rtype: float
    :raises ValueError: If exactly one of ``time`` or ``index`` is not provided
+
+Serialization Methods
+^^^^^^^^^^^^^^^^^^^^^
 
 .. py:method:: Constraint.to_json()
 
