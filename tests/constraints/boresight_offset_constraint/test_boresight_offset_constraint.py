@@ -182,25 +182,25 @@ def test_low_level_constraint_api_accepts_target_roll(
 def test_free_roll_for_gte_fixed_roll_for(
     tle_ephem: rust_ephem.TLEEphemeris,
 ) -> None:
-    """Free-roll FoR must be >= any fixed-roll FoR for the same constraint.
+    """FoR with no spacecraft roll specified sweeps all rolls, giving >= any single-roll FoR.
 
-    When roll_deg is None and pitch/yaw are non-zero, instantaneous_field_of_regard
-    sweeps all roll angles and counts a direction accessible if *any* roll satisfies
-    the inner constraint.  That superset property means the result is always >= the
-    FoR computed with a single fixed roll.
+    When target_roll is not specified (None), instantaneous_field_of_regard sweeps all
+    possible spacecraft roll angles for boresight-offset constraints with non-zero pitch/yaw.
+    The result is always >= the FoR at any single fixed spacecraft roll.
     """
     ephem = tle_ephem
 
-    sun = Constraint.sun_proximity(45.0)
+    c = SunConstraint(min_angle=45.0).boresight_offset(pitch_deg=30.0, yaw_deg=0.0)
 
-    free = Constraint.boresight_offset(sun, pitch_deg=30.0, yaw_deg=0.0)
-    fixed = Constraint.boresight_offset(sun, roll_deg=0.0, pitch_deg=30.0, yaw_deg=0.0)
+    # target_roll=None (default) → sweep all spacecraft rolls
+    for_sweep = c.instantaneous_field_of_regard(ephem, index=0, n_points=500)
+    # target_roll=0.0 → evaluate at a single specific spacecraft roll
+    for_fixed = c.instantaneous_field_of_regard(
+        ephem, index=0, n_points=500, target_roll=0.0
+    )
 
-    for_free = free.instantaneous_field_of_regard(ephem, index=0, n_points=500)
-    for_fixed = fixed.instantaneous_field_of_regard(ephem, index=0, n_points=500)
-
-    assert for_free >= for_fixed, (
-        f"Free-roll FoR ({for_free:.4f} sr) should be >= fixed-roll FoR ({for_fixed:.4f} sr)"
+    assert for_sweep >= for_fixed, (
+        f"Sweep FoR ({for_sweep:.4f} sr) should be >= fixed-roll FoR ({for_fixed:.4f} sr)"
     )
 
 

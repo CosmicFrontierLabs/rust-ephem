@@ -21,9 +21,9 @@ import rust_ephem
 
 from .ephemeris import Ephemeris
 
-#: Default number of roll-angle samples used when sweeping roll in
-#: :meth:`~RustConstraintMixin.instantaneous_field_of_regard` for free-roll
-#: boresight-offset constraints.  72 samples gives 5° resolution.
+#: Default number of roll-angle samples used when sweeping spacecraft roll in
+#: :meth:`~RustConstraintMixin.instantaneous_field_of_regard` when ``target_roll``
+#: is not specified.  72 samples gives 5° resolution.
 DEFAULT_N_ROLL_SAMPLES: int = 72
 
 #: Default number of Fibonacci-sphere sky samples used by
@@ -165,23 +165,33 @@ class RustConstraintMixin(BaseModel):
     def _to_rust_constraint(
         self,
         target_roll: float | None = None,
+        *,
+        sweep_roll: bool = False,
     ) -> Any:
-        """Build a Rust Constraint, injecting evaluation-time roll if needed."""
+        """Build a Rust Constraint, injecting evaluation-time roll if needed.
+
+        Args:
+            target_roll: Spacecraft roll (degrees) added on top of each boresight
+                instrument offset.  ``None`` means no spacecraft roll is applied.
+            sweep_roll: When ``True`` (used internally by
+                :meth:`instantaneous_field_of_regard`), boresight-offset nodes
+                with non-zero pitch/yaw have their ``roll_deg`` set to ``null`` so
+                the Rust layer sweeps all spacecraft rolls for FoR computation.
+        """
         from rust_ephem import Constraint
 
         config = self.model_dump(mode="json")
 
-        def apply_eval_roll(node: Any) -> bool:
+        def apply_eval_roll(node: Any) -> None:
             if not isinstance(node, dict):
-                return False
+                return
 
             node_type = node.get("type")
-            requires_roll = False
 
             if node_type == "boresight_offset":
                 pitch = float(node.get("pitch_deg", 0.0) or 0.0)
                 yaw = float(node.get("yaw_deg", 0.0) or 0.0)
-                requires_roll = abs(pitch) > 1.0e-12 or abs(yaw) > 1.0e-12
+                has_offset = abs(pitch) > 1.0e-12 or abs(yaw) > 1.0e-12
 
                 base_roll = float(node.get("roll_deg") or 0.0)
                 base_clockwise = bool(node.get("roll_clockwise", False))
@@ -192,8 +202,14 @@ class RustConstraintMixin(BaseModel):
                     raise ValueError("roll_reference must be either 'sun' or 'north'")
                 base_ccw = -base_roll if base_clockwise else base_roll
 
-                if target_roll is not None:
-                    # Evaluation-time roll uses the boresight-defined roll direction.
+                if sweep_roll and has_offset:
+                    # Signal the Rust layer to sweep all spacecraft rolls for FoR.
+                    node["roll_deg"] = None
+                    node["roll_clockwise"] = base_clockwise
+                    node["roll_reference"] = base_reference
+                elif target_roll is not None:
+                    # Combine instrument offset with spacecraft roll, both interpreted
+                    # in the instrument's configured roll direction.
                     eval_ccw = (
                         -float(target_roll) if base_clockwise else float(target_roll)
                     )
@@ -202,33 +218,25 @@ class RustConstraintMixin(BaseModel):
                     node["roll_clockwise"] = False
                     node["roll_reference"] = base_reference
                 else:
+                    # No spacecraft roll — preserve instrument offset unchanged.
                     node["roll_deg"] = base_roll
                     node["roll_clockwise"] = base_clockwise
                     node["roll_reference"] = base_reference
 
                 inner = node.get("constraint")
                 if isinstance(inner, dict):
-                    requires_roll = apply_eval_roll(inner) or requires_roll
-
-                return requires_roll
+                    apply_eval_roll(inner)
+                return
 
             if node_type in {"and", "or", "xor", "at_least"}:
-                child_requires_roll = False
                 for child in node.get("constraints", []):
-                    child_requires_roll = apply_eval_roll(child) or child_requires_roll
-                return child_requires_roll
+                    apply_eval_roll(child)
+                return
 
             if node_type == "not":
-                return apply_eval_roll(node.get("constraint"))
+                apply_eval_roll(node.get("constraint"))
 
-            return False
-
-        requires_roll = apply_eval_roll(config)
-        if requires_roll and target_roll is None:
-            raise ValueError(
-                "target_roll must be provided at evaluation time when boresight pitch/yaw offsets are non-zero"
-            )
-
+        apply_eval_roll(config)
         return Constraint.from_json(json.dumps(config))
 
     def evaluate(
@@ -386,23 +394,27 @@ class RustConstraintMixin(BaseModel):
         Field of regard is the visible solid angle at a single timestamp,
         where visibility is defined by constraint not violated (False).
 
-        For ``boresight_offset`` constraints with ``roll_deg=None`` (free roll)
-        and non-zero pitch/yaw, the result is computed by sweeping
-        ``n_roll_samples`` roll angles uniformly over [0°, 360°) and counting
-        a sky direction as accessible if *any* roll satisfies the inner
-        constraint.  This correctly accounts for roll freedom when the
-        spacecraft can rotate about its boresight axis.
+        When ``target_roll`` is not specified, boresight-offset constraints with
+        non-zero pitch/yaw are evaluated by sweeping ``n_roll_samples`` spacecraft
+        roll angles uniformly over [0°, 360°) and counting a sky direction as
+        accessible if *any* roll satisfies the inner constraint.  This gives the
+        maximum accessible sky over all possible spacecraft orientations.
+
+        To evaluate at a specific spacecraft roll angle, pass ``target_roll``.
 
         Args:
             ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
             time: Specific datetime to evaluate (must exist in ephemeris)
             index: Specific time index to evaluate
             n_points: Number of Fibonacci-sphere samples for sky integration
-            n_roll_samples: Number of roll angles to sweep for free-roll
-                boresight-offset constraints (uniformly spaced over [0°, 360°)).
-                Ignored for fixed-roll or roll-independent constraints.
-                Default :data:`DEFAULT_N_ROLL_SAMPLES` (5° resolution). Reduce for speed, increase for
-                accuracy with large pitch/yaw offsets.
+            n_roll_samples: Number of spacecraft roll angles to sweep when
+                ``target_roll`` is not specified and boresight pitch/yaw offsets
+                are present (uniformly spaced over [0°, 360°)).  Ignored when
+                ``target_roll`` is given or no pitch/yaw offset is defined.
+                Default :data:`DEFAULT_N_ROLL_SAMPLES` (5° resolution).
+            target_roll: Spacecraft roll angle (degrees) about the boresight +X axis.
+                When ``None`` (default), FoR sweeps all possible roll angles for
+                boresight-offset constraints with non-zero pitch/yaw.
 
         Returns:
             Visible solid angle in steradians (range [0, 4π])
@@ -410,12 +422,12 @@ class RustConstraintMixin(BaseModel):
         Raises:
             ValueError: If exactly one of time/index is not provided
         """
-        rust_constraint_any = cast(
-            Any,
-            self._resolve_rust_constraint(
-                target_roll=target_roll,
-            ),
-        )
+        if target_roll is None:
+            rust_constraint_any = cast(Any, self._to_rust_constraint(sweep_roll=True))
+        else:
+            rust_constraint_any = cast(
+                Any, self._resolve_rust_constraint(target_roll=target_roll)
+            )
         return float(
             rust_constraint_any.instantaneous_field_of_regard(
                 ephemeris,
@@ -641,7 +653,7 @@ class RustConstraintMixin(BaseModel):
 
     def boresight_offset(
         self,
-        roll_deg: float | None = None,
+        roll_deg: float = 0.0,
         roll_clockwise: bool = False,
         roll_reference: RollReference = RollReference.NORTH,
         pitch_deg: float = 0.0,
@@ -650,20 +662,16 @@ class RustConstraintMixin(BaseModel):
         """Wrap this constraint with a fixed boresight Euler-angle offset.
 
         This is useful for shared-axis multi-instrument systems where a secondary
-        instrument is offset from the primary pointing direction.
+        instrument is physically offset from the primary pointing direction.
 
         Args:
-            roll_deg: Fixed boresight roll offset about +X in degrees, or ``None``
-                (default) for free roll. When ``None`` and ``pitch_deg`` or
-                ``yaw_deg`` are non-zero, ``instantaneous_field_of_regard`` sweeps
-                ``DEFAULT_N_ROLL_SAMPLES`` roll angles and counts a sky direction
-                accessible if *any* roll satisfies the inner constraint. Pass an
-                explicit value to pin roll.
-            roll_clockwise: If True, positive fixed boresight roll is clockwise
-                looking along +X.
-            roll_reference: Roll-zero reference axis. "north" (default) sets
+            roll_deg: Fixed instrument roll offset about the boresight +X axis,
+                in degrees, relative to the spacecraft's nominal roll frame.
+                Default 0.0 (instrument aligned with spacecraft frame).
+            roll_clockwise: If True, positive roll is clockwise looking along +X.
+            roll_reference: Roll-zero reference axis. ``"north"`` (default) sets
                 roll=0 where +Z is celestial-north projected in the boresight-
-                normal plane. "sun" sets roll=0 where +Z is Sun-projected in
+                normal plane. ``"sun"`` sets roll=0 where +Z is Sun-projected in
                 that plane.
             pitch_deg: Pitch angle about +Y in degrees
             yaw_deg: Yaw angle about +Z in degrees
@@ -898,13 +906,11 @@ class BoresightOffsetConstraint(RustConstraintMixin):
     Attributes:
         type: Always "boresight_offset"
         constraint: Inner constraint evaluated at offset direction
-        roll_deg: Fixed boresight roll offset about +X in degrees, or ``None``
-            (default) for free roll.  When ``None`` and pitch/yaw are non-zero,
-            ``instantaneous_field_of_regard`` sweeps ``DEFAULT_N_ROLL_SAMPLES``
-            roll angles and counts a sky direction accessible if *any* roll
-            satisfies the inner constraint.
-        roll_clockwise: If True, positive fixed boresight roll is clockwise
-            looking along +X.
+        roll_deg: Fixed instrument roll offset about the boresight +X axis in
+            degrees, relative to the spacecraft's nominal roll frame.  Represents
+            the physical mounting angle of the instrument.  Default ``0.0``
+            (instrument aligned with spacecraft frame).
+        roll_clockwise: If True, positive roll is clockwise looking along +X.
         roll_reference: Roll-zero reference axis ("sun" or "north")
         pitch_deg: Pitch angle about +Y in degrees
         yaw_deg: Yaw angle about +Z in degrees
@@ -914,9 +920,9 @@ class BoresightOffsetConstraint(RustConstraintMixin):
     constraint: ConstraintConfig = Field(
         ..., description="Inner constraint evaluated at boresight-offset direction"
     )
-    roll_deg: float | None = Field(
-        default=None,
-        description="Fixed boresight roll offset about +X in degrees (None = free roll)",
+    roll_deg: float = Field(
+        default=0.0,
+        description="Fixed instrument roll offset about boresight +X in degrees relative to spacecraft frame",
     )
     roll_clockwise: bool = Field(
         default=False,

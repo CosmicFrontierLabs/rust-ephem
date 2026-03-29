@@ -147,7 +147,7 @@ class RustConstraintMixin(BaseModel):
     def not_(self) -> NotConstraint: ...
     def boresight_offset(
         self,
-        roll_deg: float | None = None,
+        roll_deg: float = 0.0,
         roll_clockwise: bool = False,
         roll_reference: RollReference = RollReference.NORTH,
         pitch_deg: float = 0.0,
@@ -250,7 +250,7 @@ class NotConstraint(RustConstraintMixin):
 class BoresightOffsetConstraint(RustConstraintMixin):
     type: Literal["boresight_offset"] = "boresight_offset"
     constraint: ConstraintConfig
-    roll_deg: float | None = None
+    roll_deg: float = 0.0
     roll_clockwise: bool = False
     roll_reference: RollReference = RollReference.NORTH
     pitch_deg: float = 0.0
