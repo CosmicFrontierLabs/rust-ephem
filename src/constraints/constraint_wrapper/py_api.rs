@@ -1227,8 +1227,6 @@ impl PyConstraint {
     ///     constraint (Constraint): Inner constraint to evaluate at offset direction
     ///     roll_deg (float): Fixed instrument roll offset about boresight +X in degrees,
     ///         relative to the spacecraft's nominal roll frame.  Default ``0.0``.
-    ///         ``None`` is also accepted internally for field-of-regard spacecraft-roll
-    ///         sweeping; do not pass ``None`` directly.
     ///     roll_clockwise (bool): If True, positive roll is clockwise when looking along +X.
     ///     roll_reference (str): Roll-zero reference axis: "north" (default) or "sun".
     ///     pitch_deg (float): Pitch angle about +Y in degrees
@@ -1240,18 +1238,16 @@ impl PyConstraint {
     #[pyo3(signature = (constraint, roll_deg=0.0, roll_clockwise=false, roll_reference="north", pitch_deg=0.0, yaw_deg=0.0))]
     fn boresight_offset(
         constraint: PyRef<PyConstraint>,
-        roll_deg: Option<f64>,
+        roll_deg: f64,
         roll_clockwise: bool,
         roll_reference: &str,
         pitch_deg: f64,
         yaw_deg: f64,
     ) -> PyResult<Self> {
-        if let Some(r) = roll_deg {
-            if !r.is_finite() {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "roll_deg must be a finite number",
-                ));
-            }
+        if !roll_deg.is_finite() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "roll_deg must be a finite number",
+            ));
         }
         if !pitch_deg.is_finite() || !yaw_deg.is_finite() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1277,9 +1273,7 @@ impl PyConstraint {
             "yaw_deg": yaw_deg
         });
 
-        if let Some(r) = roll_deg {
-            config_obj["roll_deg"] = serde_json::json!(r);
-        }
+        config_obj["roll_deg"] = serde_json::json!(roll_deg);
 
         let config_json = config_obj.to_string();
         let evaluator = parse_constraint_json(&serde_json::from_str(&config_json).unwrap())?;
