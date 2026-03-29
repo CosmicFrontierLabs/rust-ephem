@@ -591,6 +591,14 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         Ok(Some(result))
     }
 
+    fn is_roll_dependent(&self) -> bool {
+        self.roll_deg.is_none()
+            && !(self.pitch_deg.abs() <= NEAR_ZERO && self.yaw_deg.abs() <= NEAR_ZERO)
+    }
+
+    /// Efficient standalone sweep for free-roll FoR: reuses a single allocation across
+    /// all roll steps.  The default trait sweep via `field_of_regard_violated_at_roll`
+    /// would allocate a new buffer per step; this override avoids that cost.
     fn field_of_regard_violated_batch(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -598,44 +606,38 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         time_index: usize,
         n_roll_samples: usize,
     ) -> pyo3::PyResult<Vec<bool>> {
-        let n_targets = target_unit_vectors.nrows();
-
-        // When roll is fixed (Some) or there is no pitch/yaw offset, roll either does
-        // not affect the result or is already pinned – use the standard single-roll path.
-        if self.roll_deg.is_some()
-            || (self.pitch_deg.abs() <= NEAR_ZERO && self.yaw_deg.abs() <= NEAR_ZERO)
-        {
-            if let Some(result) = self.in_constraint_batch_unit_vectors(
+        if !self.is_roll_dependent() {
+            // Fixed roll or no offset – single evaluation suffices.
+            return self.field_of_regard_violated_at_roll(
                 ephemeris,
                 target_unit_vectors,
-                Some(&[time_index]),
-            )? {
-                return Ok((0..n_targets).map(|i| result[[i, 0]]).collect());
-            }
-            let (ras, decs) = unit_vectors_to_radec_batch(target_unit_vectors);
-            let result = self.in_constraint_batch(ephemeris, &ras, &decs, Some(&[time_index]))?;
-            return Ok((0..n_targets).map(|i| result[[i, 0]]).collect());
+                time_index,
+                0.0,
+            );
         }
 
-        // Roll is free (None) with a non-zero pitch/yaw offset.
-        // Sweep n_roll_samples roll angles over [0°, 360°).
-        // A direction is accessible if ANY roll angle satisfies the inner constraint.
-        let sun_positions = ephemeris.get_sun_positions()?;
-        let observer_positions = ephemeris.get_gcrs_positions()?;
-
-        let sun_rel = [
-            sun_positions[[time_index, 0]] - observer_positions[[time_index, 0]],
-            sun_positions[[time_index, 1]] - observer_positions[[time_index, 1]],
-            sun_positions[[time_index, 2]] - observer_positions[[time_index, 2]],
-        ];
-
-        // accessible[i] = true  ⟹ direction i is reachable at some roll angle
-        let mut accessible = vec![false; n_targets];
+        let n_targets = target_unit_vectors.nrows();
         let roll_step_deg = 360.0 / n_roll_samples as f64;
+
+        // Compute sun_rel once outside the loop.
+        let sun_rel: [f64; 3] = match self.roll_reference {
+            RollReference::Sun => {
+                let sun_positions = ephemeris.get_sun_positions()?;
+                let observer_positions = ephemeris.get_gcrs_positions()?;
+                [
+                    sun_positions[[time_index, 0]] - observer_positions[[time_index, 0]],
+                    sun_positions[[time_index, 1]] - observer_positions[[time_index, 1]],
+                    sun_positions[[time_index, 2]] - observer_positions[[time_index, 2]],
+                ]
+            }
+            RollReference::North => [0.0, 0.0, 0.0],
+        };
+
+        // Reuse a single allocation for the rotated unit vectors across all roll steps.
+        let mut accessible = vec![false; n_targets];
         let mut rotated_units = Array2::<f64>::zeros((n_targets, 3));
 
         for step in 0..n_roll_samples {
-            // Early exit once every direction has been found accessible.
             if accessible.iter().all(|&a| a) {
                 break;
             }
@@ -648,12 +650,8 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
                     target_unit_vectors[[i, 1]],
                     target_unit_vectors[[i, 2]],
                 ];
-                let sun_input = match self.roll_reference {
-                    RollReference::Sun => sun_rel,
-                    RollReference::North => [0.0, 0.0, 0.0],
-                };
                 let rotated =
-                    self.rotated_target_for_time_with_params(&target_unit, &sun_input, params)?;
+                    self.rotated_target_for_time_with_params(&target_unit, &sun_rel, params)?;
                 rotated_units[[i, 0]] = rotated[0];
                 rotated_units[[i, 1]] = rotated[1];
                 rotated_units[[i, 2]] = rotated[2];
@@ -678,8 +676,79 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
             }
         }
 
-        // Return violated = NOT accessible.
         Ok(accessible.iter().map(|&a| !a).collect())
+    }
+
+    fn field_of_regard_violated_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_index: usize,
+        roll_deg: f64,
+    ) -> pyo3::PyResult<Vec<bool>> {
+        let n_targets = target_unit_vectors.nrows();
+
+        // When roll is fixed (Some) or there is no pitch/yaw offset, roll either does
+        // not affect the result or is already pinned – ignore the candidate roll_deg and
+        // evaluate with the configured state (which already encodes the fixed roll).
+        if self.roll_deg.is_some()
+            || (self.pitch_deg.abs() <= NEAR_ZERO && self.yaw_deg.abs() <= NEAR_ZERO)
+        {
+            if let Some(result) = self.in_constraint_batch_unit_vectors(
+                ephemeris,
+                target_unit_vectors,
+                Some(&[time_index]),
+            )? {
+                return Ok((0..n_targets).map(|i| result[[i, 0]]).collect());
+            }
+            let (ras, decs) = unit_vectors_to_radec_batch(target_unit_vectors);
+            let result = self.in_constraint_batch(ephemeris, &ras, &decs, Some(&[time_index]))?;
+            return Ok((0..n_targets).map(|i| result[[i, 0]]).collect());
+        }
+
+        // Free roll: evaluate at the specific roll_deg provided by the sweep.
+        let sun_rel: [f64; 3] = match self.roll_reference {
+            RollReference::Sun => {
+                let sun_positions = ephemeris.get_sun_positions()?;
+                let observer_positions = ephemeris.get_gcrs_positions()?;
+                [
+                    sun_positions[[time_index, 0]] - observer_positions[[time_index, 0]],
+                    sun_positions[[time_index, 1]] - observer_positions[[time_index, 1]],
+                    sun_positions[[time_index, 2]] - observer_positions[[time_index, 2]],
+                ]
+            }
+            RollReference::North => [0.0, 0.0, 0.0],
+        };
+
+        let params = self.rotation_params_with_roll(roll_deg);
+        let mut rotated_units = Array2::<f64>::zeros((n_targets, 3));
+
+        for i in 0..n_targets {
+            let target_unit = [
+                target_unit_vectors[[i, 0]],
+                target_unit_vectors[[i, 1]],
+                target_unit_vectors[[i, 2]],
+            ];
+            let rotated =
+                self.rotated_target_for_time_with_params(&target_unit, &sun_rel, params)?;
+            rotated_units[[i, 0]] = rotated[0];
+            rotated_units[[i, 1]] = rotated[1];
+            rotated_units[[i, 2]] = rotated[2];
+        }
+
+        let violated_col = if let Some(r) = self.constraint.in_constraint_batch_unit_vectors(
+            ephemeris,
+            &rotated_units,
+            Some(&[time_index]),
+        )? {
+            r
+        } else {
+            let (ras, decs) = unit_vectors_to_radec_batch(&rotated_units);
+            self.constraint
+                .in_constraint_batch(ephemeris, &ras, &decs, Some(&[time_index]))?
+        };
+
+        Ok((0..n_targets).map(|i| violated_col[[i, 0]]).collect())
     }
 
     fn name(&self) -> String {

@@ -6,6 +6,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 import numpy as np
 import numpy.typing as npt
 
+from .constraints import DEFAULT_N_POINTS, DEFAULT_N_ROLL_SAMPLES
 from .ephemeris import Ephemeris
 
 @runtime_checkable

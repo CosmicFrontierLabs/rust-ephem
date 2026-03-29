@@ -277,41 +277,38 @@ impl ConstraintEvaluator for AndEvaluator {
         Ok(result)
     }
 
-    fn field_of_regard_violated_batch(
+    fn is_roll_dependent(&self) -> bool {
+        self.constraints.iter().any(|c| c.is_roll_dependent())
+    }
+
+    fn field_of_regard_violated_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_unit_vectors: &Array2<f64>,
         time_index: usize,
-        n_roll_samples: usize,
+        roll_deg: f64,
     ) -> PyResult<Vec<bool>> {
         let n_targets = target_unit_vectors.nrows();
-
-        // Vacuously violated (AND over zero constraints is all-violated, matching
-        // in_constraint_batch which returns all-true for an empty AND).
         if self.constraints.is_empty() {
             return Ok(vec![true; n_targets]);
         }
-
-        let mut result = self.constraints[0].field_of_regard_violated_batch(
+        let mut result = self.constraints[0].field_of_regard_violated_at_roll(
             ephemeris,
             target_unit_vectors,
             time_index,
-            n_roll_samples,
+            roll_deg,
         )?;
-
         for constraint in &self.constraints[1..] {
-            let sub = constraint.field_of_regard_violated_batch(
+            let sub = constraint.field_of_regard_violated_at_roll(
                 ephemeris,
                 target_unit_vectors,
                 time_index,
-                n_roll_samples,
+                roll_deg,
             )?;
-            // AND logic: violated when ALL sub-constraints are violated.
             for i in 0..n_targets {
                 result[i] = result[i] && sub[i];
             }
         }
-
         Ok(result)
     }
 
@@ -533,40 +530,38 @@ impl ConstraintEvaluator for OrEvaluator {
         Ok(result)
     }
 
-    fn field_of_regard_violated_batch(
+    fn is_roll_dependent(&self) -> bool {
+        self.constraints.iter().any(|c| c.is_roll_dependent())
+    }
+
+    fn field_of_regard_violated_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_unit_vectors: &Array2<f64>,
         time_index: usize,
-        n_roll_samples: usize,
+        roll_deg: f64,
     ) -> PyResult<Vec<bool>> {
         let n_targets = target_unit_vectors.nrows();
-
-        // Identity: OR over zero constraints is never violated.
         if self.constraints.is_empty() {
             return Ok(vec![false; n_targets]);
         }
-
-        let mut result = self.constraints[0].field_of_regard_violated_batch(
+        let mut result = self.constraints[0].field_of_regard_violated_at_roll(
             ephemeris,
             target_unit_vectors,
             time_index,
-            n_roll_samples,
+            roll_deg,
         )?;
-
         for constraint in &self.constraints[1..] {
-            let sub = constraint.field_of_regard_violated_batch(
+            let sub = constraint.field_of_regard_violated_at_roll(
                 ephemeris,
                 target_unit_vectors,
                 time_index,
-                n_roll_samples,
+                roll_deg,
             )?;
-            // OR logic: violated when ANY sub-constraint is violated.
             for i in 0..n_targets {
                 result[i] = result[i] || sub[i];
             }
         }
-
         Ok(result)
     }
 
@@ -744,18 +739,22 @@ impl ConstraintEvaluator for NotEvaluator {
         Ok(sub_result.into_iter().map(|v| !v).collect())
     }
 
-    fn field_of_regard_violated_batch(
+    fn is_roll_dependent(&self) -> bool {
+        self.constraint.is_roll_dependent()
+    }
+
+    fn field_of_regard_violated_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_unit_vectors: &Array2<f64>,
         time_index: usize,
-        n_roll_samples: usize,
+        roll_deg: f64,
     ) -> PyResult<Vec<bool>> {
-        let sub = self.constraint.field_of_regard_violated_batch(
+        let sub = self.constraint.field_of_regard_violated_at_roll(
             ephemeris,
             target_unit_vectors,
             time_index,
-            n_roll_samples,
+            roll_deg,
         )?;
         // NOTE: Do not negate here: inner result is already aggregated over roll freedom.
         Ok(sub)
@@ -966,6 +965,39 @@ impl ConstraintEvaluator for XorEvaluator {
         Ok(result)
     }
 
+    fn is_roll_dependent(&self) -> bool {
+        self.constraints.iter().any(|c| c.is_roll_dependent())
+    }
+
+    fn field_of_regard_violated_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_index: usize,
+        roll_deg: f64,
+    ) -> PyResult<Vec<bool>> {
+        let n_targets = target_unit_vectors.nrows();
+        let sub_results: PyResult<Vec<_>> = self
+            .constraints
+            .iter()
+            .map(|c| {
+                c.field_of_regard_violated_at_roll(
+                    ephemeris,
+                    target_unit_vectors,
+                    time_index,
+                    roll_deg,
+                )
+            })
+            .collect();
+        let sub_results = sub_results?;
+        let mut result = Vec::with_capacity(n_targets);
+        for i in 0..n_targets {
+            let count = sub_results.iter().filter(|r| r[i]).count();
+            result.push(count == 1);
+        }
+        Ok(result)
+    }
+
     fn name(&self) -> String {
         format!(
             "XOR({})",
@@ -1171,6 +1203,39 @@ impl ConstraintEvaluator for AtLeastEvaluator {
             result.push(violation_count >= self.min_violated);
         }
 
+        Ok(result)
+    }
+
+    fn is_roll_dependent(&self) -> bool {
+        self.constraints.iter().any(|c| c.is_roll_dependent())
+    }
+
+    fn field_of_regard_violated_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_index: usize,
+        roll_deg: f64,
+    ) -> PyResult<Vec<bool>> {
+        let n_targets = target_unit_vectors.nrows();
+        let sub_results: PyResult<Vec<_>> = self
+            .constraints
+            .iter()
+            .map(|c| {
+                c.field_of_regard_violated_at_roll(
+                    ephemeris,
+                    target_unit_vectors,
+                    time_index,
+                    roll_deg,
+                )
+            })
+            .collect();
+        let sub_results = sub_results?;
+        let mut result = Vec::with_capacity(n_targets);
+        for i in 0..n_targets {
+            let count = sub_results.iter().filter(|r| r[i]).count();
+            result.push(count >= self.min_violated);
+        }
         Ok(result)
     }
 

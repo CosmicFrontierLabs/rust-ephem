@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 import rust_ephem
 from rust_ephem import Constraint
@@ -176,3 +177,40 @@ def test_low_level_constraint_api_accepts_target_roll(
     ).in_constraint_batch(ephem, target_ras, target_decs)
 
     assert np.array_equal(via_target_roll, expected)
+
+
+def test_free_roll_for_gte_fixed_roll_for(
+    tle_ephem: rust_ephem.TLEEphemeris,
+) -> None:
+    """Free-roll FoR must be >= any fixed-roll FoR for the same constraint.
+
+    When roll_deg is None and pitch/yaw are non-zero, instantaneous_field_of_regard
+    sweeps all roll angles and counts a direction accessible if *any* roll satisfies
+    the inner constraint.  That superset property means the result is always >= the
+    FoR computed with a single fixed roll.
+    """
+    ephem = tle_ephem
+
+    sun = Constraint.sun_proximity(45.0)
+
+    free = Constraint.boresight_offset(sun, pitch_deg=30.0, yaw_deg=0.0)
+    fixed = Constraint.boresight_offset(sun, roll_deg=0.0, pitch_deg=30.0, yaw_deg=0.0)
+
+    for_free = free.instantaneous_field_of_regard(ephem, index=0, n_points=500)
+    for_fixed = fixed.instantaneous_field_of_regard(ephem, index=0, n_points=500)
+
+    assert for_free >= for_fixed, (
+        f"Free-roll FoR ({for_free:.4f} sr) should be >= fixed-roll FoR ({for_fixed:.4f} sr)"
+    )
+
+
+def test_instantaneous_for_zero_n_roll_samples_raises(
+    tle_ephem: rust_ephem.TLEEphemeris,
+) -> None:
+    """n_roll_samples=0 must raise ValueError (no roll angles to sweep)."""
+    ephem = tle_ephem
+
+    c = Constraint.sun_proximity(45.0)
+
+    with pytest.raises(ValueError, match="n_roll_samples must be greater than 0"):
+        c.instantaneous_field_of_regard(ephem, index=0, n_points=100, n_roll_samples=0)

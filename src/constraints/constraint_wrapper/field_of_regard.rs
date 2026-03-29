@@ -132,6 +132,11 @@ where
             "n_points must be greater than 0",
         ));
     }
+    if n_roll_samples == 0 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "n_roll_samples must be greater than 0",
+        ));
+    }
 
     let has_time = time.is_some();
     let has_index = index.is_some();
