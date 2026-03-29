@@ -22,7 +22,7 @@ extensions = [
 
 # If the extension module isn't available at docs build time, mock it so the
 # docs can still build on systems that haven't built the native extension.
-autodoc_mock_imports = []
+autodoc_mock_imports: list[str] = []
 
 # Use the manually-committed stub pages in _autosummary/ instead of regenerating
 autosummary_generate = False
@@ -40,7 +40,7 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 # -- Options for HTML output ----------------------------------------------
 
 try:
-    import sphinx_rtd_theme  # noqa: F401
+    import sphinx_rtd_theme  # type: ignore[import-untyped] # noqa: F401
 
     html_theme = "sphinx_rtd_theme"
 except Exception:
