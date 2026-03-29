@@ -1237,7 +1237,7 @@ impl PyConstraint {
     /// Returns:
     ///     Constraint: A new boresight-offset wrapped constraint
     #[staticmethod]
-    #[pyo3(signature = (constraint, roll_deg=None, roll_clockwise=false, roll_reference="north", pitch_deg=0.0, yaw_deg=0.0))]
+    #[pyo3(signature = (constraint, roll_deg=0.0, roll_clockwise=false, roll_reference="north", pitch_deg=0.0, yaw_deg=0.0))]
     fn boresight_offset(
         constraint: PyRef<PyConstraint>,
         roll_deg: Option<f64>,
