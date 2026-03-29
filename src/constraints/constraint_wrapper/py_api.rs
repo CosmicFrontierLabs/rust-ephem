@@ -31,69 +31,334 @@ use super::field_of_regard::DEFAULT_N_ROLL_SAMPLES;
 use super::json_parser::parse_constraint_json;
 use super::json_to_py::json_to_pyobject;
 
-/// Recursively walk a constraint JSON tree and bake a spacecraft roll angle into every
-/// ``boresight_offset`` node.  Mirrors Python's ``_to_rust_constraint(target_roll=roll)``
-/// tree-walking logic so that compound constraints (``or``/``and``/etc.) composed of
-/// multiple ``boresight_offset`` nodes all receive the correct spacecraft roll.
-fn apply_spacecraft_roll_to_json(config: &mut serde_json::Value, target_roll_deg: f64) {
-    let Some(obj) = config.as_object_mut() else {
-        return;
-    };
-    let node_type = obj
-        .get("type")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+// --- Vectorized roll-sweep helpers for roll_range ---
 
-    match node_type.as_deref() {
+#[inline]
+fn rsv_dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+#[inline]
+fn rsv_norm(v: [f64; 3]) -> f64 {
+    (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
+}
+
+#[inline]
+fn rsv_cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+#[inline]
+fn rsv_radec_to_unit(ra_deg: f64, dec_deg: f64) -> [f64; 3] {
+    let ra = ra_deg.to_radians();
+    let dec = dec_deg.to_radians();
+    let (sd, cd) = dec.sin_cos();
+    let (sr, cr) = ra.sin_cos();
+    [cd * cr, cd * sr, sd]
+}
+
+/// Get the normalized sun direction relative to the observer at `time_idx`.
+/// Falls back to `[1, 0, 0]` if the positions are degenerate.
+fn get_sun_unit_at(ephem: &dyn EphemerisBase, time_idx: usize) -> PyResult<[f64; 3]> {
+    let sun = ephem.get_sun_positions()?;
+    let obs = ephem.get_gcrs_positions()?;
+    let v = [
+        sun[[time_idx, 0]] - obs[[time_idx, 0]],
+        sun[[time_idx, 1]] - obs[[time_idx, 1]],
+        sun[[time_idx, 2]] - obs[[time_idx, 2]],
+    ];
+    let n = rsv_norm(v);
+    if n < 1.0e-12 {
+        return Ok([1.0, 0.0, 0.0]);
+    }
+    Ok([v[0] / n, v[1] / n, v[2] / n])
+}
+
+/// Rotate `target` using the boresight geometry.
+///
+/// `eff_roll_ccw_deg` is the combined roll (base + spacecraft), CCW-positive convention.
+/// `z_ref` is the reference axis for roll=0: `[0, 0, 1]` (north) or the sun direction.
+///
+/// Mirrors `BoresightOffsetEvaluator::rotated_target_for_time_with_params` exactly.
+fn boresight_rotate(
+    target: [f64; 3],
+    z_ref: [f64; 3],
+    eff_roll_ccw_deg: f64,
+    pitch_deg: f64,
+    yaw_deg: f64,
+) -> PyResult<[f64; 3]> {
+    const NEAR_ZERO: f64 = 1.0e-12;
+    let (sr, cr) = eff_roll_ccw_deg.to_radians().sin_cos();
+    let (sp, cp) = pitch_deg.to_radians().sin_cos();
+    let (sy, cy) = yaw_deg.to_radians().sin_cos();
+    let local_x = cp * cy;
+    let local_y = cp * sy;
+    let local_z = -sp;
+
+    let x_axis = target;
+
+    // Project z_ref onto the plane normal to x_axis to form the roll=0 Z basis.
+    let zref_dot_x = rsv_dot(x_axis, z_ref);
+    let mut z_axis = [
+        z_ref[0] - zref_dot_x * x_axis[0],
+        z_ref[1] - zref_dot_x * x_axis[1],
+        z_ref[2] - zref_dot_x * x_axis[2],
+    ];
+    if rsv_norm(z_axis) <= NEAR_ZERO {
+        // z_ref is near-parallel to boresight; pick a stable fallback axis.
+        let reference = if x_axis[2].abs() < 0.9 {
+            [0.0_f64, 0.0, 1.0]
+        } else {
+            [0.0_f64, 1.0, 0.0]
+        };
+        let dot_ref_x = rsv_dot(x_axis, reference);
+        z_axis = [
+            reference[0] - dot_ref_x * x_axis[0],
+            reference[1] - dot_ref_x * x_axis[1],
+            reference[2] - dot_ref_x * x_axis[2],
+        ];
+    }
+    let z_n = rsv_norm(z_axis);
+    if z_n <= 0.0 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "boresight: unable to construct roll frame",
+        ));
+    }
+    let z_axis = [z_axis[0] / z_n, z_axis[1] / z_n, z_axis[2] / z_n];
+
+    let y_raw = rsv_cross(z_axis, x_axis);
+    let y_n = rsv_norm(y_raw);
+    if y_n <= 0.0 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "boresight: unable to construct +Y axis",
+        ));
+    }
+    let y_axis = [y_raw[0] / y_n, y_raw[1] / y_n, y_raw[2] / y_n];
+    let z_axis = rsv_cross(x_axis, y_axis); // recompute for strict orthonormality
+
+    // Rotate the Y/Z frame axes by the effective roll.
+    let y_roll = [
+        y_axis[0] * cr + z_axis[0] * sr,
+        y_axis[1] * cr + z_axis[1] * sr,
+        y_axis[2] * cr + z_axis[2] * sr,
+    ];
+    let z_roll = [
+        -y_axis[0] * sr + z_axis[0] * cr,
+        -y_axis[1] * sr + z_axis[1] * cr,
+        -y_axis[2] * sr + z_axis[2] * cr,
+    ];
+
+    Ok([
+        local_x * x_axis[0] + local_y * y_roll[0] + local_z * z_roll[0],
+        local_x * x_axis[1] + local_y * y_roll[1] + local_z * z_roll[1],
+        local_x * x_axis[2] + local_y * y_roll[2] + local_z * z_roll[2],
+    ])
+}
+
+/// Vectorized roll sweep over a constraint JSON tree.
+///
+/// Returns a `Vec<bool>` of length `rolls.len()` where `result[i]` = true means the
+/// constraint is **violated** for spacecraft roll `rolls[i]`.
+///
+/// The key optimization: instead of building N evaluators and calling `in_constraint_batch`
+/// N times (once per roll), the function walks the tree and calls `in_constraint_batch`
+/// **once per leaf constraint** with all N pre-rotated targets.  This reduces the call
+/// count from `O(N × leaves)` to `O(leaves)`.
+///
+/// Every `target_ras[i]` / `target_decs[i]` carries the target direction already
+/// transformed by ancestor boresight nodes above the current node in the tree.
+fn roll_sweep_vec(
+    config: &serde_json::Value,
+    target_ras: &[f64],
+    target_decs: &[f64],
+    rolls: &[f64],
+    ephem: &dyn EphemerisBase,
+    time_idx: usize,
+    sun_unit: &[f64; 3],
+) -> PyResult<Vec<bool>> {
+    let n = rolls.len();
+    debug_assert_eq!(target_ras.len(), n);
+    debug_assert_eq!(target_decs.len(), n);
+
+    match config.get("type").and_then(|v| v.as_str()) {
         Some("boresight_offset") => {
-            let base_roll = obj.get("roll_deg").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let base_clockwise = obj
+            let base_roll = config
+                .get("roll_deg")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let clockwise = config
                 .get("roll_clockwise")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            let reference = obj
+            let pitch_deg = config
+                .get("pitch_deg")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let yaw_deg = config
+                .get("yaw_deg")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let is_sun_ref = config
                 .get("roll_reference")
                 .and_then(|v| v.as_str())
                 .unwrap_or("north")
-                .to_string();
+                == "sun";
+            let inner = config.get("constraint").ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("boresight_offset is missing 'constraint'")
+            })?;
 
-            let base_ccw = if base_clockwise {
-                -base_roll
+            let z_ref: [f64; 3] = if is_sun_ref {
+                *sun_unit
             } else {
-                base_roll
+                [0.0, 0.0, 1.0] // celestial north
             };
-            let eval_ccw = if base_clockwise {
-                -target_roll_deg
-            } else {
-                target_roll_deg
-            };
-            let total_ccw = base_ccw + eval_ccw;
+            let base_ccw = if clockwise { -base_roll } else { base_roll };
 
-            obj.insert("roll_deg".to_string(), serde_json::json!(total_ccw));
-            obj.insert("roll_clockwise".to_string(), serde_json::json!(false));
-            obj.insert("roll_reference".to_string(), serde_json::json!(reference));
-
-            // Recurse into the inner constraint if present
-            if let Some(inner) = obj.get_mut("constraint") {
-                apply_spacecraft_roll_to_json(inner, target_roll_deg);
+            // Pre-compute the rotated target direction for every roll sample.
+            let mut new_ras = Vec::with_capacity(n);
+            let mut new_decs = Vec::with_capacity(n);
+            for i in 0..n {
+                let target = rsv_radec_to_unit(target_ras[i], target_decs[i]);
+                let eval_ccw = if clockwise { -rolls[i] } else { rolls[i] };
+                let eff_roll = base_ccw + eval_ccw;
+                let rotated = boresight_rotate(target, z_ref, eff_roll, pitch_deg, yaw_deg)?;
+                let dec = rotated[2].clamp(-1.0, 1.0).asin().to_degrees();
+                let mut ra = rotated[1].atan2(rotated[0]).to_degrees();
+                if ra < 0.0 {
+                    ra += 360.0;
+                }
+                new_ras.push(ra);
+                new_decs.push(dec);
             }
+
+            roll_sweep_vec(inner, &new_ras, &new_decs, rolls, ephem, time_idx, sun_unit)
         }
-        Some("and") | Some("or") | Some("xor") | Some("at_least") => {
-            if let Some(constraints) = obj.get_mut("constraints") {
-                if let Some(arr) = constraints.as_array_mut() {
-                    for child in arr {
-                        apply_spacecraft_roll_to_json(child, target_roll_deg);
-                    }
+
+        // OR: violated if ANY child is violated.
+        Some("or") => {
+            let children = config
+                .get("constraints")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("'or' node is missing 'constraints'")
+                })?;
+            if children.is_empty() {
+                return Ok(vec![false; n]);
+            }
+            let mut result = roll_sweep_vec(
+                &children[0],
+                target_ras,
+                target_decs,
+                rolls,
+                ephem,
+                time_idx,
+                sun_unit,
+            )?;
+            for child in &children[1..] {
+                let child_result = roll_sweep_vec(
+                    child,
+                    target_ras,
+                    target_decs,
+                    rolls,
+                    ephem,
+                    time_idx,
+                    sun_unit,
+                )?;
+                for (r, c) in result.iter_mut().zip(child_result) {
+                    *r = *r || c;
                 }
             }
+            Ok(result)
         }
-        Some("not") => {
-            if let Some(inner) = obj.get_mut("constraint") {
-                apply_spacecraft_roll_to_json(inner, target_roll_deg);
+
+        // AND: violated only if ALL children are violated.
+        Some("and") => {
+            let children = config
+                .get("constraints")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("'and' node is missing 'constraints'")
+                })?;
+            if children.is_empty() {
+                return Ok(vec![true; n]); // vacuously all violated
             }
+            let mut result = roll_sweep_vec(
+                &children[0],
+                target_ras,
+                target_decs,
+                rolls,
+                ephem,
+                time_idx,
+                sun_unit,
+            )?;
+            for child in &children[1..] {
+                let child_result = roll_sweep_vec(
+                    child,
+                    target_ras,
+                    target_decs,
+                    rolls,
+                    ephem,
+                    time_idx,
+                    sun_unit,
+                )?;
+                for (r, c) in result.iter_mut().zip(child_result) {
+                    *r = *r && c;
+                }
+            }
+            Ok(result)
         }
-        _ => {}
+
+        Some("not") => {
+            let inner = config.get("constraint").ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("'not' node is missing 'constraint'")
+            })?;
+            let result = roll_sweep_vec(
+                inner,
+                target_ras,
+                target_decs,
+                rolls,
+                ephem,
+                time_idx,
+                sun_unit,
+            )?;
+            Ok(result.into_iter().map(|v| !v).collect())
+        }
+
+        _ => {
+            // Leaf constraint (sun, moon, eclipse, …) or unsupported compound (xor, at_least).
+            // Build ONE evaluator, call in_constraint_batch once with all N pre-rotated
+            // targets at time_idx.  arr[[i, 0]] = violated status for roll sample i.
+            let evaluator = parse_constraint_json(config)?;
+            let arr =
+                evaluator.in_constraint_batch(ephem, target_ras, target_decs, Some(&[time_idx]))?;
+            Ok((0..n).map(|i| arr[[i, 0]]).collect())
+        }
     }
+}
+
+/// Resolve sun unit vector, then run the vectorized roll sweep.
+fn run_roll_sweep(
+    config: &serde_json::Value,
+    target_ras: &[f64],
+    target_decs: &[f64],
+    rolls: &[f64],
+    ephem: &dyn EphemerisBase,
+    time_idx: usize,
+) -> PyResult<Vec<bool>> {
+    let sun_unit = get_sun_unit_at(ephem, time_idx)?;
+    roll_sweep_vec(
+        config,
+        target_ras,
+        target_decs,
+        rolls,
+        ephem,
+        time_idx,
+        &sun_unit,
+    )
 }
 
 /// Python-facing constraint evaluator
@@ -1839,8 +2104,6 @@ impl PyConstraint {
         }
 
         let bound = ephemeris.bind(py);
-
-        // Resolve the single input time to an ephemeris index
         let time_indices = self.parse_times_to_indices(bound, time)?;
         let time_idx = *time_indices.first().ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err("time not found in ephemeris")
@@ -1850,67 +2113,67 @@ impl PyConstraint {
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
         let step = 360.0_f64 / n_roll_samples as f64;
-        let mut valid = Vec::with_capacity(n_roll_samples);
+        // All N roll samples share the same base target; boresight nodes rotate them
+        // per-sample inside roll_sweep_vec.
+        let rolls: Vec<f64> = (0..n_roll_samples).map(|i| i as f64 * step).collect();
+        let target_ras = vec![target_ra; n_roll_samples];
+        let target_decs = vec![target_dec; n_roll_samples];
 
-        for i in 0..n_roll_samples {
-            let roll = i as f64 * step;
+        // Dispatch to a typed ephemeris reference, then run the vectorized sweep.
+        // roll_sweep_vec calls in_constraint_batch once per leaf constraint with all N
+        // pre-rotated targets, reducing O(N × leaves) calls to O(leaves).
+        let violated: Vec<bool> = if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
+            run_roll_sweep(
+                &base_config,
+                &target_ras,
+                &target_decs,
+                &rolls,
+                &*ephem as &dyn EphemerisBase,
+                time_idx,
+            )?
+        } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
+            run_roll_sweep(
+                &base_config,
+                &target_ras,
+                &target_decs,
+                &rolls,
+                &*ephem as &dyn EphemerisBase,
+                time_idx,
+            )?
+        } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
+            run_roll_sweep(
+                &base_config,
+                &target_ras,
+                &target_decs,
+                &rolls,
+                &*ephem as &dyn EphemerisBase,
+                time_idx,
+            )?
+        } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+            run_roll_sweep(
+                &base_config,
+                &target_ras,
+                &target_decs,
+                &rolls,
+                &*ephem as &dyn EphemerisBase,
+                time_idx,
+            )?
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
+            ));
+        };
 
-            // Walk the JSON tree and bake the spacecraft roll into each boresight_offset
-            // node — same logic as Python's _to_rust_constraint(target_roll=roll).
-            let mut config = base_config.clone();
-            apply_spacecraft_roll_to_json(&mut config, roll);
-            let evaluator = parse_constraint_json(&config)?;
-
-            let violated = if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
-                let arr = evaluator.in_constraint_batch(
-                    &*ephem as &dyn EphemerisBase,
-                    &[target_ra],
-                    &[target_dec],
-                    Some(&[time_idx]),
-                )?;
-                arr[[0, 0]]
-            } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
-                let arr = evaluator.in_constraint_batch(
-                    &*ephem as &dyn EphemerisBase,
-                    &[target_ra],
-                    &[target_dec],
-                    Some(&[time_idx]),
-                )?;
-                arr[[0, 0]]
-            } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
-                let arr = evaluator.in_constraint_batch(
-                    &*ephem as &dyn EphemerisBase,
-                    &[target_ra],
-                    &[target_dec],
-                    Some(&[time_idx]),
-                )?;
-                arr[[0, 0]]
-            } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
-                let arr = evaluator.in_constraint_batch(
-                    &*ephem as &dyn EphemerisBase,
-                    &[target_ra],
-                    &[target_dec],
-                    Some(&[time_idx]),
-                )?;
-                arr[[0, 0]]
-            } else {
-                return Err(pyo3::exceptions::PyTypeError::new_err(
-                    "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
-                ));
-            };
-            valid.push(!violated);
-        }
-
-        // Collapse adjacent valid samples into (lo, hi) intervals
+        // Collapse contiguous valid (not-violated) samples into (lo, hi) intervals.
         let mut intervals: Vec<(f64, f64)> = Vec::new();
         let mut i = 0;
         while i < n_roll_samples {
-            if !valid[i] {
+            if violated[i] {
                 i += 1;
                 continue;
             }
             let lo = i as f64 * step;
-            while i + 1 < n_roll_samples && valid[i + 1] {
+            while i + 1 < n_roll_samples && !violated[i + 1] {
                 i += 1;
             }
             let hi = i as f64 * step;
