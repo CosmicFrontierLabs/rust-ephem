@@ -21,6 +21,15 @@ import rust_ephem
 
 from .ephemeris import Ephemeris
 
+#: Default number of roll-angle samples used when sweeping roll in
+#: :meth:`~RustConstraintMixin.instantaneous_field_of_regard` for free-roll
+#: boresight-offset constraints.  72 samples gives 5° resolution.
+DEFAULT_N_ROLL_SAMPLES: int = 72
+
+#: Default number of Fibonacci-sphere sky samples used by
+#: :meth:`~RustConstraintMixin.instantaneous_field_of_regard`.
+DEFAULT_N_POINTS: int = 20_000
+
 
 class ConstraintViolation(BaseModel):
     """A time window where a constraint was violated."""
@@ -368,7 +377,8 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         time: datetime | None = None,
         index: int | None = None,
-        n_points: int = 20000,
+        n_points: int = DEFAULT_N_POINTS,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         target_roll: float | None = None,
     ) -> float:
         """Compute instantaneous field of regard in steradians.
@@ -376,11 +386,23 @@ class RustConstraintMixin(BaseModel):
         Field of regard is the visible solid angle at a single timestamp,
         where visibility is defined by constraint not violated (False).
 
+        For ``boresight_offset`` constraints with ``roll_deg=None`` (free roll)
+        and non-zero pitch/yaw, the result is computed by sweeping
+        ``n_roll_samples`` roll angles uniformly over [0°, 360°) and counting
+        a sky direction as accessible if *any* roll satisfies the inner
+        constraint.  This correctly accounts for roll freedom when the
+        spacecraft can rotate about its boresight axis.
+
         Args:
             ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
             time: Specific datetime to evaluate (must exist in ephemeris)
             index: Specific time index to evaluate
             n_points: Number of Fibonacci-sphere samples for sky integration
+            n_roll_samples: Number of roll angles to sweep for free-roll
+                boresight-offset constraints (uniformly spaced over [0°, 360°)).
+                Ignored for fixed-roll or roll-independent constraints.
+                Default :data:`DEFAULT_N_ROLL_SAMPLES` (5° resolution). Reduce for speed, increase for
+                accuracy with large pitch/yaw offsets.
 
         Returns:
             Visible solid angle in steradians (range [0, 4π])
@@ -400,6 +422,7 @@ class RustConstraintMixin(BaseModel):
                 time=time,
                 index=index,
                 n_points=n_points,
+                n_roll_samples=n_roll_samples,
             )
         )
 
@@ -630,7 +653,12 @@ class RustConstraintMixin(BaseModel):
         instrument is offset from the primary pointing direction.
 
         Args:
-            roll_deg: Fixed boresight roll offset about +X in degrees
+            roll_deg: Fixed boresight roll offset about +X in degrees, or ``None``
+                (default) for free roll. When ``None`` and ``pitch_deg`` or
+                ``yaw_deg`` are non-zero, ``instantaneous_field_of_regard`` sweeps
+                ``DEFAULT_N_ROLL_SAMPLES`` roll angles and counts a sky direction
+                accessible if *any* roll satisfies the inner constraint. Pass an
+                explicit value to pin roll.
             roll_clockwise: If True, positive fixed boresight roll is clockwise
                 looking along +X.
             roll_reference: Roll-zero reference axis. "north" (default) sets
@@ -870,7 +898,11 @@ class BoresightOffsetConstraint(RustConstraintMixin):
     Attributes:
         type: Always "boresight_offset"
         constraint: Inner constraint evaluated at offset direction
-        roll_deg: Fixed boresight roll offset about +X in degrees
+        roll_deg: Fixed boresight roll offset about +X in degrees, or ``None``
+            (default) for free roll.  When ``None`` and pitch/yaw are non-zero,
+            ``instantaneous_field_of_regard`` sweeps ``DEFAULT_N_ROLL_SAMPLES``
+            roll angles and counts a sky direction accessible if *any* roll
+            satisfies the inner constraint.
         roll_clockwise: If True, positive fixed boresight roll is clockwise
             looking along +X.
         roll_reference: Roll-zero reference axis ("sun" or "north")

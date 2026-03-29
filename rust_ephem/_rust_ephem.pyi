@@ -8,6 +8,9 @@ import numpy.typing as npt
 
 from .ephemeris import Ephemeris
 
+DEFAULT_N_POINTS: int
+DEFAULT_N_ROLL_SAMPLES: int
+
 @runtime_checkable
 class TLELike(Protocol):
     """Protocol for objects that can be used as TLE data (e.g., TLERecord)."""
@@ -633,7 +636,8 @@ class Constraint:
         ephemeris: Ephemeris,
         time: datetime | None = None,
         index: int | None = None,
-        n_points: int = 20000,
+        n_points: int = DEFAULT_N_POINTS,
+        n_roll_samples: int = 72,
     ) -> float:
         """Compute instantaneous visible solid angle in steradians.
 

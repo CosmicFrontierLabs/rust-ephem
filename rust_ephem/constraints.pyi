@@ -18,6 +18,9 @@ from pydantic import BaseModel, TypeAdapter
 
 from .ephemeris import Ephemeris
 
+DEFAULT_N_POINTS: int
+DEFAULT_N_ROLL_SAMPLES: int
+
 if TYPE_CHECKING:
     from rust_ephem import VisibilityWindow
 
@@ -101,7 +104,8 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         time: datetime | None = None,
         index: int | None = None,
-        n_points: int = 20000,
+        n_points: int = DEFAULT_N_POINTS,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         target_roll: float | None = None,
     ) -> float: ...
     def evaluate_moving_body(

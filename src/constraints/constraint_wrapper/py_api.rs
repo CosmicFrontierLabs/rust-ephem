@@ -26,6 +26,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyList};
 
 use super::field_of_regard::instantaneous_field_of_regard_impl;
+use super::field_of_regard::DEFAULT_N_POINTS;
+use super::field_of_regard::DEFAULT_N_ROLL_SAMPLES;
 use super::json_parser::parse_constraint_json;
 use super::json_to_py::json_to_pyobject;
 
@@ -1218,7 +1220,12 @@ impl PyConstraint {
     ///
     /// Args:
     ///     constraint (Constraint): Inner constraint to evaluate at offset direction
-    ///     roll_deg (float): Fixed boresight roll offset about +X in degrees (default 0.0)
+    ///     roll_deg (float | None): Fixed boresight roll offset about +X in degrees.
+    ///         Pass ``None`` (the default) to leave roll free, which is meaningful for
+    ///         ``instantaneous_field_of_regard``: the field of regard is then computed by
+    ///         sweeping all roll angles and counting a sky direction as accessible if *any*
+    ///         roll makes the offset boresight satisfy the inner constraint.
+    ///         Pass a specific value to pin roll to a single commanded angle.
     ///     roll_clockwise (bool): If True, positive fixed boresight roll is clockwise
     ///         when looking along +X. If False, positive is counterclockwise.
     ///     roll_reference (str): Roll-zero reference axis: "north" (default) or "sun".
@@ -1476,11 +1483,21 @@ impl PyConstraint {
     /// Field of regard is the visible solid angle at a single timestamp, where
     /// visibility is defined by `constraint == False` (not violated).
     ///
+    /// For ``boresight_offset`` constraints with ``roll_deg=None`` (free roll) and
+    /// non-zero pitch or yaw, the field of regard is computed by sweeping 72 roll
+    /// angles uniformly over [0°, 360°) and marking a sky direction accessible if
+    /// *any* roll satisfies the inner constraint.  This correctly accounts for roll
+    /// freedom when the spacecraft can rotate about its boresight axis.
+    ///
     /// Args:
     ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
     ///     time (datetime, optional): Specific timestamp to evaluate (must exist in ephemeris)
     ///     index (int, optional): Specific time index to evaluate
     ///     n_points (int, optional): Number of sky samples (Fibonacci sphere). Default 20000.
+    ///     n_roll_samples (int, optional): Number of roll angles to sweep for free-roll
+    ///         boresight-offset constraints.  Each angle is spaced uniformly over
+    ///         [0°, 360°).  Ignored for fixed-roll or roll-independent constraints.
+    ///         Default 72 (5° resolution).
     ///
     /// Returns:
     ///     float: Instantaneous field of regard in steradians (range [0, 4π])
@@ -1488,7 +1505,10 @@ impl PyConstraint {
     /// Notes:
     ///     - Exactly one of `time` or `index` must be provided.
     ///     - Higher `n_points` improves accuracy at higher computational cost.
-    #[pyo3(signature = (ephemeris, time=None, index=None, n_points=20000))]
+    ///     - For free-roll boresight offsets the evaluation scales with
+    ///       ``n_roll_samples``; the default 72 is ~72× slower than a fixed-roll
+    ///       evaluation at the same ``n_points``.
+    #[pyo3(signature = (ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES))]
     fn instantaneous_field_of_regard(
         &self,
         py: Python,
@@ -1496,6 +1516,7 @@ impl PyConstraint {
         time: Option<&Bound<PyAny>>,
         index: Option<usize>,
         n_points: usize,
+        n_roll_samples: usize,
     ) -> PyResult<f64> {
         instantaneous_field_of_regard_impl(
             py,
@@ -1503,6 +1524,7 @@ impl PyConstraint {
             time,
             index,
             n_points,
+            n_roll_samples,
             &*self.evaluator,
             |bound, t| self.parse_times_to_indices(bound, t),
         )

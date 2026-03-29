@@ -232,9 +232,10 @@ the primary or any offset secondary/tertiary instrument is blocked.
     # Primary instrument constraint
     primary = SunConstraint(min_angle=45.0)
 
-    # Secondary instrument constraint at fixed offset from primary boresight
+    # Secondary instrument constraint at fixed offset from primary boresight.
+    # roll_deg=None (default) leaves roll free; instantaneous_field_of_regard
+    # will sweep all roll angles to compute the accessible sky fraction.
     secondary_offset = MoonConstraint(min_angle=12.0).boresight_offset(
-        roll_deg=0.0,
         pitch_deg=1.2,
         yaw_deg=-0.8,
     )
@@ -253,7 +254,6 @@ Equivalent Pydantic configuration:
 
     combined = SunConstraint(min_angle=45.0) | (
         MoonConstraint(min_angle=12.0).boresight_offset(
-            roll_deg=0.0,
             pitch_deg=1.2,
             yaw_deg=-0.8,
         )
@@ -317,6 +317,13 @@ Notes:
 - Exactly one of ``time`` or ``index`` must be provided.
 - ``n_points`` controls integration accuracy vs speed (higher = more accurate, slower).
 - Constraints are ``True`` when blocked/not visible, so field of regard integrates where constraint is ``False``.
+- For ``boresight_offset`` constraints with ``roll_deg=None`` (free roll) and non-zero
+  pitch/yaw, the sky is sampled at 72 evenly-spaced roll angles. A direction is counted
+  accessible if *any* roll angle satisfies the inner constraint. This models a spacecraft
+  that can rotate about its pointing axis and correctly accounts for roll freedom in the
+  field-of-regard calculation. The evaluation is ~72× slower than a fixed-roll constraint
+  at the same ``n_points``. Pass an explicit ``roll_deg`` value to pin roll and recover
+  the faster single-pass evaluation.
 
 JSON Serialization
 ------------------

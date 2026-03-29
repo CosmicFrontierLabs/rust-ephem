@@ -9,11 +9,12 @@ use pyo3::prelude::*;
 use std::f64::consts::PI;
 use std::sync::{Arc, OnceLock, RwLock};
 
-/// Number of roll-angle samples used when sweeping roll in field-of-regard
-/// evaluation for a `BoresightOffsetEvaluator` with a free (unspecified) roll.
-/// 72 samples gives 5° resolution, which is fine for the typical accuracy of
-/// the Fibonacci-sphere sky integration.
-const FOR_ROLL_SAMPLES: usize = 72;
+/// Default number of roll-angle samples for free-roll field-of-regard sweeps.
+/// 72 samples gives 5° resolution, sufficient for Fibonacci-sphere accuracy.
+pub(super) const DEFAULT_N_ROLL_SAMPLES: usize = 72;
+
+/// Default number of Fibonacci-sphere sky samples for field-of-regard integration.
+pub(super) const DEFAULT_N_POINTS: usize = 20_000;
 
 struct SkySamples {
     unit_vectors: Array2<f64>,
@@ -112,12 +113,14 @@ pub(super) fn clear_fibonacci_samples_cache() {
     cache.clear();
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn instantaneous_field_of_regard_impl<F>(
     py: Python,
     ephemeris: Py<PyAny>,
     time: Option<&Bound<PyAny>>,
     index: Option<usize>,
     n_points: usize,
+    n_roll_samples: usize,
     evaluator: &dyn ConstraintEvaluator,
     parse_times_to_indices: F,
 ) -> PyResult<f64>
@@ -181,7 +184,7 @@ where
             ephem,
             &sky_samples.unit_vectors,
             eval_index,
-            FOR_ROLL_SAMPLES,
+            n_roll_samples,
         )
     };
 
