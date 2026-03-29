@@ -239,6 +239,28 @@ class RustConstraintMixin(BaseModel):
         apply_eval_roll(config)
         return Constraint.from_json(json.dumps(config))
 
+    def _is_roll_dependent(self) -> bool:
+        """Return True if this constraint tree has a boresight offset with non-zero pitch/yaw."""
+        config = self.model_dump(mode="json")
+
+        def check(node: Any) -> bool:
+            if not isinstance(node, dict):
+                return False
+            node_type = node.get("type")
+            if node_type == "boresight_offset":
+                pitch = float(node.get("pitch_deg", 0.0) or 0.0)
+                yaw = float(node.get("yaw_deg", 0.0) or 0.0)
+                if abs(pitch) > 1.0e-12 or abs(yaw) > 1.0e-12:
+                    return True
+                return check(node.get("constraint"))
+            if node_type in {"and", "or", "xor", "at_least"}:
+                return any(check(c) for c in node.get("constraints", []))
+            if node_type == "not":
+                return bool(check(node.get("constraint")))
+            return False
+
+        return check(config)
+
     def evaluate(
         self,
         ephemeris: Ephemeris,
@@ -319,10 +341,39 @@ class RustConstraintMixin(BaseModel):
             target_decs: List of target declinations in degrees (ICRS/J2000)
             times: Optional specific time(s) to evaluate
             indices: Optional specific time index/indices to evaluate
+            target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and
+                the constraint has a boresight offset with non-zero pitch/yaw, sweeps
+                ``DEFAULT_N_ROLL_SAMPLES`` roll angles and returns ``True`` (violated)
+                only if violated at **every** possible roll (i.e. no valid roll exists).
 
         Returns:
             2D numpy array of shape (n_targets, n_times) with boolean violation status
         """
+        if target_roll is None and self._is_roll_dependent():
+            # Sweep all spacecraft roll angles; a cell is violated only if blocked at
+            # every roll (AND across the sweep).
+            roll_step = 360.0 / DEFAULT_N_ROLL_SAMPLES
+            combined: npt.NDArray[np.bool_] | None = None
+            for i in range(DEFAULT_N_ROLL_SAMPLES):
+                r = i * roll_step
+                arr = np.asarray(
+                    self._resolve_rust_constraint(target_roll=r).in_constraint_batch(
+                        ephemeris, target_ras, target_decs, times, indices
+                    ),
+                    dtype=bool,
+                )
+                combined = (
+                    arr
+                    if combined is None
+                    else cast(npt.NDArray[np.bool_], combined & arr)
+                )
+            return cast(
+                npt.NDArray[np.bool_],
+                combined
+                if combined is not None
+                else np.ones((len(target_ras), 0), dtype=bool),
+            )
+
         rust_constraint = self._resolve_rust_constraint(
             target_roll=target_roll,
         )
@@ -361,12 +412,30 @@ class RustConstraintMixin(BaseModel):
             ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
             target_ra: Target right ascension in degrees (ICRS/J2000)
             target_dec: Target declination in degrees (ICRS/J2000)
+            target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and
+                the constraint has a boresight offset with non-zero pitch/yaw, sweeps
+                ``DEFAULT_N_ROLL_SAMPLES`` roll angles and returns ``True`` (violated)
+                only if violated at **every** possible roll (i.e. no valid roll exists).
 
         Returns:
             True if constraint is violated at the given time(s) (in-constraint).
             False if constraint is satisfied (out-of-constraint).
             Returns a single bool for a single time, or a list of bools for multiple times.
         """
+        if target_roll is None and self._is_roll_dependent():
+            # Sweep all spacecraft roll angles; violated only if blocked at every roll.
+            roll_step = 360.0 / DEFAULT_N_ROLL_SAMPLES
+            parts: list[Any] = [
+                self._resolve_rust_constraint(target_roll=i * roll_step).in_constraint(
+                    time, ephemeris, target_ra, target_dec
+                )
+                for i in range(DEFAULT_N_ROLL_SAMPLES)
+            ]
+            if isinstance(parts[0], bool):
+                return all(parts)
+            arr = np.array(parts, dtype=bool)  # (n_rolls, n_times)
+            return list(arr.all(axis=0))
+
         rust_constraint = self._resolve_rust_constraint(
             target_roll=target_roll,
         )
