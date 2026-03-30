@@ -554,6 +554,8 @@ class RustConstraintMixin(BaseModel):
             List of ``(min_deg, max_deg)`` tuples, one per contiguous valid interval.
             Empty list if no roll is valid.
         """
+        if n_roll_samples <= 0:
+            raise ValueError("n_roll_samples must be a positive integer")
         return self._get_cached_rust_constraint().roll_range(
             time, ephemeris, target_ra, target_dec, n_roll_samples
         )
