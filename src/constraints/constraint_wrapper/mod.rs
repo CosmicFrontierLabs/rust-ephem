@@ -6,6 +6,8 @@ pub use py_api::*;
 
 mod field_of_regard;
 
+mod roll_range;
+
 mod json_parser;
 
 mod combinators;
