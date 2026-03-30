@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 import rust_ephem
 from rust_ephem import Constraint
@@ -176,3 +177,40 @@ def test_low_level_constraint_api_accepts_target_roll(
     ).in_constraint_batch(ephem, target_ras, target_decs)
 
     assert np.array_equal(via_target_roll, expected)
+
+
+def test_free_roll_for_gte_fixed_roll_for(
+    tle_ephem: rust_ephem.TLEEphemeris,
+) -> None:
+    """FoR with no spacecraft roll specified sweeps all rolls, giving >= any single-roll FoR.
+
+    When target_roll is not specified (None), instantaneous_field_of_regard sweeps all
+    possible spacecraft roll angles for boresight-offset constraints with non-zero pitch/yaw.
+    The result is always >= the FoR at any single fixed spacecraft roll.
+    """
+    ephem = tle_ephem
+
+    c = SunConstraint(min_angle=45.0).boresight_offset(pitch_deg=30.0, yaw_deg=0.0)
+
+    # target_roll=None (default) → sweep all spacecraft rolls
+    for_sweep = c.instantaneous_field_of_regard(ephem, index=0, n_points=500)
+    # target_roll=0.0 → evaluate at a single specific spacecraft roll
+    for_fixed = c.instantaneous_field_of_regard(
+        ephem, index=0, n_points=500, target_roll=0.0
+    )
+
+    assert for_sweep >= for_fixed, (
+        f"Sweep FoR ({for_sweep:.4f} sr) should be >= fixed-roll FoR ({for_fixed:.4f} sr)"
+    )
+
+
+def test_instantaneous_for_zero_n_roll_samples_raises(
+    tle_ephem: rust_ephem.TLEEphemeris,
+) -> None:
+    """n_roll_samples=0 must raise ValueError (no roll angles to sweep)."""
+    ephem = tle_ephem
+
+    c = Constraint.sun_proximity(45.0)
+
+    with pytest.raises(ValueError, match="n_roll_samples must be greater than 0"):
+        c.instantaneous_field_of_regard(ephem, index=0, n_points=100, n_roll_samples=0)

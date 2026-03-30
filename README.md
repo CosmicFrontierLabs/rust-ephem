@@ -162,13 +162,19 @@ boresight is offset by fixed Euler angles.
 
 Two roll concepts are supported:
 
-- ``boresight_offset(..., roll_deg=..., pitch_deg=..., yaw_deg=...)`` defines
-  the instrument's **fixed mechanical offset** relative to +X.
+- ``boresight_offset(..., roll_deg=<value>, ...)`` — the **fixed mechanical roll** of the
+  instrument relative to the spacecraft coordinate frame.  Defaults to ``0.0`` (instrument
+  aligned with spacecraft).  This is a property of the hardware, not the observation.
+- ``evaluate(..., target_roll=...)`` / ``in_constraint_batch(..., target_roll=...)`` —
+  the **commanded spacecraft roll** at observation time, applied on top of the instrument
+  offset.  This is separate so you can test different roll states without redefining the
+  instrument.
 - ``boresight_offset(..., roll_reference=...)`` defaults to ``"north"``
   (celestial-north-projected +Z at roll=0). Use ``"sun"`` if you need
   Sun-projected +Z at roll=0.
-- ``evaluate(..., target_roll=...)`` applies **spacecraft roll
-  at evaluation time** for the commanded pointing.
+- ``instantaneous_field_of_regard`` with no ``target_roll`` sweeps all spacecraft roll
+  angles and counts a direction accessible if *any* roll satisfies the constraint, giving
+  the maximum reachable sky.
 
 Remember: constraints are `True` when the target is **not visible**. So if
 either primary or secondary instrument is blocked, the combined constraint
@@ -192,8 +198,7 @@ secondary = (
   | MoonConstraint(min_angle=12.0)
 )
 secondary_offset = secondary.boresight_offset(
-    roll_deg=0.0,
-    pitch_deg=1.2,
+    pitch_deg=1.2,     # roll_deg=0.0 (default) = instrument aligned with spacecraft
     yaw_deg=-0.8,
 )
 
@@ -220,7 +225,7 @@ from rust_ephem.constraints import SunConstraint, MoonConstraint
 
 primary = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=12.0)
 secondary = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=12.0)
-combined = primary | secondary.boresight_offset(pitch_deg=1.2, yaw_deg=-0.8)
+combined = primary | secondary.boresight_offset(pitch_deg=1.2, yaw_deg=-0.8)  # roll_deg=0.0, FoR sweeps all spacecraft rolls
 
 # Apply spacecraft roll at evaluation time
 result = combined.evaluate(ephem, target_ra=83.63, target_dec=22.01, target_roll=95.0)

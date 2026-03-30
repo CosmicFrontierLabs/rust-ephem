@@ -527,7 +527,12 @@ Evaluation Methods
    :param float target_dec: Target declination in degrees (ICRS/J2000)
    :param times: Optional specific time(s) to evaluate (datetime or list of datetimes)
    :param indices: Optional specific time index/indices to evaluate (int or list of ints)
-   :param float target_roll: Optional spacecraft roll angle about +X (degrees), applied at evaluation time
+   :param target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and the
+      constraint contains a boresight offset with non-zero pitch/yaw, sweeps
+      :data:`DEFAULT_N_ROLL_SAMPLES` roll angles uniformly and marks a timestamp as
+      violated only when **every** roll is blocked (no valid spacecraft orientation exists).
+      Pass an explicit float to evaluate at a fixed roll.
+   :type target_roll: float or None
    :returns: ConstraintResult containing violation windows
    :rtype: ConstraintResult
    :raises ValueError: If both times and indices are provided, or if times/indices not found
@@ -550,7 +555,7 @@ Evaluation Methods
       # Evaluate at specific indices
       result = constraint.evaluate(ephem, 83.63, 22.01, indices=[0, 10, 20])
 
-.. py:method:: Constraint.in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_roll=None)
+.. py:method:: Constraint.in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
 
    Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
 
@@ -562,7 +567,15 @@ Evaluation Methods
    :param list target_decs: List of target declinations in degrees (ICRS/J2000)
    :param times: Optional specific time(s) to evaluate
    :param indices: Optional specific time index/indices to evaluate
-   :param float target_roll: Optional spacecraft roll angle about +X (degrees), applied at evaluation time
+   :param target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and the
+      constraint contains a boresight offset with non-zero pitch/yaw, sweeps
+      ``n_roll_samples`` roll angles and returns ``True`` only when all
+      rolls are blocked (no valid spacecraft orientation exists).  Pass an explicit
+      float to evaluate at a fixed roll.
+   :type target_roll: float or None
+   :param int n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
+      and the constraint is roll-dependent.  Default :data:`DEFAULT_N_ROLL_SAMPLES`.
+      Ignored when ``target_roll`` is given or no pitch/yaw offset is present.
    :returns: 2D numpy boolean array of shape (n_targets, n_times)
    :rtype: numpy.ndarray
 
@@ -593,7 +606,7 @@ Evaluation Methods
       # Find targets that never violate
       always_visible = np.where(violation_counts == 0)[0]
 
-.. py:method:: Constraint.in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None)
+.. py:method:: Constraint.in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
 
    Check if the target satisfies the constraint at given time(s).
 
@@ -606,7 +619,15 @@ Evaluation Methods
    :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
    :param float target_ra: Target right ascension in degrees (ICRS/J2000)
    :param float target_dec: Target declination in degrees (ICRS/J2000)
-   :param float target_roll: Optional spacecraft roll angle about +X (degrees), applied at evaluation time
+   :param target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and the
+      constraint contains a boresight offset with non-zero pitch/yaw, sweeps
+      ``n_roll_samples`` roll angles and returns ``True`` only when
+      **every** roll is blocked (no valid spacecraft orientation exists).  Pass an
+      explicit float to evaluate at a fixed roll.
+   :type target_roll: float or None
+   :param int n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
+      and the constraint is roll-dependent.  Default :data:`DEFAULT_N_ROLL_SAMPLES`.
+      Ignored when ``target_roll`` is given or no pitch/yaw offset is present.
    :returns: True if constraint is satisfied at the given time(s).
              Returns a single bool for a single time, or a list of bools for multiple times.
    :rtype: bool or list[bool]
@@ -634,6 +655,55 @@ Evaluation Methods
       times_array = np.array([time, time, time])
       results = constraint.in_constraint(times_array, ephem, 83.63, 22.01)
       # Returns: [bool, bool, bool]
+
+.. py:method:: Constraint.roll_range(time, ephemeris, target_ra, target_dec, n_roll_samples=360)
+
+   Return contiguous roll-angle intervals where the constraint is satisfied (target visible).
+
+   Sweeps ``n_roll_samples`` uniformly-spaced spacecraft roll angles over [0°, 360°),
+   identifies those where the constraint is ``False`` (not violated), and collapses
+   adjacent valid samples into ``(min_deg, max_deg)`` intervals.
+
+   :param time: A single datetime to evaluate (must exist in ephemeris).
+   :type time: datetime
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param float target_ra: Target right ascension in degrees (ICRS/J2000)
+   :param float target_dec: Target declination in degrees (ICRS/J2000)
+   :param int n_roll_samples: Number of uniformly-spaced roll angles to test over [0°, 360°).
+      Default 360 (1° resolution).
+   :returns: List of ``(min_deg, max_deg)`` tuples, one per contiguous valid interval.
+      Empty list if no roll is valid.
+   :rtype: list[tuple[float, float]]
+
+   **Example:**
+
+   .. code-block:: python
+
+      ranges = constraint.roll_range(
+          ephem.timestamp[0], ephem,
+          target_ra=83.63, target_dec=22.01,
+      )
+      # e.g. [(12.0, 47.0), (193.0, 228.0)]
+      for lo, hi in ranges:
+          print(f"Valid rolls: {lo:.1f}° – {hi:.1f}°")
+
+.. py:method:: Constraint.instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+
+   Compute instantaneous field of regard in steradians.
+
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param time: Optional datetime to evaluate (must exist in ephemeris)
+   :type time: datetime or None
+   :param index: Optional ephemeris index to evaluate
+   :type index: int or None
+   :param int n_points: Number of Fibonacci-sphere sky samples (default :data:`DEFAULT_N_POINTS`)
+   :param int n_roll_samples: Spacecraft roll angles to sweep when computing FoR over all
+      roll states for boresight-offset constraints with non-zero pitch/yaw
+      (default :data:`DEFAULT_N_ROLL_SAMPLES`). Ignored when ``target_roll`` is specified
+      or when no pitch/yaw offset is present.
+   :returns: Visible solid angle in steradians, range ``[0, 4π]``
+   :rtype: float
+   :raises ValueError: If exactly one of ``time`` or ``index`` is not provided
 
 Serialization Methods
 ^^^^^^^^^^^^^^^^^^^^^
@@ -1271,7 +1341,7 @@ Common Methods (RustConstraintMixin)
 
 All Pydantic constraint models inherit these methods:
 
-.. py:method:: evaluate(ephemeris, target_ra, target_dec, times=None, indices=None, target_roll=None)
+.. py:method:: evaluate(ephemeris, target_ra, target_dec, times=None, indices=None, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
 
    Evaluate the constraint using the Rust backend.
 
@@ -1282,11 +1352,20 @@ All Pydantic constraint models inherit these methods:
    :param float target_dec: Target declination in degrees (ICRS/J2000)
    :param times: Optional specific time(s) to evaluate
    :param indices: Optional specific time index/indices to evaluate
-   :param float target_roll: Optional spacecraft roll angle about +X (degrees), applied at evaluation time
+   :param target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and the
+      constraint contains a boresight offset with non-zero pitch/yaw, sweeps
+      ``n_roll_samples`` roll angles and marks a timestamp as violated
+      only when **every** roll is blocked (no valid spacecraft orientation exists).
+      Pass an explicit float to evaluate at a fixed roll.
+   :type target_roll: float or None
+   :param int n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
+      and the constraint is roll-dependent.  Default
+      :data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES` (72 ≈ 5° resolution).
+      Ignored when ``target_roll`` is given or no pitch/yaw offset is present.
    :returns: ConstraintResult containing violation windows
    :rtype: ConstraintResult
 
-.. py:method:: in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_roll=None)
+.. py:method:: in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
 
    Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
 
@@ -1295,11 +1374,20 @@ All Pydantic constraint models inherit these methods:
    :param list target_decs: List of target declinations in degrees
    :param times: Optional specific time(s) to evaluate
    :param indices: Optional specific time index/indices to evaluate
-   :param float target_roll: Optional spacecraft roll angle about +X (degrees), applied at evaluation time
+   :param target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and the
+      constraint contains a boresight offset with non-zero pitch/yaw, sweeps
+      ``n_roll_samples`` roll angles and returns ``True`` only when all
+      rolls are blocked (no valid spacecraft orientation exists).  Pass an explicit
+      float to evaluate at a fixed roll.
+   :type target_roll: float or None
+   :param int n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
+      and the constraint is roll-dependent.  Default
+      :data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES`.  Ignored when ``target_roll``
+      is given or no pitch/yaw offset is present.
    :returns: 2D numpy array of shape (n_targets, n_times) with boolean violation status
    :rtype: numpy.ndarray
 
-.. py:method:: in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None)
+.. py:method:: in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
 
    Check if target violates the constraint at given time(s).
 
@@ -1309,17 +1397,81 @@ All Pydantic constraint models inherit these methods:
    :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
    :param float target_ra: Target right ascension in degrees
    :param float target_dec: Target declination in degrees
-   :param float target_roll: Optional spacecraft roll angle about +X (degrees), applied at evaluation time
+   :param target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and the
+      constraint contains a boresight offset with non-zero pitch/yaw, sweeps
+      ``n_roll_samples`` roll angles and returns ``True`` only when
+      **every** roll is blocked (no valid spacecraft orientation exists).  Pass an
+      explicit float to evaluate at a fixed roll.
+   :type target_roll: float or None
+   :param int n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
+      and the constraint is roll-dependent.  Default
+      :data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES`.  Ignored when ``target_roll``
+      is given or no pitch/yaw offset is present.
    :returns: True if constraint is satisfied at the given time(s). Returns a single bool
              for a single time, or a list of bools for multiple times.
    :rtype: bool or list[bool]
+
+.. py:method:: roll_range(time, ephemeris, target_ra, target_dec, n_roll_samples=360)
+
+   Return contiguous roll-angle intervals where the constraint is satisfied (target visible).
+
+   Sweeps ``n_roll_samples`` uniformly-spaced spacecraft roll angles over [0°, 360°),
+   identifies those where the constraint is ``False`` (not violated), and collapses
+   adjacent valid samples into ``(min_deg, max_deg)`` intervals.
+
+   :param time: A single datetime to evaluate (must exist in ephemeris).
+   :type time: datetime
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param float target_ra: Target right ascension in degrees (ICRS/J2000)
+   :param float target_dec: Target declination in degrees (ICRS/J2000)
+   :param int n_roll_samples: Number of uniformly-spaced roll angles to test over [0°, 360°).
+      Default 360 (1° resolution).
+   :returns: List of ``(min_deg, max_deg)`` tuples, one per contiguous valid interval.
+      Empty list if no roll is valid.
+   :rtype: list[tuple[float, float]]
+
+.. py:method:: instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, target_roll=None)
+
+   Compute instantaneous field of regard in steradians.
+
+   Field of regard is the visible solid angle at a single timestamp, where visibility
+   is defined by the constraint not being violated (``False``).
+
+   When ``target_roll`` is not specified (the default), boresight-offset constraints with
+   non-zero pitch/yaw sweep ``n_roll_samples`` spacecraft roll angles uniformly over
+   [0°, 360°) and count a sky direction as accessible if *any* roll satisfies the inner
+   constraint.  This gives the maximum accessible sky over all possible spacecraft
+   orientations.  Pass ``target_roll`` to evaluate at a specific spacecraft roll angle.
+
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param time: Specific datetime to evaluate (must exist in ephemeris)
+   :type time: datetime or None
+   :param index: Specific time index to evaluate
+   :type index: int or None
+   :param int n_points: Number of Fibonacci-sphere sky samples. Higher values improve
+      accuracy at the cost of speed. Default :data:`~rust_ephem.constraints.DEFAULT_N_POINTS`.
+   :param int n_roll_samples: Number of spacecraft roll angles to sweep when ``target_roll``
+      is not specified (uniformly spaced over [0°, 360°)). Ignored when ``target_roll`` is
+      given or no pitch/yaw offset is present. Default
+      :data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES` (72 ≈ 5° resolution).
+   :param float target_roll: Spacecraft roll angle about +X (degrees).  When ``None``
+      (default), sweeps all roll angles for boresight-offset FoR.
+   :returns: Visible solid angle in steradians, range ``[0, 4π]``
+   :rtype: float
+   :raises ValueError: If exactly one of ``time`` or ``index`` is not provided
 
 .. py:method:: boresight_offset(roll_deg=0.0, roll_clockwise=False, roll_reference="north", pitch_deg=0.0, yaw_deg=0.0)
 
    Wrap this constraint with a fixed boresight Euler-angle offset.
 
-   :param float roll_deg: Fixed boresight roll offset about +X in degrees
-   :param bool roll_clockwise: If True, positive fixed boresight roll is clockwise looking along +X
+   ``roll_deg`` is the fixed mechanical roll of the instrument relative to the spacecraft
+   coordinate frame.  It defaults to ``0.0`` (instrument aligned with spacecraft).
+   Spacecraft roll at observation time is applied separately via ``target_roll`` on the
+   evaluation methods.
+
+   :param float roll_deg: Fixed instrument roll offset about boresight +X in degrees,
+      relative to the spacecraft's nominal roll frame.  Default ``0.0``.
+   :param bool roll_clockwise: If True, positive roll is clockwise looking along +X.
    :param str roll_reference: Roll-zero reference axis. Default is ``"north"`` for celestial-north-projected +Z zero-roll. Use ``"sun"`` for Sun-projected +Z zero-roll.
    :param float pitch_deg: Fixed boresight pitch offset about +Y in degrees
    :param float yaw_deg: Fixed boresight yaw offset about +Z in degrees

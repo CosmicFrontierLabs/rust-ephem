@@ -232,9 +232,11 @@ the primary or any offset secondary/tertiary instrument is blocked.
     # Primary instrument constraint
     primary = SunConstraint(min_angle=45.0)
 
-    # Secondary instrument constraint at fixed offset from primary boresight
+    # Secondary instrument constraint at fixed offset from primary boresight.
+    # roll_deg defaults to 0.0 (instrument aligned with spacecraft frame).
+    # instantaneous_field_of_regard sweeps all spacecraft roll angles by default
+    # to compute the accessible sky fraction over all orientations.
     secondary_offset = MoonConstraint(min_angle=12.0).boresight_offset(
-        roll_deg=0.0,
         pitch_deg=1.2,
         yaw_deg=-0.8,
     )
@@ -253,7 +255,6 @@ Equivalent Pydantic configuration:
 
     combined = SunConstraint(min_angle=45.0) | (
         MoonConstraint(min_angle=12.0).boresight_offset(
-            roll_deg=0.0,
             pitch_deg=1.2,
             yaw_deg=-0.8,
         )
@@ -277,6 +278,16 @@ at evaluation time:
 This lets you keep one fixed boresight definition while evaluating different
 commanded roll states for the same RA/Dec pointing.
 
+When ``target_roll`` is omitted (or ``None``) and the constraint contains a
+boresight offset with non-zero pitch/yaw, all three evaluation methods
+(``evaluate``, ``in_constraint``, ``in_constraint_batch``) automatically sweep
+roll angles and report a target as blocked only when **every** possible roll is
+blocked — i.e., no valid spacecraft orientation exists.  The sweep resolution is
+controlled by the ``n_roll_samples`` parameter (default
+:data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES` = 72 ≈ 5° resolution).
+This is the conservative "is there any viable roll?" check.  Pass an explicit
+``target_roll`` value to evaluate against a single commanded roll.
+
 Instantaneous Field of Regard (steradians)
 ------------------------------------------
 
@@ -287,7 +298,7 @@ The result is returned in steradians and always lies in ``[0, 4π]``.
 
 .. code-block:: python
 
-    from rust_ephem.constraints import SunConstraint, MoonConstraint
+    from rust_ephem.constraints import SunConstraint, MoonConstraint, DEFAULT_N_POINTS
 
     constraint = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=12.0)
 
@@ -295,7 +306,7 @@ The result is returned in steradians and always lies in ``[0, 4π]``.
     field_sr = constraint.instantaneous_field_of_regard(
         ephemeris=ephem,
         index=0,
-        n_points=20000,
+        n_points=DEFAULT_N_POINTS,
     )
 
     visible_fraction = field_sr / (4.0 * 3.141592653589793)
@@ -309,14 +320,25 @@ You can also evaluate by datetime:
     field_sr = constraint.instantaneous_field_of_regard(
         ephemeris=ephem,
         time=t0,
-        n_points=20000,
+        n_points=DEFAULT_N_POINTS,
     )
 
 Notes:
 
 - Exactly one of ``time`` or ``index`` must be provided.
 - ``n_points`` controls integration accuracy vs speed (higher = more accurate, slower).
+- ``n_roll_samples`` controls how finely spacecraft roll is swept when ``target_roll`` is
+  not specified (default ``DEFAULT_N_ROLL_SAMPLES`` = 72 ≈ 5° resolution). Reduce to speed
+  up at the cost of accuracy; ignored when ``target_roll`` is given or when no pitch/yaw
+  offset is present.
 - Constraints are ``True`` when blocked/not visible, so field of regard integrates where constraint is ``False``.
+- For boresight-offset constraints with non-zero pitch/yaw, the sky is sampled at 72
+  evenly-spaced spacecraft roll angles when ``target_roll`` is not specified.  A direction
+  is counted accessible if *any* roll angle satisfies the inner constraint, modelling a
+  spacecraft that can rotate about its pointing axis.  The evaluation scales with
+  ``n_roll_samples``; the default 72 is ~72× slower than a single-roll evaluation at the
+  same ``n_points``.  Pass ``target_roll`` to pin spacecraft roll and recover the faster
+  single-pass evaluation.
 
 JSON Serialization
 ------------------

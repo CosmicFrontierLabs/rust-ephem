@@ -6,6 +6,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 import numpy as np
 import numpy.typing as npt
 
+from .constraints import DEFAULT_N_POINTS, DEFAULT_N_ROLL_SAMPLES
 from .ephemeris import Ephemeris
 
 @runtime_checkable
@@ -469,11 +470,16 @@ class Constraint:
         """
         Wrap a constraint with a fixed boresight Euler-angle offset.
 
+        ``roll_deg`` is the fixed mechanical roll of the instrument relative to the
+        spacecraft coordinate frame (default ``0.0``).
+        Spacecraft roll at observation time is applied separately via ``target_roll``
+        on the evaluation methods.
+
         Args:
             constraint: Inner constraint to evaluate at the offset direction
-            roll_deg: Fixed boresight roll offset about +X in degrees
-            roll_clockwise: If True, positive fixed boresight roll is clockwise
-                looking along +X.
+            roll_deg: Fixed instrument roll offset about boresight +X relative to
+                spacecraft frame, in degrees. Default 0.0.
+            roll_clockwise: If True, positive roll is clockwise looking along +X.
             roll_reference: Roll-zero reference axis: "north" or "sun".
             pitch_deg: Pitch angle about +Y in degrees
             yaw_deg: Yaw angle about +Z in degrees
@@ -628,12 +634,45 @@ class Constraint:
         """
         ...
 
+    def roll_range(
+        self,
+        time: datetime,
+        ephemeris: Ephemeris,
+        target_ra: float,
+        target_dec: float,
+        n_roll_samples: int = 360,
+    ) -> list[tuple[float, float]]:
+        """Return contiguous roll-angle intervals where the constraint is satisfied.
+
+        Sweeps ``n_roll_samples`` uniformly-spaced spacecraft roll angles over [0°, 360°),
+        identifies those where the constraint is *not* violated, and collapses adjacent
+        valid samples into ``(min_deg, max_deg)`` intervals.
+
+        Args:
+            time: Timestamp to evaluate (must exist in ephemeris).
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+            target_ra: Target right ascension in degrees (ICRS/J2000)
+            target_dec: Target declination in degrees (ICRS/J2000)
+            n_roll_samples: Number of uniformly-spaced roll angles to test over [0°, 360°).
+                Default 360 (1° resolution).
+
+        Returns:
+            List of (min_deg, max_deg) tuples for each contiguous valid roll interval.
+            Empty list if no roll is valid.
+
+        Raises:
+            ValueError: If time is not found in the ephemeris.
+            TypeError: If ephemeris type is not supported.
+        """
+        ...
+
     def instantaneous_field_of_regard(
         self,
         ephemeris: Ephemeris,
         time: datetime | None = None,
         index: int | None = None,
-        n_points: int = 20000,
+        n_points: int = DEFAULT_N_POINTS,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> float:
         """Compute instantaneous visible solid angle in steradians.
 

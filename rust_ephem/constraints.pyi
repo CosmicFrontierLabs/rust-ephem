@@ -18,6 +18,9 @@ from pydantic import BaseModel, TypeAdapter
 
 from .ephemeris import Ephemeris
 
+DEFAULT_N_POINTS: int
+DEFAULT_N_ROLL_SAMPLES: int
+
 if TYPE_CHECKING:
     from rust_ephem import VisibilityWindow
 
@@ -78,6 +81,7 @@ class RustConstraintMixin(BaseModel):
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
         target_roll: float | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> ConstraintResult: ...
     def in_constraint_batch(
         self,
@@ -87,6 +91,7 @@ class RustConstraintMixin(BaseModel):
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
         target_roll: float | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> npt.NDArray[np.bool_]: ...
     def in_constraint(
         self,
@@ -95,13 +100,23 @@ class RustConstraintMixin(BaseModel):
         target_ra: float,
         target_dec: float,
         target_roll: float | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> bool | list[bool]: ...
+    def roll_range(
+        self,
+        time: datetime,
+        ephemeris: Ephemeris,
+        target_ra: float,
+        target_dec: float,
+        n_roll_samples: int = 360,
+    ) -> list[tuple[float, float]]: ...
     def instantaneous_field_of_regard(
         self,
         ephemeris: Ephemeris,
         time: datetime | None = None,
         index: int | None = None,
-        n_points: int = 20000,
+        n_points: int = DEFAULT_N_POINTS,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         target_roll: float | None = None,
     ) -> float: ...
     def evaluate_moving_body(

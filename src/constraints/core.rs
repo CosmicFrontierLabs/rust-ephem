@@ -628,6 +628,120 @@ pub trait ConstraintEvaluator: Send + Sync {
         Ok((0..n).map(|i| full[[i, i]]).collect())
     }
 
+    /// Returns `true` if this constraint's FoR result changes depending on the spacecraft
+    /// roll angle.  Roll-independent constraints return `false` (the default); only
+    /// `BoresightOffsetEvaluator` with a free roll angle (`roll_deg = None`) and a
+    /// non-zero pitch/yaw offset returns `true`.
+    ///
+    /// Combinators delegate to their children: they are roll-dependent if any child is.
+    fn is_roll_dependent(&self) -> bool {
+        false
+    }
+
+    /// Evaluate violated-per-direction for a *single* roll angle, at one timestamp.
+    ///
+    /// Returns one bool per target direction: `true` = violated at this roll,
+    /// `false` = accessible at this roll.
+    ///
+    /// `roll_deg` is the candidate roll angle (degrees).  Roll-independent constraints
+    /// ignore it; `BoresightOffsetEvaluator` injects it when its own roll is free (`None`).
+    ///
+    /// Default: delegates to `in_constraint_batch_unit_vectors` / `in_constraint_batch`
+    /// ignoring `roll_deg`, correct for constraints that do not depend on roll.
+    fn field_of_regard_violated_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_index: usize,
+        _roll_deg: f64,
+    ) -> PyResult<Vec<bool>> {
+        let n_targets = target_unit_vectors.nrows();
+
+        if let Some(result) = self.in_constraint_batch_unit_vectors(
+            ephemeris,
+            target_unit_vectors,
+            Some(&[time_index]),
+        )? {
+            return Ok((0..n_targets).map(|i| result[[i, 0]]).collect());
+        }
+
+        // Fallback: convert unit vectors to RA/Dec inline and use the scalar batch path.
+        let mut ras = Vec::with_capacity(n_targets);
+        let mut decs = Vec::with_capacity(n_targets);
+        for i in 0..n_targets {
+            let x = target_unit_vectors[[i, 0]];
+            let y = target_unit_vectors[[i, 1]];
+            let z = target_unit_vectors[[i, 2]];
+            let ra = y.atan2(x).to_degrees().rem_euclid(360.0);
+            let dec = z.clamp(-1.0, 1.0).asin().to_degrees();
+            ras.push(ra);
+            decs.push(dec);
+        }
+
+        let result = self.in_constraint_batch(ephemeris, &ras, &decs, Some(&[time_index]))?;
+        Ok((0..n_targets).map(|i| result[[i, 0]]).collect())
+    }
+
+    /// For field-of-regard evaluation: determine which sky directions are inaccessible,
+    /// sweeping over roll angles where applicable.
+    ///
+    /// Returns one bool per target direction:
+    ///   - `true`  → violated / inaccessible (blocked for every applicable roll)
+    ///   - `false` → accessible for at least one valid roll
+    ///
+    /// `time_index` is the single ephemeris timestamp to evaluate at.
+    /// `n_roll_samples` uniform roll angles are swept over [0°, 360°) for evaluators
+    /// that depend on spacecraft roll; constraints without roll dependence ignore it.
+    ///
+    /// Default: sweeps `n_roll_samples` roll angles and calls `field_of_regard_violated_at_roll`
+    /// at each step, marking a direction accessible if *any* roll satisfies it.
+    /// Leaf implementations that carry their own roll state (e.g. `BoresightOffsetEvaluator`
+    /// with fixed roll) override `field_of_regard_violated_at_roll` instead, and the sweep
+    /// here automatically propagates the correct roll to them.
+    fn field_of_regard_violated_batch(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_index: usize,
+        n_roll_samples: usize,
+    ) -> PyResult<Vec<bool>> {
+        // For roll-independent constraints the result is identical at every roll
+        // angle, so a single evaluation at roll=0° is sufficient.
+        if !self.is_roll_dependent() {
+            return self.field_of_regard_violated_at_roll(
+                ephemeris,
+                target_unit_vectors,
+                time_index,
+                0.0,
+            );
+        }
+
+        // Roll-dependent: sweep n_roll_samples angles over [0°, 360°).
+        let n_targets = target_unit_vectors.nrows();
+        let roll_step_deg = 360.0 / n_roll_samples as f64;
+        let mut accessible = vec![false; n_targets];
+
+        for step in 0..n_roll_samples {
+            if accessible.iter().all(|&a| a) {
+                break;
+            }
+            let roll_deg = step as f64 * roll_step_deg;
+            let violated = self.field_of_regard_violated_at_roll(
+                ephemeris,
+                target_unit_vectors,
+                time_index,
+                roll_deg,
+            )?;
+            for i in 0..n_targets {
+                if !violated[i] {
+                    accessible[i] = true;
+                }
+            }
+        }
+
+        Ok(accessible.iter().map(|&a| !a).collect())
+    }
+
     /// Get constraint name
     fn name(&self) -> String;
 

@@ -26,8 +26,11 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyList};
 
 use super::field_of_regard::instantaneous_field_of_regard_impl;
+use super::field_of_regard::DEFAULT_N_POINTS;
+use super::field_of_regard::DEFAULT_N_ROLL_SAMPLES;
 use super::json_parser::parse_constraint_json;
 use super::json_to_py::json_to_pyobject;
+use super::roll_range::run_roll_sweep;
 
 /// Python-facing constraint evaluator
 ///
@@ -1216,11 +1219,16 @@ impl PyConstraint {
     /// enabling shared-axis telescope planning where secondary instruments are offset
     /// from the primary boresight.
     ///
+    /// ``roll_deg`` represents the fixed mechanical roll of the instrument relative to
+    /// the spacecraft coordinate frame.  It defaults to ``0.0`` (instrument aligned with
+    /// spacecraft).  Spacecraft roll at observation time is applied separately via
+    /// ``target_roll`` on the evaluation methods.
+    ///
     /// Args:
     ///     constraint (Constraint): Inner constraint to evaluate at offset direction
-    ///     roll_deg (float): Fixed boresight roll offset about +X in degrees (default 0.0)
-    ///     roll_clockwise (bool): If True, positive fixed boresight roll is clockwise
-    ///         when looking along +X. If False, positive is counterclockwise.
+    ///     roll_deg (float): Fixed instrument roll offset about boresight +X in degrees,
+    ///         relative to the spacecraft's nominal roll frame.  Default ``0.0``.
+    ///     roll_clockwise (bool): If True, positive roll is clockwise when looking along +X.
     ///     roll_reference (str): Roll-zero reference axis: "north" (default) or "sun".
     ///     pitch_deg (float): Pitch angle about +Y in degrees
     ///     yaw_deg (float): Yaw angle about +Z in degrees
@@ -1257,17 +1265,18 @@ impl PyConstraint {
 
         let config: serde_json::Value = serde_json::from_str(&constraint.config_json).unwrap();
 
-        let config_json = serde_json::json!({
+        let mut config_obj = serde_json::json!({
             "type": "boresight_offset",
             "constraint": config,
-            "roll_deg": roll_deg,
             "roll_clockwise": roll_clockwise,
             "roll_reference": roll_reference_normalized,
             "pitch_deg": pitch_deg,
             "yaw_deg": yaw_deg
-        })
-        .to_string();
+        });
 
+        config_obj["roll_deg"] = serde_json::json!(roll_deg);
+
+        let config_json = config_obj.to_string();
         let evaluator = parse_constraint_json(&serde_json::from_str(&config_json).unwrap())?;
 
         Ok(PyConstraint {
@@ -1471,11 +1480,28 @@ impl PyConstraint {
     /// Field of regard is the visible solid angle at a single timestamp, where
     /// visibility is defined by `constraint == False` (not violated).
     ///
+    /// Compute instantaneous field of regard for this constraint in steradians.
+    ///
+    /// Field of regard is the visible solid angle at a single timestamp, where
+    /// visibility is defined by `constraint == False` (not violated).
+    ///
+    /// For boresight-offset constraints with non-zero pitch or yaw, the spacecraft
+    /// may be commanded at different roll angles.  When ``roll_deg`` is ``None``
+    /// (set internally by the Python layer when no ``target_roll`` is specified),
+    /// the field of regard is computed by sweeping ``n_roll_samples`` spacecraft roll
+    /// angles uniformly over [0°, 360°) and marking a sky direction accessible if
+    /// *any* roll satisfies the inner constraint, giving the total accessible sky
+    /// over all possible roll states.
+    ///
     /// Args:
     ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
     ///     time (datetime, optional): Specific timestamp to evaluate (must exist in ephemeris)
     ///     index (int, optional): Specific time index to evaluate
     ///     n_points (int, optional): Number of sky samples (Fibonacci sphere). Default 20000.
+    ///     n_roll_samples (int, optional): Number of spacecraft roll angles to sweep when
+    ///         computing FoR over all roll states.  Each angle is spaced uniformly over
+    ///         [0°, 360°).  Ignored for fixed-roll or roll-independent constraints.
+    ///         Default 72 (5° resolution).
     ///
     /// Returns:
     ///     float: Instantaneous field of regard in steradians (range [0, 4π])
@@ -1483,7 +1509,9 @@ impl PyConstraint {
     /// Notes:
     ///     - Exactly one of `time` or `index` must be provided.
     ///     - Higher `n_points` improves accuracy at higher computational cost.
-    #[pyo3(signature = (ephemeris, time=None, index=None, n_points=20000))]
+    ///     - Spacecraft-roll sweeps scale with ``n_roll_samples``; the default 72 is
+    ///       ~72× slower than a single-roll evaluation at the same ``n_points``.
+    #[pyo3(signature = (ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES))]
     fn instantaneous_field_of_regard(
         &self,
         py: Python,
@@ -1491,6 +1519,7 @@ impl PyConstraint {
         time: Option<&Bound<PyAny>>,
         index: Option<usize>,
         n_points: usize,
+        n_roll_samples: usize,
     ) -> PyResult<f64> {
         instantaneous_field_of_regard_impl(
             py,
@@ -1498,6 +1527,7 @@ impl PyConstraint {
             time,
             index,
             n_points,
+            n_roll_samples,
             &*self.evaluator,
             |bound, t| self.parse_times_to_indices(bound, t),
         )
@@ -1707,6 +1737,122 @@ impl PyConstraint {
         } else {
             Ok(PyBool::new(py, results[0]).as_any().clone().unbind())
         }
+    }
+
+    /// Return contiguous roll-angle intervals where the constraint is satisfied.
+    ///
+    /// Sweeps ``n_roll_samples`` uniformly-spaced spacecraft roll angles over [0°, 360°),
+    /// identifies those where the constraint is *not* violated, and collapses adjacent
+    /// valid samples into ``(min_deg, max_deg)`` intervals.
+    ///
+    /// Args:
+    ///     time (datetime): Timestamp to evaluate (must exist in ephemeris).
+    ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+    ///     target_ra (float): Target right ascension in degrees (ICRS/J2000)
+    ///     target_dec (float): Target declination in degrees (ICRS/J2000)
+    ///     n_roll_samples (int, optional): Number of roll angles to sweep uniformly over
+    ///         [0°, 360°). Default 360 (1° resolution).
+    ///
+    /// Returns:
+    ///     list[tuple[float, float]]: Contiguous ``(min_deg, max_deg)`` intervals of valid
+    ///     roll angles. Empty list if no roll is valid.
+    ///
+    /// Raises:
+    ///     ValueError: If time is not found in the ephemeris or n_roll_samples is 0.
+    ///     TypeError: If ephemeris type is not supported.
+    #[pyo3(signature = (time, ephemeris, target_ra, target_dec, n_roll_samples=360))]
+    fn roll_range(
+        &self,
+        py: Python,
+        time: &Bound<PyAny>,
+        ephemeris: Py<PyAny>,
+        target_ra: f64,
+        target_dec: f64,
+        n_roll_samples: usize,
+    ) -> PyResult<Vec<(f64, f64)>> {
+        if n_roll_samples == 0 {
+            return Ok(Vec::new());
+        }
+
+        let bound = ephemeris.bind(py);
+        let time_indices = self.parse_times_to_indices(bound, time)?;
+        let time_idx = *time_indices.first().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("time not found in ephemeris")
+        })?;
+
+        let base_config: serde_json::Value = serde_json::from_str(&self.config_json)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+
+        let step = 360.0_f64 / n_roll_samples as f64;
+        // All N roll samples share the same base target; boresight nodes rotate them
+        // per-sample inside roll_sweep_vec.
+        let rolls: Vec<f64> = (0..n_roll_samples).map(|i| i as f64 * step).collect();
+        let target_ras = vec![target_ra; n_roll_samples];
+        let target_decs = vec![target_dec; n_roll_samples];
+
+        // Dispatch to a typed ephemeris reference, then run the vectorized sweep.
+        // roll_sweep_vec calls in_constraint_batch once per leaf constraint with all N
+        // pre-rotated targets, reducing O(N × leaves) calls to O(leaves).
+        let violated: Vec<bool> = if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
+            run_roll_sweep(
+                &base_config,
+                &target_ras,
+                &target_decs,
+                &rolls,
+                &*ephem as &dyn EphemerisBase,
+                time_idx,
+            )?
+        } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
+            run_roll_sweep(
+                &base_config,
+                &target_ras,
+                &target_decs,
+                &rolls,
+                &*ephem as &dyn EphemerisBase,
+                time_idx,
+            )?
+        } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
+            run_roll_sweep(
+                &base_config,
+                &target_ras,
+                &target_decs,
+                &rolls,
+                &*ephem as &dyn EphemerisBase,
+                time_idx,
+            )?
+        } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+            run_roll_sweep(
+                &base_config,
+                &target_ras,
+                &target_decs,
+                &rolls,
+                &*ephem as &dyn EphemerisBase,
+                time_idx,
+            )?
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
+            ));
+        };
+
+        // Collapse contiguous valid (not-violated) samples into (lo, hi) intervals.
+        let mut intervals: Vec<(f64, f64)> = Vec::new();
+        let mut i = 0;
+        while i < n_roll_samples {
+            if violated[i] {
+                i += 1;
+                continue;
+            }
+            let lo = i as f64 * step;
+            while i + 1 < n_roll_samples && !violated[i + 1] {
+                i += 1;
+            }
+            let hi = i as f64 * step;
+            intervals.push((lo, hi));
+            i += 1;
+        }
+
+        Ok(intervals)
     }
 
     /// Evaluate constraint for a moving body (varying RA/Dec over time)
