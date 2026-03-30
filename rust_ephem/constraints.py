@@ -23,8 +23,8 @@ from .ephemeris import Ephemeris
 
 #: Default number of roll-angle samples used when sweeping spacecraft roll in
 #: :meth:`~RustConstraintMixin.instantaneous_field_of_regard` when ``target_roll``
-#: is not specified.  72 samples gives 5° resolution.
-DEFAULT_N_ROLL_SAMPLES: int = 72
+#: is not specified.  360 samples gives 1° resolution.
+DEFAULT_N_ROLL_SAMPLES: int = 360
 
 #: Default number of Fibonacci-sphere sky samples used by
 #: :meth:`~RustConstraintMixin.instantaneous_field_of_regard`.
@@ -306,11 +306,14 @@ class RustConstraintMixin(BaseModel):
                 evaluate at a fixed spacecraft roll.
             n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
                 and the constraint is roll-dependent.  Uniformly spaced over [0°, 360°).
-                Default :data:`DEFAULT_N_ROLL_SAMPLES` (72 ≈ 5° resolution).
+                Default :data:`DEFAULT_N_ROLL_SAMPLES` (360 ≈ 1° resolution).
 
         Returns:
             ConstraintResult containing violation windows
         """
+        if n_roll_samples <= 0:
+            raise ValueError("n_roll_samples must be a positive integer")
+
         if target_roll is None and self._is_roll_dependent():
             # Sweep all spacecraft roll angles; a timestamp is violated only if
             # blocked at every possible roll (no valid orientation exists).
@@ -419,11 +422,14 @@ class RustConstraintMixin(BaseModel):
                 only if violated at **every** possible roll (i.e. no valid roll exists).
             n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
                 and the constraint is roll-dependent.  Uniformly spaced over [0°, 360°).
-                Default :data:`DEFAULT_N_ROLL_SAMPLES` (72 ≈ 5° resolution).
+                Default :data:`DEFAULT_N_ROLL_SAMPLES` (360 ≈ 1° resolution).
 
         Returns:
             2D numpy array of shape (n_targets, n_times) with boolean violation status
         """
+        if n_roll_samples <= 0:
+            raise ValueError("n_roll_samples must be a positive integer")
+
         if target_roll is None and self._is_roll_dependent():
             # Sweep all spacecraft roll angles; a cell is violated only if blocked at
             # every roll (AND across the sweep).
@@ -494,13 +500,16 @@ class RustConstraintMixin(BaseModel):
                 only if violated at **every** possible roll (i.e. no valid roll exists).
             n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
                 and the constraint is roll-dependent.  Uniformly spaced over [0°, 360°).
-                Default :data:`DEFAULT_N_ROLL_SAMPLES` (72 ≈ 5° resolution).
+                Default :data:`DEFAULT_N_ROLL_SAMPLES` (360 ≈ 1° resolution).
 
         Returns:
             True if constraint is violated at the given time(s) (in-constraint).
             False if constraint is satisfied (out-of-constraint).
             Returns a single bool for a single time, or a list of bools for multiple times.
         """
+        if n_roll_samples <= 0:
+            raise ValueError("n_roll_samples must be a positive integer")
+
         if target_roll is None and self._is_roll_dependent():
             # Sweep all spacecraft roll angles; violated only if blocked at every roll.
             roll_step = 360.0 / n_roll_samples
@@ -548,7 +557,7 @@ class RustConstraintMixin(BaseModel):
             target_ra: Target right ascension in degrees (ICRS/J2000)
             target_dec: Target declination in degrees (ICRS/J2000)
             n_roll_samples: Number of uniformly-spaced roll angles to test over [0°, 360°).
-                Default 72 (5° resolution).
+                Default 360 (1° resolution).
 
         Returns:
             List of ``(min_deg, max_deg)`` tuples, one per contiguous valid interval.
