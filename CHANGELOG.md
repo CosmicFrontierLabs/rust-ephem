@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.6.0...v0.7.0) (2026-03-30)
+
+
+### Features
+
+* **visibility:** field of regard / visibility should return sweep roll angles if target_roll is None ([#151](https://github.com/CosmicFrontierLabs/rust-ephem/issues/151)) ([157687a](https://github.com/CosmicFrontierLabs/rust-ephem/commit/157687a26f8d9290f3125cdea471038eebee14ae))
+
+
+### Performance Improvements
+
+* Field of regard optimizations ([#148](https://github.com/CosmicFrontierLabs/rust-ephem/issues/148)) ([e4800c9](https://github.com/CosmicFrontierLabs/rust-ephem/commit/e4800c919d6cbc2d5d923f4550c9c1e35df04d04))
+
 ## [0.6.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.5.2...v0.6.0) (2026-03-17)
 
 
