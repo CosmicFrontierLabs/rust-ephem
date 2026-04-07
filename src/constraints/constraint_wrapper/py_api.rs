@@ -1432,7 +1432,7 @@ impl PyConstraint {
         target_decs: Vec<f64>,
         times: Option<&Bound<PyAny>>,
         indices: Option<&Bound<PyAny>>,
-        target_rolls: Option<Vec<Option<f64>>>,
+        target_rolls: Option<Vec<f64>>,
     ) -> PyResult<Vec<ConstraintResult>> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1514,7 +1514,7 @@ impl PyConstraint {
         let mut roll_map: std::collections::BTreeMap<String, Vec<usize>> =
             std::collections::BTreeMap::new();
         for (idx, roll) in rolls.iter().enumerate() {
-            let key = format!("{:?}", roll);
+            let key = format!("{}", roll);
             roll_map.entry(key).or_default().push(idx);
         }
 
@@ -1533,7 +1533,7 @@ impl PyConstraint {
             let group_ras: Vec<f64> = group_indices.iter().map(|&i| target_ras[i]).collect();
             let group_decs: Vec<f64> = group_indices.iter().map(|&i| target_decs[i]).collect();
 
-            let group_results = self.with_effective_evaluator(target_roll, |evaluator| {
+            let group_results = self.with_effective_evaluator(Some(target_roll), |evaluator| {
                 if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
                     return self.eval_batch_with_ephemeris(
                         evaluator,
@@ -1600,7 +1600,7 @@ impl PyConstraint {
     ///     target_decs (array-like): Array of declinations in degrees (ICRS/J2000)
     ///     times (datetime or list[datetime], optional): Specific times to evaluate
     ///     indices (int or list[int], optional): Specific time index/indices to evaluate
-    ///     target_rolls (list[float|None], optional): Per-target spacecraft roll angles in degrees
+    ///     target_rolls (list[float], optional): Per-target spacecraft roll angles in degrees
     ///
     /// Returns:
     ///     numpy.ndarray: 2D boolean array of shape (n_targets, n_times) where True
@@ -1622,7 +1622,7 @@ impl PyConstraint {
         target_decs: Vec<f64>,
         times: Option<&Bound<PyAny>>,
         indices: Option<&Bound<PyAny>>,
-        target_rolls: Option<Vec<Option<f64>>>,
+        target_rolls: Option<Vec<f64>>,
     ) -> PyResult<Py<PyAny>> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1705,7 +1705,7 @@ impl PyConstraint {
         let mut roll_map: std::collections::BTreeMap<String, Vec<usize>> =
             std::collections::BTreeMap::new();
         for (idx, roll) in rolls.iter().enumerate() {
-            let key = format!("{:?}", roll);
+            let key = format!("{}", roll);
             roll_map.entry(key).or_default().push(idx);
         }
 
@@ -1718,7 +1718,7 @@ impl PyConstraint {
             let group_ras: Vec<f64> = group_indices.iter().map(|&i| target_ras[i]).collect();
             let group_decs: Vec<f64> = group_indices.iter().map(|&i| target_decs[i]).collect();
 
-            let group_array = self.with_effective_evaluator(target_roll, |evaluator| {
+            let group_array = self.with_effective_evaluator(Some(target_roll), |evaluator| {
                 if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
                     return evaluator.in_constraint_batch(
                         &*ephem as &dyn EphemerisBase,
@@ -2025,7 +2025,7 @@ impl PyConstraint {
 
         // Call the batch method with the time parameter as is
         // Convert target_roll to target_rolls (per-target list with single element)
-        let target_rolls = target_roll.map(|roll| vec![Some(roll)]);
+        let target_rolls = target_roll.map(|roll| vec![roll]);
         let result_array = self.in_constraint_batch(
             py,
             ephemeris,
