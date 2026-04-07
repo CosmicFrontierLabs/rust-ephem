@@ -192,9 +192,10 @@ impl PyConstraint {
                 |_i, _is_open| evaluator.name(),
             );
 
+            let all_satisfied = violations.is_empty();
             results.push(ConstraintResult::new(
-                violations.clone(),
-                violations.is_empty(),
+                violations,
+                all_satisfied,
                 evaluator.name(),
                 times.clone(),
             ));
