@@ -111,7 +111,7 @@ def pytest_collection_modifyitems(config: Config, items: list[Any]) -> None:
         import rust_ephem  # noqa: F401
 
         has_rust_ephem = True
-    except Exception:
+    except ImportError:
         has_rust_ephem = False
 
     # Mark tests based on module imports
