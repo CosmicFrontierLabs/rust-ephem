@@ -7,9 +7,9 @@ that can retrieve TLEs from various sources (files, URLs, Celestrak, Space-Track
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 from ._rust_ephem import fetch_tle as _fetch_tle
 
@@ -34,6 +34,33 @@ class TLERecord(BaseModel):
     name: str | None = Field(None, description="Optional satellite name")
     epoch: datetime = Field(..., description="TLE epoch timestamp")
     source: str | None = Field(None, description="Source of the TLE data")
+
+    @model_validator(mode="before")
+    def _validate_tle_lines(cls, values: dict) -> dict:
+        """Validate that line1 and line2 conform to TLE format."""
+        line1 = values.get("line1", "")
+        line2 = values.get("line2", "")
+
+        if not (line1.startswith("1 ") and line2.startswith("2 ")):
+            raise ValueError(
+                "Invalid TLE format: line1 must start with '1 ' and line2 with '2 '"
+            )
+
+        if not values.get("epoch") and len(line1) >= 19:
+            # Extract epoch from line1 if not provided
+            epoch_str = line1[18:32].strip()
+            try:
+                epoch_year = int(epoch_str[:2])
+                epoch_day = float(epoch_str[2:])
+                epoch_year += 2000 if epoch_year < 57 else 1900  # TLE epoch year cutoff
+                epoch_datetime = datetime(epoch_year, 1, 1) + timedelta(
+                    days=epoch_day - 1
+                )
+                values["epoch"] = epoch_datetime
+            except Exception as exc:
+                raise ValueError(f"Failed to parse epoch from line1: {exc}") from exc
+
+        return values
 
     @computed_field  # type: ignore[prop-decorator]
     @property
