@@ -103,7 +103,7 @@ def pytest_collection_modifyitems(config: Config, items: list[Any]) -> None:
         import astropy  # type: ignore[import-untyped]  # noqa: F401
 
         has_astropy = True
-    except ImportError:
+    except Exception:
         has_astropy = False
 
     # Check for rust_ephem
@@ -111,7 +111,7 @@ def pytest_collection_modifyitems(config: Config, items: list[Any]) -> None:
         import rust_ephem  # noqa: F401
 
         has_rust_ephem = True
-    except ImportError:
+    except Exception:
         has_rust_ephem = False
 
     # Mark tests based on module imports

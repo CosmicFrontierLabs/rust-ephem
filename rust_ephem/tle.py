@@ -8,6 +8,7 @@ that can retrieve TLEs from various sources (files, URLs, Celestrak, Space-Track
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Any
 
 from pydantic import BaseModel, Field, computed_field, model_validator
 
@@ -36,7 +37,7 @@ class TLERecord(BaseModel):
     source: str | None = Field(None, description="Source of the TLE data")
 
     @model_validator(mode="before")
-    def _validate_tle_lines(cls, values: dict) -> dict:
+    def _validate_tle_lines(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Validate that line1 and line2 conform to TLE format."""
         line1 = values.get("line1", "")
         line2 = values.get("line2", "")

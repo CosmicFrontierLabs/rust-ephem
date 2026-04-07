@@ -1,11 +1,14 @@
 # Create a type alias that supports isinstance checks
 import abc
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
-from astropy.coordinates import SkyCoord  # type: ignore[import-untyped]
-from astropy.units import Quantity  # type: ignore[import-untyped]
+
+if TYPE_CHECKING:
+    from astropy.coordinates import SkyCoord  # type: ignore[import-untyped]
+    from astropy.units import Quantity  # type: ignore[import-untyped]
 
 from ._rust_ephem import (
     GroundEphemeris,
