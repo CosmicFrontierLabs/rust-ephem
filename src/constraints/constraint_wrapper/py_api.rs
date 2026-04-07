@@ -21,7 +21,6 @@ use crate::ephemeris::OEMEphemeris;
 use crate::ephemeris::SPICEEphemeris;
 use crate::ephemeris::TLEEphemeris;
 use chrono::{DateTime, Utc};
-use ndarray;
 use numpy::{PyArray2, PyArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyList};

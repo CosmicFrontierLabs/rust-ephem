@@ -57,8 +57,9 @@ Constraint Class (Rust Backend)
 -------------------------------
 
 The low-level ``Constraint`` class provides direct access to Rust constraint evaluation
-for maximum performance. However, **this class has limited features** (single ``target_roll``,
-no per-target roll angles, no roll-sweeping). Most users should use the
+for maximum performance. However, **this class still has limited roll support**:
+single-target methods use a single ``target_roll`` value, while batch methods support
+per-target ``target_rolls``. Roll-sweeping is not supported at this layer. Most users should use the
 **Pydantic configuration models** (``SunConstraint``, ``MoonConstraint``, etc.) instead,
 which wrap ``Constraint`` with full support for per-target rolls and roll-sweeping via ``target_rolls``
 and ``n_roll_samples`` parameters.
