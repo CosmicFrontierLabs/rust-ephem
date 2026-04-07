@@ -159,11 +159,13 @@ def test_low_level_constraint_api_accepts_target_roll(
         yaw_deg=-1.5,
     )
 
+    # Per-target rolls with same value for all targets
+    target_rolls = [12.0] * len(target_ras)
     via_target_roll = base.in_constraint_batch(
         ephem,
         target_ras,
         target_decs,
-        target_roll=12.0,
+        target_rolls=target_rolls,
     )
 
     # With clockwise=True, target_roll is added with opposite sign.

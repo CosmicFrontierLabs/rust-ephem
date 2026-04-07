@@ -568,7 +568,7 @@ class Constraint:
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-        target_roll: float | None = None,
+        target_rolls: list[float | None] | None = None,
     ) -> list[Any]:
         """
         Evaluate constraint against multiple targets and return one result per target.
@@ -582,8 +582,9 @@ class Constraint:
                    evaluated (must exist in the ephemeris).
             indices: Optional specific time index/indices to evaluate. Can be a
                      single index or list of indices into the ephemeris timestamp array.
-            target_roll: Optional spacecraft roll angle about +X in degrees,
-                         applied at evaluation time.
+            target_rolls: Optional per-target spacecraft roll angles in degrees.
+                         List of length equal to target_ras. Each entry may be None
+                         to evaluate without a fixed roll.
 
         Returns:
             List of ConstraintResult objects, one per input target.
@@ -597,7 +598,7 @@ class Constraint:
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-        target_roll: float | None = None,
+        target_rolls: list[float] | None = None,
     ) -> npt.NDArray[np.bool_]:
         """
         Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
@@ -614,8 +615,9 @@ class Constraint:
                    evaluated (must exist in the ephemeris).
             indices: Optional specific time index/indices to evaluate. Can be a
                      single index or list of indices into the ephemeris timestamp array.
-            target_roll: Optional spacecraft roll angle about +X in degrees,
-                         applied at evaluation time.
+            target_rolls: Optional per-target spacecraft roll angles in degrees.
+                         List of length equal to target_ras. Each entry may be None
+                         to evaluate without a fixed roll.
 
         Returns:
             2D numpy boolean array of shape (n_targets, n_times) where True indicates
