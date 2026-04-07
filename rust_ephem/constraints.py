@@ -277,16 +277,16 @@ class RustConstraintMixin(BaseModel):
                 target_roll=target_roll,
                 n_roll_samples=n_roll_samples,
             )
-            first_result = self.evaluate(
+            # Get timestamps/constraint_name from a single fixed roll (0°) to avoid
+            # redundant roll sweep. The metadata is the same regardless of roll.
+            first_result = self._resolve_rust_constraint(target_roll=0.0).evaluate(
                 ephemeris,
                 target_ras[0],
                 target_decs[0],
                 times=times,
                 indices=indices,
-                target_roll=target_roll,
-                n_roll_samples=n_roll_samples,
             )
-            timestamps = self._coerce_timestamps(first_result.timestamps)
+            timestamps = self._coerce_timestamps(first_result.timestamp)
             constraint_name = first_result.constraint_name
 
             return [
