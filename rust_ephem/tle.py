@@ -30,8 +30,12 @@ class TLERecord(BaseModel):
         source: Source of the TLE data (e.g., 'celestrak', 'spacetrack', 'file', 'url')
     """
 
-    line1: str = Field(..., description="First line of the TLE")
-    line2: str = Field(..., description="Second line of the TLE")
+    line1: str = Field(
+        ..., description="First line of the TLE", min_length=69, max_length=69
+    )
+    line2: str = Field(
+        ..., description="Second line of the TLE", min_length=69, max_length=69
+    )
     name: str | None = Field(None, description="Optional satellite name")
     epoch: datetime = Field(..., description="TLE epoch timestamp")
     source: str | None = Field(None, description="Source of the TLE data")
