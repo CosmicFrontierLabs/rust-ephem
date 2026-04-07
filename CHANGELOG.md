@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.7.0...v0.8.0) (2026-04-07)
+
+
+### Features
+
+* **constraints:** Add evaluate_batch and fix roll constraint calculation ([#152](https://github.com/CosmicFrontierLabs/rust-ephem/issues/152)) ([c380a61](https://github.com/CosmicFrontierLabs/rust-ephem/commit/c380a615a152129019485ffd9b08f7a9793053bd))
+
 ## [0.7.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.6.0...v0.7.0) (2026-03-30)
 
 
