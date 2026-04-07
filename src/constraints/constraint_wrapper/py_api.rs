@@ -157,6 +157,51 @@ impl PyConstraint {
         ))
     }
 
+    fn eval_batch_with_ephemeris<E: EphemerisBase>(
+        &self,
+        evaluator: &dyn ConstraintEvaluator,
+        ephemeris: &E,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<Vec<usize>>,
+    ) -> PyResult<Vec<ConstraintResult>> {
+        let violation_array = evaluator.in_constraint_batch(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices.as_deref(),
+        )?;
+
+        let all_times = ephemeris.get_times()?;
+        let times: Vec<_> = if let Some(ref indices) = time_indices {
+            indices.iter().map(|&i| all_times[i]).collect()
+        } else {
+            all_times.to_vec()
+        };
+
+        let mut results = Vec::with_capacity(target_ras.len());
+        for target_index in 0..target_ras.len() {
+            let violated: Vec<bool> = (0..violation_array.ncols())
+                .map(|i| violation_array[[target_index, i]])
+                .collect();
+
+            let violations = crate::constraints::core::track_violations(
+                &times,
+                |i| (violated[i], if violated[i] { 1.0 } else { 0.0 }),
+                |_i, _is_open| evaluator.name(),
+            );
+
+            results.push(ConstraintResult::new(
+                violations.clone(),
+                violations.is_empty(),
+                evaluator.name(),
+                times.clone(),
+            ));
+        }
+
+        Ok(results)
+    }
+
     /// Vectorized evaluation for moving bodies - evaluates all targets at their corresponding times
     ///
     /// For N targets at N times, this calls in_constraint_batch once with all N targets
@@ -1364,6 +1409,83 @@ impl PyConstraint {
                     &*ephem,
                     target_ra,
                     target_dec,
+                    time_indices.clone(),
+                );
+            }
+
+            Err(pyo3::exceptions::PyTypeError::new_err(
+                "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
+            ))
+        })
+    }
+
+    /// Evaluate constraint for multiple targets and return one result per target.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None, target_roll=None))]
+    fn evaluate_batch(
+        &self,
+        py: Python,
+        ephemeris: Py<PyAny>,
+        target_ras: Vec<f64>,
+        target_decs: Vec<f64>,
+        times: Option<&Bound<PyAny>>,
+        indices: Option<&Bound<PyAny>>,
+        target_roll: Option<f64>,
+    ) -> PyResult<Vec<ConstraintResult>> {
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+
+        let bound = ephemeris.bind(py);
+        let time_indices = if let Some(times_arg) = times {
+            if indices.is_some() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Cannot specify both 'times' and 'indices' parameters",
+                ));
+            }
+            Some(self.parse_times_to_indices(bound, times_arg)?)
+        } else if let Some(indices_arg) = indices {
+            Some(self.parse_indices(indices_arg)?)
+        } else {
+            None
+        };
+
+        self.with_effective_evaluator(target_roll, |evaluator| {
+            if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
+                return self.eval_batch_with_ephemeris(
+                    evaluator,
+                    &*ephem,
+                    &target_ras,
+                    &target_decs,
+                    time_indices.clone(),
+                );
+            }
+            if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
+                return self.eval_batch_with_ephemeris(
+                    evaluator,
+                    &*ephem,
+                    &target_ras,
+                    &target_decs,
+                    time_indices.clone(),
+                );
+            }
+            if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
+                return self.eval_batch_with_ephemeris(
+                    evaluator,
+                    &*ephem,
+                    &target_ras,
+                    &target_decs,
+                    time_indices.clone(),
+                );
+            }
+            if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+                return self.eval_batch_with_ephemeris(
+                    evaluator,
+                    &*ephem,
+                    &target_ras,
+                    &target_decs,
                     time_indices.clone(),
                 );
             }

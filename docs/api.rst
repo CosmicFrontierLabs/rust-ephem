@@ -409,6 +409,11 @@ Classes
       - ``indices`` — Optional: specific time index/indices to evaluate
       - Returns: ``ConstraintResult`` object
 
+    * ``evaluate_batch(ephemeris, target_ras, target_decs, times=None, indices=None)`` — Convenience batch API returning one ``ConstraintResult`` per target
+
+      - Returns: list of ``ConstraintResult`` objects
+      - Best when you want the same per-target summary shape as ``evaluate()`` without writing the loop yourself
+
     * ``in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None)`` — **[Recommended]** Vectorized batch evaluation for multiple targets
 
       - ``ephemeris`` — TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris object

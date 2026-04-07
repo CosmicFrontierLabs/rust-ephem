@@ -126,6 +126,7 @@ class DummyConstraintBackend:
     def __init__(self) -> None:
         DummyConstraintBackend.created += 1
         self.evaluate_calls: list[Any] = []
+        self.evaluate_batch_calls: list[Any] = []
         self.batch_calls: list[Any] = []
         self.single_calls: list[Any] = []
         self.evaluate_moving_body_calls: list[Any] = []
@@ -144,6 +145,19 @@ class DummyConstraintBackend:
     ) -> DummyRustResult:
         self.evaluate_calls.append((ephemeris, target_ra, target_dec, times, indices))
         return DummyRustResult()
+
+    def evaluate_batch(
+        self,
+        ephemeris: object,
+        target_ras: list[object],
+        target_decs: list[object],
+        times: object,
+        indices: object,
+    ) -> list[DummyRustResult]:
+        self.evaluate_batch_calls.append(
+            (ephemeris, target_ras, target_decs, times, indices)
+        )
+        return [DummyRustResult() for _ in target_ras]
 
     def in_constraint_batch(
         self,

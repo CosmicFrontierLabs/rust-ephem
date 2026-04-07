@@ -179,6 +179,89 @@ def test_low_level_constraint_api_accepts_target_roll(
     assert np.array_equal(via_target_roll, expected)
 
 
+def test_batch_target_rolls_matches_per_target_calls(
+    tle_ephem: rust_ephem.TLEEphemeris,
+) -> None:
+    config = SunConstraint(min_angle=45.0).boresight_offset(
+        pitch_deg=1.5,
+        yaw_deg=-0.7,
+        roll_reference=RollReference.NORTH,
+    )
+
+    target_ras = [10.0, 25.0, 40.0, 55.0]
+    target_decs = [5.0, -10.0, 15.0, -20.0]
+    target_rolls = [None, 12.0, None, 30.0]
+
+    batch = config.in_constraint_batch(
+        tle_ephem,
+        target_ras,
+        target_decs,
+        target_rolls=target_rolls,
+    )
+
+    for i, target_roll in enumerate(target_rolls):
+        single = config.evaluate(
+            tle_ephem,
+            target_ras[i],
+            target_decs[i],
+            target_roll=target_roll,
+        )
+        np.testing.assert_array_equal(batch[i, :], single.constraint_array)
+
+
+def test_evaluate_batch_target_rolls_matches_per_target_calls(
+    tle_ephem: rust_ephem.TLEEphemeris,
+) -> None:
+    config = SunConstraint(min_angle=45.0).boresight_offset(
+        pitch_deg=1.5,
+        yaw_deg=-0.7,
+        roll_reference=RollReference.NORTH,
+    )
+
+    target_ras = [10.0, 25.0, 40.0, 55.0]
+    target_decs = [5.0, -10.0, 15.0, -20.0]
+    target_rolls = [None, 12.0, None, 30.0]
+
+    batch = config.evaluate_batch(
+        tle_ephem,
+        target_ras,
+        target_decs,
+        target_rolls=target_rolls,
+    )
+
+    for i, target_roll in enumerate(target_rolls):
+        single = config.evaluate(
+            tle_ephem,
+            target_ras[i],
+            target_decs[i],
+            target_roll=target_roll,
+        )
+        np.testing.assert_array_equal(
+            batch[i].constraint_array, single.constraint_array
+        )
+
+
+def test_batch_target_rolls_length_validation(
+    tle_ephem: rust_ephem.TLEEphemeris,
+) -> None:
+    config = SunConstraint(min_angle=45.0).boresight_offset(
+        pitch_deg=1.5,
+        yaw_deg=-0.7,
+        roll_reference=RollReference.NORTH,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="target_rolls must have the same length as target_ras and target_decs",
+    ):
+        config.in_constraint_batch(
+            tle_ephem,
+            [10.0, 25.0],
+            [5.0, -10.0],
+            target_rolls=[None],
+        )
+
+
 def test_free_roll_for_gte_fixed_roll_for(
     tle_ephem: rust_ephem.TLEEphemeris,
 ) -> None:

@@ -158,6 +158,220 @@ class RollReference(str, Enum):
 class RustConstraintMixin(BaseModel):
     """Base class for Rust constraint configurations"""
 
+    @staticmethod
+    def _coerce_datetime(value: Any) -> datetime:
+        """Convert supported timestamp values to Python datetime."""
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, np.datetime64):
+            coerced = value.astype("datetime64[us]").tolist()
+            if isinstance(coerced, datetime):
+                return coerced
+        raise TypeError(f"Unsupported timestamp type: {type(value)!r}")
+
+    @classmethod
+    def _coerce_timestamps(
+        cls,
+        values: npt.NDArray[np.datetime64] | list[datetime],
+    ) -> list[datetime]:
+        """Convert timestamp arrays/sequences to Python datetimes."""
+        return [cls._coerce_datetime(value) for value in values]
+
+    @staticmethod
+    def _build_constraint_result(
+        constraint_name: str,
+        timestamps: list[datetime],
+        violated: npt.NDArray[np.bool_] | list[bool],
+    ) -> ConstraintResult:
+        """Build a ConstraintResult from a boolean violation mask."""
+        violation_flags = np.asarray(violated, dtype=bool)
+        violations: list[ConstraintViolation] = []
+        in_viol = False
+        viol_start: datetime | None = None
+
+        for dt, flag in zip(timestamps, violation_flags):
+            if flag and not in_viol:
+                in_viol = True
+                viol_start = dt
+            elif not flag and in_viol:
+                in_viol = False
+                violations.append(
+                    ConstraintViolation(
+                        start_time=cast(datetime, viol_start),
+                        end_time=dt,
+                        max_severity=1.0,
+                        description=constraint_name,
+                    )
+                )
+
+        if in_viol and viol_start is not None and timestamps:
+            violations.append(
+                ConstraintViolation(
+                    start_time=viol_start,
+                    end_time=timestamps[-1],
+                    max_severity=1.0,
+                    description=constraint_name,
+                )
+            )
+
+        return ConstraintResult(
+            violations=violations,
+            all_satisfied=not bool(violation_flags.any()),
+            constraint_name=constraint_name,
+            _swept_timestamps=timestamps,
+            _swept_array=violation_flags.tolist(),
+        )
+
+    @staticmethod
+    def _normalize_target_rolls(
+        target_ras: list[float],
+        target_decs: list[float],
+        target_rolls: list[float | None] | None,
+    ) -> list[float | None] | None:
+        """Validate per-target roll inputs for batch APIs."""
+        if len(target_ras) != len(target_decs):
+            raise ValueError("target_ras and target_decs must have the same length")
+        if target_rolls is None:
+            return None
+        if len(target_rolls) != len(target_ras):
+            raise ValueError(
+                "target_rolls must have the same length as target_ras and target_decs"
+            )
+        return target_rolls
+
+    @staticmethod
+    def _group_target_roll_indices(
+        target_rolls: list[float | None],
+    ) -> list[tuple[float | None, list[int]]]:
+        """Group target indices by shared roll values while preserving order."""
+        grouped: dict[float | None, list[int]] = {}
+        order: list[float | None] = []
+        for index, target_roll in enumerate(target_rolls):
+            if target_roll not in grouped:
+                grouped[target_roll] = []
+                order.append(target_roll)
+            grouped[target_roll].append(index)
+        return [(target_roll, grouped[target_roll]) for target_roll in order]
+
+    def _evaluate_batch_uniform(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: list[float],
+        target_decs: list[float],
+        times: datetime | list[datetime] | None = None,
+        indices: int | list[int] | None = None,
+        target_roll: float | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+    ) -> list[ConstraintResult]:
+        """Evaluate a batch where all targets share the same roll semantics."""
+        if target_roll is None and self._is_roll_dependent():
+            if not target_ras:
+                return []
+
+            batch = self._in_constraint_batch_uniform(
+                ephemeris,
+                target_ras,
+                target_decs,
+                times=times,
+                indices=indices,
+                target_roll=target_roll,
+                n_roll_samples=n_roll_samples,
+            )
+            first_result = self.evaluate(
+                ephemeris,
+                target_ras[0],
+                target_decs[0],
+                times=times,
+                indices=indices,
+                target_roll=target_roll,
+                n_roll_samples=n_roll_samples,
+            )
+            timestamps = self._coerce_timestamps(first_result.timestamps)
+            constraint_name = first_result.constraint_name
+
+            return [
+                self._build_constraint_result(constraint_name, timestamps, row)
+                for row in np.asarray(batch, dtype=bool)
+            ]
+
+        rust_constraint = self._resolve_rust_constraint(
+            target_roll=target_roll,
+        )
+        rust_results = rust_constraint.evaluate_batch(
+            ephemeris,
+            target_ras,
+            target_decs,
+            times,
+            indices,
+        )
+        return [
+            ConstraintResult(
+                violations=[
+                    ConstraintViolation(
+                        start_time=v.start_time,
+                        end_time=v.end_time,
+                        max_severity=v.max_severity,
+                        description=v.description,
+                    )
+                    for v in rust_result.violations
+                ],
+                all_satisfied=rust_result.all_satisfied,
+                constraint_name=rust_result.constraint_name,
+                _rust_result_ref=rust_result,
+            )
+            for rust_result in rust_results
+        ]
+
+    def _in_constraint_batch_uniform(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: list[float],
+        target_decs: list[float],
+        times: datetime | list[datetime] | None = None,
+        indices: int | list[int] | None = None,
+        target_roll: float | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+    ) -> npt.NDArray[np.bool_]:
+        """Evaluate a batch where all targets share the same roll semantics."""
+        if target_roll is None and self._is_roll_dependent():
+            # Sweep all spacecraft roll angles; a cell is violated only if blocked at
+            # every roll (AND across the sweep).
+            roll_step = 360.0 / n_roll_samples
+            combined: npt.NDArray[np.bool_] | None = None
+            for i in range(n_roll_samples):
+                r = i * roll_step
+                arr = np.asarray(
+                    self._resolve_rust_constraint(target_roll=r).in_constraint_batch(
+                        ephemeris, target_ras, target_decs, times, indices
+                    ),
+                    dtype=bool,
+                )
+                combined = (
+                    arr
+                    if combined is None
+                    else cast(npt.NDArray[np.bool_], combined & arr)
+                )
+            return cast(
+                npt.NDArray[np.bool_],
+                combined
+                if combined is not None
+                else np.ones((len(target_ras), 0), dtype=bool),
+            )
+
+        rust_constraint = self._resolve_rust_constraint(
+            target_roll=target_roll,
+        )
+        return cast(
+            npt.NDArray[np.bool_],
+            rust_constraint.in_constraint_batch(
+                ephemeris,
+                target_ras,
+                target_decs,
+                times,
+                indices,
+            ),
+        )
+
     def _get_cached_rust_constraint(self) -> Any:
         """Return lazily cached Rust backend constraint for definition-only config."""
         if getattr(self, "_rust_constraint", None) is None:
@@ -329,40 +543,10 @@ class RustConstraintMixin(BaseModel):
             for arr in arrays[1:]:
                 combined &= arr
             swept_timestamps = list(rust_results[0].timestamp)
-            constraint_name = rust_results[0].constraint_name
-            # Reconstruct violation windows from the AND'd boolean array.
-            violations: list[ConstraintViolation] = []
-            in_viol = False
-            viol_start: datetime | None = None
-            for dt, flag in zip(swept_timestamps, combined):
-                if flag and not in_viol:
-                    in_viol = True
-                    viol_start = dt
-                elif not flag and in_viol:
-                    in_viol = False
-                    violations.append(
-                        ConstraintViolation(
-                            start_time=cast(datetime, viol_start),
-                            end_time=dt,
-                            max_severity=1.0,
-                            description=constraint_name,
-                        )
-                    )
-            if in_viol and viol_start is not None and swept_timestamps:
-                violations.append(
-                    ConstraintViolation(
-                        start_time=viol_start,
-                        end_time=swept_timestamps[-1],
-                        max_severity=1.0,
-                        description=constraint_name,
-                    )
-                )
-            return ConstraintResult(
-                violations=violations,
-                all_satisfied=not bool(combined.any()),
-                constraint_name=constraint_name,
-                _swept_timestamps=swept_timestamps,
-                _swept_array=combined.tolist(),
+            return self._build_constraint_result(
+                rust_results[0].constraint_name,
+                swept_timestamps,
+                combined,
             )
 
         rust_constraint = self._resolve_rust_constraint(
@@ -394,6 +578,54 @@ class RustConstraintMixin(BaseModel):
             _rust_result_ref=rust_result,
         )
 
+    def evaluate_batch(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: list[float],
+        target_decs: list[float],
+        times: datetime | list[datetime] | None = None,
+        indices: int | list[int] | None = None,
+        target_rolls: list[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+    ) -> list[ConstraintResult]:
+        """Evaluate the constraint for multiple targets and return one result per target."""
+        if n_roll_samples <= 0:
+            raise ValueError("n_roll_samples must be a positive integer")
+        normalized_target_rolls = self._normalize_target_rolls(
+            target_ras,
+            target_decs,
+            target_rolls,
+        )
+
+        if normalized_target_rolls is None:
+            return self._evaluate_batch_uniform(
+                ephemeris,
+                target_ras,
+                target_decs,
+                times=times,
+                indices=indices,
+                target_roll=None,
+                n_roll_samples=n_roll_samples,
+            )
+
+        results: list[ConstraintResult | None] = [None] * len(target_ras)
+        for target_roll, batch_indices in self._group_target_roll_indices(
+            normalized_target_rolls
+        ):
+            batch_results = self._evaluate_batch_uniform(
+                ephemeris,
+                [target_ras[i] for i in batch_indices],
+                [target_decs[i] for i in batch_indices],
+                times=times,
+                indices=indices,
+                target_roll=target_roll,
+                n_roll_samples=n_roll_samples,
+            )
+            for source_index, result in zip(batch_indices, batch_results):
+                results[source_index] = result
+
+        return [cast(ConstraintResult, result) for result in results]
+
     def in_constraint_batch(
         self,
         ephemeris: Ephemeris,
@@ -401,7 +633,7 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-        target_roll: float | None = None,
+        target_rolls: list[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> npt.NDArray[np.bool_]:
         """
@@ -416,10 +648,12 @@ class RustConstraintMixin(BaseModel):
             target_decs: List of target declinations in degrees (ICRS/J2000)
             times: Optional specific time(s) to evaluate
             indices: Optional specific time index/indices to evaluate
-            target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and
-                the constraint has a boresight offset with non-zero pitch/yaw, sweeps
-                ``n_roll_samples`` roll angles and returns ``True`` (violated)
-                only if violated at **every** possible roll (i.e. no valid roll exists).
+            target_rolls: Optional per-target spacecraft roll angles (degrees), one
+                value per target. Each entry may be ``None`` to evaluate that target
+                without a fixed spacecraft roll, using only the target coordinates.
+                When an entry is ``None`` and the constraint has a boresight offset with
+                non-zero pitch/yaw, sweeps ``n_roll_samples`` roll angles and returns
+                ``True`` (violated) only if violated at **every** possible roll.
             n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
                 and the constraint is roll-dependent.  Uniformly spaced over [0°, 360°).
                 Default :data:`DEFAULT_N_ROLL_SAMPLES` (360 ≈ 1° resolution).
@@ -429,44 +663,46 @@ class RustConstraintMixin(BaseModel):
         """
         if n_roll_samples <= 0:
             raise ValueError("n_roll_samples must be a positive integer")
-
-        if target_roll is None and self._is_roll_dependent():
-            # Sweep all spacecraft roll angles; a cell is violated only if blocked at
-            # every roll (AND across the sweep).
-            roll_step = 360.0 / n_roll_samples
-            combined: npt.NDArray[np.bool_] | None = None
-            for i in range(n_roll_samples):
-                r = i * roll_step
-                arr = np.asarray(
-                    self._resolve_rust_constraint(target_roll=r).in_constraint_batch(
-                        ephemeris, target_ras, target_decs, times, indices
-                    ),
-                    dtype=bool,
-                )
-                combined = (
-                    arr
-                    if combined is None
-                    else cast(npt.NDArray[np.bool_], combined & arr)
-                )
-            return cast(
-                npt.NDArray[np.bool_],
-                combined
-                if combined is not None
-                else np.ones((len(target_ras), 0), dtype=bool),
-            )
-
-        rust_constraint = self._resolve_rust_constraint(
-            target_roll=target_roll,
+        normalized_target_rolls = self._normalize_target_rolls(
+            target_ras,
+            target_decs,
+            target_rolls,
         )
-        return cast(
-            npt.NDArray[np.bool_],
-            rust_constraint.in_constraint_batch(
+
+        if normalized_target_rolls is None:
+            return self._in_constraint_batch_uniform(
                 ephemeris,
                 target_ras,
                 target_decs,
-                times,
-                indices,
-            ),
+                times=times,
+                indices=indices,
+                target_roll=None,
+                n_roll_samples=n_roll_samples,
+            )
+
+        result: npt.NDArray[np.bool_] | None = None
+        for target_roll, batch_indices in self._group_target_roll_indices(
+            normalized_target_rolls
+        ):
+            batch_result = self._in_constraint_batch_uniform(
+                ephemeris,
+                [target_ras[i] for i in batch_indices],
+                [target_decs[i] for i in batch_indices],
+                times=times,
+                indices=indices,
+                target_roll=target_roll,
+                n_roll_samples=n_roll_samples,
+            )
+            if result is None:
+                result = np.empty(
+                    (len(target_ras), batch_result.shape[1]),
+                    dtype=bool,
+                )
+            result[batch_indices, :] = batch_result
+
+        return cast(
+            npt.NDArray[np.bool_],
+            result if result is not None else np.ones((0, 0), dtype=bool),
         )
 
     def in_constraint(
@@ -522,7 +758,7 @@ class RustConstraintMixin(BaseModel):
             if isinstance(parts[0], bool):
                 return all(parts)
             arr = np.array(parts, dtype=bool)  # (n_rolls, n_times)
-            return list(arr.all(axis=0))
+            return cast(list[bool], arr.all(axis=0).tolist())
 
         rust_constraint = self._resolve_rust_constraint(
             target_roll=target_roll,
@@ -565,8 +801,11 @@ class RustConstraintMixin(BaseModel):
         """
         if n_roll_samples <= 0:
             raise ValueError("n_roll_samples must be a positive integer")
-        return self._get_cached_rust_constraint().roll_range(
-            time, ephemeris, target_ra, target_dec, n_roll_samples
+        return cast(
+            list[tuple[float, float]],
+            self._get_cached_rust_constraint().roll_range(
+                time, ephemeris, target_ra, target_dec, n_roll_samples
+            ),
         )
 
     def instantaneous_field_of_regard(

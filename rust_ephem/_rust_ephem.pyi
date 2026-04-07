@@ -561,6 +561,35 @@ class Constraint:
         """
         ...
 
+    def evaluate_batch(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: list[float],
+        target_decs: list[float],
+        times: datetime | list[datetime] | None = None,
+        indices: int | list[int] | None = None,
+        target_roll: float | None = None,
+    ) -> list[Any]:
+        """
+        Evaluate constraint against multiple targets and return one result per target.
+
+        Args:
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, OEMEphemeris, or GroundEphemeris
+            target_ras: List of target right ascensions in degrees (ICRS/J2000)
+            target_decs: List of target declinations in degrees (ICRS/J2000)
+            times: Optional specific time(s) to evaluate. Can be a single datetime
+                   or list of datetimes. If provided, only these times will be
+                   evaluated (must exist in the ephemeris).
+            indices: Optional specific time index/indices to evaluate. Can be a
+                     single index or list of indices into the ephemeris timestamp array.
+            target_roll: Optional spacecraft roll angle about +X in degrees,
+                         applied at evaluation time.
+
+        Returns:
+            List of ConstraintResult objects, one per input target.
+        """
+        ...
+
     def in_constraint_batch(
         self,
         ephemeris: Ephemeris,

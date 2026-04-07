@@ -606,6 +606,25 @@ Evaluation Methods
       # Find targets that never violate
       always_visible = np.where(violation_counts == 0)[0]
 
+.. py:method:: Constraint.evaluate_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+
+   Evaluate a constraint for multiple targets and return one :class:`ConstraintResult`
+   per target.
+
+   This is a convenience API for callers that want the richer ``evaluate()`` result
+   structure for each target, without manually looping over targets.
+
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param list target_ras: List of target right ascensions in degrees (ICRS/J2000)
+   :param list target_decs: List of target declinations in degrees (ICRS/J2000)
+   :param times: Optional specific time(s) to evaluate
+   :param indices: Optional specific time index/indices to evaluate
+   :param target_roll: Optional spacecraft roll angle in degrees
+   :type target_roll: float or None
+   :param int n_roll_samples: Number of roll angles to sweep for roll-dependent constraints
+   :returns: List of :class:`ConstraintResult` objects, one per input target
+   :rtype: list[ConstraintResult]
+
 .. py:method:: Constraint.in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
 
    Check if the target satisfies the constraint at given time(s).
