@@ -1575,6 +1575,14 @@ impl PyConstraint {
                 ))
             })?;
 
+            if group_results.len() != group_indices.len() {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "Batch evaluation returned {} results for {} targets",
+                    group_results.len(),
+                    group_indices.len()
+                )));
+            }
+
             // Place results back in original order
             // Convert group_results into an iterator and zip with group_indices
             for (result, &original_idx) in group_results.into_iter().zip(group_indices.iter()) {
@@ -1582,8 +1590,20 @@ impl PyConstraint {
             }
         }
 
-        // Convert Option results to owned results
-        let final_results: Vec<ConstraintResult> = results.into_iter().flatten().collect();
+        // Convert Option results to owned results, preserving the invariant that
+        // every input target produces exactly one result.
+        let final_results: Vec<ConstraintResult> = results
+            .into_iter()
+            .enumerate()
+            .map(|(index, result)| {
+                result.ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "Batch evaluation did not produce a result for target index {}",
+                        index
+                    ))
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?;
         Ok(final_results)
     }
 
