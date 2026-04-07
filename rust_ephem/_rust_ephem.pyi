@@ -568,7 +568,7 @@ class Constraint:
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-        target_rolls: list[float | None] | None = None,
+        target_rolls: list[float] | None = None,
     ) -> list[Any]:
         """
         Evaluate constraint against multiple targets and return one result per target.

@@ -192,7 +192,7 @@ def test_batch_target_rolls_matches_per_target_calls(
 
     target_ras = [10.0, 25.0, 40.0, 55.0]
     target_decs = [5.0, -10.0, 15.0, -20.0]
-    target_rolls = [None, 12.0, None, 30.0]
+    target_rolls = [1.0, 12.0, 15.0, 30.0]
 
     batch = config.in_constraint_batch(
         tle_ephem,
@@ -222,7 +222,7 @@ def test_evaluate_batch_target_rolls_matches_per_target_calls(
 
     target_ras = [10.0, 25.0, 40.0, 55.0]
     target_decs = [5.0, -10.0, 15.0, -20.0]
-    target_rolls = [None, 12.0, None, 30.0]
+    target_rolls = [1.0, 12.0, 15.0, 30.0]
 
     batch = config.evaluate_batch(
         tle_ephem,
@@ -260,7 +260,7 @@ def test_batch_target_rolls_length_validation(
             tle_ephem,
             [10.0, 25.0],
             [5.0, -10.0],
-            target_rolls=[None],
+            target_rolls=[1.0],  # Incorrect length
         )
 
 

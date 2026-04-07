@@ -226,8 +226,8 @@ class RustConstraintMixin(BaseModel):
     def _normalize_target_rolls(
         target_ras: list[float],
         target_decs: list[float],
-        target_rolls: list[float | None] | None,
-    ) -> list[float | None] | None:
+        target_rolls: list[float] | None,
+    ) -> list[float] | None:
         """Validate per-target roll inputs for batch APIs."""
         if len(target_ras) != len(target_decs):
             raise ValueError("target_ras and target_decs must have the same length")
@@ -241,11 +241,11 @@ class RustConstraintMixin(BaseModel):
 
     @staticmethod
     def _group_target_roll_indices(
-        target_rolls: list[float | None],
-    ) -> list[tuple[float | None, list[int]]]:
+        target_rolls: list[float],
+    ) -> list[tuple[float, list[int]]]:
         """Group target indices by shared roll values while preserving order."""
-        grouped: dict[float | None, list[int]] = {}
-        order: list[float | None] = []
+        grouped: dict[float, list[int]] = {}
+        order: list[float] = []
         for index, target_roll in enumerate(target_rolls):
             if target_roll not in grouped:
                 grouped[target_roll] = []
@@ -585,10 +585,17 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-        target_rolls: list[float | None] | None = None,
+        target_rolls: list[float] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> list[ConstraintResult]:
-        """Evaluate the constraint for multiple targets and return one result per target."""
+        """Evaluate the constraint for multiple targets and return one result per target.
+
+        Args:
+            target_rolls: Optional per-target spacecraft roll angles (degrees). Must have
+                the same length as ``target_ras`` and ``target_decs``. Each entry may be
+                ``None`` to sweep all rolls for that target, or a float for a fixed roll.
+                Pass ``None`` (not a list) to sweep rolls for all targets uniformly.
+        """
         if n_roll_samples <= 0:
             raise ValueError("n_roll_samples must be a positive integer")
         normalized_target_rolls = self._normalize_target_rolls(
@@ -633,7 +640,7 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-        target_rolls: list[float | None] | None = None,
+        target_rolls: list[float] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> npt.NDArray[np.bool_]:
         """
@@ -654,6 +661,8 @@ class RustConstraintMixin(BaseModel):
                 When an entry is ``None`` and the constraint has a boresight offset with
                 non-zero pitch/yaw, sweeps ``n_roll_samples`` roll angles and returns
                 ``True`` (violated) only if violated at **every** possible roll.
+                Must have the same length as ``target_ras`` and ``target_decs``.
+                If you want to sweep rolls for all targets, pass ``None`` instead.
             n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
                 and the constraint is roll-dependent.  Uniformly spaced over [0°, 360°).
                 Default :data:`DEFAULT_N_ROLL_SAMPLES` (360 ≈ 1° resolution).
@@ -674,6 +683,18 @@ class RustConstraintMixin(BaseModel):
                 ephemeris,
                 target_ras,
                 target_decs,
+                times=times,
+                indices=indices,
+                target_roll=None,
+                n_roll_samples=n_roll_samples,
+            )
+
+        # Special case: empty target list should still return proper (0, n_times) shape
+        if len(target_ras) == 0:
+            return self._in_constraint_batch_uniform(
+                ephemeris,
+                [],
+                [],
                 times=times,
                 indices=indices,
                 target_roll=None,
