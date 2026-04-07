@@ -559,22 +559,24 @@ Evaluation Methods
       # Evaluate at specific indices
       result = constraint.evaluate(ephem, 83.63, 22.01, indices=[0, 10, 20])
 
-.. py:method:: Constraint.in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_roll=None)
+.. py:method:: Constraint.in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None)
 
    Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
 
-   This low-level method evaluates the same constraint with the same roll angle against multiple
-   target positions. **For per-target roll angles and roll-sweeping** (``target_rolls`` and ``n_roll_samples``),
-   use the Pydantic constraint models (e.g., ``SunConstraint``) which wrap this API
-   with ``RustConstraintMixin.in_constraint_batch()`` instead.
+   This low-level method evaluates the constraint against multiple target positions.
+   **For roll-sweeping** (``n_roll_samples``), use the Pydantic constraint models
+   (e.g., ``SunConstraint``) which wrap this API with
+   ``RustConstraintMixin.in_constraint_batch()`` instead.
 
    :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
    :param list target_ras: List of target right ascensions in degrees (ICRS/J2000)
    :param list target_decs: List of target declinations in degrees (ICRS/J2000)
    :param times: Optional specific time(s) to evaluate
    :param indices: Optional specific time index/indices to evaluate
-   :param target_roll: Optional spacecraft roll angle in degrees to apply uniformly to all targets
-   :type target_roll: float or None
+   :param target_rolls: Optional per-target spacecraft roll angles in degrees.
+      Must be a list of the same length as ``target_ras``. Pass ``None`` to evaluate
+      without any fixed spacecraft roll.
+   :type target_rolls: list[float] or None
    :returns: 2D numpy boolean array of shape (n_targets, n_times)
    :rtype: numpy.ndarray
 
@@ -605,23 +607,25 @@ Evaluation Methods
       # Find targets that never violate
       always_visible = np.where(violation_counts == 0)[0]
 
-.. py:method:: Constraint.evaluate_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_roll=None)
+.. py:method:: Constraint.evaluate_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None)
 
    Evaluate a constraint for multiple targets and return one :class:`ConstraintResult`
    per target.
 
-   This low-level method evaluates the same constraint with the same roll angle against multiple
-   target positions. The returned list has one result per target. **For per-target roll angles and roll-sweeping**
-   (``target_rolls`` and ``n_roll_samples``), use the Pydantic constraint models (e.g., ``SunConstraint``)
-   which wrap this API with ``RustConstraintMixin.evaluate_batch()`` instead.
+   This low-level method evaluates the constraint against multiple target positions.
+   The returned list has one result per target. **For roll-sweeping** (``n_roll_samples``),
+   use the Pydantic constraint models (e.g., ``SunConstraint``) which wrap this API
+   with ``RustConstraintMixin.evaluate_batch()`` instead.
 
    :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
    :param list target_ras: List of target right ascensions in degrees (ICRS/J2000)
    :param list target_decs: List of target declinations in degrees (ICRS/J2000)
    :param times: Optional specific time(s) to evaluate
    :param indices: Optional specific time index/indices to evaluate
-   :param target_roll: Optional spacecraft roll angle in degrees to apply uniformly to all targets
-   :type target_roll: float or None
+   :param target_rolls: Optional per-target spacecraft roll angles in degrees.
+      Must be a list of the same length as ``target_ras``. Pass ``None`` to evaluate
+      without any fixed spacecraft roll.
+   :type target_rolls: list[float] or None
    :returns: List of :class:`ConstraintResult` objects, one per input target
    :rtype: list[ConstraintResult]
 

@@ -52,6 +52,9 @@ class TestSunConstraints:
         else:
             assert not_vis is False, "Sun should not be Sun Constrained"
 
+    @pytest.mark.filterwarnings(
+        "ignore::astropy.coordinates.NonRotationTransformationWarning"
+    )
     def test_or_constraints_sun_angle_greater_than_90(self, sun: Any) -> None:
         sun_angle = sun.separation(SkyCoord(10, 0, unit="deg")).deg
         assert sun_angle > 90, f"Sun is too close, {sun.ra} {sun.dec}"

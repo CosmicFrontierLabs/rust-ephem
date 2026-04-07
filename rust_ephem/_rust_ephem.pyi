@@ -583,8 +583,7 @@ class Constraint:
             indices: Optional specific time index/indices to evaluate. Can be a
                      single index or list of indices into the ephemeris timestamp array.
             target_rolls: Optional per-target spacecraft roll angles in degrees.
-                         List of length equal to target_ras. Each entry may be None
-                         to evaluate without a fixed roll.
+                         List of length equal to target_ras.
 
         Returns:
             List of ConstraintResult objects, one per input target.
@@ -616,8 +615,7 @@ class Constraint:
             indices: Optional specific time index/indices to evaluate. Can be a
                      single index or list of indices into the ephemeris timestamp array.
             target_rolls: Optional per-target spacecraft roll angles in degrees.
-                         List of length equal to target_ras. Each entry may be None
-                         to evaluate without a fixed roll.
+                         List of length equal to target_ras.
 
         Returns:
             2D numpy boolean array of shape (n_targets, n_times) where True indicates
