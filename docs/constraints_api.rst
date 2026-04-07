@@ -56,8 +56,13 @@ Quick Start
 Constraint Class (Rust Backend)
 -------------------------------
 
-The ``Constraint`` class provides the core constraint evaluation functionality
-implemented in Rust for maximum performance.
+The low-level ``Constraint`` class provides direct access to Rust constraint evaluation
+for maximum performance. However, **this class still has limited roll support**:
+single-target methods use a single ``target_roll`` value, while batch methods support
+per-target ``target_rolls``. Roll-sweeping is not supported at this layer. Most users should use the
+**Pydantic configuration models** (``SunConstraint``, ``MoonConstraint``, etc.) instead,
+which wrap ``Constraint`` with full support for per-target rolls and roll-sweeping via ``target_rolls``
+and ``n_roll_samples`` parameters.
 
 Factory Methods
 ^^^^^^^^^^^^^^^
@@ -555,27 +560,24 @@ Evaluation Methods
       # Evaluate at specific indices
       result = constraint.evaluate(ephem, 83.63, 22.01, indices=[0, 10, 20])
 
-.. py:method:: Constraint.in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+.. py:method:: Constraint.in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None)
 
    Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
 
-   This method is **3-50x faster** than calling ``evaluate()`` in a loop when
-   you need to check many target positions.
+   This low-level method evaluates the constraint against multiple target positions.
+   **For roll-sweeping** (``n_roll_samples``), use the Pydantic constraint models
+   (e.g., ``SunConstraint``) which wrap this API with
+   ``RustConstraintMixin.in_constraint_batch()`` instead.
 
    :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
    :param list target_ras: List of target right ascensions in degrees (ICRS/J2000)
    :param list target_decs: List of target declinations in degrees (ICRS/J2000)
    :param times: Optional specific time(s) to evaluate
    :param indices: Optional specific time index/indices to evaluate
-   :param target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and the
-      constraint contains a boresight offset with non-zero pitch/yaw, sweeps
-      ``n_roll_samples`` roll angles and returns ``True`` only when all
-      rolls are blocked (no valid spacecraft orientation exists).  Pass an explicit
-      float to evaluate at a fixed roll.
-   :type target_roll: float or None
-   :param int n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
-      and the constraint is roll-dependent.  Default :data:`DEFAULT_N_ROLL_SAMPLES`.
-      Ignored when ``target_roll`` is given or no pitch/yaw offset is present.
+   :param target_rolls: Optional per-target spacecraft roll angles in degrees.
+      Must be a list of the same length as ``target_ras``. Pass ``None`` to evaluate
+      without any fixed spacecraft roll.
+   :type target_rolls: list[float] or None
    :returns: 2D numpy boolean array of shape (n_targets, n_times)
    :rtype: numpy.ndarray
 
@@ -605,6 +607,28 @@ Evaluation Methods
 
       # Find targets that never violate
       always_visible = np.where(violation_counts == 0)[0]
+
+.. py:method:: Constraint.evaluate_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None)
+
+   Evaluate a constraint for multiple targets and return one :class:`ConstraintResult`
+   per target.
+
+   This low-level method evaluates the constraint against multiple target positions.
+   The returned list has one result per target. **For roll-sweeping** (``n_roll_samples``),
+   use the Pydantic constraint models (e.g., ``SunConstraint``) which wrap this API
+   with ``RustConstraintMixin.evaluate_batch()`` instead.
+
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param list target_ras: List of target right ascensions in degrees (ICRS/J2000)
+   :param list target_decs: List of target declinations in degrees (ICRS/J2000)
+   :param times: Optional specific time(s) to evaluate
+   :param indices: Optional specific time index/indices to evaluate
+   :param target_rolls: Optional per-target spacecraft roll angles in degrees.
+      Must be a list of the same length as ``target_ras``. Pass ``None`` to evaluate
+      without any fixed spacecraft roll.
+   :type target_rolls: list[float] or None
+   :returns: List of :class:`ConstraintResult` objects, one per input target
+   :rtype: list[ConstraintResult]
 
 .. py:method:: Constraint.in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
 
@@ -1365,27 +1389,64 @@ All Pydantic constraint models inherit these methods:
    :returns: ConstraintResult containing violation windows
    :rtype: ConstraintResult
 
-.. py:method:: in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+.. py:method:: evaluate_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+
+   Evaluate the constraint for multiple targets and return one ``ConstraintResult`` per target.
+
+   This is the **recommended high-level API** for batch constraint evaluation. Supports per-target
+   roll angles and automatic roll-sweeping for roll-dependent constraints.
+
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param list target_ras: List of target right ascensions in degrees (ICRS/J2000)
+   :param list target_decs: List of target declinations in degrees (ICRS/J2000)
+   :param times: Optional specific time(s) to evaluate
+   :param indices: Optional specific time index/indices to evaluate
+   :param target_rolls: Optional per-target spacecraft roll angles in degrees. List of length
+      equal to ``target_ras``. Each entry may be ``None`` to auto-sweep that target's roll.
+      When ``None`` for a target and the constraint is roll-dependent, sweeps ``n_roll_samples``
+      roll angles and marks violated only if **all** rolls are blocked.
+   :type target_rolls: list[float | None] or None
+   :param int n_roll_samples: Number of roll angles to sweep when a target has ``target_roll=None``
+      and the constraint is roll-dependent. Default
+      :data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES` (72 ≈ 5° resolution).
+   :returns: List of ``ConstraintResult`` objects, one per input target
+   :rtype: list[ConstraintResult]
+
+.. py:method:: in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
 
    Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
+
+   Supports per-target roll angles and automatic roll-sweeping for roll-dependent constraints.
 
    :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
    :param list target_ras: List of target right ascensions in degrees
    :param list target_decs: List of target declinations in degrees
    :param times: Optional specific time(s) to evaluate
    :param indices: Optional specific time index/indices to evaluate
-   :param target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and the
-      constraint contains a boresight offset with non-zero pitch/yaw, sweeps
-      ``n_roll_samples`` roll angles and returns ``True`` only when all
-      rolls are blocked (no valid spacecraft orientation exists).  Pass an explicit
-      float to evaluate at a fixed roll.
-   :type target_roll: float or None
-   :param int n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
-      and the constraint is roll-dependent.  Default
-      :data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES`.  Ignored when ``target_roll``
-      is given or no pitch/yaw offset is present.
+   :param target_rolls: Optional per-target spacecraft roll angles in degrees. List of length
+      equal to ``target_ras``. Each entry may be ``None`` to auto-sweep that target's roll.
+      When ``None`` for a target and the constraint is roll-dependent, sweeps ``n_roll_samples``
+      roll angles and returns ``True`` only when **all** rolls are blocked.
+   :type target_rolls: list[float | None] or None
+   :param int n_roll_samples: Number of roll angles to sweep when a target has ``target_roll=None``
+      and the constraint is roll-dependent. Default
+      :data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES`. Ignored when all ``target_rolls`` are
+      fixed floats or no pitch/yaw offset is present.
    :returns: 2D numpy array of shape (n_targets, n_times) with boolean violation status
    :rtype: numpy.ndarray
+
+   **Example:**
+
+   .. code-block:: python
+
+      # Evaluate multiple targets, some with fixed rolls, some with auto-sweep
+      violations = constraint.in_constraint_batch(
+          ephem,
+          target_ras=[0.0, 90.0, 180.0],
+          target_decs=[0.0, 45.0, -30.0],
+          target_rolls=[0.0, None, 90.0]  # First: fixed 0°, Second: sweep all, Third: fixed 90°
+      )
+      print(violations.shape)  # (3, n_times)
 
 .. py:method:: in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
 

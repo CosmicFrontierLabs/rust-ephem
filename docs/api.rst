@@ -409,13 +409,25 @@ Classes
       - ``indices`` — Optional: specific time index/indices to evaluate
       - Returns: ``ConstraintResult`` object
 
-    * ``in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None)`` — **[Recommended]** Vectorized batch evaluation for multiple targets
+    * ``evaluate_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None)`` — Convenience batch API returning one ``ConstraintResult`` per target
+
+      - ``ephemeris`` — TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris object
+      - ``target_ras`` — List of target right ascensions in degrees (ICRS/J2000)
+      - ``target_decs`` — List of target declinations in degrees (ICRS/J2000)
+      - ``times`` — Optional: specific datetime(s) to evaluate (must exist in ephemeris)
+      - ``indices`` — Optional: specific time index/indices to evaluate
+      - ``target_rolls`` — Optional: per-target spacecraft roll angles in degrees, one value per target. Each entry may be ``None`` to evaluate that target without a fixed spacecraft roll (default: ``None`` for all targets)
+      - Returns: list of ``ConstraintResult`` objects, one per target
+      - Best when you want the same per-target summary shape as ``evaluate()`` without writing the loop yourself
+
+    * ``in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None)`` — **[Recommended]** Vectorized batch evaluation for multiple targets
 
       - ``ephemeris`` — TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris object
       - ``target_ras`` — List/array of target right ascensions in degrees (ICRS/J2000)
       - ``target_decs`` — List/array of target declinations in degrees (ICRS/J2000)
       - ``times`` — Optional: specific datetime(s) to evaluate (must exist in ephemeris)
       - ``indices`` — Optional: specific time index/indices to evaluate
+      - ``target_rolls`` — Optional: per-target spacecraft roll angles in degrees, one value per target. Each entry may be ``None`` to evaluate that target without a fixed spacecraft roll. When an entry is ``None`` and the constraint has boresight offsets with non-zero pitch/yaw, evaluates the target as violated only if it violates at every possible roll angle (default: ``None`` for all targets)
       - Returns: 2D NumPy boolean array of shape (n_targets, n_times) where True indicates constraint violation
       - **Performance**: 3-50x faster than calling ``evaluate()`` in a loop
       - **Optimized**: Uses vectorized operations for batch RA/Dec conversion and constraint evaluation

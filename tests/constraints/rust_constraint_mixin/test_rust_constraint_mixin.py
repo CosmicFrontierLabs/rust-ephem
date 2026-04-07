@@ -12,6 +12,33 @@ from rust_ephem.constraints import (
 
 
 class TestRustConstraintMixin:
+    def test_evaluate_batch_returns_constraint_results(
+        self, patched_constraint: Any, dummy_ephemeris: Any
+    ) -> None:
+        constraint: Any = SunConstraint(min_angle=10.0)
+        results = constraint.evaluate_batch(
+            dummy_ephemeris,
+            target_ras=[1.0, 3.0],
+            target_decs=[2.0, 4.0],
+        )
+
+        assert len(results) == 2
+        assert all(isinstance(result, ConstraintResult) for result in results)
+
+    def test_evaluate_batch_reuses_cached_backend(
+        self, patched_constraint: Any, dummy_ephemeris: Any
+    ) -> None:
+        constraint: Any = SunConstraint(min_angle=10.0)
+        _ = constraint.evaluate_batch(
+            dummy_ephemeris,
+            target_ras=[1.0, 3.0],
+            target_decs=[2.0, 4.0],
+        )
+
+        assert patched_constraint.created == 1
+        backend = constraint._rust_constraint
+        assert len(backend.evaluate_batch_calls) == 1
+
     def test_evaluate_creates_backend_once_created_count(
         self, patched_constraint: Any, dummy_ephemeris: Any
     ) -> None:

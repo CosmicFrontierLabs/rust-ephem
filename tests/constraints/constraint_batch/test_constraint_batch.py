@@ -142,6 +142,57 @@ def test_batch_single_target(
     np.testing.assert_array_equal(batch_result[0, :], single_result)
 
 
+def test_evaluate_batch_matches_single_evaluate(
+    ground_ephem_2h: GroundEphemeris, sun_constraint_45: SunConstraint
+) -> None:
+    """Test evaluate_batch returns one ConstraintResult per target."""
+    ephem = ground_ephem_2h
+    constraint = sun_constraint_45
+
+    target_ras = [0.0, 90.0, 180.0]
+    target_decs = [0.0, 30.0, -30.0]
+
+    batch_results = constraint.evaluate_batch(ephem, target_ras, target_decs)
+
+    assert len(batch_results) == len(target_ras)
+
+    for i, batch_result in enumerate(batch_results):
+        single_result = constraint.evaluate(ephem, target_ras[i], target_decs[i])
+
+        np.testing.assert_array_equal(
+            batch_result.constraint_array,
+            single_result.constraint_array,
+            err_msg=f"evaluate_batch result {i} does not match single evaluate()",
+        )
+        assert batch_result.all_satisfied == single_result.all_satisfied
+        assert batch_result.constraint_name == single_result.constraint_name
+
+
+def test_rust_constraint_evaluate_batch_matches_single_evaluate(
+    ground_ephem_2h: GroundEphemeris,
+) -> None:
+    """Test rust_ephem.Constraint exposes evaluate_batch convenience API."""
+    import rust_ephem
+
+    ephem = ground_ephem_2h
+    constraint = rust_ephem.Constraint.sun_proximity(45.0)
+    target_ras = [0.0, 90.0]
+    target_decs = [0.0, 30.0]
+
+    batch_results = constraint.evaluate_batch(ephem, target_ras, target_decs)
+
+    assert len(batch_results) == len(target_ras)
+
+    for i, batch_result in enumerate(batch_results):
+        single_result = constraint.evaluate(ephem, target_ras[i], target_decs[i])
+
+        np.testing.assert_array_equal(
+            batch_result.constraint_array,
+            single_result.constraint_array,
+            err_msg=f"rust evaluate_batch result {i} does not match single evaluate()",
+        )
+
+
 def test_earth_limb_batch(
     ground_ephem_earth_limb: GroundEphemeris,
     earth_limb_constraint_20: EarthLimbConstraint,

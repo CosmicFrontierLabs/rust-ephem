@@ -83,6 +83,16 @@ class RustConstraintMixin(BaseModel):
         target_roll: float | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> ConstraintResult: ...
+    def evaluate_batch(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: list[float],
+        target_decs: list[float],
+        times: datetime | list[datetime] | None = None,
+        indices: int | list[int] | None = None,
+        target_rolls: list[float] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+    ) -> list[ConstraintResult]: ...
     def in_constraint_batch(
         self,
         ephemeris: Ephemeris,
@@ -90,7 +100,7 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-        target_roll: float | None = None,
+        target_rolls: list[float] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> npt.NDArray[np.bool_]: ...
     def in_constraint(
