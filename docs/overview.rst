@@ -33,6 +33,7 @@ Core Capabilities
 - **SPICE kernel access** for spacecraft ephemeris from SPK files
 - **Ground observatory ephemeris** for fixed Earth locations
 - **OEM file support** for CCSDS Orbit Ephemeris Messages
+- **Generic file ephemeris** for simulator output (STK .e, CSV, and similar formats)
 - **JPL Horizons integration** for asteroids, comets, and spacecraft
 - **Coordinate transformations** between TEME, ITRS, and GCRS frames
 - **Time system conversions** (TAI, UT1, UTC) with leap seconds

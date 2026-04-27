@@ -26,7 +26,7 @@ Classes
 
 **Ephemeris** (Abstract Base Class)
   Common interface for all ephemeris types. All concrete ephemeris classes
-  (TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris) implement this
+  (TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris) implement this
   interface and can be used interchangeably where an ``Ephemeris`` is expected.
 
   Use ``isinstance(obj, Ephemeris)`` to check if an object is any ephemeris type.
@@ -55,7 +55,7 @@ Classes
     * ``calculate_airmass(ra_deg, dec_deg, time_indices=None)`` — Calculate astronomical airmass for target
 
   **Type Alias:**
-    ``EphemerisType = TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris``
+    ``EphemerisType = TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris | FileEphemeris``
 
 **TLEEphemeris**
   Propagate Two-Line Element (TLE) sets with SGP4 and convert to coordinate frames.
@@ -379,6 +379,60 @@ Classes
       - ``body`` — Body name or NAIF ID as string
       - Returns: ``astropy.coordinates.SkyCoord`` in GCRS frame
 
+**FileEphemeris**
+  Load pre-computed state vectors from a simulator output file and resample to a
+  uniform output grid via Hermite interpolation.  Supports STK ``.e`` files,
+  simple CSV/TSV layouts, and any file where data rows contain seven
+  whitespace-separated values: ``<time>  <x>  <y>  <z>  <vx>  <vy>  <vz>``.
+
+  The coordinate frame, reference epoch, and units are auto-detected from header
+  key-value pairs and may be overridden via constructor parameters.
+
+  **Constructor:**
+    ``FileEphemeris(file_path, begin, end, step_size=60, *, polar_motion=False, position_unit=None, velocity_unit=None, frame=None, epoch=None, time_format=None)``
+
+    * ``file_path`` — Path to the ephemeris file
+    * ``begin`` — Start time for the output grid (Python datetime, UTC)
+    * ``end`` — End time for the output grid (Python datetime, UTC)
+    * ``step_size`` — Output time step in seconds (default: 60)
+    * ``polar_motion`` — Apply polar motion correction (default: False)
+    * ``position_unit`` — Override detected position unit: ``"km"`` (default), ``"m"``, ``"cm"``
+    * ``velocity_unit`` — Override detected velocity unit: ``"km/s"`` (default), ``"m/s"``, ``"cm/s"``
+    * ``frame`` — Override detected coordinate frame.
+      GCRS-compatible: ``"J2000"``, ``"EME2000"``, ``"GCRF"``, ``"GCRS"``, ``"ICRF"``.
+      Earth-fixed: ``"ITRS"``, ``"ECEF"``, ``"ECF"``, ``"FIXED"``, ``"TERRESTRIAL"``
+    * ``epoch`` — Reference epoch (T0) for numeric time offsets; overrides any epoch found in the file header
+    * ``time_format`` — How to interpret the time column: ``"auto"`` (default), ``"seconds"``, ``"days"``, ``"iso8601"``
+
+  **Raises:**
+    * ``IOError`` — If the file cannot be opened or read
+    * ``ValueError`` — If no state vectors are found, the requested time range exceeds the file data range,
+      units are unrecognised, or the frame is unsupported
+
+  **Attributes (read-only):**
+    * ``file_path`` — Path to the source file
+    * ``source_frame`` — Coordinate frame as detected/specified
+    * ``source_position_unit`` — Position unit as detected/specified (before km conversion)
+    * ``source_velocity_unit`` — Velocity unit as detected/specified (before km/s conversion)
+    * ``file_pv`` — Raw state vectors from the file (km, km/s) before resampling (PositionVelocityData)
+    * ``file_timestamp`` — Raw timestamps from the file before resampling (list of datetime)
+    * ``gcrs_pv`` — Interpolated position/velocity in GCRS frame (PositionVelocityData)
+    * ``itrs_pv`` — Position/velocity in ITRS frame (PositionVelocityData)
+    * ``sun_pv``, ``moon_pv`` — Sun/Moon position/velocity in GCRS frame (PositionVelocityData)
+    * ``timestamp`` — Output grid timestamps (NumPy datetime64 array)
+    * ``gcrs``, ``itrs``, ``earth``, ``sun``, ``moon`` — astropy SkyCoord objects
+    * ``latitude_deg``, ``longitude_deg``, ``height_m`` — Geodetic coordinates
+    * All other standard ``Ephemeris`` properties (angular radii, RA/Dec arrays, etc.)
+
+  **Methods:**
+    * ``index(time)`` — Find the index of the closest output-grid timestamp to the given datetime
+    * ``get_body_pv(body)``, ``get_body(body)`` — Solar system body position/velocity and SkyCoord
+    * ``moon_illumination(time_indices=None)`` — Moon illumination fraction (0–1) as seen from spacecraft
+    * ``radec_to_altaz(ra_deg, dec_deg, time_indices=None)`` — Convert RA/Dec to Alt/Az
+    * ``calculate_airmass(ra_deg, dec_deg, time_indices=None)`` — Astronomical airmass
+
+  See :doc:`ephemeris_file` for worked examples.
+
 **Constraint**
   Evaluate astronomical observation constraints against ephemeris data.
 
@@ -402,7 +456,7 @@ Classes
   **Methods:**
     * ``evaluate(ephemeris, target_ra, target_dec, times=None, indices=None)`` — Evaluate constraint against ephemeris data
 
-      - ``ephemeris`` — TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris object
+      - ``ephemeris`` — Any ``Ephemeris`` object (TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, or FileEphemeris)
       - ``target_ra`` — Target right ascension in degrees (ICRS/J2000)
       - ``target_dec`` — Target declination in degrees (ICRS/J2000)
       - ``times`` — Optional: specific datetime(s) to evaluate (must exist in ephemeris)
@@ -411,7 +465,7 @@ Classes
 
     * ``evaluate_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None)`` — Convenience batch API returning one ``ConstraintResult`` per target
 
-      - ``ephemeris`` — TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris object
+      - ``ephemeris`` — Any ``Ephemeris`` object (TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, or FileEphemeris)
       - ``target_ras`` — List of target right ascensions in degrees (ICRS/J2000)
       - ``target_decs`` — List of target declinations in degrees (ICRS/J2000)
       - ``times`` — Optional: specific datetime(s) to evaluate (must exist in ephemeris)
@@ -422,7 +476,7 @@ Classes
 
     * ``in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None)`` — **[Recommended]** Vectorized batch evaluation for multiple targets
 
-      - ``ephemeris`` — TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris object
+      - ``ephemeris`` — Any ``Ephemeris`` object (TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, or FileEphemeris)
       - ``target_ras`` — List/array of target right ascensions in degrees (ICRS/J2000)
       - ``target_decs`` — List/array of target declinations in degrees (ICRS/J2000)
       - ``times`` — Optional: specific datetime(s) to evaluate (must exist in ephemeris)
@@ -440,7 +494,7 @@ Classes
 
     * ``instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, target_roll=None)`` — Compute instantaneous visible sky solid angle. When ``target_roll`` is not specified, sweeps ``n_roll_samples`` spacecraft roll angles for boresight-offset constraints with non-zero pitch/yaw, giving the total accessible sky over all roll states.
 
-      - ``ephemeris`` — TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris object
+      - ``ephemeris`` — Any ``Ephemeris`` object (TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, or FileEphemeris)
       - ``time`` — Optional datetime to evaluate (must exist in ephemeris)
       - ``index`` — Optional ephemeris index to evaluate
       - ``n_points`` — Number of sky samples (Fibonacci sphere integration, default :data:`DEFAULT_N_POINTS`)
