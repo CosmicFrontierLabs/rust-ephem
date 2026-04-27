@@ -39,7 +39,7 @@ Key Features
    - **SPICEEphemeris**: Spacecraft ephemeris from SPICE kernel (SPK) files
    - **GroundEphemeris**: Fixed ground station positions
    - **OEMEphemeris**: CCSDS Orbit Ephemeris Message files
-   - **FileEphemeris**: Generic simulator output files (STK .e, CSV, …)
+   - **FileEphemeris**: Generic simulator output files (offset-based, ISO 8601, CSV, …)
 
 🎛️ **Flexible Constraints**
    Evaluate observational constraints (Sun/Moon avoidance, Earth limb, eclipses)

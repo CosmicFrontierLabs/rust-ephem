@@ -381,8 +381,8 @@ Classes
 
 **FileEphemeris**
   Load pre-computed state vectors from a simulator output file and resample to a
-  uniform output grid via Hermite interpolation.  Supports STK ``.e`` files,
-  simple CSV/TSV layouts, and any file where data rows contain seven
+  uniform output grid via Hermite interpolation.  Supports offset-based simulator
+  output, simple CSV/TSV layouts, and any file where data rows contain seven
   whitespace-separated values: ``<time>  <x>  <y>  <z>  <vx>  <vy>  <vz>``.
 
   The coordinate frame, reference epoch, and units are auto-detected from header
