@@ -5,6 +5,7 @@
 
 pub mod ccsds_ephemeris;
 pub mod ephemeris_common;
+pub mod file_ephemeris;
 pub mod ground_ephemeris;
 pub mod position_velocity;
 pub mod spice_ephemeris;
@@ -13,6 +14,7 @@ pub mod tle_ephemeris;
 
 // Re-export main types
 pub use ccsds_ephemeris::OEMEphemeris;
+pub use file_ephemeris::FileEphemeris;
 pub use ground_ephemeris::GroundEphemeris;
 pub use spice_ephemeris::SPICEEphemeris;
 pub use tle_ephemeris::TLEEphemeris;

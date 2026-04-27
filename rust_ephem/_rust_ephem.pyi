@@ -2432,6 +2432,411 @@ class OEMEphemeris(Ephemeris):
         """
         ...
 
+class FileEphemeris(Ephemeris):
+    """
+    Ephemeris that reads pre-computed state vectors from a file.
+
+    Each row of the data section must contain at least 7 whitespace-separated
+    values: a timestamp (or numeric offset) followed by x, y, z, vx, vy, vz.
+
+    Supported timestamp formats
+    ---------------------------
+    * **Numeric offset** (default / ``time_format="seconds"``): seconds elapsed
+      since a reference epoch.  The epoch is read from file header keys such as
+      ``ScenarioEpoch``, ``Epoch``, or ``T0``, or may be supplied via ``epoch``.
+    * ``time_format="days"``: same as above but the offset is in days.
+    * ``time_format="iso8601"``: absolute UTC datetime in ISO 8601 format.
+    * ``time_format="auto"`` (default): try numeric offset first, then ISO 8601 /
+      STK natural-language date strings.
+
+    Supported coordinate frames
+    ---------------------------
+    Auto-detected from the ``CoordinateSystem`` / ``ref_frame`` header key,
+    or overridden via the ``frame`` parameter.
+
+    * **GCRS-compatible**: J2000, EME2000, GCRF, GCRS, ICRF — data are treated
+      as inertial and transformed to ITRS.
+    * **Earth-fixed**: ITRS, ECEF, ECF, FIXED, TERRESTRIAL — data are treated as
+      Earth-fixed and transformed to GCRS.
+
+    Units
+    -----
+    Defaults are km / km/s.  Use ``position_unit`` and ``velocity_unit`` to
+    specify different units (``"m"`` / ``"m/s"``, ``"cm"`` / ``"cm/s"``).
+    """
+
+    def __init__(
+        self,
+        file_path: str,
+        begin: datetime,
+        end: datetime,
+        step_size: int = 60,
+        *,
+        polar_motion: bool = False,
+        position_unit: str | None = None,
+        velocity_unit: str | None = None,
+        frame: str | None = None,
+        epoch: datetime | None = None,
+        time_format: str | None = None,
+    ) -> None:
+        """
+        Initialise a FileEphemeris from a state-vector file.
+
+        Args:
+            file_path: Path to the ephemeris file.
+            begin: Start of the output time grid (UTC).
+            end: End of the output time grid (UTC).
+            step_size: Output time step in seconds (default 60).
+            polar_motion: Apply polar motion correction (default False).
+            position_unit: Override detected position unit.
+                Supported: ``"km"`` (default), ``"m"``, ``"cm"``.
+            velocity_unit: Override detected velocity unit.
+                Supported: ``"km/s"`` (default), ``"m/s"``, ``"cm/s"``.
+            frame: Override detected coordinate frame.
+                GCRS-compatible: ``"J2000"``, ``"EME2000"``, ``"GCRF"``, ``"GCRS"``,
+                ``"ICRF"``.  Earth-fixed: ``"ITRS"``, ``"ECEF"``, ``"ECF"``,
+                ``"FIXED"``, ``"TERRESTRIAL"``.
+            epoch: Reference epoch (T0) for numeric time offsets.  Overrides any
+                epoch found in the file header.
+            time_format: How to interpret the time column.
+                ``"auto"`` (default), ``"seconds"``, ``"days"``, ``"iso8601"``.
+
+        Raises:
+            IOError: If the file cannot be opened or read.
+            ValueError: If no state vectors are found, the requested time range
+                exceeds the file's data range, units are unrecognised, or the
+                frame is unsupported.
+        """
+        ...
+
+    @property
+    def file_path(self) -> str:
+        """Path to the source file."""
+        ...
+
+    @property
+    def polar_motion(self) -> bool:
+        """Whether polar motion correction is applied."""
+        ...
+
+    @property
+    def source_position_unit(self) -> str:
+        """Position unit as found in / specified for the file (before km conversion)."""
+        ...
+
+    @property
+    def source_velocity_unit(self) -> str:
+        """Velocity unit as found in / specified for the file (before km/s conversion)."""
+        ...
+
+    @property
+    def source_frame(self) -> str:
+        """Coordinate frame as found in / specified for the file."""
+        ...
+
+    @property
+    def file_pv(self) -> PositionVelocityData:
+        """Raw position/velocity from the file (in km, km/s) before resampling."""
+        ...
+
+    @property
+    def file_timestamp(self) -> list[datetime]:
+        """Raw timestamps from the file before resampling."""
+        ...
+
+    @property
+    def begin(self) -> datetime:
+        """Start time of the output ephemeris grid."""
+        ...
+
+    @property
+    def end(self) -> datetime:
+        """End time of the output ephemeris grid."""
+        ...
+
+    @property
+    def step_size(self) -> int:
+        """Output time step in seconds."""
+        ...
+
+    @property
+    def gcrs_pv(self) -> PositionVelocityData:
+        """Position and velocity in GCRS frame (interpolated to the output grid)."""
+        ...
+
+    @property
+    def itrs_pv(self) -> PositionVelocityData:
+        """Position and velocity in ITRS (Earth-fixed) frame."""
+        ...
+
+    @property
+    def itrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord in ITRS frame."""
+        ...
+
+    @property
+    def gcrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord in GCRS frame."""
+        ...
+
+    @property
+    def earth(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord for the Earth position relative to the spacecraft."""
+        ...
+
+    @property
+    def sun(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord for the Sun."""
+        ...
+
+    @property
+    def moon(self) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """SkyCoord for the Moon."""
+        ...
+
+    @property
+    def timestamp(self) -> npt.NDArray[np.datetime64]:
+        """Output grid timestamps."""
+        ...
+
+    @property
+    def sun_pv(self) -> PositionVelocityData:
+        """Sun position/velocity in GCRS frame."""
+        ...
+
+    @property
+    def moon_pv(self) -> PositionVelocityData:
+        """Moon position/velocity in GCRS frame."""
+        ...
+
+    @property
+    def obsgeoloc(self) -> Any:
+        """Observer geocentric location."""
+        ...
+
+    @property
+    def obsgeovel(self) -> Any:
+        """Observer geocentric velocity."""
+        ...
+
+    @property
+    def latitude(self) -> Any:  # Returns astropy.units.Quantity
+        """Geodetic latitude as an astropy Quantity array (degrees)."""
+        ...
+
+    @property
+    def latitude_deg(self) -> npt.NDArray[np.float64]:
+        """Geodetic latitude in degrees."""
+        ...
+
+    @property
+    def latitude_rad(self) -> npt.NDArray[np.float64]:
+        """Geodetic latitude in radians."""
+        ...
+
+    @property
+    def longitude(self) -> Any:  # Returns astropy.units.Quantity
+        """Geodetic longitude as an astropy Quantity array (degrees)."""
+        ...
+
+    @property
+    def longitude_deg(self) -> npt.NDArray[np.float64]:
+        """Geodetic longitude in degrees."""
+        ...
+
+    @property
+    def longitude_rad(self) -> npt.NDArray[np.float64]:
+        """Geodetic longitude in radians."""
+        ...
+
+    @property
+    def height(self) -> Any:  # Returns astropy.units.Quantity
+        """Geodetic height above WGS84 ellipsoid."""
+        ...
+
+    @property
+    def height_m(self) -> npt.NDArray[np.float64]:
+        """Geodetic height in metres."""
+        ...
+
+    @property
+    def height_km(self) -> npt.NDArray[np.float64]:
+        """Geodetic height in kilometres."""
+        ...
+
+    @property
+    def sun_radius(self) -> Any:
+        """Angular radius of the Sun as an astropy Quantity (degrees)."""
+        ...
+
+    @property
+    def sun_radius_deg(self) -> npt.NDArray[np.float64]:
+        """Angular radius of the Sun in degrees."""
+        ...
+
+    @property
+    def sun_radius_rad(self) -> npt.NDArray[np.float64]:
+        """Angular radius of the Sun in radians."""
+        ...
+
+    @property
+    def moon_radius(self) -> Any:
+        """Angular radius of the Moon as an astropy Quantity (degrees)."""
+        ...
+
+    @property
+    def moon_radius_deg(self) -> npt.NDArray[np.float64]:
+        """Angular radius of the Moon in degrees."""
+        ...
+
+    @property
+    def moon_radius_rad(self) -> npt.NDArray[np.float64]:
+        """Angular radius of the Moon in radians."""
+        ...
+
+    @property
+    def earth_radius(self) -> Any:
+        """Angular radius of the Earth as an astropy Quantity (degrees)."""
+        ...
+
+    @property
+    def earth_radius_deg(self) -> npt.NDArray[np.float64]:
+        """Angular radius of the Earth in degrees."""
+        ...
+
+    @property
+    def earth_radius_rad(self) -> npt.NDArray[np.float64]:
+        """Angular radius of the Earth in radians."""
+        ...
+
+    @property
+    def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Sun RA/Dec in degrees (N×2 array: RA, Dec)."""
+        ...
+
+    @property
+    def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Moon RA/Dec in degrees (N×2 array: RA, Dec)."""
+        ...
+
+    @property
+    def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Earth RA/Dec in degrees (N×2 array: RA, Dec)."""
+        ...
+
+    @property
+    def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Sun RA/Dec in radians (N×2 array: RA, Dec)."""
+        ...
+
+    @property
+    def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Moon RA/Dec in radians (N×2 array: RA, Dec)."""
+        ...
+
+    @property
+    def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Earth RA/Dec in radians (N×2 array: RA, Dec)."""
+        ...
+
+    @property
+    def sun_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Sun right ascension in degrees."""
+        ...
+
+    @property
+    def sun_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Sun declination in degrees."""
+        ...
+
+    @property
+    def moon_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Moon right ascension in degrees."""
+        ...
+
+    @property
+    def moon_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Moon declination in degrees."""
+        ...
+
+    @property
+    def earth_ra_deg(self) -> npt.NDArray[np.float64]:
+        """Earth right ascension in degrees."""
+        ...
+
+    @property
+    def earth_dec_deg(self) -> npt.NDArray[np.float64]:
+        """Earth declination in degrees."""
+        ...
+
+    @property
+    def sun_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Sun right ascension in radians."""
+        ...
+
+    @property
+    def sun_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Sun declination in radians."""
+        ...
+
+    @property
+    def moon_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Moon right ascension in radians."""
+        ...
+
+    @property
+    def moon_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Moon declination in radians."""
+        ...
+
+    @property
+    def earth_ra_rad(self) -> npt.NDArray[np.float64]:
+        """Earth right ascension in radians."""
+        ...
+
+    @property
+    def earth_dec_rad(self) -> npt.NDArray[np.float64]:
+        """Earth declination in radians."""
+        ...
+
+    def index(self, time: datetime) -> int:
+        """Find the index of the closest timestamp to the given datetime."""
+        ...
+
+    def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
+        """Calculate Moon illumination fraction for all (or selected) ephemeris times."""
+        ...
+
+    def get_body_pv(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> PositionVelocityData:
+        """Get position and velocity of a named solar-system body."""
+        ...
+
+    def get_body(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> Any:  # Returns astropy.coordinates.SkyCoord
+        """Get a SkyCoord for a named solar-system body."""
+        ...
+
+    def radec_to_altaz(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> npt.NDArray[np.float64]:
+        """Convert RA/Dec to Altitude/Azimuth. Returns (N, 2) array: [alt_deg, az_deg]."""
+        ...
+
+    def calculate_airmass(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> list[float]:
+        """Calculate airmass for a target at the given RA/Dec."""
+        ...
+
 class GroundEphemeris(Ephemeris):
     """Ephemeris for a fixed ground location"""
 
