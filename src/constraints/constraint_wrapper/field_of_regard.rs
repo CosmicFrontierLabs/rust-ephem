@@ -1,5 +1,6 @@
 use crate::constraints::core::ConstraintEvaluator;
 use crate::ephemeris::ephemeris_common::EphemerisBase;
+use crate::ephemeris::FileEphemeris;
 use crate::ephemeris::GroundEphemeris;
 use crate::ephemeris::OEMEphemeris;
 use crate::ephemeris::SPICEEphemeris;
@@ -168,6 +169,8 @@ where
             ephem.get_times()?.len()
         } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
             ephem.get_times()?.len()
+        } else if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
+            ephem.get_times()?.len()
         } else {
             return Err(pyo3::exceptions::PyTypeError::new_err(
                 "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
@@ -200,6 +203,8 @@ where
     } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
         evaluate_batch(&*ephem as &dyn EphemerisBase)?
     } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+        evaluate_batch(&*ephem as &dyn EphemerisBase)?
+    } else if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
         evaluate_batch(&*ephem as &dyn EphemerisBase)?
     } else {
         return Err(pyo3::exceptions::PyTypeError::new_err(
