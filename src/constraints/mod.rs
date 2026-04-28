@@ -11,6 +11,7 @@ pub mod core;
 pub mod airmass;
 pub mod alt_az;
 pub mod body_proximity;
+pub mod bright_star;
 pub mod daytime;
 pub mod earth_limb;
 pub mod eclipse;

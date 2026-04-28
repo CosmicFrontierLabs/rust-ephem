@@ -5,6 +5,7 @@
 use crate::constraints::airmass::AirmassConfig;
 use crate::constraints::alt_az::AltAzConfig;
 use crate::constraints::body_proximity::BodyProximityConfig;
+use crate::constraints::bright_star::BrightStarConfig;
 use crate::constraints::core::*;
 use crate::constraints::daytime::{DaytimeConfig, TwilightType};
 use crate::constraints::earth_limb::EarthLimbConfig;
@@ -60,11 +61,28 @@ impl PyConstraint {
         let mut config: serde_json::Value = serde_json::from_str(&self.config_json)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
-        let is_boresight_offset = config
+        let constraint_type = config
             .get("type")
             .and_then(|v| v.as_str())
-            .map(|t| t == "boresight_offset")
-            .unwrap_or(false);
+            .unwrap_or("")
+            .to_owned();
+
+        let is_boresight_offset = constraint_type == "boresight_offset";
+        let is_bright_star = constraint_type == "bright_star";
+
+        // Bright star with a polygon FoV: inject target_roll as roll_deg so the
+        // evaluator rotates the polygon to the requested angle.  For a circular FoV
+        // roll is irrelevant, but we still bypass the BoresightOffset wrapper so the
+        // evaluator's own geometry is preserved.
+        if is_bright_star {
+            if config.get("fov_polygon").is_some() {
+                if let Some(obj) = config.as_object_mut() {
+                    obj.insert("roll_deg".to_string(), serde_json::json!(target_roll_deg));
+                }
+            }
+            let evaluator = parse_constraint_json(&config)?;
+            return f(&*evaluator);
+        }
 
         if is_boresight_offset {
             let base_roll_deg = config
@@ -972,6 +990,108 @@ impl PyConstraint {
         });
         if let Some(max) = max_angle {
             json_obj["max_angle"] = serde_json::json!(max);
+        }
+        let config_json = json_obj.to_string();
+
+        Ok(PyConstraint {
+            evaluator: config.to_evaluator(),
+            config_json,
+        })
+    }
+
+    /// Create a bright star avoidance constraint
+    ///
+    /// Violated when any catalog star falls within the telescope field of view.
+    ///
+    /// Args:
+    ///     stars (list[tuple[float, float]]): Stars to avoid as (ra_deg, dec_deg) pairs.
+    ///     fov_radius (float, optional): Circular FoV radius in degrees. Mutually exclusive
+    ///         with fov_polygon.
+    ///     fov_polygon (list[tuple[float, float]], optional): Polygon FoV as a list of
+    ///         (u_deg, v_deg) vertices in the instrument frame. At roll=0, +u points east
+    ///         and +v points north. Mutually exclusive with fov_radius.
+    ///     roll_deg (float, optional): Position angle of the instrument +v axis from north
+    ///         (degrees east of north). Only valid with fov_polygon. When None (default),
+    ///         all roll angles are swept: the constraint is violated only if every roll has
+    ///         a star inside the FoV.
+    ///
+    /// Returns:
+    ///     Constraint: A new constraint object
+    #[pyo3(signature = (stars, fov_radius=None, fov_polygon=None, roll_deg=None))]
+    #[staticmethod]
+    fn bright_star(
+        stars: Vec<(f64, f64)>,
+        fov_radius: Option<f64>,
+        fov_polygon: Option<Vec<(f64, f64)>>,
+        roll_deg: Option<f64>,
+    ) -> PyResult<Self> {
+        if stars.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "stars list cannot be empty",
+            ));
+        }
+        match (&fov_radius, &fov_polygon) {
+            (None, None) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "either fov_radius or fov_polygon must be specified",
+                ))
+            }
+            (Some(_), Some(_)) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "fov_radius and fov_polygon are mutually exclusive",
+                ))
+            }
+            _ => {}
+        }
+        if let Some(r) = fov_radius {
+            if !(0.0..=180.0).contains(&r) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "fov_radius must be between 0 and 180 degrees",
+                ));
+            }
+        }
+        if let Some(ref poly) = fov_polygon {
+            if poly.len() < 3 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "fov_polygon must have at least 3 vertices",
+                ));
+            }
+        }
+        if let Some(r) = roll_deg {
+            if !r.is_finite() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "roll_deg must be a finite number when provided",
+                ));
+            }
+        }
+        if fov_radius.is_some() && roll_deg.is_some() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "roll_deg has no effect with fov_radius",
+            ));
+        }
+
+        let stars_arr: Vec<[f64; 2]> = stars.iter().map(|&(ra, dec)| [ra, dec]).collect();
+        let poly_arr: Option<Vec<[f64; 2]>> = fov_polygon
+            .as_ref()
+            .map(|verts| verts.iter().map(|&(u, v)| [u, v]).collect());
+
+        let config = BrightStarConfig {
+            stars: stars_arr.clone(),
+            fov_radius,
+            fov_polygon: poly_arr.clone(),
+            roll_deg,
+        };
+
+        let mut json_obj = serde_json::json!({
+            "type": "bright_star",
+            "stars": stars_arr,
+        });
+        if let Some(r) = fov_radius {
+            json_obj["fov_radius"] = serde_json::json!(r);
+        }
+        if let Some(ref p) = poly_arr {
+            json_obj["fov_polygon"] = serde_json::json!(p);
+            json_obj["roll_deg"] = serde_json::json!(roll_deg);
         }
         let config_json = json_obj.to_string();
 

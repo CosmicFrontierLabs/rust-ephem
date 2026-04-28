@@ -226,6 +226,37 @@ class Constraint:
         ...
 
     @staticmethod
+    def bright_star(
+        stars: list[tuple[float, float]],
+        fov_radius: float | None = None,
+        fov_polygon: list[tuple[float, float]] | None = None,
+        roll_deg: float | None = None,
+    ) -> Constraint:
+        """
+        Create a bright star avoidance constraint.
+
+        Violated when any catalog star falls within the telescope field of view.
+
+        Args:
+            stars: Stars to avoid as (ra_deg, dec_deg) pairs.
+            fov_radius: Circular FoV radius in degrees. Mutually exclusive with fov_polygon.
+            fov_polygon: Polygon FoV vertices in instrument frame (u_deg, v_deg).
+                At roll=0, +u points east and +v points north. Mutually exclusive
+                with fov_radius.
+            roll_deg: Position angle (degrees east of north) of the instrument +v axis.
+                Only valid with fov_polygon. When None (default), all roll angles are
+                swept and the constraint is violated only if every roll has a star inside
+                the FoV.
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If arguments are invalid or inconsistent.
+        """
+        ...
+
+    @staticmethod
     def eclipse(umbra_only: bool = True) -> Constraint:
         """
         Create an eclipse constraint.

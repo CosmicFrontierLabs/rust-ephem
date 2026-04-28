@@ -1,6 +1,7 @@
 use crate::constraints::airmass::AirmassConfig;
 use crate::constraints::alt_az::AltAzConfig;
 use crate::constraints::body_proximity::BodyProximityConfig;
+use crate::constraints::bright_star::BrightStarConfig;
 use crate::constraints::core::{ConstraintConfig, ConstraintEvaluator};
 use crate::constraints::daytime::{DaytimeConfig, TwilightType};
 use crate::constraints::earth_limb::EarthLimbConfig;
@@ -166,6 +167,14 @@ enum ConstraintSpec {
     OrbitRam {
         min_angle: f64,
         max_angle: Option<f64>,
+    },
+    #[serde(rename = "bright_star")]
+    BrightStar {
+        stars: Vec<[f64; 2]>,
+        fov_radius: Option<f64>,
+        fov_polygon: Option<Vec<[f64; 2]>>,
+        #[serde(default)]
+        roll_deg: Option<f64>,
     },
 }
 
@@ -374,6 +383,18 @@ impl ConstraintSpec {
             } => Ok(OrbitRamConfig {
                 min_angle,
                 max_angle,
+            }
+            .to_evaluator()),
+            ConstraintSpec::BrightStar {
+                stars,
+                fov_radius,
+                fov_polygon,
+                roll_deg,
+            } => Ok(BrightStarConfig {
+                stars,
+                fov_radius,
+                fov_polygon,
+                roll_deg,
             }
             .to_evaluator()),
         }
