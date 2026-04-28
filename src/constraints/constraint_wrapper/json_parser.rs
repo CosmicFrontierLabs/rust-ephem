@@ -94,8 +94,14 @@ enum ConstraintSpec {
     #[serde(rename = "body")]
     Body {
         body: String,
-        min_angle: f64,
+        #[serde(default)]
+        min_angle: Option<f64>,
+        #[serde(default)]
         max_angle: Option<f64>,
+        #[serde(default)]
+        fov_polygon: Option<Vec<[f64; 2]>>,
+        #[serde(default)]
+        roll_deg: Option<f64>,
     },
     #[serde(rename = "daytime")]
     Daytime {
@@ -225,10 +231,14 @@ impl ConstraintSpec {
                 body,
                 min_angle,
                 max_angle,
+                fov_polygon,
+                roll_deg,
             } => Ok(BodyProximityConfig {
                 body,
                 min_angle,
                 max_angle,
+                fov_polygon,
+                roll_deg,
             }
             .to_evaluator()),
             ConstraintSpec::Daytime { twilight } => Ok(DaytimeConfig {

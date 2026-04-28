@@ -69,12 +69,12 @@ impl PyConstraint {
 
         let is_boresight_offset = constraint_type == "boresight_offset";
         let is_bright_star = constraint_type == "bright_star";
+        let is_body_polygon = constraint_type == "body" && config.get("fov_polygon").is_some();
 
-        // Bright star with a polygon FoV: inject target_roll as roll_deg so the
-        // evaluator rotates the polygon to the requested angle.  For a circular FoV
-        // roll is irrelevant, but we still bypass the BoresightOffset wrapper so the
-        // evaluator's own geometry is preserved.
-        if is_bright_star {
+        // Bright star or body proximity with a polygon FoV: inject target_roll as roll_deg
+        // so the evaluator rotates the polygon to the requested angle.  Both constraint types
+        // handle roll internally, so we bypass the BoresightOffset wrapper.
+        if is_bright_star || is_body_polygon {
             if config.get("fov_polygon").is_some() {
                 if let Some(obj) = config.as_object_mut() {
                     obj.insert("roll_deg".to_string(), serde_json::json!(target_roll_deg));
@@ -945,10 +945,19 @@ impl PyConstraint {
 
     /// Create a generic solar system body avoidance constraint
     ///
+    /// The exclusion zone can be defined as a circular angular separation (min_angle) or as
+    /// a polygon in the instrument frame (fov_polygon). These are mutually exclusive.
+    ///
     /// Args:
     ///     body (str): Body identifier - NAIF ID or name (e.g., "Jupiter", "499", "Mars")
-    ///     min_angle (float): Minimum allowed angular separation in degrees
-    ///     max_angle (float, optional): Maximum allowed angular separation in degrees
+    ///     min_angle (float, optional): Minimum allowed angular separation in degrees (circle mode)
+    ///     max_angle (float, optional): Maximum allowed angular separation in degrees (circle mode only)
+    ///     fov_polygon (list[tuple[float, float]], optional): Polygon FoV as (u_deg, v_deg) vertices
+    ///         in the instrument frame. At roll=0, +u points east and +v points north.
+    ///         Mutually exclusive with min_angle.
+    ///     roll_deg (float, optional): Position angle of instrument +v from north (degrees east of
+    ///         north). Only used with fov_polygon. None (default) sweeps all roll angles: violated
+    ///         only when every roll has the body inside the polygon.
     ///
     /// Returns:
     ///     Constraint: A new constraint object
@@ -956,40 +965,102 @@ impl PyConstraint {
     /// Note:
     ///     Supported bodies depend on the ephemeris type and loaded kernels.
     ///     Common bodies: Sun (10), Moon (301), planets (199, 299, 399, 499, 599, 699, 799, 899)
-    #[pyo3(signature=(body, min_angle, max_angle=None))]
+    #[pyo3(signature=(body, min_angle=None, max_angle=None, fov_polygon=None, roll_deg=None))]
     #[staticmethod]
-    fn body_proximity(body: String, min_angle: f64, max_angle: Option<f64>) -> PyResult<Self> {
-        if !(0.0..=180.0).contains(&min_angle) {
+    fn body_proximity(
+        body: String,
+        min_angle: Option<f64>,
+        max_angle: Option<f64>,
+        fov_polygon: Option<Vec<(f64, f64)>>,
+        roll_deg: Option<f64>,
+    ) -> PyResult<Self> {
+        let has_angle = min_angle.is_some();
+        let has_polygon = fov_polygon.is_some();
+
+        match (has_angle, has_polygon) {
+            (false, false) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "either min_angle or fov_polygon must be specified",
+                ))
+            }
+            (true, true) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "min_angle and fov_polygon are mutually exclusive",
+                ))
+            }
+            _ => {}
+        }
+
+        if let Some(min) = min_angle {
+            if !(0.0..=180.0).contains(&min) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "min_angle must be between 0 and 180 degrees",
+                ));
+            }
+            if let Some(max) = max_angle {
+                if !(0.0..=180.0).contains(&max) {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "max_angle must be between 0 and 180 degrees",
+                    ));
+                }
+                if max <= min {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "max_angle must be greater than min_angle",
+                    ));
+                }
+            }
+        }
+
+        if has_angle && roll_deg.is_some() {
             return Err(pyo3::exceptions::PyValueError::new_err(
-                "min_angle must be between 0 and 180 degrees",
+                "roll_deg has no effect with min_angle",
             ));
         }
 
-        if let Some(max) = max_angle {
-            if !(0.0..=180.0).contains(&max) {
+        if has_angle && max_angle.is_none() {
+            // max_angle only meaningful in circle mode; check already done above
+        }
+
+        if let Some(ref poly) = fov_polygon {
+            if poly.len() < 3 {
                 return Err(pyo3::exceptions::PyValueError::new_err(
-                    "max_angle must be between 0 and 180 degrees",
-                ));
-            }
-            if max <= min_angle {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "max_angle must be greater than min_angle",
+                    "fov_polygon must have at least 3 vertices",
                 ));
             }
         }
+
+        if let Some(r) = roll_deg {
+            if !r.is_finite() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "roll_deg must be a finite number when provided",
+                ));
+            }
+        }
+
+        let poly_array: Option<Vec<[f64; 2]>> = fov_polygon
+            .as_ref()
+            .map(|v| v.iter().map(|&(u, v)| [u, v]).collect());
 
         let config = BodyProximityConfig {
             body: body.clone(),
             min_angle,
             max_angle,
+            fov_polygon: poly_array.clone(),
+            roll_deg,
         };
-        let mut json_obj = serde_json::json!({
-            "type": "body",
-            "body": body,
-            "min_angle": min_angle
-        });
+
+        let mut json_obj = serde_json::json!({ "type": "body", "body": body });
+        if let Some(min) = min_angle {
+            json_obj["min_angle"] = serde_json::json!(min);
+        }
         if let Some(max) = max_angle {
             json_obj["max_angle"] = serde_json::json!(max);
+        }
+        if let Some(ref poly) = poly_array {
+            json_obj["fov_polygon"] = serde_json::json!(poly);
+        }
+        if let Some(r) = roll_deg {
+            json_obj["roll_deg"] = serde_json::json!(r);
         }
         let config_json = json_obj.to_string();
 

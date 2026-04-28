@@ -7,6 +7,9 @@
 #[macro_use]
 pub mod core;
 
+// Shared FoV geometry
+pub mod fov_polygon;
+
 // Constraint implementations
 pub mod airmass;
 pub mod alt_az;

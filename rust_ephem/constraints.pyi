@@ -194,8 +194,10 @@ class EarthLimbConstraint(RustConstraintMixin):
 class BodyConstraint(RustConstraintMixin):
     type: Literal["body"] = "body"
     body: str
-    min_angle: float
+    min_angle: float | None = None
     max_angle: float | None = None
+    fov_polygon: list[tuple[float, float]] | None = None
+    roll_deg: float | None = None
 
 class MoonConstraint(RustConstraintMixin):
     type: Literal["moon"] = "moon"
