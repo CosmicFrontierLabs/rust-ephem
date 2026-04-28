@@ -16,6 +16,7 @@ use crate::constraints::orbit_ram::OrbitRamConfig;
 use crate::constraints::saa::SAAConfig;
 use crate::constraints::sun_proximity::SunProximityConfig;
 use crate::ephemeris::ephemeris_common::EphemerisBase;
+use crate::ephemeris::FileEphemeris;
 use crate::ephemeris::GroundEphemeris;
 use crate::ephemeris::OEMEphemeris;
 use crate::ephemeris::SPICEEphemeris;
@@ -242,6 +243,12 @@ impl PyConstraint {
                 target_decs,
             )
         } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+            self.evaluator.in_constraint_batch_diagonal(
+                &*ephem as &dyn EphemerisBase,
+                target_ras,
+                target_decs,
+            )
+        } else if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
             self.evaluator.in_constraint_batch_diagonal(
                 &*ephem as &dyn EphemerisBase,
                 target_ras,
@@ -1413,6 +1420,15 @@ impl PyConstraint {
                     time_indices.clone(),
                 );
             }
+            if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
+                return self.eval_with_ephemeris(
+                    evaluator,
+                    &*ephem,
+                    target_ra,
+                    target_dec,
+                    time_indices.clone(),
+                );
+            }
 
             Err(pyo3::exceptions::PyTypeError::new_err(
                 "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
@@ -1501,6 +1517,15 @@ impl PyConstraint {
                         time_indices.clone(),
                     );
                 }
+                if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
+                    return self.eval_batch_with_ephemeris(
+                        evaluator,
+                        &*ephem,
+                        &target_ras,
+                        &target_decs,
+                        time_indices.clone(),
+                    );
+                }
 
                 Err(pyo3::exceptions::PyTypeError::new_err(
                     "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
@@ -1561,6 +1586,15 @@ impl PyConstraint {
                     );
                 }
                 if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+                    return self.eval_batch_with_ephemeris(
+                        evaluator,
+                        &*ephem,
+                        &group_ras,
+                        &group_decs,
+                        time_indices.clone(),
+                    );
+                }
+                if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
                     return self.eval_batch_with_ephemeris(
                         evaluator,
                         &*ephem,
@@ -1708,6 +1742,14 @@ impl PyConstraint {
                         time_indices.as_deref(),
                     );
                 }
+                if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
+                    return evaluator.in_constraint_batch(
+                        &*ephem as &dyn EphemerisBase,
+                        &target_ras,
+                        &target_decs,
+                        time_indices.as_deref(),
+                    );
+                }
 
                 Err(pyo3::exceptions::PyTypeError::new_err(
                     "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
@@ -1763,6 +1805,14 @@ impl PyConstraint {
                     );
                 }
                 if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+                    return evaluator.in_constraint_batch(
+                        &*ephem as &dyn EphemerisBase,
+                        &group_ras,
+                        &group_decs,
+                        time_indices.as_deref(),
+                    );
+                }
+                if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
                     return evaluator.in_constraint_batch(
                         &*ephem as &dyn EphemerisBase,
                         &group_ras,
@@ -1900,6 +1950,8 @@ impl PyConstraint {
             } else if let Ok(ephem) = ephemeris.extract::<PyRef<GroundEphemeris>>() {
                 ephem.data().times.as_ref().cloned()
             } else if let Ok(ephem) = ephemeris.extract::<PyRef<OEMEphemeris>>() {
+                ephem.data().times.as_ref().cloned()
+            } else if let Ok(ephem) = ephemeris.extract::<PyRef<FileEphemeris>>() {
                 ephem.data().times.as_ref().cloned()
             } else {
                 None
@@ -2154,6 +2206,15 @@ impl PyConstraint {
                 time_idx,
             )?
         } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+            run_roll_sweep(
+                &base_config,
+                &target_ras,
+                &target_decs,
+                &rolls,
+                &*ephem as &dyn EphemerisBase,
+                time_idx,
+            )?
+        } else if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
             run_roll_sweep(
                 &base_config,
                 &target_ras,
