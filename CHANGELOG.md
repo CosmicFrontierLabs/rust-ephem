@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.8.0...v0.9.0) (2026-04-28)
+
+
+### Features
+
+* add FileEphemeris, which creates ephemeris object from file ([#156](https://github.com/CosmicFrontierLabs/rust-ephem/issues/156)) ([019823a](https://github.com/CosmicFrontierLabs/rust-ephem/commit/019823ad8010e348908c91abf42a5480eb6f7848))
+
 ## [0.8.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.7.0...v0.8.0) (2026-04-07)
 
 
