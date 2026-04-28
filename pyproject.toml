@@ -46,7 +46,11 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
-dependencies = ["numpy>=1.16", "pydantic>=2.12.4"]
+dependencies = [
+    "astroquery>=0.4.11",
+    "numpy>=1.16",
+    "pydantic>=2.12.4",
+]
 
 [project.optional-dependencies]
 test = ["pytest>=7.0", "astropy>=5.0", "pytest-cov>=7.0.0"]
