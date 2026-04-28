@@ -26,7 +26,7 @@ from astroquery.vizier import Vizier  # type: ignore[import-untyped]
 __all__ = ["get_bright_stars"]
 
 _CATALOG_ID = "I/239/hip_main"
-_COLUMNS = ["RAJ2000", "DEJ2000", "Vmag"]
+_COLUMNS = ["_RA.icrs", "_DE.icrs", "Vmag"]
 _CACHE_PREFIX = "hipparcos_vmag_"
 
 
@@ -93,8 +93,8 @@ def _download(cache_mag_limit: float) -> np.ndarray:
     table = result[0]
 
     # astropy Table columns may be MaskedColumns; convert safely to plain float arrays.
-    ra = np.asarray(table["RAJ2000"], dtype=float)
-    dec = np.asarray(table["DEJ2000"], dtype=float)
+    ra = np.asarray(table["_RA.icrs"], dtype=float)
+    dec = np.asarray(table["_DE.icrs"], dtype=float)
     vmag = np.asarray(table["Vmag"], dtype=float)
 
     valid = np.isfinite(ra) & np.isfinite(dec) & np.isfinite(vmag)
