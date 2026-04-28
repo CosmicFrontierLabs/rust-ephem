@@ -5,6 +5,9 @@ from rust_ephem._rust_ephem import (
     Constraint as Constraint,
 )
 from rust_ephem._rust_ephem import (
+    FileEphemeris as FileEphemeris,
+)
+from rust_ephem._rust_ephem import (
     GroundEphemeris as GroundEphemeris,
 )
 from rust_ephem._rust_ephem import (
@@ -163,6 +166,7 @@ __all__ = [
     "SPICEEphemeris",
     "OEMEphemeris",
     "GroundEphemeris",
+    "FileEphemeris",
     "PositionVelocityData",
     "Constraint",
     "ConstraintResult",

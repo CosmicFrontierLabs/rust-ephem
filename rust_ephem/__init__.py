@@ -1,5 +1,6 @@
 from ._rust_ephem import (
     Constraint,
+    FileEphemeris,
     GroundEphemeris,
     MovingBodyResult,
     OEMEphemeris,
@@ -74,6 +75,7 @@ __all__ = [
     "SPICEEphemeris",
     "OEMEphemeris",
     "GroundEphemeris",
+    "FileEphemeris",
     "Ephemeris",
     "EphemerisType",
     "PositionVelocityData",

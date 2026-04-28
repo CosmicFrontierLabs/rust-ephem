@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from astropy.units import Quantity  # type: ignore[import-untyped]
 
 from ._rust_ephem import (
+    FileEphemeris,
     GroundEphemeris,
     OEMEphemeris,
     PositionVelocityData,
@@ -534,7 +535,10 @@ Ephemeris.register(TLEEphemeris)
 Ephemeris.register(SPICEEphemeris)
 Ephemeris.register(OEMEphemeris)
 Ephemeris.register(GroundEphemeris)
+Ephemeris.register(FileEphemeris)
 
 
 # Also create a Union type for type checking
-EphemerisType = TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris
+EphemerisType = (
+    TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris | FileEphemeris
+)

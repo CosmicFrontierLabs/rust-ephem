@@ -194,7 +194,7 @@ fn prune_tle_cache(cache_dir: &Path, max_entries: usize) {
     if cached.len() <= max_entries {
         return;
     }
-    cached.sort_by(|a, b| b.0.cmp(&a.0));
+    cached.sort_by_key(|b| std::cmp::Reverse(b.0));
     for (_, path) in cached.into_iter().skip(max_entries) {
         if let Err(_e) = fs::remove_file(&path) {
             #[cfg(debug_assertions)]
