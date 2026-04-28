@@ -1201,6 +1201,151 @@ Orbit pole direction constraint ensuring target maintains minimum angular separa
       # Target must be between 10° and 80° from orbital pole
       orbit_pole = OrbitPoleConstraint(min_angle=10.0, max_angle=80.0)
 
+BrightStarConstraint
+^^^^^^^^^^^^^^^^^^^^
+
+Bright star avoidance constraint — violated when any catalog star falls within
+the telescope field of view.  Useful for preventing stray light or detector
+saturation from bright stars.
+
+Stars are supplied by the caller as ``(ra_deg, dec_deg)`` pairs; use
+:func:`get_bright_stars` to obtain a ready-to-use list from the Hipparcos
+catalog.
+
+Two FoV shapes are supported:
+
+- **Circular** (``fov_radius``) — roll-independent; a star is inside whenever
+  its angular separation from the boresight is less than ``fov_radius``.
+- **Polygon** (``fov_polygon``) — the polygon is defined in instrument frame
+  coordinates and rotates with spacecraft roll.  At roll = 0° the +v axis
+  points north and the +u axis points east on the sky.  When ``roll_deg`` is
+  ``None``, all roll angles are swept (72 samples, ≈5° resolution) and the
+  constraint is violated only if every roll has a star inside the polygon.
+
+.. py:class:: BrightStarConstraint(stars, *, fov_radius=None, fov_polygon=None, roll_deg=None)
+
+   :param list stars: Stars to avoid as a list of ``(ra_deg, dec_deg)`` pairs (ICRS/J2000, required).
+   :param float fov_radius: Circular FoV radius in degrees (0–180). Mutually exclusive with ``fov_polygon``.
+   :param list fov_polygon: Polygon FoV as a list of ``(u_deg, v_deg)`` vertices in instrument frame.
+       At roll = 0° the +u axis points east and the +v axis points north.
+       Mutually exclusive with ``fov_radius``.  Minimum 3 vertices.
+   :param float roll_deg: Position angle (degrees east of north) of the instrument +v axis.
+       ``None`` (default) sweeps all roll angles — the constraint is violated only
+       when no clear roll exists.  Only meaningful with ``fov_polygon``.
+
+   **Attributes:**
+
+   - ``type`` — Always ``"bright_star"`` (Literal)
+   - ``stars`` — List of ``(ra_deg, dec_deg)`` catalog entries
+   - ``fov_radius`` — Circular FoV radius in degrees (or ``None``)
+   - ``fov_polygon`` — Polygon vertices in instrument frame (or ``None``)
+   - ``roll_deg`` — Fixed roll angle (or ``None`` for roll sweep)
+
+   **Coordinate frame for polygon vertices:**
+
+   Vertices are in degrees relative to the boresight in the *instrument frame*:
+
+   - ``u = 0, v = 0`` — boresight
+   - At roll = 0°: +u points east, +v points north
+   - Roll is the position angle of +v from north, measured east of north
+
+   A star at sky tangent-plane offset (Δeast, Δnorth) maps to instrument
+   coordinates ``(u, v)`` at roll θ as:
+
+   .. math::
+
+      u = \Delta_\text{east} \cos\theta - \Delta_\text{north} \sin\theta
+
+      v = \Delta_\text{east} \sin\theta + \Delta_\text{north} \cos\theta
+
+   **Example — circular FoV:**
+
+   .. code-block:: python
+
+      from rust_ephem import get_bright_stars, Constraint
+      from rust_ephem.constraints import BrightStarConstraint
+
+      stars = get_bright_stars(mag_limit=7.0)
+
+      # Pydantic model (JSON-serialisable)
+      c = BrightStarConstraint(stars=stars, fov_radius=0.5)
+
+      # Or build the Rust evaluator directly
+      c = Constraint.bright_star(stars=stars, fov_radius=0.5)
+      result = c.evaluate(ephem, target_ra, target_dec)
+
+   **Example — polygon FoV with roll sweep:**
+
+   .. code-block:: python
+
+      # 0.5° × 0.3° rectangular detector; check all rolls
+      c = BrightStarConstraint(
+          stars=stars,
+          fov_polygon=[(-0.25, -0.15), (0.25, -0.15), (0.25, 0.15), (-0.25, 0.15)],
+      )
+
+      # Violated only when no spacecraft roll avoids all stars
+      result = c.evaluate(ephem, target_ra, target_dec)
+
+      # Evaluate at a specific roll (position angle in degrees, east of north)
+      result = c.evaluate(ephem, target_ra, target_dec, target_roll=45.0)
+
+
+Catalog Utilities
+-----------------
+
+.. py:function:: get_bright_stars(mag_limit=7.0, cache_mag_limit=None, *, refresh=False)
+
+   Return bright stars from the Hipparcos catalog suitable for use with
+   :py:class:`BrightStarConstraint` and :py:meth:`Constraint.bright_star`.
+
+   Stars brighter than *mag_limit* (Johnson V magnitude) are returned as
+   ``(ra_deg, dec_deg)`` pairs in ICRS / J2000 coordinates.  The catalog is
+   downloaded from `VizieR <https://vizier.cds.unistra.fr>`_ on the first call
+   and cached to disk; subsequent calls with a compatible magnitude limit are
+   served from cache with no network access.
+
+   **Cache reuse:** a cache file covers all stars up to a given magnitude limit.
+   Requesting a tighter limit from an existing broader cache never triggers a
+   re-download.  Use ``cache_mag_limit`` to pre-download a wider dataset:
+
+   .. code-block:: python
+
+      from rust_ephem import get_bright_stars
+
+      # Download stars brighter than V = 8 once, return the V < 6 subset
+      stars = get_bright_stars(mag_limit=6.0, cache_mag_limit=8.0)
+
+      # Future calls for any limit ≤ 8 reuse the cached file instantly
+      stars_7 = get_bright_stars(mag_limit=7.0)   # no network call
+
+   :param float mag_limit: Return stars brighter than this V magnitude
+       (lower value = brighter).  Default ``7.0`` yields roughly 4 000 stars.
+   :param float cache_mag_limit: Magnitude limit used when writing the on-disk
+       cache.  Defaults to *mag_limit*.  Must be ≥ *mag_limit*.
+   :param bool refresh: If ``True``, ignore any existing cache and re-download
+       from VizieR.  Default ``False``.
+   :returns: List of ``(ra_deg, dec_deg)`` tuples for stars brighter than
+       *mag_limit*.
+   :raises ImportError: If *astroquery* is not installed.
+   :raises ValueError: If *cache_mag_limit* < *mag_limit*, or VizieR returns no rows.
+
+   **Cache location:** ``{rust_ephem.get_cache_dir()}/hipparcos_vmag_<limit>.npy``
+
+   **Requires:** ``astroquery`` (``pip install astroquery``)
+
+   .. code-block:: python
+
+      import rust_ephem as re
+      from rust_ephem import get_bright_stars, Constraint
+
+      # Typical workflow
+      stars = get_bright_stars(mag_limit=7.0)
+      c = Constraint.bright_star(stars=stars, fov_radius=0.5)
+      result = c.evaluate(ephem, target_ra, target_dec)
+      print(f"All satisfied: {result.all_satisfied}")
+
+
 AndConstraint
 ^^^^^^^^^^^^^
 
@@ -1763,12 +1908,12 @@ Time window when the observation target is not constrained (visible).
 
    * ``target_ras``/``target_decs`` must have the same length as ephemeris timestamps.
    * When ``body`` is set, timestamps come from the ephemeris.
-    * Body positions use the planetary ephemeris kernel (default ``de440s.bsp``). To override for a specific
-       body lookup, call ``ephemeris.get_body(body, spice_kernel="path_or_url", use_horizons=True)`` (local file or URL). Downloads
-       are cached under ``~/.cache/rust_ephem``; reuse the cached path to avoid re-fetching.
-    * If you already have a planetary kernel on disk, point ``spice_kernel`` at that path; this does not affect
-       telescope/observer geometry — only body positions.
-    * Use ``use_horizons=True`` for bodies not available in your SPICE kernels; JPL Horizons covers all major and many minor solar system bodies.
+   * Body positions use the planetary ephemeris kernel (default ``de440s.bsp``). To override for a specific
+     body lookup, call ``ephemeris.get_body(body, spice_kernel="path_or_url", use_horizons=True)`` (local file or URL). Downloads
+     are cached under ``~/.cache/rust_ephem``; reuse the cached path to avoid re-fetching.
+   * If you already have a planetary kernel on disk, point ``spice_kernel`` at that path; this does not affect
+     telescope/observer geometry — only body positions.
+   * Use ``use_horizons=True`` for bodies not available in your SPICE kernels; JPL Horizons covers all major and many minor solar system bodies.
 
 
 Type Aliases

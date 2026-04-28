@@ -122,6 +122,64 @@ Working with Results
 Available Constraint Types
 --------------------------
 
+**Bright Star Avoidance**
+
+Use :py:class:`~rust_ephem.constraints.BrightStarConstraint` to prevent bright
+stars from entering the telescope field of view (e.g. stray-light or detector
+saturation avoidance).  Stars are supplied by the user as ``(ra_deg, dec_deg)``
+pairs; the :func:`~rust_ephem.get_bright_stars` helper fetches and caches the
+Hipparcos catalog so you do not have to manage the catalog yourself.
+
+Two FoV shapes are supported:
+
+- **Circular** — any star within ``fov_radius`` degrees of the boresight violates
+  the constraint.  Roll is irrelevant.
+- **Polygon** — a convex or non-convex polygon defined in *instrument frame*
+  coordinates ``(u_deg, v_deg)``.  At roll = 0° the +v axis points north and the
+  +u axis points east.  The polygon rotates rigidly with spacecraft roll.
+
+.. code-block:: python
+
+    import rust_ephem as re
+    from rust_ephem import get_bright_stars, Constraint
+
+    # Fetch Hipparcos stars brighter than V = 7 (cached after first call)
+    stars = get_bright_stars(mag_limit=7.0)
+
+    # Circular FoV: violated if any star is within 0.5° of the boresight
+    c_circle = Constraint.bright_star(stars=stars, fov_radius=0.5)
+    result = c_circle.evaluate(ephem, target_ra, target_dec)
+
+    # Rectangular detector FoV (0.5° × 0.3°), checking all roll angles
+    c_poly = Constraint.bright_star(
+        stars=stars,
+        fov_polygon=[(-0.25, -0.15), (0.25, -0.15), (0.25, 0.15), (-0.25, 0.15)],
+    )
+    result = c_poly.evaluate(ephem, target_ra, target_dec)
+
+    # Evaluate at a specific spacecraft roll (position angle in degrees, east of north)
+    result = c_poly.evaluate(ephem, target_ra, target_dec, target_roll=45.0)
+
+When ``target_roll`` is omitted (or ``None``) for a polygon FoV, the evaluator
+sweeps 72 roll angles (5° resolution) across [0°, 360°).  The constraint is
+violated only when **every** roll has at least one star inside the polygon — i.e.
+it returns ``False`` as soon as a clear roll exists.  This answers the scheduling
+question *"is there any valid roll for this pointing?"*.
+
+For a broader catalog that serves multiple magnitude limits without re-downloading:
+
+.. code-block:: python
+
+    # Download all stars brighter than V = 8 once; return the V < 6 subset now
+    stars_tight = get_bright_stars(mag_limit=6.0, cache_mag_limit=8.0)
+
+    # Later calls for any mag_limit ≤ 8 reuse the on-disk cache instantly
+    stars_7 = get_bright_stars(mag_limit=7.0)   # no network call
+
+The cache is stored as a numpy array in the rust_ephem cache directory
+(``rust_ephem.get_cache_dir()``), keyed by magnitude limit.  Pass
+``refresh=True`` to force a re-download.
+
 **Proximity Constraints**
 
 .. code-block:: python
@@ -206,7 +264,7 @@ Threshold semantics:
 - ``min_violated=len(constraints)`` is equivalent to AND over violations.
 
 Shared-Axis Multi-Instrument Planning
-------------------------------------
+--------------------------------------
 
 Use boresight offsets when multiple instruments share the same mount axis but
 have different fixed pointing directions relative to the primary boresight.
