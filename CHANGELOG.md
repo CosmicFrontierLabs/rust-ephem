@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.9.0...v0.9.1) (2026-04-28)
+
+
+### Bug Fixes
+
+* allow use of FileEphemeris in constraint calculations ([#158](https://github.com/CosmicFrontierLabs/rust-ephem/issues/158)) ([9f44596](https://github.com/CosmicFrontierLabs/rust-ephem/commit/9f445962b16cc2b9ac7e83eb2d5cae6377d05f94))
+
 ## [0.9.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.8.0...v0.9.0) (2026-04-28)
 
 
