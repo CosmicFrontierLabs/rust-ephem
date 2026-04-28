@@ -54,7 +54,7 @@ jobs:
         run: uv pip install maturin
 
       - name: Install test dependencies
-        run: uv pip install pytest numpy astropy pydantic mypy
+        run: uv pip compile pyproject.toml --extra=test -o requirements.txt ; uv pip install -r requirements.txt
 
       - name: Build and install rust-ephem
         run: |
