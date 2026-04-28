@@ -277,6 +277,13 @@ class BoresightOffsetConstraint(RustConstraintMixin):
     pitch_deg: float = 0.0
     yaw_deg: float = 0.0
 
+class BrightStarConstraint(RustConstraintMixin):
+    type: Literal["bright_star"] = "bright_star"
+    stars: list[tuple[float, float]]
+    fov_radius: float | None = None
+    fov_polygon: list[tuple[float, float]] | None = None
+    roll_deg: float | None = None
+
 ConstraintConfig = (
     SunConstraint
     | MoonConstraint
@@ -296,5 +303,6 @@ ConstraintConfig = (
     | AtLeastConstraint
     | NotConstraint
     | BoresightOffsetConstraint
+    | BrightStarConstraint
 )
 CombinedConstraintConfig: TypeAdapter[ConstraintConfig]

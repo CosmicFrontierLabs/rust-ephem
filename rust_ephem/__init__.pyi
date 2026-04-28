@@ -64,6 +64,9 @@ from rust_ephem._rust_ephem import (
 from rust_ephem._rust_ephem import (
     is_ut1_available as is_ut1_available,
 )
+from rust_ephem.bright_stars import (
+    get_bright_stars as get_bright_stars,
+)
 from rust_ephem.constraints import (
     AirmassConstraint as AirmassConstraint,
 )
@@ -81,6 +84,9 @@ from rust_ephem.constraints import (
 )
 from rust_ephem.constraints import (
     BoresightOffsetConstraint as BoresightOffsetConstraint,
+)
+from rust_ephem.constraints import (
+    BrightStarConstraint as BrightStarConstraint,
 )
 from rust_ephem.constraints import (
     CombinedConstraintConfig as CombinedConstraintConfig,
@@ -185,4 +191,6 @@ __all__ = [
     "is_eop_available",
     "init_eop_provider",
     "get_cache_dir",
+    "BrightStarConstraint",
+    "get_bright_stars",
 ]
