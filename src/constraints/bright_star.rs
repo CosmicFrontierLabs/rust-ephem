@@ -7,6 +7,7 @@ use super::core::{ConstraintConfig, ConstraintEvaluator, ConstraintResult};
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
 
@@ -49,14 +50,33 @@ impl ConstraintConfig for BrightStarConfig {
             FovDefinition::Circle { cos_radius: 1.0 }
         };
 
-        Box::new(BrightStarEvaluator { stars, fov })
+        // For polygon FoV, precompute a bounding-circle threshold: the maximum angular
+        // separation at which a star could possibly fall inside the polygon at any roll.
+        // Stars outside this circle are skipped with a cheap dot-product test before
+        // the more expensive gnomonic projection.
+        let bounding_cos = if let FovDefinition::Polygon { ref vertices, .. } = fov {
+            let max_dist_deg = vertices
+                .iter()
+                .map(|&[u, v]| (u * u + v * v).sqrt())
+                .fold(0.0f64, f64::max);
+            // Add 1° margin to be safe around polygon edges
+            Some((max_dist_deg + 1.0).to_radians().cos())
+        } else {
+            None
+        };
+
+        Box::new(BrightStarEvaluator {
+            stars,
+            fov,
+            bounding_cos,
+        })
     }
 }
 
 struct StarData {
     ra_rad: f64,
     dec_rad: f64,
-    /// Precomputed ICRS unit vector for dot-product checks in circular FoV
+    /// Precomputed ICRS unit vector for dot-product checks
     unit: [f64; 3],
 }
 
@@ -90,6 +110,9 @@ enum FovDefinition {
 pub struct BrightStarEvaluator {
     stars: Vec<StarData>,
     fov: FovDefinition,
+    /// Precomputed cos(max_polygon_radius + 1°) for fast star rejection in polygon mode.
+    /// None for circular FoV (unused).
+    bounding_cos: Option<f64>,
 }
 
 impl BrightStarEvaluator {
@@ -168,8 +191,12 @@ impl BrightStarEvaluator {
     }
 
     /// True if any star falls inside `vertices` when the instrument is at `roll_rad`.
+    ///
+    /// `target_unit` is the precomputed ICRS unit vector for the target — used for
+    /// the bounding-circle fast-rejection test before gnomonic projection.
     fn any_star_in_polygon_at_roll(
         &self,
+        target_unit: [f64; 3],
         target_ra_rad: f64,
         target_dec_rad: f64,
         vertices: &[[f64; 2]],
@@ -177,6 +204,15 @@ impl BrightStarEvaluator {
         cos_roll: f64,
     ) -> bool {
         for star in &self.stars {
+            // Fast rejection: skip stars outside the polygon bounding circle
+            if let Some(cos_thresh) = self.bounding_cos {
+                let dot = target_unit[0] * star.unit[0]
+                    + target_unit[1] * star.unit[1]
+                    + target_unit[2] * star.unit[2];
+                if dot < cos_thresh {
+                    continue;
+                }
+            }
             if let Some((east, north)) = Self::gnomonic_project(target_ra_rad, target_dec_rad, star)
             {
                 let (u_rad, v_rad) = Self::to_instrument(east, north, sin_roll, cos_roll);
@@ -206,9 +242,14 @@ impl BrightStarEvaluator {
             }
 
             FovDefinition::Polygon { vertices, roll_rad } => {
+                let (sin_tdec, cos_tdec) = target_dec_rad.sin_cos();
+                let (sin_tra, cos_tra) = target_ra_rad.sin_cos();
+                let target_unit = [cos_tdec * cos_tra, cos_tdec * sin_tra, sin_tdec];
+
                 if let Some(&roll) = roll_rad.as_ref() {
                     let (sin_roll, cos_roll) = roll.sin_cos();
                     self.any_star_in_polygon_at_roll(
+                        target_unit,
                         target_ra_rad,
                         target_dec_rad,
                         vertices,
@@ -224,6 +265,7 @@ impl BrightStarEvaluator {
                         let roll = step as f64 * roll_step;
                         let (sin_roll, cos_roll) = roll.sin_cos();
                         if !self.any_star_in_polygon_at_roll(
+                            target_unit,
                             target_ra_rad,
                             target_dec_rad,
                             vertices,
@@ -306,10 +348,18 @@ impl ConstraintEvaluator for BrightStarEvaluator {
             None => all_times.len(),
         };
         let n_targets = target_ras.len();
-        let mut result = Array2::from_elem((n_targets, n_times), false);
 
-        for (i, (&ra, &dec)) in target_ras.iter().zip(target_decs.iter()).enumerate() {
-            if self.is_violated(ra, dec) {
+        // Bright-star violation is time-invariant: evaluate once per target.
+        // Parallelise across targets since each is fully independent.
+        let violated: Vec<bool> = target_ras
+            .par_iter()
+            .zip(target_decs.par_iter())
+            .map(|(&ra, &dec)| self.is_violated(ra, dec))
+            .collect();
+
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+        for (i, &v) in violated.iter().enumerate() {
+            if v {
                 for j in 0..n_times {
                     result[[i, j]] = true;
                 }
