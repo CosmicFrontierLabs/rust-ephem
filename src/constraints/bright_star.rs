@@ -75,7 +75,8 @@ impl ConstraintConfig for BrightStarConfig {
 
 struct StarData {
     ra_rad: f64,
-    dec_rad: f64,
+    sin_dec: f64,
+    cos_dec: f64,
     /// Precomputed ICRS unit vector for dot-product checks
     unit: [f64; 3],
 }
@@ -88,7 +89,8 @@ impl StarData {
         let (sin_ra, cos_ra) = ra_rad.sin_cos();
         Self {
             ra_rad,
-            dec_rad,
+            sin_dec,
+            cos_dec,
             unit: [cos_dec * cos_ra, cos_dec * sin_ra, sin_dec],
         }
     }
@@ -132,28 +134,6 @@ impl BrightStarEvaluator {
 
     // ── Polygon helpers ───────────────────────────────────────────────────────
 
-    /// Gnomonic (tangent-plane) projection of `star` relative to `target`.
-    /// Returns (east_rad, north_rad) or None if the star is on/behind the tangent plane.
-    fn gnomonic_project(
-        target_ra_rad: f64,
-        target_dec_rad: f64,
-        star: &StarData,
-    ) -> Option<(f64, f64)> {
-        let delta_ra = star.ra_rad - target_ra_rad;
-        let (sin_tdec, cos_tdec) = (target_dec_rad.sin(), target_dec_rad.cos());
-        let (sin_sdec, cos_sdec) = (star.dec_rad.sin(), star.dec_rad.cos());
-        let (sin_dra, cos_dra) = delta_ra.sin_cos();
-
-        let cos_c = sin_tdec * sin_sdec + cos_tdec * cos_sdec * cos_dra;
-        if cos_c <= 0.0 {
-            return None;
-        }
-
-        let east = cos_sdec * sin_dra / cos_c;
-        let north = (cos_tdec * sin_sdec - sin_tdec * cos_sdec * cos_dra) / cos_c;
-        Some((east, north))
-    }
-
     /// Transform tangent-plane (east, north) offsets to instrument (u, v) at the given roll.
     ///
     /// Convention: at roll=0, u=east and v=north.  Roll is position angle of instrument
@@ -190,21 +170,21 @@ impl BrightStarEvaluator {
         inside
     }
 
-    /// True if any star falls inside `vertices` when the instrument is at `roll_rad`.
+    /// Gnomonic (tangent-plane) project all stars that pass the bounding-circle filter
+    /// into (east, north) offsets relative to the target.
     ///
-    /// `target_unit` is the precomputed ICRS unit vector for the target — used for
-    /// the bounding-circle fast-rejection test before gnomonic projection.
-    fn any_star_in_polygon_at_roll(
+    /// Returns a small Vec of (east_rad, north_rad) pairs — typically 0-50 entries.
+    /// Projections are roll-independent; the result is reused across all roll samples.
+    fn nearby_tangent_offsets(
         &self,
         target_unit: [f64; 3],
         target_ra_rad: f64,
-        target_dec_rad: f64,
-        vertices: &[[f64; 2]],
-        sin_roll: f64,
-        cos_roll: f64,
-    ) -> bool {
+        sin_tdec: f64,
+        cos_tdec: f64,
+    ) -> Vec<(f64, f64)> {
+        let mut out = Vec::new();
         for star in &self.stars {
-            // Fast rejection: skip stars outside the polygon bounding circle
+            // Bounding-circle fast rejection
             if let Some(cos_thresh) = self.bounding_cos {
                 let dot = target_unit[0] * star.unit[0]
                     + target_unit[1] * star.unit[1]
@@ -213,17 +193,18 @@ impl BrightStarEvaluator {
                     continue;
                 }
             }
-            if let Some((east, north)) = Self::gnomonic_project(target_ra_rad, target_dec_rad, star)
-            {
-                let (u_rad, v_rad) = Self::to_instrument(east, north, sin_roll, cos_roll);
-                let u_deg = u_rad.to_degrees();
-                let v_deg = v_rad.to_degrees();
-                if Self::point_in_polygon(u_deg, v_deg, vertices) {
-                    return true;
-                }
+            // Gnomonic projection (roll-independent)
+            let delta_ra = star.ra_rad - target_ra_rad;
+            let (sin_dra, cos_dra) = delta_ra.sin_cos();
+            let cos_c = sin_tdec * star.sin_dec + cos_tdec * star.cos_dec * cos_dra;
+            if cos_c <= 0.0 {
+                continue;
             }
+            let east = star.cos_dec * sin_dra / cos_c;
+            let north = (cos_tdec * star.sin_dec - sin_tdec * star.cos_dec * cos_dra) / cos_c;
+            out.push((east, north));
         }
-        false
+        out
     }
 
     // ── Top-level check ───────────────────────────────────────────────────────
@@ -246,16 +227,17 @@ impl BrightStarEvaluator {
                 let (sin_tra, cos_tra) = target_ra_rad.sin_cos();
                 let target_unit = [cos_tdec * cos_tra, cos_tdec * sin_tra, sin_tdec];
 
+                // Gnomonic-project nearby stars once; then only the cheap rotation
+                // (to_instrument) is repeated per roll sample.
+                let nearby =
+                    self.nearby_tangent_offsets(target_unit, target_ra_rad, sin_tdec, cos_tdec);
+
                 if let Some(&roll) = roll_rad.as_ref() {
                     let (sin_roll, cos_roll) = roll.sin_cos();
-                    self.any_star_in_polygon_at_roll(
-                        target_unit,
-                        target_ra_rad,
-                        target_dec_rad,
-                        vertices,
-                        sin_roll,
-                        cos_roll,
-                    )
+                    nearby.iter().any(|&(east, north)| {
+                        let (u, v) = Self::to_instrument(east, north, sin_roll, cos_roll);
+                        Self::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
+                    })
                 } else {
                     // Sweep N_ROLL_SAMPLES roll angles evenly over [0°, 360°).
                     // Violated only if every roll has at least one star in the FoV
@@ -264,15 +246,12 @@ impl BrightStarEvaluator {
                     for step in 0..N_ROLL_SAMPLES {
                         let roll = step as f64 * roll_step;
                         let (sin_roll, cos_roll) = roll.sin_cos();
-                        if !self.any_star_in_polygon_at_roll(
-                            target_unit,
-                            target_ra_rad,
-                            target_dec_rad,
-                            vertices,
-                            sin_roll,
-                            cos_roll,
-                        ) {
-                            return false; // found a clear roll
+                        let any_blocked = nearby.iter().any(|&(east, north)| {
+                            let (u, v) = Self::to_instrument(east, north, sin_roll, cos_roll);
+                            Self::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
+                        });
+                        if !any_blocked {
+                            return false; // clear roll found
                         }
                     }
                     true // every roll blocked
