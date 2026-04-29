@@ -318,6 +318,87 @@ pub(super) fn roll_sweep_vec(
             Ok(result.into_iter().map(|v| !v).collect())
         }
 
+        // AT_LEAST: violated if at least `min_violated` children are violated.
+        Some("at_least") => {
+            let children = config
+                .get("constraints")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "at_least node is missing 'constraints'",
+                    )
+                })?;
+            if children.is_empty() {
+                return Ok(vec![false; n]);
+            }
+            let min_violated = config
+                .get("min_violated")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1) as usize;
+
+            // collect child results
+            let mut child_results: Vec<Vec<bool>> = Vec::with_capacity(children.len());
+            for child in children {
+                child_results.push(roll_sweep_vec(
+                    child,
+                    target_ras,
+                    target_decs,
+                    rolls,
+                    ephem,
+                    time_idx,
+                    sun_unit,
+                )?);
+            }
+
+            let mut result = vec![false; n];
+            for i in 0..n {
+                let mut count = 0usize;
+                for cr in &child_results {
+                    if cr[i] {
+                        count += 1;
+                        if count >= min_violated {
+                            break;
+                        }
+                    }
+                }
+                result[i] = count >= min_violated;
+            }
+            Ok(result)
+        }
+
+        // XOR: violated if exactly one child is violated.
+        Some("xor") => {
+            let children = config
+                .get("constraints")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("xor node is missing 'constraints'")
+                })?;
+            if children.is_empty() {
+                return Ok(vec![false; n]);
+            }
+
+            let mut child_results: Vec<Vec<bool>> = Vec::with_capacity(children.len());
+            for child in children {
+                child_results.push(roll_sweep_vec(
+                    child,
+                    target_ras,
+                    target_decs,
+                    rolls,
+                    ephem,
+                    time_idx,
+                    sun_unit,
+                )?);
+            }
+
+            let mut result = vec![false; n];
+            for i in 0..n {
+                let count = child_results.iter().filter(|cr| cr[i]).count();
+                result[i] = count == 1;
+            }
+            Ok(result)
+        }
+
         _ => {
             // Leaf constraint (sun, moon, eclipse, …) or unsupported compound (xor,
             // at_least).  Build ONE evaluator, call in_constraint_batch once with all N
