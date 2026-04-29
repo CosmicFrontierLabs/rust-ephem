@@ -22,6 +22,7 @@ from pathlib import Path
 
 import numpy as np
 from astroquery.vizier import Vizier  # type: ignore[import-untyped]
+from numpy.typing import NDArray
 
 __all__ = ["get_bright_stars"]
 
@@ -72,7 +73,7 @@ def _find_usable_cache(mag_limit: float) -> Path | None:
 # ── Download ───────────────────────────────────────────────────────────────────
 
 
-def _download(cache_mag_limit: float) -> np.ndarray:
+def _download(cache_mag_limit: float) -> NDArray[np.float64]:
     """Fetch Hipparcos stars brighter than *cache_mag_limit* from VizieR.
 
     Returns an (N, 3) float64 array with columns [ra_deg, dec_deg, vmag].
