@@ -7,10 +7,14 @@
 #[macro_use]
 pub mod core;
 
+// Shared FoV geometry
+pub mod fov_polygon;
+
 // Constraint implementations
 pub mod airmass;
 pub mod alt_az;
 pub mod body_proximity;
+pub mod bright_star;
 pub mod daytime;
 pub mod earth_limb;
 pub mod eclipse;

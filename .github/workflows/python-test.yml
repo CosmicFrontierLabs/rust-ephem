@@ -50,11 +50,8 @@ jobs:
           # Optional: additional cache key prefix for manual cache invalidation
           prefix-key: "v1-rust"
 
-      - name: Install maturin
-        run: uv pip install maturin
-
       - name: Install test dependencies
-        run: uv pip install pytest numpy astropy pydantic mypy
+        run: uv pip compile pyproject.toml --extra=test,dev -o requirements.txt ; uv pip install -r requirements.txt
 
       - name: Build and install rust-ephem
         run: |

@@ -1195,23 +1195,59 @@ class EarthLimbConstraint(RustConstraintMixin):
 class BodyConstraint(RustConstraintMixin):
     """Solar system body proximity constraint
 
-    Ensures target maintains minimum angular separation from specified body.
+    Ensures the body does not enter the specified exclusion zone. The zone may be
+    defined as a circular angular separation (min_angle) or as a polygon in the
+    instrument frame (fov_polygon). These are mutually exclusive.
 
     Attributes:
         type: Always "body"
         body: Name of the solar system body (e.g., "Mars", "Jupiter")
-        min_angle: Minimum allowed angular separation in degrees (0-180)
-        max_angle: Maximum allowed angular separation in degrees (0-180), optional
+        min_angle: Minimum allowed angular separation in degrees (0-180). Circle mode.
+        max_angle: Maximum allowed angular separation in degrees (0-180). Circle mode only.
+        fov_polygon: Polygon FoV vertices in instrument frame (u_deg, v_deg). At roll=0,
+            +u points east and +v points north on the sky. Mutually exclusive with min_angle.
+        roll_deg: Position angle (degrees east of north) of the instrument +v axis.
+            Only applicable with fov_polygon. None (default) sweeps all roll angles.
     """
 
     type: Literal["body"] = "body"
     body: str = Field(..., description="Name of the solar system body")
-    min_angle: float = Field(
-        ..., ge=0.0, le=180.0, description="Minimum angle from body in degrees"
+    min_angle: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=180.0,
+        description="Minimum angle from body in degrees (circle mode)",
     )
     max_angle: float | None = Field(
-        default=None, ge=0.0, le=180.0, description="Maximum angle from body in degrees"
+        default=None,
+        ge=0.0,
+        le=180.0,
+        description="Maximum angle from body in degrees (circle mode only)",
     )
+    fov_polygon: list[tuple[float, float]] | None = Field(
+        default=None,
+        description="Polygon FoV vertices in instrument frame (u_deg, v_deg)",
+    )
+    roll_deg: float | None = Field(
+        default=None,
+        description="Roll angle (PA of instrument +v from north). None = sweep all rolls.",
+    )
+
+    @model_validator(mode="after")
+    def check_fov(self) -> "BodyConstraint":
+        has_angle = self.min_angle is not None
+        has_polygon = self.fov_polygon is not None
+        if not has_angle and not has_polygon:
+            raise ValueError("either min_angle or fov_polygon must be specified")
+        if has_angle and has_polygon:
+            raise ValueError("min_angle and fov_polygon are mutually exclusive")
+        if has_polygon and self.fov_polygon is not None and len(self.fov_polygon) < 3:
+            raise ValueError("fov_polygon must have at least 3 vertices")
+        if has_angle and self.roll_deg is not None:
+            raise ValueError("roll_deg has no effect with min_angle")
+        if has_polygon and self.max_angle is not None:
+            raise ValueError("max_angle has no effect with fov_polygon")
+        return self
 
 
 class MoonConstraint(RustConstraintMixin):
@@ -1601,6 +1637,57 @@ class OrbitPoleConstraint(RustConstraintMixin):
     )
 
 
+class BrightStarConstraint(RustConstraintMixin):
+    """Bright star avoidance constraint
+
+    Violated when any star from the supplied catalog falls within the telescope
+    field of view.  The FoV is defined either as a circle (radius around boresight)
+    or as a polygon in instrument frame coordinates that rotates with spacecraft roll.
+
+    Attributes:
+        type: Always "bright_star"
+        stars: List of (ra_deg, dec_deg) pairs for stars to avoid.
+        fov_radius: Circular FoV radius in degrees. Mutually exclusive with fov_polygon.
+        fov_polygon: Polygon FoV as a list of (u_deg, v_deg) vertices in the instrument
+            frame. At roll=0, +u points east and +v points north on the sky.
+            Mutually exclusive with fov_radius.
+        roll_deg: Position angle (degrees east of north) of the instrument +v axis.
+            Only applicable with fov_polygon. None (default) means sweep all roll
+            angles: the constraint is violated only when every roll has a star inside
+            the FoV.
+    """
+
+    type: Literal["bright_star"] = "bright_star"
+    stars: list[tuple[float, float]] = Field(
+        ..., description="Stars to avoid as (ra_deg, dec_deg) pairs"
+    )
+    fov_radius: float | None = Field(
+        default=None, ge=0.0, le=180.0, description="Circular FoV radius in degrees"
+    )
+    fov_polygon: list[tuple[float, float]] | None = Field(
+        default=None,
+        description="Polygon FoV vertices in instrument frame (u_deg, v_deg)",
+    )
+    roll_deg: float | None = Field(
+        default=None,
+        description="Roll angle (PA of instrument +v from north). None = sweep all rolls.",
+    )
+
+    @model_validator(mode="after")
+    def check_fov(self) -> "BrightStarConstraint":
+        has_radius = self.fov_radius is not None
+        has_polygon = self.fov_polygon is not None
+        if not has_radius and not has_polygon:
+            raise ValueError("either fov_radius or fov_polygon must be specified")
+        if has_radius and has_polygon:
+            raise ValueError("fov_radius and fov_polygon are mutually exclusive")
+        if has_polygon and self.fov_polygon is not None and len(self.fov_polygon) < 3:
+            raise ValueError("fov_polygon must have at least 3 vertices")
+        if has_radius and self.roll_deg is not None:
+            raise ValueError("roll_deg has no effect with fov_radius")
+        return self
+
+
 # Union type for all constraints
 ConstraintConfig = Union[
     SunConstraint,
@@ -1615,6 +1702,7 @@ ConstraintConfig = Union[
     OrbitPoleConstraint,
     SAAConstraint,
     AltAzConstraint,
+    BrightStarConstraint,
     AndConstraint,
     OrConstraint,
     XorConstraint,

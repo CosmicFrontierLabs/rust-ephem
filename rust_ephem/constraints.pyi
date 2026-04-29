@@ -194,8 +194,10 @@ class EarthLimbConstraint(RustConstraintMixin):
 class BodyConstraint(RustConstraintMixin):
     type: Literal["body"] = "body"
     body: str
-    min_angle: float
+    min_angle: float | None = None
     max_angle: float | None = None
+    fov_polygon: list[tuple[float, float]] | None = None
+    roll_deg: float | None = None
 
 class MoonConstraint(RustConstraintMixin):
     type: Literal["moon"] = "moon"
@@ -277,6 +279,13 @@ class BoresightOffsetConstraint(RustConstraintMixin):
     pitch_deg: float = 0.0
     yaw_deg: float = 0.0
 
+class BrightStarConstraint(RustConstraintMixin):
+    type: Literal["bright_star"] = "bright_star"
+    stars: list[tuple[float, float]]
+    fov_radius: float | None = None
+    fov_polygon: list[tuple[float, float]] | None = None
+    roll_deg: float | None = None
+
 ConstraintConfig = (
     SunConstraint
     | MoonConstraint
@@ -296,5 +305,6 @@ ConstraintConfig = (
     | AtLeastConstraint
     | NotConstraint
     | BoresightOffsetConstraint
+    | BrightStarConstraint
 )
 CombinedConstraintConfig: TypeAdapter[ConstraintConfig]

@@ -21,6 +21,7 @@ from ._rust_ephem import (
     is_planetary_ephemeris_initialized,
     is_ut1_available,
 )
+from .bright_stars import get_bright_stars
 from .constraints import (
     AirmassConstraint,
     AltAzConstraint,
@@ -28,6 +29,7 @@ from .constraints import (
     AtLeastConstraint,
     BodyConstraint,
     BoresightOffsetConstraint,
+    BrightStarConstraint,
     CombinedConstraintConfig,
     ConstraintConfig,
     ConstraintResult,
@@ -98,4 +100,6 @@ __all__ = [
     "get_cache_dir",
     "TLERecord",
     "fetch_tle",
+    "BrightStarConstraint",
+    "get_bright_stars",
 ]

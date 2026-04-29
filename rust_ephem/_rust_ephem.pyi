@@ -204,24 +204,68 @@ class Constraint:
 
     @staticmethod
     def body_proximity(
-        body: str, min_angle: float, max_angle: float | None = None
+        body: str,
+        min_angle: float | None = None,
+        max_angle: float | None = None,
+        fov_polygon: list[tuple[float, float]] | None = None,
+        roll_deg: float | None = None,
     ) -> Constraint:
         """
         Create a generic solar system body avoidance constraint.
 
+        The exclusion zone is defined either as a circular angular separation
+        (min_angle) or as a polygon in the instrument frame (fov_polygon).
+        These are mutually exclusive.
+
         Args:
             body: Body identifier - NAIF ID or name (e.g., "Jupiter", "499", "Mars")
-            min_angle: Minimum allowed angular separation in degrees (0-180)
-            max_angle: Maximum allowed angular separation in degrees (optional)
+            min_angle: Minimum allowed angular separation in degrees (circle mode)
+            max_angle: Maximum allowed angular separation in degrees (circle mode only)
+            fov_polygon: Polygon FoV as (u_deg, v_deg) vertices in the instrument frame.
+                At roll=0, +u points east and +v points north. Mutually exclusive with min_angle.
+            roll_deg: Position angle of instrument +v from north (degrees east of north).
+                Only used with fov_polygon. None sweeps all roll angles: violated only when
+                every roll has the body inside the polygon.
 
         Returns:
             A new Constraint instance
 
         Raises:
-            ValueError: If angles are out of valid range
+            ValueError: If the configuration is invalid
 
         Note:
             Supported bodies depend on the ephemeris type and loaded kernels.
+        """
+        ...
+
+    @staticmethod
+    def bright_star(
+        stars: list[tuple[float, float]],
+        fov_radius: float | None = None,
+        fov_polygon: list[tuple[float, float]] | None = None,
+        roll_deg: float | None = None,
+    ) -> Constraint:
+        """
+        Create a bright star avoidance constraint.
+
+        Violated when any catalog star falls within the telescope field of view.
+
+        Args:
+            stars: Stars to avoid as (ra_deg, dec_deg) pairs.
+            fov_radius: Circular FoV radius in degrees. Mutually exclusive with fov_polygon.
+            fov_polygon: Polygon FoV vertices in instrument frame (u_deg, v_deg).
+                At roll=0, +u points east and +v points north. Mutually exclusive
+                with fov_radius.
+            roll_deg: Position angle (degrees east of north) of the instrument +v axis.
+                Only valid with fov_polygon. When None (default), all roll angles are
+                swept and the constraint is violated only if every roll has a star inside
+                the FoV.
+
+        Returns:
+            A new Constraint instance
+
+        Raises:
+            ValueError: If arguments are invalid or inconsistent.
         """
         ...
 
