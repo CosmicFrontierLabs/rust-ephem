@@ -155,18 +155,45 @@ impl BrightStarEvaluator {
         if n < 3 {
             return false;
         }
+        // Robust ray-casting. Guard against near-horizontal edges (vj == vi)
+        // to avoid division by zero and treat points on the polygon boundary as inside.
         let mut inside = false;
         let mut j = n - 1;
+        const EPS: f64 = 1.0e-12;
         for i in 0..n {
             let ui = vertices[i][0];
             let vi = vertices[i][1];
             let uj = vertices[j][0];
             let vj = vertices[j][1];
-            if ((vi > v) != (vj > v)) && (u < (uj - ui) * (v - vi) / (vj - vi) + ui) {
-                inside = !inside;
+
+            if (vi > v) != (vj > v) {
+                let denom = vj - vi;
+                if denom.abs() < EPS {
+                    // Nearly horizontal segment: skip the crossing test but
+                    // still check for boundary-on-segment cases below.
+                } else {
+                    let x_intersect = (uj - ui) * (v - vi) / denom + ui;
+                    // Point lies exactly on the edge -> consider inside
+                    if (u - x_intersect).abs() < EPS {
+                        return true;
+                    }
+                    if u < x_intersect {
+                        inside = !inside;
+                    }
+                }
+            } else if (v - vi).abs() < EPS {
+                // v equals a vertex v coordinate and the segment is (nearly)
+                // horizontal: check if u lies between the segment endpoints.
+                let min_u = ui.min(uj) - EPS;
+                let max_u = ui.max(uj) + EPS;
+                if u >= min_u && u <= max_u {
+                    return true;
+                }
             }
+
             j = i;
         }
+
         inside
     }
 
