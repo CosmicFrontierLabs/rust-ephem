@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.9.1...v0.9.2) (2026-04-29)
+
+
+### Bug Fixes
+
+* roll_range support for atleast and xor constraints ([#161](https://github.com/CosmicFrontierLabs/rust-ephem/issues/161)) ([120e503](https://github.com/CosmicFrontierLabs/rust-ephem/commit/120e5038edee0049dff3b5eca8e062fbce99de7a))
+
 ## [0.9.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.9.0...v0.9.1) (2026-04-28)
 
 
