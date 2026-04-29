@@ -238,6 +238,11 @@ class AltAzConstraint(RustConstraintMixin):
     max_azimuth: float | None = None
     polygon: list[tuple[float, float]] | None = None
 
+class SolarRollConstraint(RustConstraintMixin):
+    type: Literal["solar_roll"] = "solar_roll"
+    tolerance_deg: float
+    roll_deg: float | None = None
+
 class OrbitRamConstraint(RustConstraintMixin):
     type: Literal["orbit_ram"] = "orbit_ram"
     min_angle: float
@@ -295,6 +300,7 @@ ConstraintConfig = (
     | DaytimeConstraint
     | AirmassConstraint
     | MoonPhaseConstraint
+    | SolarRollConstraint
     | SAAConstraint
     | AltAzConstraint
     | OrbitRamConstraint

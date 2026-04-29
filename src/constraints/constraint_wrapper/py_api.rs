@@ -70,6 +70,7 @@ impl PyConstraint {
         let is_boresight_offset = constraint_type == "boresight_offset";
         let is_bright_star = constraint_type == "bright_star";
         let is_body_polygon = constraint_type == "body" && config.get("fov_polygon").is_some();
+        let is_solar_roll = constraint_type == "solar_roll";
 
         // Bright star or body proximity with a polygon FoV: inject target_roll as roll_deg
         // so the evaluator rotates the polygon to the requested angle.  Both constraint types
@@ -79,6 +80,16 @@ impl PyConstraint {
                 if let Some(obj) = config.as_object_mut() {
                     obj.insert("roll_deg".to_string(), serde_json::json!(target_roll_deg));
                 }
+            }
+            let evaluator = parse_constraint_json(&config)?;
+            return f(&*evaluator);
+        }
+
+        // SolarRoll: inject the spacecraft roll so the evaluator can compare to the
+        // solar-optimal roll.  Handled internally — bypass the BoresightOffset wrapper.
+        if is_solar_roll {
+            if let Some(obj) = config.as_object_mut() {
+                obj.insert("roll_deg".to_string(), serde_json::json!(target_roll_deg));
             }
             let evaluator = parse_constraint_json(&config)?;
             return f(&*evaluator);
