@@ -64,6 +64,71 @@ pub(super) fn get_sun_unit_at(ephem: &dyn EphemerisBase, time_idx: usize) -> PyR
 }
 
 // ---------------------------------------------------------------------------
+// Solar-roll helpers (shared with roll_sweep_vec)
+// ---------------------------------------------------------------------------
+
+/// Compute the north-referenced optimal roll (degrees) that maximises solar
+/// illumination of the panel with the given body-frame normal, using the same
+/// frame as `boresight_rotate`.  `panel_normal[1]` and `panel_normal[2]` are
+/// the Y and Z body-frame components; the X component (boresight) is ignored.
+fn solar_optimal_roll_for_sweep(
+    target: [f64; 3],
+    sun_unit: &[f64; 3],
+    panel_normal: [f64; 3],
+) -> f64 {
+    const NEAR_ZERO: f64 = 1.0e-12;
+    let x_axis = target;
+    let z_ref = [0.0_f64, 0.0, 1.0];
+    let zref_dot_x = rsv_dot(x_axis, z_ref);
+    let z_raw = [
+        z_ref[0] - zref_dot_x * x_axis[0],
+        z_ref[1] - zref_dot_x * x_axis[1],
+        z_ref[2] - zref_dot_x * x_axis[2],
+    ];
+    let z_n = rsv_norm(z_raw);
+    let z_axis = if z_n > NEAR_ZERO {
+        [z_raw[0] / z_n, z_raw[1] / z_n, z_raw[2] / z_n]
+    } else {
+        let fallback: [f64; 3] = if x_axis[2].abs() < 0.9 {
+            [0.0, 0.0, 1.0]
+        } else {
+            [0.0, 1.0, 0.0]
+        };
+        let d = rsv_dot(x_axis, fallback);
+        let raw = [
+            fallback[0] - d * x_axis[0],
+            fallback[1] - d * x_axis[1],
+            fallback[2] - d * x_axis[2],
+        ];
+        let n = rsv_norm(raw);
+        if n > NEAR_ZERO {
+            [raw[0] / n, raw[1] / n, raw[2] / n]
+        } else {
+            [0.0, 1.0, 0.0]
+        }
+    };
+    let y_raw = rsv_cross(z_axis, x_axis);
+    let y_n = rsv_norm(y_raw);
+    let y_axis = if y_n > NEAR_ZERO {
+        [y_raw[0] / y_n, y_raw[1] / y_n, y_raw[2] / y_n]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
+    let z_axis = rsv_cross(x_axis, y_axis);
+    let sun_y = rsv_dot(*sun_unit, y_axis);
+    let sun_z = rsv_dot(*sun_unit, z_axis);
+    let panel_angle = f64::atan2(panel_normal[2], panel_normal[1]);
+    (f64::atan2(sun_z, sun_y) - panel_angle).to_degrees()
+}
+
+/// Shortest arc between two angles (result in [0, 180]).
+#[inline]
+fn rsv_circular_diff_deg(a: f64, b: f64) -> f64 {
+    let d = (a - b).rem_euclid(360.0);
+    180.0 - (d - 180.0).abs()
+}
+
+// ---------------------------------------------------------------------------
 // Boresight rotation
 // ---------------------------------------------------------------------------
 
@@ -397,6 +462,36 @@ pub(super) fn roll_sweep_vec(
                 result[i] = count == 1;
             }
             Ok(result)
+        }
+
+        // SolarRoll: analytically check each roll sample against the solar-optimal roll.
+        Some("solar_roll") => {
+            let tolerance_deg = config
+                .get("tolerance_deg")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let panel_normal: [f64; 3] = config
+                .get("panel_normal")
+                .and_then(|v| v.as_array())
+                .and_then(|a| {
+                    if a.len() == 3 {
+                        Some([
+                            a[0].as_f64().unwrap_or(0.0),
+                            a[1].as_f64().unwrap_or(1.0),
+                            a[2].as_f64().unwrap_or(0.0),
+                        ])
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or([0.0, 1.0, 0.0]);
+            Ok((0..n)
+                .map(|i| {
+                    let target = rsv_radec_to_unit(target_ras[i], target_decs[i]);
+                    let opt = solar_optimal_roll_for_sweep(target, sun_unit, panel_normal);
+                    rsv_circular_diff_deg(rolls[i], opt) > tolerance_deg
+                })
+                .collect())
         }
 
         _ => {

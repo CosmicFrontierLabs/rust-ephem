@@ -457,6 +457,14 @@ class RustConstraintMixin(BaseModel):
                     apply_eval_roll(inner)
                 return
 
+            if node_type == "solar_roll":
+                # Inject the spacecraft roll directly so the evaluator can compare
+                # it to the solar-optimal roll.  Only inject when a roll is known
+                # (not during a sweep_roll pass, which doesn't apply here).
+                if target_roll is not None and not sweep_roll:
+                    node["roll_deg"] = float(target_roll)
+                return
+
             if node_type in {"and", "or", "xor", "at_least"}:
                 for child in node.get("constraints", []):
                     apply_eval_roll(child)
@@ -1577,6 +1585,57 @@ class AltAzConstraint(RustConstraintMixin):
     )
 
 
+class SolarRollConstraint(RustConstraintMixin):
+    """Solar roll constraint.
+
+    Violated when the spacecraft's roll deviates from the solar-optimal roll
+    (the roll that maximises solar illumination of the specified panel) by more
+    than ``tolerance_deg`` degrees.
+
+    The optimal roll is computed from the sun direction in the north-referenced
+    spacecraft body frame.
+
+    When ``target_roll`` is not provided (the default), the constraint always
+    reports "not violated" — it is only active when a specific roll angle is
+    evaluated.  Use :meth:`~RustConstraintMixin.roll_range` to obtain the valid
+    roll windows for a given pointing.
+
+    Attributes:
+        type: Always "solar_roll"
+        tolerance_deg: Half-width of the allowed roll window around the solar-optimal
+            roll (degrees).  A target roll within ``[opt - tolerance_deg, opt + tolerance_deg]``
+            is considered valid.
+        panel_normal: Body-frame unit vector normal to the solar panel surface
+            (x = boresight, y = cross-track, z = north-aligned).  Default
+            ``(0, 1, 0)`` is the standard orientation for a nadir-pointing
+            spacecraft with panels on the ±Y faces.  Adjust for panels mounted
+            at a different angle.
+        roll_deg: Spacecraft roll angle (degrees) at evaluation time.  Injected
+            automatically when evaluating with a fixed roll; leave as ``None``
+            in configuration.
+    """
+
+    type: Literal["solar_roll"] = "solar_roll"
+    tolerance_deg: float = Field(
+        ...,
+        ge=0.0,
+        le=180.0,
+        description="Half-width of valid roll window around solar-optimal (degrees)",
+    )
+    panel_normal: tuple[float, float, float] = Field(
+        default=(0.0, 1.0, 0.0),
+        description=(
+            "Body-frame normal vector of the solar panel "
+            "(x=boresight, y=cross-track, z=north). "
+            "Defaults to (0, 1, 0) (+Y body axis)."
+        ),
+    )
+    roll_deg: float | None = Field(
+        default=None,
+        description="Evaluation-time spacecraft roll (degrees). Injected automatically; leave None in config.",
+    )
+
+
 class OrbitRamConstraint(RustConstraintMixin):
     """Orbit RAM direction constraint
 
@@ -1698,6 +1757,7 @@ ConstraintConfig = Union[
     DaytimeConstraint,
     AirmassConstraint,
     MoonPhaseConstraint,
+    SolarRollConstraint,
     OrbitRamConstraint,
     OrbitPoleConstraint,
     SAAConstraint,

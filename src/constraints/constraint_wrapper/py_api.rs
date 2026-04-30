@@ -70,6 +70,7 @@ impl PyConstraint {
         let is_boresight_offset = constraint_type == "boresight_offset";
         let is_bright_star = constraint_type == "bright_star";
         let is_body_polygon = constraint_type == "body" && config.get("fov_polygon").is_some();
+        let is_solar_roll = constraint_type == "solar_roll";
 
         // Bright star or body proximity with a polygon FoV: inject target_roll as roll_deg
         // so the evaluator rotates the polygon to the requested angle.  Both constraint types
@@ -79,6 +80,16 @@ impl PyConstraint {
                 if let Some(obj) = config.as_object_mut() {
                     obj.insert("roll_deg".to_string(), serde_json::json!(target_roll_deg));
                 }
+            }
+            let evaluator = parse_constraint_json(&config)?;
+            return f(&*evaluator);
+        }
+
+        // SolarRoll: inject the spacecraft roll so the evaluator can compare to the
+        // solar-optimal roll.  Handled internally — bypass the BoresightOffset wrapper.
+        if is_solar_roll {
+            if let Some(obj) = config.as_object_mut() {
+                obj.insert("roll_deg".to_string(), serde_json::json!(target_roll_deg));
             }
             let evaluator = parse_constraint_json(&config)?;
             return f(&*evaluator);
@@ -1898,8 +1909,68 @@ impl PyConstraint {
             None
         };
 
-        // If no per-target rolls, use uniform None roll for all targets
+        // target_rolls=None means "evaluate at all rolls and report targets constrained at every
+        // roll" (i.e., no valid roll exists).  For roll-dependent constraints the sweep must be
+        // coordinated: the same roll angle is injected into every sub-constraint simultaneously
+        // so that, e.g., SolarRollConstraint and BodyConstraint share the same roll value.
         if target_rolls.is_none() {
+            if self.evaluator.is_roll_dependent() {
+                // Sweep roll angles.  A target is constrained (true) only when EVERY roll
+                // violates at least one sub-constraint, meaning no valid roll exists.
+                // Extract the ephemeris once and call in_constraint_batch_at_roll in the
+                // loop — no JSON round-trips, no evaluator reconstruction per step.
+                let roll_step = 360.0 / DEFAULT_N_ROLL_SAMPLES as f64;
+                let mut acc: Option<ndarray::Array2<bool>> = None;
+
+                macro_rules! do_roll_sweep {
+                    ($ephem:expr) => {{
+                        let ephem_ref = &*$ephem as &dyn EphemerisBase;
+                        for step in 0..DEFAULT_N_ROLL_SAMPLES {
+                            // Early break: once all targets are accessible no roll can block them.
+                            if let Some(ref a) = acc {
+                                if a.iter().all(|&b| !b) {
+                                    break;
+                                }
+                            }
+                            let roll_deg = step as f64 * roll_step;
+                            let step_result = self.evaluator.in_constraint_batch_at_roll(
+                                ephem_ref,
+                                &target_ras,
+                                &target_decs,
+                                time_indices.as_deref(),
+                                roll_deg,
+                            )?;
+                            match acc {
+                                None => acc = Some(step_result),
+                                Some(ref mut a) => a.zip_mut_with(&step_result, |x, &y| *x &= y),
+                            }
+                        }
+                    }};
+                }
+
+                if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
+                    do_roll_sweep!(ephem);
+                } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
+                    do_roll_sweep!(ephem);
+                } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
+                    do_roll_sweep!(ephem);
+                } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+                    do_roll_sweep!(ephem);
+                } else if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
+                    do_roll_sweep!(ephem);
+                } else {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        "Unsupported ephemeris type",
+                    ));
+                }
+
+                let result_array =
+                    acc.unwrap_or_else(|| ndarray::Array2::from_elem((target_ras.len(), 0), false));
+                use numpy::IntoPyArray;
+                return Ok(result_array.into_pyarray(py).into());
+            }
+
+            // Roll-independent: original behaviour — evaluate with the stored evaluator.
             let result_array = self.with_effective_evaluator(None, |evaluator| {
                 if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
                     return evaluator.in_constraint_batch(
@@ -1941,13 +2012,11 @@ impl PyConstraint {
                         time_indices.as_deref(),
                     );
                 }
-
                 Err(pyo3::exceptions::PyTypeError::new_err(
                     "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
                 ))
             })?;
 
-            // Convert to numpy array
             use numpy::IntoPyArray;
             return Ok(result_array.into_pyarray(py).into());
         }

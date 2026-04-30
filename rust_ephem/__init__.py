@@ -45,6 +45,7 @@ from .constraints import (
     OrbitRamConstraint,
     OrConstraint,
     SAAConstraint,
+    SolarRollConstraint,
     SunConstraint,
     XorConstraint,
 )
@@ -65,6 +66,7 @@ __all__ = [
     "MovingVisibilityResult",
     "SAAConstraint",
     "AltAzConstraint",
+    "SolarRollConstraint",
     "OrbitRamConstraint",
     "OrbitPoleConstraint",
     "CombinedConstraintConfig",
