@@ -284,6 +284,79 @@ impl ConstraintEvaluator for SolarRollEvaluator {
         Ok(None)
     }
 
+    /// When no fixed roll is configured the constraint participates in the
+    /// field-of-regard roll sweep: each candidate roll angle is checked for
+    /// solar compliance, so only solar-valid rolls contribute accessible sky.
+    fn is_roll_dependent(&self) -> bool {
+        self.roll_deg.is_none()
+    }
+
+    /// For the free-roll case: violated when the sweep candidate `roll_deg` is
+    /// outside the solar-tolerance band for the given target direction.
+    /// For the fixed-roll case: fall through to the default (calls `in_constraint_batch`).
+    fn field_of_regard_violated_at_roll(
+        &self,
+        ephemeris: &dyn EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_index: usize,
+        roll_deg: f64,
+    ) -> PyResult<Vec<bool>> {
+        if self.roll_deg.is_some() {
+            // Fixed roll — the default implementation calls in_constraint_batch,
+            // which already uses self.roll_deg.
+            let n_targets = target_unit_vectors.nrows();
+            let result = self.in_constraint_batch(
+                ephemeris,
+                &(0..n_targets)
+                    .map(|i| {
+                        target_unit_vectors[[i, 1]]
+                            .atan2(target_unit_vectors[[i, 0]])
+                            .to_degrees()
+                            .rem_euclid(360.0)
+                    })
+                    .collect::<Vec<_>>(),
+                &(0..n_targets)
+                    .map(|i| {
+                        target_unit_vectors[[i, 2]]
+                            .clamp(-1.0, 1.0)
+                            .asin()
+                            .to_degrees()
+                    })
+                    .collect::<Vec<_>>(),
+                Some(&[time_index]),
+            )?;
+            return Ok((0..n_targets).map(|i| result[[i, 0]]).collect());
+        }
+
+        // Free-roll: check whether this sweep roll is within solar tolerance for each target.
+        let sun = ephemeris.get_sun_positions()?;
+        let obs = ephemeris.get_gcrs_positions()?;
+        let v = [
+            sun[[time_index, 0]] - obs[[time_index, 0]],
+            sun[[time_index, 1]] - obs[[time_index, 1]],
+            sun[[time_index, 2]] - obs[[time_index, 2]],
+        ];
+        let n = norm3(v);
+        let sun_unit = if n < NEAR_ZERO {
+            [1.0, 0.0, 0.0]
+        } else {
+            [v[0] / n, v[1] / n, v[2] / n]
+        };
+
+        let n_targets = target_unit_vectors.nrows();
+        let mut result = Vec::with_capacity(n_targets);
+        for i in 0..n_targets {
+            let target = [
+                target_unit_vectors[[i, 0]],
+                target_unit_vectors[[i, 1]],
+                target_unit_vectors[[i, 2]],
+            ];
+            let opt = solar_optimal_roll_deg(&target, &sun_unit, self.panel_normal);
+            result.push(circular_diff_deg(roll_deg, opt) > self.tolerance_deg);
+        }
+        Ok(result)
+    }
+
     fn name(&self) -> String {
         self.name_str()
     }

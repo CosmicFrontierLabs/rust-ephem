@@ -54,6 +54,25 @@ pub struct BodyProximityEvaluator {
 impl_proximity_evaluator!(BodyProximityEvaluator, "Body", "body", sun_positions);
 
 impl BodyProximityEvaluator {
+    /// Return body positions in GCRS (km) for the correct body.
+    ///
+    /// Earth centre is the GCRS origin so its position is all zeros.
+    fn body_positions(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    ) -> pyo3::PyResult<Array2<f64>> {
+        match self.body.to_lowercase().as_str() {
+            "sun" => ephemeris.get_sun_positions(),
+            "moon" => ephemeris.get_moon_positions(),
+            "earth" => {
+                // Earth centre = GCRS origin: return zero array with the same shape as observer.
+                let obs = ephemeris.get_gcrs_positions()?;
+                Ok(Array2::zeros(obs.raw_dim()))
+            }
+            _ => ephemeris.get_any_body_gcrs_positions(&self.body),
+        }
+    }
+
     #[allow(dead_code)]
     fn final_violation_description(&self) -> String {
         match self.max_angle_deg {
@@ -132,8 +151,19 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
         target_dec: f64,
         time_indices: Option<&[usize]>,
     ) -> pyo3::PyResult<ConstraintResult> {
+        let all_times = ephemeris.get_times()?;
+        let body_all = self.body_positions(ephemeris)?;
+        let obs_all = ephemeris.get_gcrs_positions()?;
         let (times_slice, body_positions_slice, observer_positions_slice) =
-            extract_standard_ephemeris_data!(ephemeris, time_indices);
+            if let Some(indices) = time_indices {
+                (
+                    indices.iter().map(|&i| all_times[i]).collect::<Vec<_>>(),
+                    body_all.select(ndarray::Axis(0), indices),
+                    obs_all.select(ndarray::Axis(0), indices),
+                )
+            } else {
+                (all_times.to_vec(), body_all, obs_all)
+            };
 
         if let Some(ref vertices) = self.fov_polygon {
             let target_ra_rad = target_ra.to_radians();
@@ -195,15 +225,15 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
         let times = ephemeris.get_times()?;
         let (body_positions_slice, observer_positions_slice, n_times) =
             if let Some(indices) = time_indices {
-                let body_filtered = ephemeris
-                    .get_sun_positions()?
+                let body_filtered = self
+                    .body_positions(ephemeris)?
                     .select(ndarray::Axis(0), indices);
                 let obs_filtered = ephemeris
                     .get_gcrs_positions()?
                     .select(ndarray::Axis(0), indices);
                 (body_filtered, obs_filtered, indices.len())
             } else {
-                let body_positions = ephemeris.get_sun_positions()?;
+                let body_positions = self.body_positions(ephemeris)?;
                 let observer_positions = ephemeris.get_gcrs_positions()?;
                 (body_positions, observer_positions, times.len())
             };
@@ -299,15 +329,15 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
         let times = ephemeris.get_times()?;
         let (body_positions_slice, observer_positions_slice, n_times) =
             if let Some(indices) = time_indices {
-                let body_filtered = ephemeris
-                    .get_sun_positions()?
+                let body_filtered = self
+                    .body_positions(ephemeris)?
                     .select(ndarray::Axis(0), indices);
                 let obs_filtered = ephemeris
                     .get_gcrs_positions()?
                     .select(ndarray::Axis(0), indices);
                 (body_filtered, obs_filtered, indices.len())
             } else {
-                let body_positions = ephemeris.get_sun_positions()?;
+                let body_positions = self.body_positions(ephemeris)?;
                 let observer_positions = ephemeris.get_gcrs_positions()?;
                 (body_positions, observer_positions, times.len())
             };
@@ -397,6 +427,70 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
             }
         }
         Ok(Some(result))
+    }
+
+    /// When this evaluator uses a free-roll polygon (no fixed roll), the polygon
+    /// orientation changes with roll, so the outer field-of-regard sweep must pass
+    /// the same roll to every constraint at each step.  Returning `true` here opts
+    /// this evaluator into that sweep.
+    fn is_roll_dependent(&self) -> bool {
+        self.fov_polygon.is_some() && self.roll_rad.is_none()
+    }
+
+    /// For the free-roll polygon case: check whether the body falls inside the polygon
+    /// at the specific `roll_deg` coming from the outer sweep.  This ensures the body
+    /// and solar-roll constraints are evaluated at the same roll angle simultaneously.
+    fn field_of_regard_violated_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_index: usize,
+        roll_deg: f64,
+    ) -> pyo3::PyResult<Vec<bool>> {
+        let n_targets = target_unit_vectors.nrows();
+
+        // Not free-roll polygon mode — fall back to the default (uses in_constraint_batch_unit_vectors).
+        let vertices = match &self.fov_polygon {
+            Some(v) if self.roll_rad.is_none() => v,
+            _ => {
+                if let Some(result) = self.in_constraint_batch_unit_vectors(
+                    ephemeris,
+                    target_unit_vectors,
+                    Some(&[time_index]),
+                )? {
+                    return Ok((0..n_targets).map(|i| result[[i, 0]]).collect());
+                }
+                return Ok(vec![false; n_targets]);
+            }
+        };
+
+        let body_positions = self.body_positions(ephemeris)?;
+        let obs_positions = ephemeris.get_gcrs_positions()?;
+
+        let body_radec = Self::body_radec_at(&body_positions, &obs_positions, time_index);
+
+        let (sin_roll, cos_roll) = roll_deg.to_radians().sin_cos();
+        let mut result = Vec::with_capacity(n_targets);
+        for i in 0..n_targets {
+            let ux = target_unit_vectors[[i, 0]];
+            let uy = target_unit_vectors[[i, 1]];
+            let uz = target_unit_vectors[[i, 2]];
+            let (target_ra_rad, target_dec_rad) = fov_polygon::unit_to_radec(&[ux, uy, uz]);
+            let violated = match body_radec {
+                Some((body_ra, body_dec)) => fov_polygon::point_in_polygon_at_roll(
+                    target_ra_rad,
+                    target_dec_rad,
+                    body_ra,
+                    body_dec,
+                    vertices,
+                    sin_roll,
+                    cos_roll,
+                ),
+                None => false,
+            };
+            result.push(violated);
+        }
+        Ok(result)
     }
 
     fn name(&self) -> String {

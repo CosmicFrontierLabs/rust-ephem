@@ -34,6 +34,75 @@ use super::json_parser::parse_constraint_json;
 use super::json_to_py::json_to_pyobject;
 use super::roll_range::run_roll_sweep;
 
+/// Recursively inject `roll_deg` into every roll-sensitive leaf node in a
+/// constraint JSON tree so the entire combined constraint is evaluated at the
+/// same spacecraft roll angle in a single pass.
+///
+/// Nodes updated:
+///   - `solar_roll`                         → sets `roll_deg`
+///   - `body` with `fov_polygon`            → sets `roll_deg`
+///   - `bright_star` with `fov_polygon`     → sets `roll_deg`
+///   - `boresight_offset`                   → adds sweep roll to existing `roll_deg`
+///   - compound nodes (or/and/not/xor/…)    → recurse into children
+///   - everything else                      → unchanged (roll-independent)
+fn inject_roll_into_json(config: &mut serde_json::Value, roll_deg: f64) {
+    let ctype = config
+        .get("type")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned);
+    match ctype.as_deref() {
+        Some("solar_roll") => {
+            if let Some(obj) = config.as_object_mut() {
+                obj.insert("roll_deg".to_string(), serde_json::json!(roll_deg));
+            }
+        }
+        Some("body") if config.get("fov_polygon").is_some() => {
+            if let Some(obj) = config.as_object_mut() {
+                obj.insert("roll_deg".to_string(), serde_json::json!(roll_deg));
+            }
+        }
+        Some("bright_star") if config.get("fov_polygon").is_some() => {
+            if let Some(obj) = config.as_object_mut() {
+                obj.insert("roll_deg".to_string(), serde_json::json!(roll_deg));
+            }
+        }
+        Some("boresight_offset") => {
+            let base = config
+                .get("roll_deg")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let clockwise = config
+                .get("roll_clockwise")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let combined = if clockwise {
+                base - roll_deg
+            } else {
+                base + roll_deg
+            };
+            if let Some(obj) = config.as_object_mut() {
+                obj.insert("roll_deg".to_string(), serde_json::json!(combined));
+            }
+            if let Some(inner) = config.get_mut("constraint") {
+                inject_roll_into_json(inner, roll_deg);
+            }
+        }
+        Some("or") | Some("and") | Some("xor") | Some("at_least") => {
+            if let Some(arr) = config.get_mut("constraints").and_then(|v| v.as_array_mut()) {
+                for child in arr.iter_mut() {
+                    inject_roll_into_json(child, roll_deg);
+                }
+            }
+        }
+        Some("not") => {
+            if let Some(inner) = config.get_mut("constraint") {
+                inject_roll_into_json(inner, roll_deg);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Python-facing constraint evaluator
 ///
 /// This wraps the Rust constraint system and provides a convenient Python API.
@@ -1909,8 +1978,79 @@ impl PyConstraint {
             None
         };
 
-        // If no per-target rolls, use uniform None roll for all targets
+        // target_rolls=None means "evaluate at all rolls and report targets constrained at every
+        // roll" (i.e., no valid roll exists).  For roll-dependent constraints the sweep must be
+        // coordinated: the same roll angle is injected into every sub-constraint simultaneously
+        // so that, e.g., SolarRollConstraint and BodyConstraint share the same roll value.
         if target_rolls.is_none() {
+            if self.evaluator.is_roll_dependent() {
+                // Sweep roll angles.  A target is constrained (true) only when EVERY roll
+                // violates at least one sub-constraint, meaning no valid roll exists.
+                let roll_step = 360.0 / DEFAULT_N_ROLL_SAMPLES as f64;
+                let mut acc: Option<ndarray::Array2<bool>> = None;
+
+                for step in 0..DEFAULT_N_ROLL_SAMPLES {
+                    let roll_deg = step as f64 * roll_step;
+
+                    let mut config: serde_json::Value = serde_json::from_str(&self.config_json)
+                        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+                    inject_roll_into_json(&mut config, roll_deg);
+                    let evaluator = parse_constraint_json(&config)?;
+
+                    let step_result = if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
+                        evaluator.in_constraint_batch(
+                            &*ephem as &dyn EphemerisBase,
+                            &target_ras,
+                            &target_decs,
+                            time_indices.as_deref(),
+                        )?
+                    } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
+                        evaluator.in_constraint_batch(
+                            &*ephem as &dyn EphemerisBase,
+                            &target_ras,
+                            &target_decs,
+                            time_indices.as_deref(),
+                        )?
+                    } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
+                        evaluator.in_constraint_batch(
+                            &*ephem as &dyn EphemerisBase,
+                            &target_ras,
+                            &target_decs,
+                            time_indices.as_deref(),
+                        )?
+                    } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
+                        evaluator.in_constraint_batch(
+                            &*ephem as &dyn EphemerisBase,
+                            &target_ras,
+                            &target_decs,
+                            time_indices.as_deref(),
+                        )?
+                    } else if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
+                        evaluator.in_constraint_batch(
+                            &*ephem as &dyn EphemerisBase,
+                            &target_ras,
+                            &target_decs,
+                            time_indices.as_deref(),
+                        )?
+                    } else {
+                        return Err(pyo3::exceptions::PyTypeError::new_err(
+                            "Unsupported ephemeris type",
+                        ));
+                    };
+
+                    match acc {
+                        None => acc = Some(step_result),
+                        Some(ref mut a) => a.zip_mut_with(&step_result, |x, &y| *x &= y),
+                    }
+                }
+
+                let result_array =
+                    acc.unwrap_or_else(|| ndarray::Array2::from_elem((target_ras.len(), 0), false));
+                use numpy::IntoPyArray;
+                return Ok(result_array.into_pyarray(py).into());
+            }
+
+            // Roll-independent: original behaviour — evaluate with the stored evaluator.
             let result_array = self.with_effective_evaluator(None, |evaluator| {
                 if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
                     return evaluator.in_constraint_batch(
@@ -1952,13 +2092,11 @@ impl PyConstraint {
                         time_indices.as_deref(),
                     );
                 }
-
                 Err(pyo3::exceptions::PyTypeError::new_err(
                     "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
                 ))
             })?;
 
-            // Convert to numpy array
             use numpy::IntoPyArray;
             return Ok(result_array.into_pyarray(py).into());
         }
