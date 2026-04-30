@@ -241,6 +241,7 @@ class AltAzConstraint(RustConstraintMixin):
 class SolarRollConstraint(RustConstraintMixin):
     type: Literal["solar_roll"] = "solar_roll"
     tolerance_deg: float
+    panel_normal: tuple[float, float, float] = (0.0, 1.0, 0.0)
     roll_deg: float | None = None
 
 class OrbitRamConstraint(RustConstraintMixin):

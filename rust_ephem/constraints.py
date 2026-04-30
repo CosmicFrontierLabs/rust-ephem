@@ -1589,13 +1589,11 @@ class SolarRollConstraint(RustConstraintMixin):
     """Solar roll constraint.
 
     Violated when the spacecraft's roll deviates from the solar-optimal roll
-    (the roll that maximises solar illumination of the +Y body panel) by more
+    (the roll that maximises solar illumination of the specified panel) by more
     than ``tolerance_deg`` degrees.
 
     The optimal roll is computed from the sun direction in the north-referenced
-    spacecraft body frame.  No panel geometry parameters are needed — the
-    constraint is generic and works for any spacecraft where the primary panel
-    normal is approximately +Y body.
+    spacecraft body frame.
 
     When ``target_roll`` is not provided (the default), the constraint always
     reports "not violated" — it is only active when a specific roll angle is
@@ -1607,6 +1605,11 @@ class SolarRollConstraint(RustConstraintMixin):
         tolerance_deg: Half-width of the allowed roll window around the solar-optimal
             roll (degrees).  A target roll within ``[opt - tolerance_deg, opt + tolerance_deg]``
             is considered valid.
+        panel_normal: Body-frame unit vector normal to the solar panel surface
+            (x = boresight, y = cross-track, z = north-aligned).  Default
+            ``(0, 1, 0)`` is the standard orientation for a nadir-pointing
+            spacecraft with panels on the ±Y faces.  Adjust for panels mounted
+            at a different angle.
         roll_deg: Spacecraft roll angle (degrees) at evaluation time.  Injected
             automatically when evaluating with a fixed roll; leave as ``None``
             in configuration.
@@ -1618,6 +1621,14 @@ class SolarRollConstraint(RustConstraintMixin):
         ge=0.0,
         le=180.0,
         description="Half-width of valid roll window around solar-optimal (degrees)",
+    )
+    panel_normal: tuple[float, float, float] = Field(
+        default=(0.0, 1.0, 0.0),
+        description=(
+            "Body-frame normal vector of the solar panel "
+            "(x=boresight, y=cross-track, z=north). "
+            "Defaults to (0, 1, 0) (+Y body axis)."
+        ),
     )
     roll_deg: float | None = Field(
         default=None,

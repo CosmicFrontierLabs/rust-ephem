@@ -11,7 +11,7 @@ use crate::constraints::moon_proximity::MoonProximityConfig;
 use crate::constraints::orbit_pole::OrbitPoleConfig;
 use crate::constraints::orbit_ram::OrbitRamConfig;
 use crate::constraints::saa::SAAConfig;
-use crate::constraints::solar_roll::SolarRollConfig;
+use crate::constraints::solar_roll::{default_panel_normal, SolarRollConfig};
 use crate::constraints::sun_proximity::SunProximityConfig;
 use pyo3::PyResult;
 use serde::Deserialize;
@@ -188,6 +188,8 @@ enum ConstraintSpec {
         tolerance_deg: f64,
         #[serde(default)]
         roll_deg: Option<f64>,
+        #[serde(default = "default_panel_normal")]
+        panel_normal: [f64; 3],
     },
 }
 
@@ -417,9 +419,11 @@ impl ConstraintSpec {
             ConstraintSpec::SolarRoll {
                 tolerance_deg,
                 roll_deg,
+                panel_normal,
             } => Ok(SolarRollConfig {
                 tolerance_deg,
                 roll_deg,
+                panel_normal,
             }
             .to_evaluator()),
         }

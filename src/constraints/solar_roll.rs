@@ -10,11 +10,17 @@ use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
 
+pub fn default_panel_normal() -> [f64; 3] {
+    [0.0, 1.0, 0.0]
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SolarRollConfig {
     pub tolerance_deg: f64,
     #[serde(default)]
     pub roll_deg: Option<f64>,
+    #[serde(default = "default_panel_normal")]
+    pub panel_normal: [f64; 3],
 }
 
 impl ConstraintConfig for SolarRollConfig {
@@ -22,6 +28,7 @@ impl ConstraintConfig for SolarRollConfig {
         Box::new(SolarRollEvaluator {
             tolerance_deg: self.tolerance_deg,
             roll_deg: self.roll_deg,
+            panel_normal: self.panel_normal,
         })
     }
 }
@@ -29,6 +36,7 @@ impl ConstraintConfig for SolarRollConfig {
 struct SolarRollEvaluator {
     tolerance_deg: f64,
     roll_deg: Option<f64>,
+    panel_normal: [f64; 3],
 }
 
 const NEAR_ZERO: f64 = 1.0e-12;
@@ -72,17 +80,23 @@ fn radec_to_unit(ra_deg: f64, dec_deg: f64) -> [f64; 3] {
 }
 
 /// Compute the north-referenced spacecraft roll (degrees, CCW positive) that maximises
-/// solar illumination of the +Y body panel.
+/// solar illumination of the panel with the given body-frame normal.
 ///
 /// North-referenced body frame (same convention as `boresight_rotate` in roll_range.rs):
 ///   x = boresight (target direction)
 ///   z = celestial north projected onto the plane perpendicular to x
 ///   y = z × x  (recomputed for orthonormality)
 ///
-/// At roll θ the +Y body axis is:  y·cos(θ) + z·sin(θ)
-/// Illumination of +Y panel:       s_y(θ) = sun_y·cos(θ) + sun_z·sin(θ)
-/// Optimal roll (d/dθ = 0):        θ_opt = atan2(sun_z, sun_y)
-pub fn solar_optimal_roll_deg(target: &[f64; 3], sun_unit: &[f64; 3]) -> f64 {
+/// At roll θ the body Y-axis is:  y_ref·cos(θ) + z_ref·sin(θ)
+/// For panel normal n = [nx, ny, nz] (body frame, x = boresight), the panel
+/// illumination is maximised at:
+///   θ_opt = atan2(sun_z, sun_y) - atan2(nz, ny)
+/// The +Y default (ny=1, nz=0) recovers the original formula.
+pub fn solar_optimal_roll_deg(
+    target: &[f64; 3],
+    sun_unit: &[f64; 3],
+    panel_normal: [f64; 3],
+) -> f64 {
     let x_axis = *target;
     let z_ref = [0.0_f64, 0.0, 1.0];
 
@@ -116,13 +130,16 @@ pub fn solar_optimal_roll_deg(target: &[f64; 3], sun_unit: &[f64; 3]) -> f64 {
     let sun_y = dot3(*sun_unit, y_axis);
     let sun_z = dot3(*sun_unit, z_axis);
 
-    f64::atan2(sun_z, sun_y).to_degrees()
+    // Shift by the angle of the panel normal in the body Y-Z plane.
+    let panel_angle = f64::atan2(panel_normal[2], panel_normal[1]);
+    (f64::atan2(sun_z, sun_y) - panel_angle).to_degrees()
 }
 
 /// Shortest angular arc between two roll angles (result in [0, 180]).
 #[inline]
 pub fn circular_diff_deg(a: f64, b: f64) -> f64 {
-    ((a - b).rem_euclid(360.0) - 180.0).abs()
+    let d = (a - b).rem_euclid(360.0);
+    180.0 - (d - 180.0).abs()
 }
 
 impl SolarRollEvaluator {
@@ -181,7 +198,7 @@ impl ConstraintEvaluator for SolarRollEvaluator {
         let violations = track_violations(
             &times_filtered,
             |i| {
-                let opt = solar_optimal_roll_deg(&target, &sun_units[i]);
+                let opt = solar_optimal_roll_deg(&target, &sun_units[i], self.panel_normal);
                 let diff = circular_diff_deg(roll, opt);
                 let violated = diff > self.tolerance_deg;
                 (
@@ -197,7 +214,7 @@ impl ConstraintEvaluator for SolarRollEvaluator {
                 if !violated {
                     return "".to_string();
                 }
-                let opt = solar_optimal_roll_deg(&target, &sun_units[i]);
+                let opt = solar_optimal_roll_deg(&target, &sun_units[i], self.panel_normal);
                 let diff = circular_diff_deg(roll, opt);
                 format!(
                     "Roll {:.1}° deviates {:.1}° from solar-optimal {:.1}° (tolerance {:.1}°)",
@@ -250,7 +267,7 @@ impl ConstraintEvaluator for SolarRollEvaluator {
                 } else {
                     [v[0] / n, v[1] / n, v[2] / n]
                 };
-                let opt = solar_optimal_roll_deg(&target, &sun_unit);
+                let opt = solar_optimal_roll_deg(&target, &sun_unit, self.panel_normal);
                 result[[j, i]] = circular_diff_deg(roll, opt) > self.tolerance_deg;
             }
         }
@@ -273,5 +290,123 @@ impl ConstraintEvaluator for SolarRollEvaluator {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Boresight along GCRS +X gives a clean reference frame:
+    //   x_axis = [1, 0, 0]
+    //   z_ref  = [0, 0, 1]  → z_raw = [0, 0, 1] (z_ref fully perpendicular to x)
+    //   z_axis = [0, 0, 1]
+    //   y_raw  = z × x = [0, 1, 0]
+    //   y_axis = [0, 1, 0]
+    // So sun_y = sun·ŷ and sun_z = sun·ẑ are just the sun's Y and Z GCRS components.
+    const X_BORESIGHT: [f64; 3] = [1.0, 0.0, 0.0];
+
+    fn approx_eq(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-8
+    }
+
+    // --- solar_optimal_roll_deg ---
+
+    #[test]
+    fn test_optimal_roll_default_panel_sun_along_y() {
+        // Sun on +Y, panel normal +Y → sun is already on the panel → optimal roll = 0°
+        let opt = solar_optimal_roll_deg(&X_BORESIGHT, &[0.0, 1.0, 0.0], [0.0, 1.0, 0.0]);
+        assert!(approx_eq(opt, 0.0), "expected 0°, got {opt}");
+    }
+
+    #[test]
+    fn test_optimal_roll_default_panel_sun_along_z() {
+        // Sun on +Z, panel normal +Y → need 90° roll to face the sun
+        let opt = solar_optimal_roll_deg(&X_BORESIGHT, &[0.0, 0.0, 1.0], [0.0, 1.0, 0.0]);
+        assert!(approx_eq(opt, 90.0), "expected 90°, got {opt}");
+    }
+
+    #[test]
+    fn test_optimal_roll_default_panel_sun_along_neg_y() {
+        // Sun on -Y, panel normal +Y → need ±180° roll
+        let opt = solar_optimal_roll_deg(&X_BORESIGHT, &[0.0, -1.0, 0.0], [0.0, 1.0, 0.0]);
+        assert!(approx_eq(opt.abs(), 180.0), "expected ±180°, got {opt}");
+    }
+
+    #[test]
+    fn test_optimal_roll_panel_z_sun_along_z() {
+        // Sun on +Z, panel normal +Z → no roll needed, optimal = 0°
+        let opt = solar_optimal_roll_deg(&X_BORESIGHT, &[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]);
+        assert!(approx_eq(opt, 0.0), "expected 0°, got {opt}");
+    }
+
+    #[test]
+    fn test_optimal_roll_panel_z_sun_along_y() {
+        // Sun on +Y, panel normal +Z → optimal is -90° (panel must roll -90° to face +Y)
+        let opt = solar_optimal_roll_deg(&X_BORESIGHT, &[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]);
+        assert!(approx_eq(opt, -90.0), "expected -90°, got {opt}");
+    }
+
+    #[test]
+    fn test_optimal_roll_panel_45deg_sun_along_z() {
+        // Panel tilted 45° from +Y toward +Z, sun on +Z → need 45° roll
+        let c = 45.0_f64.to_radians().cos();
+        let s = 45.0_f64.to_radians().sin();
+        let opt = solar_optimal_roll_deg(&X_BORESIGHT, &[0.0, 0.0, 1.0], [0.0, c, s]);
+        assert!(approx_eq(opt, 45.0), "expected 45°, got {opt}");
+    }
+
+    #[test]
+    fn test_panel_normal_shift_is_90deg() {
+        // Rotating the panel 90° in the Y-Z plane shifts the optimal roll by exactly -90°
+        // for any sun direction in the Y-Z plane.
+        let sun = [0.0, 1.0_f64 / 2.0_f64.sqrt(), 1.0_f64 / 2.0_f64.sqrt()];
+        let opt_y = solar_optimal_roll_deg(&X_BORESIGHT, &sun, [0.0, 1.0, 0.0]);
+        let opt_z = solar_optimal_roll_deg(&X_BORESIGHT, &sun, [0.0, 0.0, 1.0]);
+        // +Z panel needs 90° less roll than +Y panel to face the same sun direction.
+        assert!(
+            approx_eq(opt_y - opt_z, 90.0),
+            "expected 90° shift, got {opt_y} - {opt_z} = {}",
+            opt_y - opt_z
+        );
+    }
+
+    #[test]
+    fn test_panel_x_component_ignored() {
+        // The X component of the panel normal (along boresight) does not affect the result.
+        let sun = [0.0, 0.0, 1.0];
+        let opt_no_x = solar_optimal_roll_deg(&X_BORESIGHT, &sun, [0.0, 1.0, 0.0]);
+        let opt_with_x = solar_optimal_roll_deg(&X_BORESIGHT, &sun, [5.0, 1.0, 0.0]);
+        assert!(
+            approx_eq(opt_no_x, opt_with_x),
+            "X component changed result: {opt_no_x} vs {opt_with_x}"
+        );
+    }
+
+    // --- circular_diff_deg ---
+
+    #[test]
+    fn test_circular_diff_identical() {
+        assert!(approx_eq(circular_diff_deg(45.0, 45.0), 0.0));
+    }
+
+    #[test]
+    fn test_circular_diff_antipodal() {
+        assert!(approx_eq(circular_diff_deg(0.0, 180.0), 180.0));
+        assert!(approx_eq(circular_diff_deg(180.0, 0.0), 180.0));
+    }
+
+    #[test]
+    fn test_circular_diff_wraparound() {
+        // 350° and 10° differ by 20° across the 0/360 boundary.
+        assert!(approx_eq(circular_diff_deg(350.0, 10.0), 20.0));
+        assert!(approx_eq(circular_diff_deg(10.0, 350.0), 20.0));
+    }
+
+    #[test]
+    fn test_circular_diff_symmetric() {
+        let a = 270.0_f64;
+        let b = 90.0_f64;
+        assert!(approx_eq(circular_diff_deg(a, b), circular_diff_deg(b, a)));
     }
 }
