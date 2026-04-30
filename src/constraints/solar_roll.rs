@@ -284,6 +284,52 @@ impl ConstraintEvaluator for SolarRollEvaluator {
         Ok(None)
     }
 
+    /// Hot path for coordinated roll sweep: evaluate at `roll_deg` without any
+    /// JSON round-trip.  Fixed-roll mode delegates to `in_constraint_batch` unchanged.
+    fn in_constraint_batch_at_roll(
+        &self,
+        ephemeris: &dyn EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        roll_deg: f64,
+    ) -> PyResult<Array2<bool>> {
+        if self.roll_deg.is_some() {
+            // Fixed roll — in_constraint_batch already evaluates at self.roll_deg.
+            return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices);
+        }
+        // Free roll: evaluate at the sweep-provided roll_deg.
+        let (times_filtered,) = extract_time_data!(ephemeris, time_indices);
+        let n_targets = target_ras.len();
+        let n_times = times_filtered.len();
+        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
+
+        let sun = ephemeris.get_sun_positions()?;
+        let obs = ephemeris.get_gcrs_positions()?;
+
+        for j in 0..n_targets {
+            let target = radec_to_unit(target_ras[j], target_decs[j]);
+            for i in 0..n_times {
+                let source_i = time_indices.map_or(i, |indices| indices[i]);
+                let v = [
+                    sun[[source_i, 0]] - obs[[source_i, 0]],
+                    sun[[source_i, 1]] - obs[[source_i, 1]],
+                    sun[[source_i, 2]] - obs[[source_i, 2]],
+                ];
+                let n = norm3(v);
+                let sun_unit = if n < NEAR_ZERO {
+                    [1.0, 0.0, 0.0]
+                } else {
+                    [v[0] / n, v[1] / n, v[2] / n]
+                };
+                let opt = solar_optimal_roll_deg(&target, &sun_unit, self.panel_normal);
+                result[[j, i]] = circular_diff_deg(roll_deg, opt) > self.tolerance_deg;
+            }
+        }
+
+        Ok(result)
+    }
+
     /// When no fixed roll is configured the constraint participates in the
     /// field-of-regard roll sweep: each candidate roll angle is checked for
     /// solar compliance, so only solar-valid rolls contribute accessible sky.

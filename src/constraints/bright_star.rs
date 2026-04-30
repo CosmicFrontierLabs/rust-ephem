@@ -374,6 +374,63 @@ impl ConstraintEvaluator for BrightStarEvaluator {
         Ok(result)
     }
 
+    /// Hot path for coordinated roll sweep: evaluate polygon at `roll_deg` without
+    /// JSON round-trips.  Circle mode and fixed-roll polygon delegate unchanged.
+    fn in_constraint_batch_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        roll_deg: f64,
+    ) -> PyResult<Array2<bool>> {
+        let vertices = match &self.fov {
+            FovDefinition::Polygon {
+                vertices,
+                roll_rad: None,
+            } => vertices,
+            _ => return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices),
+        };
+
+        let all_times = ephemeris.get_times()?;
+        let n_times = match time_indices {
+            Some(idx) => idx.len(),
+            None => all_times.len(),
+        };
+        let n_targets = target_ras.len();
+        let (sin_roll, cos_roll) = roll_deg.to_radians().sin_cos();
+
+        // Bright-star violation is time-invariant; evaluate once per target, parallelise.
+        let violated: Vec<bool> = target_ras
+            .par_iter()
+            .zip(target_decs.par_iter())
+            .map(|(&ra_deg, &dec_deg)| {
+                let target_ra_rad = ra_deg.to_radians();
+                let target_dec_rad = dec_deg.to_radians();
+                let sin_tdec = target_dec_rad.sin();
+                let cos_tdec = target_dec_rad.cos();
+                let (sin_tra, cos_tra) = target_ra_rad.sin_cos();
+                let target_unit = [cos_tdec * cos_tra, cos_tdec * sin_tra, sin_tdec];
+                let nearby =
+                    self.nearby_tangent_offsets(target_unit, target_ra_rad, sin_tdec, cos_tdec);
+                nearby.iter().any(|&(east, north)| {
+                    let (u, v) = Self::to_instrument(east, north, sin_roll, cos_roll);
+                    Self::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
+                })
+            })
+            .collect();
+
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+        for (i, &v) in violated.iter().enumerate() {
+            if v {
+                for j in 0..n_times {
+                    result[[i, j]] = true;
+                }
+            }
+        }
+        Ok(result)
+    }
+
     /// Free-roll polygon mode: the polygon rotates with roll, so the outer
     /// field-of-regard sweep must test every constraint at the same roll step.
     fn is_roll_dependent(&self) -> bool {

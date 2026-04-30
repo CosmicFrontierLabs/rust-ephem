@@ -429,6 +429,66 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
         Ok(Some(result))
     }
 
+    /// Hot path for coordinated roll sweep: evaluate polygon at `roll_deg` without
+    /// JSON round-trips.  Circle mode and fixed-roll polygon delegate unchanged.
+    fn in_constraint_batch_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        roll_deg: f64,
+    ) -> pyo3::PyResult<Array2<bool>> {
+        let vertices = match &self.fov_polygon {
+            Some(v) if self.roll_rad.is_none() => v,
+            _ => return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices),
+        };
+
+        let times = ephemeris.get_times()?;
+        let (body_positions_slice, observer_positions_slice, n_times) =
+            if let Some(indices) = time_indices {
+                let body_filtered = self
+                    .body_positions(ephemeris)?
+                    .select(ndarray::Axis(0), indices);
+                let obs_filtered = ephemeris
+                    .get_gcrs_positions()?
+                    .select(ndarray::Axis(0), indices);
+                (body_filtered, obs_filtered, indices.len())
+            } else {
+                (
+                    self.body_positions(ephemeris)?,
+                    ephemeris.get_gcrs_positions()?,
+                    times.len(),
+                )
+            };
+
+        let n_targets = target_ras.len();
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+        let (sin_roll, cos_roll) = roll_deg.to_radians().sin_cos();
+
+        for (i, (&ra, &dec)) in target_ras.iter().zip(target_decs.iter()).enumerate() {
+            let target_ra_rad = ra.to_radians();
+            let target_dec_rad = dec.to_radians();
+            for j in 0..n_times {
+                if let Some((body_ra, body_dec)) =
+                    Self::body_radec_at(&body_positions_slice, &observer_positions_slice, j)
+                {
+                    result[[i, j]] = fov_polygon::point_in_polygon_at_roll(
+                        target_ra_rad,
+                        target_dec_rad,
+                        body_ra,
+                        body_dec,
+                        vertices,
+                        sin_roll,
+                        cos_roll,
+                    );
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
     /// When this evaluator uses a free-roll polygon (no fixed roll), the polygon
     /// orientation changes with roll, so the outer field-of-regard sweep must pass
     /// the same roll to every constraint at each step.  Returning `true` here opts

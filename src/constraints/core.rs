@@ -742,6 +742,25 @@ pub trait ConstraintEvaluator: Send + Sync {
         Ok(accessible.iter().map(|&a| !a).collect())
     }
 
+    /// Evaluate constraint for the full target set at a single fixed roll angle.
+    ///
+    /// This is the hot path for the coordinated roll sweep in `target_rolls=None` mode.
+    /// Roll-independent constraints ignore `roll_deg` and delegate to `in_constraint_batch`.
+    /// Roll-dependent leaves (SolarRoll, BodyProximity polygon, BrightStar polygon) override
+    /// this to use `roll_deg` directly, eliminating JSON round-trips across 72 sweep steps.
+    ///
+    /// Returns (M × N) boolean violation array, same semantics as `in_constraint_batch`.
+    fn in_constraint_batch_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        _roll_deg: f64,
+    ) -> PyResult<Array2<bool>> {
+        self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices)
+    }
+
     /// Get constraint name
     fn name(&self) -> String;
 
