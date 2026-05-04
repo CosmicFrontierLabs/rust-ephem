@@ -1326,18 +1326,7 @@ impl PyConstraint {
     ) -> PyResult<ConstraintResult> {
         // Parse time filtering options
         let bound = ephemeris.bind(py);
-        let time_indices = if let Some(times_arg) = times {
-            if indices.is_some() {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "Cannot specify both 'times' and 'indices' parameters",
-                ));
-            }
-            Some(self.parse_times_to_indices(bound, times_arg)?)
-        } else if let Some(indices_arg) = indices {
-            Some(self.parse_indices(indices_arg)?)
-        } else {
-            None
-        };
+        let time_indices = self.resolve_time_indices(bound, times, indices)?;
 
         self.with_effective_evaluator(target_roll, |evaluator| {
             self.with_ephemeris(bound, |ephem_ref| {
@@ -1381,18 +1370,7 @@ impl PyConstraint {
         }
 
         let bound = ephemeris.bind(py);
-        let time_indices = if let Some(times_arg) = times {
-            if indices.is_some() {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "Cannot specify both 'times' and 'indices' parameters",
-                ));
-            }
-            Some(self.parse_times_to_indices(bound, times_arg)?)
-        } else if let Some(indices_arg) = indices {
-            Some(self.parse_indices(indices_arg)?)
-        } else {
-            None
-        };
+        let time_indices = self.resolve_time_indices(bound, times, indices)?;
 
         // If no per-target rolls, use uniform None roll for all targets
         if target_rolls.is_none() {
@@ -1411,12 +1389,7 @@ impl PyConstraint {
 
         // Group targets by roll value for efficient evaluation
         let rolls = target_rolls.unwrap();
-        let mut roll_map: std::collections::BTreeMap<String, Vec<usize>> =
-            std::collections::BTreeMap::new();
-        for (idx, roll) in rolls.iter().enumerate() {
-            let key = format!("{}", roll);
-            roll_map.entry(key).or_default().push(idx);
-        }
+        let roll_map = Self::build_roll_groups(&rolls);
 
         // Create a result vector with capacity for all targets
         let mut results: Vec<Option<ConstraintResult>> = Vec::with_capacity(target_ras.len());
@@ -1430,8 +1403,8 @@ impl PyConstraint {
             let target_roll = rolls[group_indices[0]];
 
             // Extract targets for this group
-            let group_ras: Vec<f64> = group_indices.iter().map(|&i| target_ras[i]).collect();
-            let group_decs: Vec<f64> = group_indices.iter().map(|&i| target_decs[i]).collect();
+            let (group_ras, group_decs) =
+                Self::extract_group_targets(&target_ras, &target_decs, &group_indices);
 
             let group_results = self.with_effective_evaluator(Some(target_roll), |evaluator| {
                 self.with_ephemeris(bound, |ephem_ref| {
@@ -1536,18 +1509,7 @@ impl PyConstraint {
 
         // Parse time filtering options
         let bound = ephemeris.bind(py);
-        let time_indices = if let Some(times_arg) = times {
-            if indices.is_some() {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "Cannot specify both 'times' and 'indices' parameters",
-                ));
-            }
-            Some(self.parse_times_to_indices(bound, times_arg)?)
-        } else if let Some(indices_arg) = indices {
-            Some(self.parse_indices(indices_arg)?)
-        } else {
-            None
-        };
+        let time_indices = self.resolve_time_indices(bound, times, indices)?;
 
         // target_rolls=None means "evaluate at all rolls and report targets constrained at every
         // roll" (i.e., no valid roll exists).  For roll-dependent constraints the sweep must be
@@ -1609,12 +1571,7 @@ impl PyConstraint {
 
         // Handle per-target rolls: group targets by roll and stack results
         let rolls = target_rolls.unwrap();
-        let mut roll_map: std::collections::BTreeMap<String, Vec<usize>> =
-            std::collections::BTreeMap::new();
-        for (idx, roll) in rolls.iter().enumerate() {
-            let key = format!("{}", roll);
-            roll_map.entry(key).or_default().push(idx);
-        }
+        let roll_map = Self::build_roll_groups(&rolls);
 
         // First pass: get dimensions and collect results
         let mut all_groups: Vec<(Vec<usize>, numpy::ndarray::Array2<bool>)> = Vec::new();
@@ -1622,8 +1579,8 @@ impl PyConstraint {
 
         for (_, group_indices) in roll_map {
             let target_roll = rolls[group_indices[0]];
-            let group_ras: Vec<f64> = group_indices.iter().map(|&i| target_ras[i]).collect();
-            let group_decs: Vec<f64> = group_indices.iter().map(|&i| target_decs[i]).collect();
+            let (group_ras, group_decs) =
+                Self::extract_group_targets(&target_ras, &target_decs, &group_indices);
 
             let group_array = self.with_effective_evaluator(Some(target_roll), |evaluator| {
                 self.with_ephemeris(bound, |ephem_ref| {

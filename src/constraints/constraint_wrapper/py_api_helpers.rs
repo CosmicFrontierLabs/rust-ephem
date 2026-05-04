@@ -7,16 +7,55 @@ use crate::ephemeris::SPICEEphemeris;
 use crate::ephemeris::TLEEphemeris;
 use pyo3::prelude::*;
 
+use super::PyConstraint;
 use crate::constraints::constraint_wrapper::field_of_regard::DEFAULT_N_ROLL_SAMPLES;
 use crate::constraints::constraint_wrapper::json_parser::parse_constraint_json;
-use super::PyConstraint;
 
 impl PyConstraint {
-    pub(super) fn with_ephemeris<T, F>(
+    pub(super) fn resolve_time_indices(
         &self,
         bound: &Bound<'_, PyAny>,
-        mut f: F,
-    ) -> PyResult<T>
+        times: Option<&Bound<'_, PyAny>>,
+        indices: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Option<Vec<usize>>> {
+        if let Some(times_arg) = times {
+            if indices.is_some() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Cannot specify both 'times' and 'indices' parameters",
+                ));
+            }
+            Ok(Some(self.parse_times_to_indices(bound, times_arg)?))
+        } else if let Some(indices_arg) = indices {
+            Ok(Some(self.parse_indices(indices_arg)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub(super) fn build_roll_groups(
+        rolls: &[f64],
+    ) -> std::collections::BTreeMap<String, Vec<usize>> {
+        let mut roll_map: std::collections::BTreeMap<String, Vec<usize>> =
+            std::collections::BTreeMap::new();
+        for (idx, roll) in rolls.iter().enumerate() {
+            let key = format!("{}", roll);
+            roll_map.entry(key).or_default().push(idx);
+        }
+        roll_map
+    }
+
+    pub(super) fn extract_group_targets(
+        target_ras: &[f64],
+        target_decs: &[f64],
+        indices: &[usize],
+    ) -> (Vec<f64>, Vec<f64>) {
+        (
+            indices.iter().map(|&i| target_ras[i]).collect(),
+            indices.iter().map(|&i| target_decs[i]).collect(),
+        )
+    }
+
+    pub(super) fn with_ephemeris<T, F>(&self, bound: &Bound<'_, PyAny>, mut f: F) -> PyResult<T>
     where
         F: FnMut(&dyn EphemerisBase) -> PyResult<T>,
     {
@@ -100,7 +139,11 @@ impl PyConstraint {
         Ok(acc.unwrap_or_else(|| ndarray::Array2::from_elem((target_ras.len(), 0), false)))
     }
 
-    pub(super) fn with_effective_evaluator<T, F>(&self, target_roll: Option<f64>, f: F) -> PyResult<T>
+    pub(super) fn with_effective_evaluator<T, F>(
+        &self,
+        target_roll: Option<f64>,
+        f: F,
+    ) -> PyResult<T>
     where
         F: FnOnce(&dyn ConstraintEvaluator) -> PyResult<T>,
     {
