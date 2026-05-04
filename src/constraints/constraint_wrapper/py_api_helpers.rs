@@ -55,6 +55,30 @@ impl PyConstraint {
         )
     }
 
+    pub(super) fn reassemble_grouped_batch_results(
+        n_targets: usize,
+        n_times: usize,
+        all_groups: Vec<(Vec<usize>, ndarray::Array2<bool>)>,
+    ) -> PyResult<ndarray::Array2<bool>> {
+        let mut final_results: Vec<Vec<bool>> = vec![vec![false; n_times]; n_targets];
+
+        for (group_indices, group_array) in all_groups {
+            for (row_in_group, &orig_idx) in group_indices.iter().enumerate() {
+                for col in 0..n_times {
+                    final_results[orig_idx][col] = group_array[[row_in_group, col]];
+                }
+            }
+        }
+
+        ndarray::Array2::from_shape_vec(
+            (n_targets, n_times),
+            final_results.into_iter().flatten().collect(),
+        )
+        .map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Failed to create array: {}", e))
+        })
+    }
+
     pub(super) fn with_ephemeris<T, F>(&self, bound: &Bound<'_, PyAny>, mut f: F) -> PyResult<T>
     where
         F: FnMut(&dyn EphemerisBase) -> PyResult<T>,

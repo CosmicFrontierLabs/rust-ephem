@@ -1600,26 +1600,10 @@ impl PyConstraint {
             all_groups.push((group_indices, group_array));
         }
 
-        // Reconstruct results in original order
-        let mut final_results: Vec<Vec<bool>> = vec![vec![false; n_times]; target_ras.len()];
-
-        for (group_indices, group_array) in all_groups {
-            for (row_in_group, &orig_idx) in group_indices.iter().enumerate() {
-                for col in 0..n_times {
-                    final_results[orig_idx][col] = group_array[[row_in_group, col]];
-                }
-            }
-        }
+        let arr = Self::reassemble_grouped_batch_results(target_ras.len(), n_times, all_groups)?;
 
         // Convert to numpy array
         use numpy::IntoPyArray;
-        let arr: numpy::ndarray::Array2<bool> = numpy::ndarray::Array2::from_shape_vec(
-            (target_ras.len(), n_times),
-            final_results.into_iter().flatten().collect(),
-        )
-        .map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Failed to create array: {}", e))
-        })?;
         Ok(arr.into_pyarray(py).into())
     }
 
