@@ -316,6 +316,70 @@ class TestSolarRollConstraintPanelNormalShift:
 
 
 # ---------------------------------------------------------------------------
+# Nested solar_roll roll injection
+# ---------------------------------------------------------------------------
+
+
+class TestSolarRollConstraintNestedInjection:
+    @pytest.fixture
+    def sample_time(self, tle_ephemeris: rust_ephem.TLEEphemeris) -> datetime:
+        times = tle_ephemeris.timestamp
+        return cast(datetime, times[len(times) // 2])
+
+    def _roll_in_intervals(
+        self, roll_deg: float, intervals: list[tuple[float, float]]
+    ) -> bool:
+        for lo, hi in intervals:
+            if lo <= roll_deg <= hi:
+                return True
+        return False
+
+    def test_nested_solar_roll_honors_target_roll(
+        self,
+        tle_ephemeris: rust_ephem.TLEEphemeris,
+        sample_time: datetime,
+    ) -> None:
+        solar = SolarRollConstraint(tolerance_deg=2.0)
+        always_ok = rust_ephem.constraints.SunConstraint(min_angle=0.0)
+        combined = solar & always_ok
+
+        intervals = solar.roll_range(
+            sample_time,
+            ephemeris=tle_ephemeris,
+            target_ra=30.0,
+            target_dec=10.0,
+            n_roll_samples=360,
+        )
+
+        invalid_roll = None
+        for roll in range(0, 360):
+            if not self._roll_in_intervals(float(roll), intervals):
+                invalid_roll = float(roll)
+                break
+
+        if invalid_roll is None:
+            pytest.skip("No invalid roll found for this ephemeris sample")
+
+        solar_violation = solar.in_constraint(
+            sample_time,
+            ephemeris=tle_ephemeris,
+            target_ra=30.0,
+            target_dec=10.0,
+            target_roll=invalid_roll,
+        )
+        combined_violation = combined.in_constraint(
+            sample_time,
+            ephemeris=tle_ephemeris,
+            target_ra=30.0,
+            target_dec=10.0,
+            target_roll=invalid_roll,
+        )
+
+        assert solar_violation is True, "Expected a violating roll for solar_roll"
+        assert combined_violation == solar_violation
+
+
+# ---------------------------------------------------------------------------
 # Batch evaluation
 # ---------------------------------------------------------------------------
 

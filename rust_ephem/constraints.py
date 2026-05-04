@@ -484,6 +484,8 @@ class RustConstraintMixin(BaseModel):
             if not isinstance(node, dict):
                 return False
             node_type = node.get("type")
+            if node_type == "solar_roll":
+                return True
             if node_type == "boresight_offset":
                 pitch = float(node.get("pitch_deg", 0.0) or 0.0)
                 yaw = float(node.get("yaw_deg", 0.0) or 0.0)

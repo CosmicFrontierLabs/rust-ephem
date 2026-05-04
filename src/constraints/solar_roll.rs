@@ -79,6 +79,13 @@ fn radec_to_unit(ra_deg: f64, dec_deg: f64) -> [f64; 3] {
     [cd * cr, cd * sr, sd]
 }
 
+#[inline]
+fn roll_is_unconstrained(sun_y: f64, sun_z: f64, panel_normal: [f64; 3]) -> bool {
+    let sun_proj = (sun_y * sun_y + sun_z * sun_z).sqrt();
+    let panel_proj = (panel_normal[1] * panel_normal[1] + panel_normal[2] * panel_normal[2]).sqrt();
+    sun_proj <= NEAR_ZERO || panel_proj <= NEAR_ZERO
+}
+
 /// Compute the north-referenced spacecraft roll (degrees, CCW positive) that maximises
 /// solar illumination of the panel with the given body-frame normal.
 ///
@@ -198,6 +205,11 @@ impl ConstraintEvaluator for SolarRollEvaluator {
         let violations = track_violations(
             &times_filtered,
             |i| {
+                let sun_y = dot3(sun_units[i], [0.0, 1.0, 0.0]);
+                let sun_z = dot3(sun_units[i], [0.0, 0.0, 1.0]);
+                if roll_is_unconstrained(sun_y, sun_z, self.panel_normal) {
+                    return (false, 0.0);
+                }
                 let opt = solar_optimal_roll_deg(&target, &sun_units[i], self.panel_normal);
                 let diff = circular_diff_deg(roll, opt);
                 let violated = diff > self.tolerance_deg;
@@ -267,8 +279,14 @@ impl ConstraintEvaluator for SolarRollEvaluator {
                 } else {
                     [v[0] / n, v[1] / n, v[2] / n]
                 };
-                let opt = solar_optimal_roll_deg(&target, &sun_unit, self.panel_normal);
-                result[[j, i]] = circular_diff_deg(roll, opt) > self.tolerance_deg;
+                let sun_y = dot3(sun_unit, [0.0, 1.0, 0.0]);
+                let sun_z = dot3(sun_unit, [0.0, 0.0, 1.0]);
+                if roll_is_unconstrained(sun_y, sun_z, self.panel_normal) {
+                    result[[j, i]] = false;
+                } else {
+                    let opt = solar_optimal_roll_deg(&target, &sun_unit, self.panel_normal);
+                    result[[j, i]] = circular_diff_deg(roll, opt) > self.tolerance_deg;
+                }
             }
         }
 
@@ -322,8 +340,14 @@ impl ConstraintEvaluator for SolarRollEvaluator {
                 } else {
                     [v[0] / n, v[1] / n, v[2] / n]
                 };
-                let opt = solar_optimal_roll_deg(&target, &sun_unit, self.panel_normal);
-                result[[j, i]] = circular_diff_deg(roll_deg, opt) > self.tolerance_deg;
+                let sun_y = dot3(sun_unit, [0.0, 1.0, 0.0]);
+                let sun_z = dot3(sun_unit, [0.0, 0.0, 1.0]);
+                if roll_is_unconstrained(sun_y, sun_z, self.panel_normal) {
+                    result[[j, i]] = false;
+                } else {
+                    let opt = solar_optimal_roll_deg(&target, &sun_unit, self.panel_normal);
+                    result[[j, i]] = circular_diff_deg(roll_deg, opt) > self.tolerance_deg;
+                }
             }
         }
 
@@ -388,6 +412,11 @@ impl ConstraintEvaluator for SolarRollEvaluator {
         } else {
             [v[0] / n, v[1] / n, v[2] / n]
         };
+        let sun_y = dot3(sun_unit, [0.0, 1.0, 0.0]);
+        let sun_z = dot3(sun_unit, [0.0, 0.0, 1.0]);
+        if roll_is_unconstrained(sun_y, sun_z, self.panel_normal) {
+            return Ok(vec![false; target_unit_vectors.nrows()]);
+        }
 
         let n_targets = target_unit_vectors.nrows();
         let mut result = Vec::with_capacity(n_targets);

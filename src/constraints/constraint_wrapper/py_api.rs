@@ -44,6 +44,26 @@ pub struct PyConstraint {
 }
 
 impl PyConstraint {
+    fn inject_solar_roll(config: &mut serde_json::Value, roll_deg: f64) {
+        let Some(obj) = config.as_object_mut() else {
+            return;
+        };
+
+        if obj.get("type").and_then(|v| v.as_str()) == Some("solar_roll") {
+            obj.insert("roll_deg".to_string(), serde_json::json!(roll_deg));
+        }
+
+        if let Some(inner) = obj.get_mut("constraint") {
+            Self::inject_solar_roll(inner, roll_deg);
+        }
+
+        if let Some(children) = obj.get_mut("constraints").and_then(|v| v.as_array_mut()) {
+            for child in children {
+                Self::inject_solar_roll(child, roll_deg);
+            }
+        }
+    }
+
     fn in_constraint_batch_with_roll_sweep(
         &self,
         evaluator: &dyn ConstraintEvaluator,
@@ -99,6 +119,8 @@ impl PyConstraint {
         let mut config: serde_json::Value = serde_json::from_str(&self.config_json)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
+        Self::inject_solar_roll(&mut config, target_roll_deg);
+
         let constraint_type = config
             .get("type")
             .and_then(|v| v.as_str())
@@ -126,9 +148,6 @@ impl PyConstraint {
         // SolarRoll: inject the spacecraft roll so the evaluator can compare to the
         // solar-optimal roll.  Handled internally — bypass the BoresightOffset wrapper.
         if is_solar_roll {
-            if let Some(obj) = config.as_object_mut() {
-                obj.insert("roll_deg".to_string(), serde_json::json!(target_roll_deg));
-            }
             let evaluator = parse_constraint_json(&config)?;
             return f(&*evaluator);
         }
