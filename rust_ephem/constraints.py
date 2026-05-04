@@ -369,6 +369,7 @@ class RustConstraintMixin(BaseModel):
                 target_decs,
                 times,
                 indices,
+                n_roll_samples=n_roll_samples,
             ),
         )
 

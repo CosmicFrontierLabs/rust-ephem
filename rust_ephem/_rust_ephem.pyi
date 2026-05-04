@@ -642,6 +642,7 @@ class Constraint:
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
         target_rolls: list[float] | None = None,
+        n_roll_samples: int = 72,
     ) -> npt.NDArray[np.bool_]:
         """
         Check if targets are in-constraint for multiple RA/Dec positions (vectorized).

@@ -341,7 +341,7 @@ class TestSolarRollConstraintNestedInjection:
     ) -> None:
         solar = SolarRollConstraint(tolerance_deg=2.0)
         always_ok = rust_ephem.constraints.SunConstraint(min_angle=0.0)
-        combined = solar & always_ok
+        combined = solar | always_ok
 
         intervals = solar.roll_range(
             sample_time,

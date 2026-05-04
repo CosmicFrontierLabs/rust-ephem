@@ -71,15 +71,16 @@ impl PyConstraint {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
+        n_roll_samples: usize,
     ) -> PyResult<ndarray::Array2<bool>> {
         if !evaluator.is_roll_dependent() {
             return evaluator.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices);
         }
 
         // Sweep roll angles and require violation at every roll to mark a cell violated.
-        let roll_step = 360.0 / DEFAULT_N_ROLL_SAMPLES as f64;
+        let roll_step = 360.0 / n_roll_samples as f64;
         let mut acc: Option<ndarray::Array2<bool>> = None;
-        for step in 0..DEFAULT_N_ROLL_SAMPLES {
+        for step in 0..n_roll_samples {
             if let Some(ref a) = acc {
                 if a.iter().all(|&b| !b) {
                     break;
@@ -213,6 +214,7 @@ impl PyConstraint {
             &[target_ra],
             &[target_dec],
             time_indices.as_deref(),
+            DEFAULT_N_ROLL_SAMPLES,
         )?;
 
         // Get the times we evaluated
@@ -259,6 +261,7 @@ impl PyConstraint {
             target_ras,
             target_decs,
             time_indices.as_deref(),
+            DEFAULT_N_ROLL_SAMPLES,
         )?;
 
         let all_times = ephemeris.get_times()?;
@@ -1927,7 +1930,7 @@ impl PyConstraint {
     ///     >>> violations.shape  # (3, n_times)
     ///     >>> violations[0, :]  # Violations for first target across all times
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None))]
+    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES))]
     fn in_constraint_batch(
         &self,
         py: Python,
@@ -1937,7 +1940,13 @@ impl PyConstraint {
         times: Option<&Bound<PyAny>>,
         indices: Option<&Bound<PyAny>>,
         target_rolls: Option<Vec<f64>>,
+        n_roll_samples: usize,
     ) -> PyResult<Py<PyAny>> {
+        if n_roll_samples == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "n_roll_samples must be greater than 0",
+            ));
+        }
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "target_ras and target_decs must have the same length",
@@ -1978,13 +1987,13 @@ impl PyConstraint {
                 // violates at least one sub-constraint, meaning no valid roll exists.
                 // Extract the ephemeris once and call in_constraint_batch_at_roll in the
                 // loop — no JSON round-trips, no evaluator reconstruction per step.
-                let roll_step = 360.0 / DEFAULT_N_ROLL_SAMPLES as f64;
+                let roll_step = 360.0 / n_roll_samples as f64;
                 let mut acc: Option<ndarray::Array2<bool>> = None;
 
                 macro_rules! do_roll_sweep {
                     ($ephem:expr) => {{
                         let ephem_ref = &*$ephem as &dyn EphemerisBase;
-                        for step in 0..DEFAULT_N_ROLL_SAMPLES {
+                        for step in 0..n_roll_samples {
                             // Early break: once all targets are accessible no roll can block them.
                             if let Some(ref a) = acc {
                                 if a.iter().all(|&b| !b) {
@@ -2424,6 +2433,7 @@ impl PyConstraint {
             Some(bound_time),
             None,
             target_rolls,
+            DEFAULT_N_ROLL_SAMPLES,
         )?;
 
         // Extract the results for the single target (first row)
