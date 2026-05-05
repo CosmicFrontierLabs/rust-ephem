@@ -4,6 +4,7 @@ use crate::constraints::fov_polygon;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 
 /// Configuration for generic solar system body proximity constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,8 +36,17 @@ impl ConstraintConfig for BodyProximityConfig {
             max_angle_deg: self.max_angle,
             fov_polygon: self.fov_polygon.clone(),
             roll_rad: self.roll_deg.map(|r| r.to_radians()),
+            roll_sweep_cache: Mutex::new(None),
         })
     }
+}
+
+struct RollSweepCacheEntry {
+    ephemeris_key: usize,
+    time_indices: Option<Vec<usize>>,
+    body_positions: Array2<f64>,
+    observer_positions: Array2<f64>,
+    n_times: usize,
 }
 
 /// Evaluator for generic body proximity - requires body positions computed externally
@@ -49,11 +59,73 @@ pub struct BodyProximityEvaluator {
     pub fov_polygon: Option<Vec<[f64; 2]>>,
     /// Fixed roll in radians; None means sweep all rolls (polygon mode only)
     pub roll_rad: Option<f64>,
+    /// Cached body/observer slices for repeated roll-step evaluation.
+    roll_sweep_cache: Mutex<Option<RollSweepCacheEntry>>,
 }
 
 impl_proximity_evaluator!(BodyProximityEvaluator, "Body", "body", sun_positions);
 
 impl BodyProximityEvaluator {
+    fn ephemeris_cache_key(
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    ) -> usize {
+        (ephemeris as *const dyn crate::ephemeris::ephemeris_common::EphemerisBase) as *const ()
+            as usize
+    }
+
+    fn ensure_roll_sweep_cache(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        time_indices: Option<&[usize]>,
+    ) -> pyo3::PyResult<()> {
+        let ephemeris_key = Self::ephemeris_cache_key(ephemeris);
+        let indices_key = time_indices.map(|idx| idx.to_vec());
+
+        let needs_refresh = {
+            let cache = self.roll_sweep_cache.lock().map_err(|_| {
+                pyo3::exceptions::PyRuntimeError::new_err("roll_sweep_cache mutex was poisoned")
+            })?;
+            match cache.as_ref() {
+                Some(entry) => {
+                    entry.ephemeris_key != ephemeris_key || entry.time_indices != indices_key
+                }
+                None => true,
+            }
+        };
+
+        if needs_refresh {
+            let (body_positions, observer_positions, n_times) = if let Some(indices) = time_indices
+            {
+                (
+                    self.body_positions(ephemeris)?
+                        .select(ndarray::Axis(0), indices),
+                    ephemeris
+                        .get_gcrs_positions()?
+                        .select(ndarray::Axis(0), indices),
+                    indices.len(),
+                )
+            } else {
+                let body_positions = self.body_positions(ephemeris)?;
+                let observer_positions = ephemeris.get_gcrs_positions()?;
+                let n_times = body_positions.nrows();
+                (body_positions, observer_positions, n_times)
+            };
+
+            let mut cache = self.roll_sweep_cache.lock().map_err(|_| {
+                pyo3::exceptions::PyRuntimeError::new_err("roll_sweep_cache mutex was poisoned")
+            })?;
+            *cache = Some(RollSweepCacheEntry {
+                ephemeris_key,
+                time_indices: indices_key,
+                body_positions,
+                observer_positions,
+                n_times,
+            });
+        }
+
+        Ok(())
+    }
+
     /// Return body positions in GCRS (km) for the correct body.
     ///
     /// Earth centre is the GCRS origin so its position is all zeros.
@@ -444,23 +516,16 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
             _ => return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices),
         };
 
-        let times = ephemeris.get_times()?;
-        let (body_positions_slice, observer_positions_slice, n_times) =
-            if let Some(indices) = time_indices {
-                let body_filtered = self
-                    .body_positions(ephemeris)?
-                    .select(ndarray::Axis(0), indices);
-                let obs_filtered = ephemeris
-                    .get_gcrs_positions()?
-                    .select(ndarray::Axis(0), indices);
-                (body_filtered, obs_filtered, indices.len())
-            } else {
-                (
-                    self.body_positions(ephemeris)?,
-                    ephemeris.get_gcrs_positions()?,
-                    times.len(),
-                )
-            };
+        self.ensure_roll_sweep_cache(ephemeris, time_indices)?;
+        let cached = self.roll_sweep_cache.lock().map_err(|_| {
+            pyo3::exceptions::PyRuntimeError::new_err("roll_sweep_cache mutex was poisoned")
+        })?;
+        let entry = cached
+            .as_ref()
+            .expect("roll_sweep_cache must be initialized");
+        let body_positions_slice = &entry.body_positions;
+        let observer_positions_slice = &entry.observer_positions;
+        let n_times = entry.n_times;
 
         let n_targets = target_ras.len();
         let mut result = Array2::from_elem((n_targets, n_times), false);
@@ -471,7 +536,7 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
             let target_dec_rad = dec.to_radians();
             for j in 0..n_times {
                 if let Some((body_ra, body_dec)) =
-                    Self::body_radec_at(&body_positions_slice, &observer_positions_slice, j)
+                    Self::body_radec_at(body_positions_slice, observer_positions_slice, j)
                 {
                     result[[i, j]] = fov_polygon::point_in_polygon_at_roll(
                         target_ra_rad,
@@ -524,10 +589,16 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
             }
         };
 
-        let body_positions = self.body_positions(ephemeris)?;
-        let obs_positions = ephemeris.get_gcrs_positions()?;
+        self.ensure_roll_sweep_cache(ephemeris, None)?;
+        let cached = self.roll_sweep_cache.lock().map_err(|_| {
+            pyo3::exceptions::PyRuntimeError::new_err("roll_sweep_cache mutex was poisoned")
+        })?;
+        let entry = cached
+            .as_ref()
+            .expect("roll_sweep_cache must be initialized");
 
-        let body_radec = Self::body_radec_at(&body_positions, &obs_positions, time_index);
+        let body_radec =
+            Self::body_radec_at(&entry.body_positions, &entry.observer_positions, time_index);
 
         let (sin_roll, cos_roll) = roll_deg.to_radians().sin_cos();
         let mut result = Vec::with_capacity(n_targets);
