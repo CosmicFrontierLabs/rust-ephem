@@ -871,7 +871,8 @@ class RustConstraintMixin(BaseModel):
                 ``target_roll`` is not specified and boresight pitch/yaw offsets
                 are present (uniformly spaced over [0°, 360°)).  Ignored when
                 ``target_roll`` is given or no pitch/yaw offset is defined.
-                Default :data:`DEFAULT_N_ROLL_SAMPLES` (5° resolution).
+                Default :data:`DEFAULT_N_ROLL_SAMPLES` (360 ≈ 1° resolution).
+                Can be reduced (e.g., 72 for 5° resolution) for faster evaluation.
             target_roll: Spacecraft roll angle (degrees) about the boresight +X axis.
                 When ``None`` (default), FoR sweeps all possible roll angles for
                 boresight-offset constraints with non-zero pitch/yaw.

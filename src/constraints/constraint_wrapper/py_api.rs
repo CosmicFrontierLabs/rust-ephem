@@ -1633,7 +1633,7 @@ impl PyConstraint {
     ///     n_roll_samples (int, optional): Number of spacecraft roll angles to sweep when
     ///         computing FoR over all roll states.  Each angle is spaced uniformly over
     ///         [0°, 360°).  Ignored for fixed-roll or roll-independent constraints.
-    ///         Default 72 (5° resolution).
+    ///         Default 360 (1° resolution). Can be reduced (e.g., 72 for 5° resolution) for faster evaluation.
     ///
     /// Returns:
     ///     float: Instantaneous field of regard in steradians (range [0, 4π])
@@ -1641,8 +1641,8 @@ impl PyConstraint {
     /// Notes:
     ///     - Exactly one of `time` or `index` must be provided.
     ///     - Higher `n_points` improves accuracy at higher computational cost.
-    ///     - Spacecraft-roll sweeps scale with ``n_roll_samples``; the default 72 is
-    ///       ~72× slower than a single-roll evaluation at the same ``n_points``.
+    ///     - Spacecraft-roll sweeps scale with ``n_roll_samples``; each additional roll sample
+    ///       increases evaluation time proportionally.
     #[pyo3(signature = (ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES))]
     fn instantaneous_field_of_regard(
         &self,
