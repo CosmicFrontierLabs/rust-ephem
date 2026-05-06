@@ -7,11 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
 /// Content-derived fingerprint identifying an ephemeris's time grid and observer
-/// trajectory.  Avoids relying on pointer addresses, which Rust may reuse after a
-/// value is dropped — that would make a pointer-keyed cache return stale data
-/// when a different ephemeris happens to land at a previously freed address.
-///
-/// f64s are compared by bit pattern so the struct can derive `Eq`.
+/// trajectory.
 #[derive(Clone, PartialEq, Eq)]
 struct EphemerisFingerprint {
     n_times: usize,

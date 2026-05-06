@@ -80,7 +80,11 @@ fn radec_to_unit(ra_deg: f64, dec_deg: f64) -> [f64; 3] {
 }
 
 #[inline]
-fn roll_is_unconstrained(target: &[f64; 3], sun_unit: &[f64; 3], panel_normal: [f64; 3]) -> bool {
+pub fn roll_is_unconstrained(
+    target: &[f64; 3],
+    sun_unit: &[f64; 3],
+    panel_normal: [f64; 3],
+) -> bool {
     // Roll is unconstrained when sun is along the boresight (target direction).
     // In that case the panel is edge-on to the sun regardless of roll angle.
     let sun_along_boresight = dot3(*sun_unit, *target).abs() > 1.0 - NEAR_ZERO;
@@ -169,7 +173,7 @@ impl ConstraintEvaluator for SolarRollEvaluator {
         target_dec: f64,
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
-        let times = ephemeris.get_times().expect("Ephemeris must have times");
+        let times = ephemeris.get_times()?;
         let times_filtered: Vec<_> = if let Some(idx) = time_indices {
             idx.iter().map(|&i| times[i]).collect()
         } else {
