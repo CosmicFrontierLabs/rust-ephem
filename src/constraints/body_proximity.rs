@@ -6,6 +6,21 @@ use ndarray::Array2;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
+/// Content-derived fingerprint identifying an ephemeris's time grid and observer
+/// trajectory.  Avoids relying on pointer addresses, which Rust may reuse after a
+/// value is dropped — that would make a pointer-keyed cache return stale data
+/// when a different ephemeris happens to land at a previously freed address.
+///
+/// f64s are compared by bit pattern so the struct can derive `Eq`.
+#[derive(Clone, PartialEq, Eq)]
+struct EphemerisFingerprint {
+    n_times: usize,
+    first_time: DateTime<Utc>,
+    last_time: DateTime<Utc>,
+    first_obs_bits: [u64; 3],
+    last_obs_bits: [u64; 3],
+}
+
 /// Configuration for generic solar system body proximity constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BodyProximityConfig {
@@ -42,7 +57,7 @@ impl ConstraintConfig for BodyProximityConfig {
 }
 
 struct RollSweepCacheEntry {
-    ephemeris_key: usize,
+    fingerprint: EphemerisFingerprint,
     time_indices: Option<Vec<usize>>,
     body_positions: Array2<f64>,
     observer_positions: Array2<f64>,
@@ -66,11 +81,47 @@ pub struct BodyProximityEvaluator {
 impl_proximity_evaluator!(BodyProximityEvaluator, "Body", "body", sun_positions);
 
 impl BodyProximityEvaluator {
-    fn ephemeris_cache_key(
+    /// Build a content-derived fingerprint for an ephemeris.  Reads endpoints
+    /// directly out of `data()` without cloning the underlying arrays.
+    fn ephemeris_fingerprint(
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-    ) -> usize {
-        (ephemeris as *const dyn crate::ephemeris::ephemeris_common::EphemerisBase) as *const ()
-            as usize
+    ) -> pyo3::PyResult<EphemerisFingerprint> {
+        let data = ephemeris.data();
+        let times = data
+            .times
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available"))?;
+        let n_times = times.len();
+        if n_times == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Ephemeris has no times",
+            ));
+        }
+        let gcrs = data.gcrs.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("No GCRS positions available")
+        })?;
+        if gcrs.nrows() != n_times || gcrs.ncols() < 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "GCRS positions shape does not match times",
+            ));
+        }
+        let first_obs_bits = [
+            gcrs[[0, 0]].to_bits(),
+            gcrs[[0, 1]].to_bits(),
+            gcrs[[0, 2]].to_bits(),
+        ];
+        let last_obs_bits = [
+            gcrs[[n_times - 1, 0]].to_bits(),
+            gcrs[[n_times - 1, 1]].to_bits(),
+            gcrs[[n_times - 1, 2]].to_bits(),
+        ];
+        Ok(EphemerisFingerprint {
+            n_times,
+            first_time: times[0],
+            last_time: times[n_times - 1],
+            first_obs_bits,
+            last_obs_bits,
+        })
     }
 
     fn ensure_roll_sweep_cache(
@@ -78,7 +129,7 @@ impl BodyProximityEvaluator {
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         time_indices: Option<&[usize]>,
     ) -> pyo3::PyResult<()> {
-        let ephemeris_key = Self::ephemeris_cache_key(ephemeris);
+        let fingerprint = Self::ephemeris_fingerprint(ephemeris)?;
         let indices_key = time_indices.map(|idx| idx.to_vec());
 
         let needs_refresh = {
@@ -87,7 +138,7 @@ impl BodyProximityEvaluator {
             })?;
             match cache.as_ref() {
                 Some(entry) => {
-                    entry.ephemeris_key != ephemeris_key || entry.time_indices != indices_key
+                    entry.fingerprint != fingerprint || entry.time_indices != indices_key
                 }
                 None => true,
             }
@@ -115,7 +166,7 @@ impl BodyProximityEvaluator {
                 pyo3::exceptions::PyRuntimeError::new_err("roll_sweep_cache mutex was poisoned")
             })?;
             *cache = Some(RollSweepCacheEntry {
-                ephemeris_key,
+                fingerprint,
                 time_indices: indices_key,
                 body_positions,
                 observer_positions,
