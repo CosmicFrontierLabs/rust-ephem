@@ -1639,6 +1639,19 @@ class SolarRollConstraint(RustConstraintMixin):
         description="Evaluation-time spacecraft roll (degrees). Injected automatically; leave None in config.",
     )
 
+    @model_validator(mode="after")
+    def validate_panel_normal(self) -> SolarRollConstraint:
+        vec = np.asarray(self.panel_normal, dtype=float)
+        if not np.all(np.isfinite(vec)):
+            raise ValueError("panel_normal must contain only finite values")
+        if np.linalg.norm(vec) == 0.0:
+            raise ValueError("panel_normal must be a non-zero vector")
+        if vec[1] == 0.0 and vec[2] == 0.0:
+            raise ValueError(
+                "panel_normal must have a non-zero Y or Z component for the solar roll constraint to be meaningful"
+            )
+        return self
+
 
 class OrbitRamConstraint(RustConstraintMixin):
     """Orbit RAM direction constraint
