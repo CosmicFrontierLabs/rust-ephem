@@ -589,7 +589,7 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
             }
         };
 
-        self.ensure_roll_sweep_cache(ephemeris, None)?;
+        self.ensure_roll_sweep_cache(ephemeris, Some(&[time_index]))?;
         let cached = self.roll_sweep_cache.lock().map_err(|_| {
             pyo3::exceptions::PyRuntimeError::new_err("roll_sweep_cache mutex was poisoned")
         })?;
