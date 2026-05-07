@@ -342,7 +342,7 @@ boresight offset with non-zero pitch/yaw, all three evaluation methods
 roll angles and report a target as blocked only when **every** possible roll is
 blocked — i.e., no valid spacecraft orientation exists.  The sweep resolution is
 controlled by the ``n_roll_samples`` parameter (default
-:data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES` = 72 ≈ 5° resolution).
+:data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES` = 360 ≈ 1° resolution).
 This is the conservative "is there any viable roll?" check.  Pass an explicit
 ``target_roll`` value to evaluate against a single commanded roll.
 
@@ -386,11 +386,11 @@ Notes:
 - Exactly one of ``time`` or ``index`` must be provided.
 - ``n_points`` controls integration accuracy vs speed (higher = more accurate, slower).
 - ``n_roll_samples`` controls how finely spacecraft roll is swept when ``target_roll`` is
-  not specified (default ``DEFAULT_N_ROLL_SAMPLES`` = 72 ≈ 5° resolution). Reduce to speed
+  not specified (default ``DEFAULT_N_ROLL_SAMPLES`` = 360 ≈ 1° resolution). Reduce to speed
   up at the cost of accuracy; ignored when ``target_roll`` is given or when no pitch/yaw
   offset is present.
 - Constraints are ``True`` when blocked/not visible, so field of regard integrates where constraint is ``False``.
-- For boresight-offset constraints with non-zero pitch/yaw, the sky is sampled at 72
+- For boresight-offset constraints with non-zero pitch/yaw, the sky is sampled at ``n_roll_samples``
   evenly-spaced spacecraft roll angles when ``target_roll`` is not specified.  A direction
   is counted accessible if *any* roll angle satisfies the inner constraint, modelling a
   spacecraft that can rotate about its pointing axis.  The evaluation scales with

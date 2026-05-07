@@ -369,6 +369,7 @@ class RustConstraintMixin(BaseModel):
                 target_decs,
                 times,
                 indices,
+                n_roll_samples=n_roll_samples,
             ),
         )
 
@@ -457,6 +458,14 @@ class RustConstraintMixin(BaseModel):
                     apply_eval_roll(inner)
                 return
 
+            if node_type == "solar_roll":
+                # Inject the spacecraft roll directly so the evaluator can compare
+                # it to the solar-optimal roll.  Only inject when a roll is known
+                # (not during a sweep_roll pass, which doesn't apply here).
+                if target_roll is not None and not sweep_roll:
+                    node["roll_deg"] = float(target_roll)
+                return
+
             if node_type in {"and", "or", "xor", "at_least"}:
                 for child in node.get("constraints", []):
                     apply_eval_roll(child)
@@ -476,6 +485,8 @@ class RustConstraintMixin(BaseModel):
             if not isinstance(node, dict):
                 return False
             node_type = node.get("type")
+            if node_type == "solar_roll":
+                return True
             if node_type == "boresight_offset":
                 pitch = float(node.get("pitch_deg", 0.0) or 0.0)
                 yaw = float(node.get("yaw_deg", 0.0) or 0.0)
@@ -860,7 +871,8 @@ class RustConstraintMixin(BaseModel):
                 ``target_roll`` is not specified and boresight pitch/yaw offsets
                 are present (uniformly spaced over [0°, 360°)).  Ignored when
                 ``target_roll`` is given or no pitch/yaw offset is defined.
-                Default :data:`DEFAULT_N_ROLL_SAMPLES` (5° resolution).
+                Default :data:`DEFAULT_N_ROLL_SAMPLES` (360 ≈ 1° resolution).
+                Can be reduced (e.g., 72 for 5° resolution) for faster evaluation.
             target_roll: Spacecraft roll angle (degrees) about the boresight +X axis.
                 When ``None`` (default), FoR sweeps all possible roll angles for
                 boresight-offset constraints with non-zero pitch/yaw.
@@ -1577,6 +1589,70 @@ class AltAzConstraint(RustConstraintMixin):
     )
 
 
+class SolarRollConstraint(RustConstraintMixin):
+    """Solar roll constraint.
+
+    Violated when the spacecraft's roll deviates from the solar-optimal roll
+    (the roll that maximises solar illumination of the specified panel) by more
+    than ``tolerance_deg`` degrees.
+
+    The optimal roll is computed from the sun direction in the north-referenced
+    spacecraft body frame.
+
+    When ``target_roll`` is not provided (the default), the constraint always
+    reports "not violated" — it is only active when a specific roll angle is
+    evaluated.  Use :meth:`~RustConstraintMixin.roll_range` to obtain the valid
+    roll windows for a given pointing.
+
+    Attributes:
+        type: Always "solar_roll"
+        tolerance_deg: Half-width of the allowed roll window around the solar-optimal
+            roll (degrees).  A target roll within ``[opt - tolerance_deg, opt + tolerance_deg]``
+            is considered valid.
+        panel_normal: Body-frame unit vector normal to the solar panel surface
+            (x = boresight, y = cross-track, z = north-aligned).  Default
+            ``(0, 1, 0)`` is the standard orientation for a nadir-pointing
+            spacecraft with panels on the ±Y faces.  Adjust for panels mounted
+            at a different angle.
+        roll_deg: Spacecraft roll angle (degrees) at evaluation time.  Injected
+            automatically when evaluating with a fixed roll; leave as ``None``
+            in configuration.
+    """
+
+    type: Literal["solar_roll"] = "solar_roll"
+    tolerance_deg: float = Field(
+        ...,
+        ge=0.0,
+        le=180.0,
+        description="Half-width of valid roll window around solar-optimal (degrees)",
+    )
+    panel_normal: tuple[float, float, float] = Field(
+        default=(0.0, 1.0, 0.0),
+        description=(
+            "Body-frame normal vector of the solar panel "
+            "(x=boresight, y=cross-track, z=north). "
+            "Defaults to (0, 1, 0) (+Y body axis)."
+        ),
+    )
+    roll_deg: float | None = Field(
+        default=None,
+        description="Evaluation-time spacecraft roll (degrees). Injected automatically; leave None in config.",
+    )
+
+    @model_validator(mode="after")
+    def validate_panel_normal(self) -> SolarRollConstraint:
+        vec = np.asarray(self.panel_normal, dtype=float)
+        if not np.all(np.isfinite(vec)):
+            raise ValueError("panel_normal must contain only finite values")
+        if np.linalg.norm(vec) == 0.0:
+            raise ValueError("panel_normal must be a non-zero vector")
+        if vec[1] == 0.0 and vec[2] == 0.0:
+            raise ValueError(
+                "panel_normal must have a non-zero Y or Z component for the solar roll constraint to be meaningful"
+            )
+        return self
+
+
 class OrbitRamConstraint(RustConstraintMixin):
     """Orbit RAM direction constraint
 
@@ -1698,6 +1774,7 @@ ConstraintConfig = Union[
     DaytimeConstraint,
     AirmassConstraint,
     MoonPhaseConstraint,
+    SolarRollConstraint,
     OrbitRamConstraint,
     OrbitPoleConstraint,
     SAAConstraint,

@@ -499,7 +499,7 @@ Classes
       - ``index`` — Optional ephemeris index to evaluate
       - ``n_points`` — Number of sky samples (Fibonacci sphere integration, default :data:`DEFAULT_N_POINTS`)
       - ``target_roll`` — Spacecraft roll angle (degrees) to evaluate at. When ``None`` (default), sweeps all roll angles for boresight-offset FoR.
-      - ``n_roll_samples`` — Spacecraft roll angles to sweep when ``target_roll`` is ``None`` and pitch/yaw offsets are present (default :data:`DEFAULT_N_ROLL_SAMPLES` = 72, i.e. 5° resolution). Ignored otherwise.
+      - ``n_roll_samples`` — Spacecraft roll angles to sweep when ``target_roll`` is ``None`` and pitch/yaw offsets are present (default :data:`DEFAULT_N_ROLL_SAMPLES` = 360, i.e. 1° resolution). Can be reduced (e.g., 72 for 5° resolution) for faster evaluation. Ignored otherwise.
       - Returns: ``float`` steradians in ``[0, 4π]``
       - Requirement: exactly one of ``time`` or ``index`` must be provided
       - Semantics: constraints are violated when ``True``; this method integrates visible sky where constraint is ``False``

@@ -166,8 +166,11 @@ class DummyConstraintBackend:
         target_decs: object,
         times: object,
         indices: object,
+        n_roll_samples: object = None,
     ) -> npt.NDArray[np.bool_]:
-        self.batch_calls.append((ephemeris, target_ras, target_decs, times, indices))
+        self.batch_calls.append(
+            (ephemeris, target_ras, target_decs, times, indices, n_roll_samples)
+        )
         return np.array([[True], [False]])
 
     def in_constraint(

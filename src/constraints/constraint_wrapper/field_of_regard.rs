@@ -10,9 +10,10 @@ use pyo3::prelude::*;
 use std::f64::consts::PI;
 use std::sync::{Arc, OnceLock, RwLock};
 
-/// Default number of roll-angle samples for free-roll field-of-regard sweeps.
-/// 72 samples gives 5° resolution, sufficient for Fibonacci-sphere accuracy.
-pub(super) const DEFAULT_N_ROLL_SAMPLES: usize = 72;
+/// Default number of roll-angle samples for constraint evaluation roll sweeps.
+/// 360 samples gives 1° resolution, matching the Python DEFAULT_N_ROLL_SAMPLES constant.
+/// For field-of-regard calculations, users can override to 72 (5° resolution) for faster evaluation.
+pub(super) const DEFAULT_N_ROLL_SAMPLES: usize = 360;
 
 /// Default number of Fibonacci-sphere sky samples for field-of-regard integration.
 pub(super) const DEFAULT_N_POINTS: usize = 20_000;

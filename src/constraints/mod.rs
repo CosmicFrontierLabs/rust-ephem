@@ -23,6 +23,7 @@ pub mod moon_proximity;
 pub mod orbit_pole;
 pub mod orbit_ram;
 pub mod saa;
+pub mod solar_roll;
 pub mod sun_proximity;
 
 // Python wrapper

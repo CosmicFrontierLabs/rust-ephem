@@ -520,6 +520,26 @@ pub trait EphemerisBase {
         Ok(moon_data.slice(s![.., 0..3]).to_owned())
     }
 
+    /// Get geocentric GCRS positions (N x 3, km) for any body supported by the
+    /// loaded DE440 almanac or SPICE kernels.  Body can be a name ("Jupiter",
+    /// "Mars") or a NAIF ID string ("599", "499").
+    fn get_any_body_gcrs_positions(&self, body_identifier: &str) -> PyResult<Array2<f64>> {
+        use crate::utils::celestial::calculate_body_by_id_or_name;
+        use crate::utils::config::EARTH_NAIF_ID;
+
+        let times = self
+            .data()
+            .times
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available."))?;
+
+        let pv = calculate_body_by_id_or_name(times, body_identifier, EARTH_NAIF_ID, None, false)
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+
+        // First 3 columns are positions (km); velocities are not needed here.
+        Ok(pv.slice(s![.., 0..3]).to_owned())
+    }
+
     /// Calculate Moon illumination fraction for all ephemeris times
     ///
     /// Returns the fraction of the Moon's illuminated surface as seen from the

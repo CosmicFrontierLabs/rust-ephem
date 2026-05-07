@@ -33,6 +33,8 @@ use super::field_of_regard::DEFAULT_N_ROLL_SAMPLES;
 use super::json_parser::parse_constraint_json;
 use super::json_to_py::json_to_pyobject;
 use super::roll_range::run_roll_sweep;
+#[path = "py_api_helpers.rs"]
+mod py_api_helpers;
 
 /// Python-facing constraint evaluator
 ///
@@ -41,243 +43,6 @@ use super::roll_range::run_roll_sweep;
 pub struct PyConstraint {
     evaluator: Box<dyn ConstraintEvaluator>,
     config_json: String,
-}
-
-impl PyConstraint {
-    fn with_effective_evaluator<T, F>(&self, target_roll: Option<f64>, f: F) -> PyResult<T>
-    where
-        F: FnOnce(&dyn ConstraintEvaluator) -> PyResult<T>,
-    {
-        let Some(target_roll_deg) = target_roll else {
-            return f(&*self.evaluator);
-        };
-
-        if !target_roll_deg.is_finite() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_roll must be a finite number",
-            ));
-        }
-
-        let mut config: serde_json::Value = serde_json::from_str(&self.config_json)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-
-        let constraint_type = config
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_owned();
-
-        let is_boresight_offset = constraint_type == "boresight_offset";
-        let is_bright_star = constraint_type == "bright_star";
-        let is_body_polygon = constraint_type == "body" && config.get("fov_polygon").is_some();
-
-        // Bright star or body proximity with a polygon FoV: inject target_roll as roll_deg
-        // so the evaluator rotates the polygon to the requested angle.  Both constraint types
-        // handle roll internally, so we bypass the BoresightOffset wrapper.
-        if is_bright_star || is_body_polygon {
-            if config.get("fov_polygon").is_some() {
-                if let Some(obj) = config.as_object_mut() {
-                    obj.insert("roll_deg".to_string(), serde_json::json!(target_roll_deg));
-                }
-            }
-            let evaluator = parse_constraint_json(&config)?;
-            return f(&*evaluator);
-        }
-
-        if is_boresight_offset {
-            let base_roll_deg = config
-                .get("roll_deg")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
-            let base_clockwise = config
-                .get("roll_clockwise")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-
-            // Match RustConstraintMixin semantics: add evaluation-time roll in the
-            // configured command convention.
-            let signed_target_roll = if base_clockwise {
-                -target_roll_deg
-            } else {
-                target_roll_deg
-            };
-
-            if let Some(obj) = config.as_object_mut() {
-                obj.insert(
-                    "roll_deg".to_string(),
-                    serde_json::json!(base_roll_deg + signed_target_roll),
-                );
-            }
-        } else {
-            config = serde_json::json!({
-                "type": "boresight_offset",
-                "constraint": config,
-                "roll_deg": target_roll_deg,
-                "roll_clockwise": false,
-                "roll_reference": "north",
-                "pitch_deg": 0.0,
-                "yaw_deg": 0.0
-            });
-        }
-
-        let evaluator = parse_constraint_json(&config)?;
-        f(&*evaluator)
-    }
-
-    /// Internal helper to evaluate against any Ephemeris implementing EphemerisBase
-    #[allow(deprecated)]
-    fn eval_with_ephemeris<E: EphemerisBase>(
-        &self,
-        evaluator: &dyn ConstraintEvaluator,
-        ephemeris: &E,
-        target_ra: f64,
-        target_dec: f64,
-        time_indices: Option<Vec<usize>>,
-    ) -> PyResult<ConstraintResult> {
-        // PERFORMANCE OPTIMIZATION: Use fast batch path internally
-        // Instead of the slow evaluate() that tracks violations step-by-step,
-        // use in_constraint_batch() which is 1700x faster, then construct violations from the result
-
-        // Call the fast batch evaluation for single target
-        let violation_array = evaluator.in_constraint_batch(
-            ephemeris,
-            &[target_ra],
-            &[target_dec],
-            time_indices.as_deref(),
-        )?;
-
-        // Get the times we evaluated
-        let all_times = ephemeris.get_times()?;
-        let times: Vec<_> = if let Some(ref indices) = time_indices {
-            indices.iter().map(|&i| all_times[i]).collect()
-        } else {
-            all_times.to_vec()
-        };
-
-        // Extract the boolean array for our single target (first row)
-        // Note: in_constraint_batch now consistently returns true when VIOLATED (matches track_violations)
-        let violated: Vec<bool> = (0..violation_array.ncols())
-            .map(|i| violation_array[[0, i]])
-            .collect();
-
-        // Track violations using the same helper function
-        let violations = crate::constraints::core::track_violations(
-            &times,
-            |i| (violated[i], if violated[i] { 1.0 } else { 0.0 }),
-            |_i, _is_open| evaluator.name(),
-        );
-
-        let all_satisfied = violations.is_empty();
-        Ok(ConstraintResult::new(
-            violations,
-            all_satisfied,
-            evaluator.name(),
-            times,
-        ))
-    }
-
-    fn eval_batch_with_ephemeris<E: EphemerisBase>(
-        &self,
-        evaluator: &dyn ConstraintEvaluator,
-        ephemeris: &E,
-        target_ras: &[f64],
-        target_decs: &[f64],
-        time_indices: Option<Vec<usize>>,
-    ) -> PyResult<Vec<ConstraintResult>> {
-        let violation_array = evaluator.in_constraint_batch(
-            ephemeris,
-            target_ras,
-            target_decs,
-            time_indices.as_deref(),
-        )?;
-
-        let all_times = ephemeris.get_times()?;
-        let times: Vec<_> = if let Some(ref indices) = time_indices {
-            indices.iter().map(|&i| all_times[i]).collect()
-        } else {
-            all_times.to_vec()
-        };
-
-        let mut results = Vec::with_capacity(target_ras.len());
-        for target_index in 0..target_ras.len() {
-            let violated: Vec<bool> = (0..violation_array.ncols())
-                .map(|i| violation_array[[target_index, i]])
-                .collect();
-
-            let violations = crate::constraints::core::track_violations(
-                &times,
-                |i| (violated[i], if violated[i] { 1.0 } else { 0.0 }),
-                |_i, _is_open| evaluator.name(),
-            );
-
-            let all_satisfied = violations.is_empty();
-            results.push(ConstraintResult::new(
-                violations,
-                all_satisfied,
-                evaluator.name(),
-                times.clone(),
-            ));
-        }
-
-        Ok(results)
-    }
-
-    /// Vectorized evaluation for moving bodies - evaluates all targets at their corresponding times
-    ///
-    /// For N targets at N times, this calls in_constraint_batch once with all N targets
-    /// Uses the efficient diagonal batch evaluation for moving bodies.
-    /// Each target_i is evaluated only at time_i, which is O(N) instead of O(N²).
-    fn eval_moving_body_batch_diagonal(
-        &self,
-        py: Python,
-        ephemeris: &Py<PyAny>,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<Vec<bool>> {
-        let n = target_ras.len();
-        if n == 0 {
-            return Ok(Vec::new());
-        }
-
-        let bound = ephemeris.bind(py);
-
-        // Use the efficient diagonal batch evaluation
-        if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
-            self.evaluator.in_constraint_batch_diagonal(
-                &*ephem as &dyn EphemerisBase,
-                target_ras,
-                target_decs,
-            )
-        } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
-            self.evaluator.in_constraint_batch_diagonal(
-                &*ephem as &dyn EphemerisBase,
-                target_ras,
-                target_decs,
-            )
-        } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
-            self.evaluator.in_constraint_batch_diagonal(
-                &*ephem as &dyn EphemerisBase,
-                target_ras,
-                target_decs,
-            )
-        } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
-            self.evaluator.in_constraint_batch_diagonal(
-                &*ephem as &dyn EphemerisBase,
-                target_ras,
-                target_decs,
-            )
-        } else if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
-            self.evaluator.in_constraint_batch_diagonal(
-                &*ephem as &dyn EphemerisBase,
-                target_ras,
-                target_decs,
-            )
-        } else {
-            Err(pyo3::exceptions::PyTypeError::new_err(
-                "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
-            ))
-        }
-    }
 }
 
 #[pymethods]
@@ -1561,69 +1326,18 @@ impl PyConstraint {
     ) -> PyResult<ConstraintResult> {
         // Parse time filtering options
         let bound = ephemeris.bind(py);
-        let time_indices = if let Some(times_arg) = times {
-            if indices.is_some() {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "Cannot specify both 'times' and 'indices' parameters",
-                ));
-            }
-            Some(self.parse_times_to_indices(bound, times_arg)?)
-        } else if let Some(indices_arg) = indices {
-            Some(self.parse_indices(indices_arg)?)
-        } else {
-            None
-        };
+        let time_indices = self.resolve_time_indices(bound, times, indices)?;
 
         self.with_effective_evaluator(target_roll, |evaluator| {
-            if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
-                return self.eval_with_ephemeris(
+            self.with_ephemeris(bound, |ephem_ref| {
+                self.eval_with_ephemeris(
                     evaluator,
-                    &*ephem,
+                    ephem_ref,
                     target_ra,
                     target_dec,
                     time_indices.clone(),
-                );
-            }
-            if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
-                return self.eval_with_ephemeris(
-                    evaluator,
-                    &*ephem,
-                    target_ra,
-                    target_dec,
-                    time_indices.clone(),
-                );
-            }
-            if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
-                return self.eval_with_ephemeris(
-                    evaluator,
-                    &*ephem,
-                    target_ra,
-                    target_dec,
-                    time_indices.clone(),
-                );
-            }
-            if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
-                return self.eval_with_ephemeris(
-                    evaluator,
-                    &*ephem,
-                    target_ra,
-                    target_dec,
-                    time_indices.clone(),
-                );
-            }
-            if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
-                return self.eval_with_ephemeris(
-                    evaluator,
-                    &*ephem,
-                    target_ra,
-                    target_dec,
-                    time_indices.clone(),
-                );
-            }
-
-            Err(pyo3::exceptions::PyTypeError::new_err(
-                "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
-            ))
+                )
+            })
         })
     }
 
@@ -1656,82 +1370,26 @@ impl PyConstraint {
         }
 
         let bound = ephemeris.bind(py);
-        let time_indices = if let Some(times_arg) = times {
-            if indices.is_some() {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "Cannot specify both 'times' and 'indices' parameters",
-                ));
-            }
-            Some(self.parse_times_to_indices(bound, times_arg)?)
-        } else if let Some(indices_arg) = indices {
-            Some(self.parse_indices(indices_arg)?)
-        } else {
-            None
-        };
+        let time_indices = self.resolve_time_indices(bound, times, indices)?;
 
         // If no per-target rolls, use uniform None roll for all targets
         if target_rolls.is_none() {
             return self.with_effective_evaluator(None, |evaluator| {
-                if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
-                    return self.eval_batch_with_ephemeris(
+                self.with_ephemeris(bound, |ephem_ref| {
+                    self.eval_batch_with_ephemeris(
                         evaluator,
-                        &*ephem,
+                        ephem_ref,
                         &target_ras,
                         &target_decs,
                         time_indices.clone(),
-                    );
-                }
-                if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
-                    return self.eval_batch_with_ephemeris(
-                        evaluator,
-                        &*ephem,
-                        &target_ras,
-                        &target_decs,
-                        time_indices.clone(),
-                    );
-                }
-                if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
-                    return self.eval_batch_with_ephemeris(
-                        evaluator,
-                        &*ephem,
-                        &target_ras,
-                        &target_decs,
-                        time_indices.clone(),
-                    );
-                }
-                if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
-                    return self.eval_batch_with_ephemeris(
-                        evaluator,
-                        &*ephem,
-                        &target_ras,
-                        &target_decs,
-                        time_indices.clone(),
-                    );
-                }
-                if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
-                    return self.eval_batch_with_ephemeris(
-                        evaluator,
-                        &*ephem,
-                        &target_ras,
-                        &target_decs,
-                        time_indices.clone(),
-                    );
-                }
-
-                Err(pyo3::exceptions::PyTypeError::new_err(
-                    "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
-                ))
+                    )
+                })
             });
         }
 
         // Group targets by roll value for efficient evaluation
         let rolls = target_rolls.unwrap();
-        let mut roll_map: std::collections::BTreeMap<String, Vec<usize>> =
-            std::collections::BTreeMap::new();
-        for (idx, roll) in rolls.iter().enumerate() {
-            let key = format!("{}", roll);
-            roll_map.entry(key).or_default().push(idx);
-        }
+        let roll_map = Self::build_roll_groups(&rolls);
 
         // Create a result vector with capacity for all targets
         let mut results: Vec<Option<ConstraintResult>> = Vec::with_capacity(target_ras.len());
@@ -1745,59 +1403,19 @@ impl PyConstraint {
             let target_roll = rolls[group_indices[0]];
 
             // Extract targets for this group
-            let group_ras: Vec<f64> = group_indices.iter().map(|&i| target_ras[i]).collect();
-            let group_decs: Vec<f64> = group_indices.iter().map(|&i| target_decs[i]).collect();
+            let (group_ras, group_decs) =
+                Self::extract_group_targets(&target_ras, &target_decs, &group_indices);
 
             let group_results = self.with_effective_evaluator(Some(target_roll), |evaluator| {
-                if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
-                    return self.eval_batch_with_ephemeris(
+                self.with_ephemeris(bound, |ephem_ref| {
+                    self.eval_batch_with_ephemeris(
                         evaluator,
-                        &*ephem,
+                        ephem_ref,
                         &group_ras,
                         &group_decs,
                         time_indices.clone(),
-                    );
-                }
-                if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
-                    return self.eval_batch_with_ephemeris(
-                        evaluator,
-                        &*ephem,
-                        &group_ras,
-                        &group_decs,
-                        time_indices.clone(),
-                    );
-                }
-                if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
-                    return self.eval_batch_with_ephemeris(
-                        evaluator,
-                        &*ephem,
-                        &group_ras,
-                        &group_decs,
-                        time_indices.clone(),
-                    );
-                }
-                if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
-                    return self.eval_batch_with_ephemeris(
-                        evaluator,
-                        &*ephem,
-                        &group_ras,
-                        &group_decs,
-                        time_indices.clone(),
-                    );
-                }
-                if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
-                    return self.eval_batch_with_ephemeris(
-                        evaluator,
-                        &*ephem,
-                        &group_ras,
-                        &group_decs,
-                        time_indices.clone(),
-                    );
-                }
-
-                Err(pyo3::exceptions::PyTypeError::new_err(
-                    "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
-                ))
+                    )
+                })
             })?;
 
             if group_results.len() != group_indices.len() {
@@ -1857,7 +1475,7 @@ impl PyConstraint {
     ///     >>> violations.shape  # (3, n_times)
     ///     >>> violations[0, :]  # Violations for first target across all times
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None))]
+    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES))]
     fn in_constraint_batch(
         &self,
         py: Python,
@@ -1867,7 +1485,13 @@ impl PyConstraint {
         times: Option<&Bound<PyAny>>,
         indices: Option<&Bound<PyAny>>,
         target_rolls: Option<Vec<f64>>,
+        n_roll_samples: usize,
     ) -> PyResult<Py<PyAny>> {
+        if n_roll_samples == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "n_roll_samples must be greater than 0",
+            ));
+        }
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "target_ras and target_decs must have the same length",
@@ -1885,81 +1509,69 @@ impl PyConstraint {
 
         // Parse time filtering options
         let bound = ephemeris.bind(py);
-        let time_indices = if let Some(times_arg) = times {
-            if indices.is_some() {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "Cannot specify both 'times' and 'indices' parameters",
-                ));
-            }
-            Some(self.parse_times_to_indices(bound, times_arg)?)
-        } else if let Some(indices_arg) = indices {
-            Some(self.parse_indices(indices_arg)?)
-        } else {
-            None
-        };
+        let time_indices = self.resolve_time_indices(bound, times, indices)?;
 
-        // If no per-target rolls, use uniform None roll for all targets
+        // target_rolls=None means "evaluate at all rolls and report targets constrained at every
+        // roll" (i.e., no valid roll exists).  For roll-dependent constraints the sweep must be
+        // coordinated: the same roll angle is injected into every sub-constraint simultaneously
+        // so that, e.g., SolarRollConstraint and BodyConstraint share the same roll value.
         if target_rolls.is_none() {
-            let result_array = self.with_effective_evaluator(None, |evaluator| {
-                if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
-                    return evaluator.in_constraint_batch(
-                        &*ephem as &dyn EphemerisBase,
-                        &target_ras,
-                        &target_decs,
-                        time_indices.as_deref(),
-                    );
-                }
-                if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
-                    return evaluator.in_constraint_batch(
-                        &*ephem as &dyn EphemerisBase,
-                        &target_ras,
-                        &target_decs,
-                        time_indices.as_deref(),
-                    );
-                }
-                if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
-                    return evaluator.in_constraint_batch(
-                        &*ephem as &dyn EphemerisBase,
-                        &target_ras,
-                        &target_decs,
-                        time_indices.as_deref(),
-                    );
-                }
-                if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
-                    return evaluator.in_constraint_batch(
-                        &*ephem as &dyn EphemerisBase,
-                        &target_ras,
-                        &target_decs,
-                        time_indices.as_deref(),
-                    );
-                }
-                if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
-                    return evaluator.in_constraint_batch(
-                        &*ephem as &dyn EphemerisBase,
-                        &target_ras,
-                        &target_decs,
-                        time_indices.as_deref(),
-                    );
-                }
+            if self.evaluator.is_roll_dependent() {
+                // Sweep roll angles.  A target is constrained (true) only when EVERY roll
+                // violates at least one sub-constraint, meaning no valid roll exists.
+                // Extract the ephemeris once and call in_constraint_batch_at_roll in the
+                // loop — no JSON round-trips, no evaluator reconstruction per step.
+                let roll_step = 360.0 / n_roll_samples as f64;
+                let mut acc: Option<ndarray::Array2<bool>> = None;
 
-                Err(pyo3::exceptions::PyTypeError::new_err(
-                    "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
-                ))
+                self.with_ephemeris(bound, |ephem_ref| {
+                    for step in 0..n_roll_samples {
+                        if let Some(ref a) = acc {
+                            if a.iter().all(|&b| !b) {
+                                break;
+                            }
+                        }
+                        let roll_deg = step as f64 * roll_step;
+                        let step_result = self.evaluator.in_constraint_batch_at_roll(
+                            ephem_ref,
+                            &target_ras,
+                            &target_decs,
+                            time_indices.as_deref(),
+                            roll_deg,
+                        )?;
+                        match acc {
+                            None => acc = Some(step_result),
+                            Some(ref mut a) => a.zip_mut_with(&step_result, |x, &y| *x &= y),
+                        }
+                    }
+                    Ok(())
+                })?;
+
+                let result_array =
+                    acc.unwrap_or_else(|| ndarray::Array2::from_elem((target_ras.len(), 0), false));
+                use numpy::IntoPyArray;
+                return Ok(result_array.into_pyarray(py).into());
+            }
+
+            // Roll-independent: original behaviour — evaluate with the stored evaluator.
+            let result_array = self.with_effective_evaluator(None, |evaluator| {
+                self.with_ephemeris(bound, |ephem_ref| {
+                    evaluator.in_constraint_batch(
+                        ephem_ref,
+                        &target_ras,
+                        &target_decs,
+                        time_indices.as_deref(),
+                    )
+                })
             })?;
 
-            // Convert to numpy array
             use numpy::IntoPyArray;
             return Ok(result_array.into_pyarray(py).into());
         }
 
         // Handle per-target rolls: group targets by roll and stack results
         let rolls = target_rolls.unwrap();
-        let mut roll_map: std::collections::BTreeMap<String, Vec<usize>> =
-            std::collections::BTreeMap::new();
-        for (idx, roll) in rolls.iter().enumerate() {
-            let key = format!("{}", roll);
-            roll_map.entry(key).or_default().push(idx);
-        }
+        let roll_map = Self::build_roll_groups(&rolls);
 
         // First pass: get dimensions and collect results
         let mut all_groups: Vec<(Vec<usize>, numpy::ndarray::Array2<bool>)> = Vec::new();
@@ -1967,54 +1579,18 @@ impl PyConstraint {
 
         for (_, group_indices) in roll_map {
             let target_roll = rolls[group_indices[0]];
-            let group_ras: Vec<f64> = group_indices.iter().map(|&i| target_ras[i]).collect();
-            let group_decs: Vec<f64> = group_indices.iter().map(|&i| target_decs[i]).collect();
+            let (group_ras, group_decs) =
+                Self::extract_group_targets(&target_ras, &target_decs, &group_indices);
 
             let group_array = self.with_effective_evaluator(Some(target_roll), |evaluator| {
-                if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
-                    return evaluator.in_constraint_batch(
-                        &*ephem as &dyn EphemerisBase,
+                self.with_ephemeris(bound, |ephem_ref| {
+                    evaluator.in_constraint_batch(
+                        ephem_ref,
                         &group_ras,
                         &group_decs,
                         time_indices.as_deref(),
-                    );
-                }
-                if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
-                    return evaluator.in_constraint_batch(
-                        &*ephem as &dyn EphemerisBase,
-                        &group_ras,
-                        &group_decs,
-                        time_indices.as_deref(),
-                    );
-                }
-                if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
-                    return evaluator.in_constraint_batch(
-                        &*ephem as &dyn EphemerisBase,
-                        &group_ras,
-                        &group_decs,
-                        time_indices.as_deref(),
-                    );
-                }
-                if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
-                    return evaluator.in_constraint_batch(
-                        &*ephem as &dyn EphemerisBase,
-                        &group_ras,
-                        &group_decs,
-                        time_indices.as_deref(),
-                    );
-                }
-                if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
-                    return evaluator.in_constraint_batch(
-                        &*ephem as &dyn EphemerisBase,
-                        &group_ras,
-                        &group_decs,
-                        time_indices.as_deref(),
-                    );
-                }
-
-                Err(pyo3::exceptions::PyTypeError::new_err(
-                    "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
-                ))
+                    )
+                })
             })?;
 
             if n_times == 0 {
@@ -2024,26 +1600,10 @@ impl PyConstraint {
             all_groups.push((group_indices, group_array));
         }
 
-        // Reconstruct results in original order
-        let mut final_results: Vec<Vec<bool>> = vec![vec![false; n_times]; target_ras.len()];
-
-        for (group_indices, group_array) in all_groups {
-            for (row_in_group, &orig_idx) in group_indices.iter().enumerate() {
-                for col in 0..n_times {
-                    final_results[orig_idx][col] = group_array[[row_in_group, col]];
-                }
-            }
-        }
+        let arr = Self::reassemble_grouped_batch_results(target_ras.len(), n_times, all_groups)?;
 
         // Convert to numpy array
         use numpy::IntoPyArray;
-        let arr: numpy::ndarray::Array2<bool> = numpy::ndarray::Array2::from_shape_vec(
-            (target_ras.len(), n_times),
-            final_results.into_iter().flatten().collect(),
-        )
-        .map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Failed to create array: {}", e))
-        })?;
         Ok(arr.into_pyarray(py).into())
     }
 
@@ -2073,7 +1633,7 @@ impl PyConstraint {
     ///     n_roll_samples (int, optional): Number of spacecraft roll angles to sweep when
     ///         computing FoR over all roll states.  Each angle is spaced uniformly over
     ///         [0°, 360°).  Ignored for fixed-roll or roll-independent constraints.
-    ///         Default 72 (5° resolution).
+    ///         Default 360 (1° resolution). Can be reduced (e.g., 72 for 5° resolution) for faster evaluation.
     ///
     /// Returns:
     ///     float: Instantaneous field of regard in steradians (range [0, 4π])
@@ -2081,8 +1641,8 @@ impl PyConstraint {
     /// Notes:
     ///     - Exactly one of `time` or `index` must be provided.
     ///     - Higher `n_points` improves accuracy at higher computational cost.
-    ///     - Spacecraft-roll sweeps scale with ``n_roll_samples``; the default 72 is
-    ///       ~72× slower than a single-roll evaluation at the same ``n_points``.
+    ///     - Spacecraft-roll sweeps scale with ``n_roll_samples``; each additional roll sample
+    ///       increases evaluation time proportionally.
     #[pyo3(signature = (ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES))]
     fn instantaneous_field_of_regard(
         &self,
@@ -2296,6 +1856,7 @@ impl PyConstraint {
             Some(bound_time),
             None,
             target_rolls,
+            DEFAULT_N_ROLL_SAMPLES,
         )?;
 
         // Extract the results for the single target (first row)
@@ -2369,56 +1930,16 @@ impl PyConstraint {
         // Dispatch to a typed ephemeris reference, then run the vectorized sweep.
         // roll_sweep_vec calls in_constraint_batch once per leaf constraint with all N
         // pre-rotated targets, reducing O(N × leaves) calls to O(leaves).
-        let violated: Vec<bool> = if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
+        let violated: Vec<bool> = self.with_ephemeris(bound, |ephem_ref| {
             run_roll_sweep(
                 &base_config,
                 &target_ras,
                 &target_decs,
                 &rolls,
-                &*ephem as &dyn EphemerisBase,
+                ephem_ref,
                 time_idx,
-            )?
-        } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
-            run_roll_sweep(
-                &base_config,
-                &target_ras,
-                &target_decs,
-                &rolls,
-                &*ephem as &dyn EphemerisBase,
-                time_idx,
-            )?
-        } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
-            run_roll_sweep(
-                &base_config,
-                &target_ras,
-                &target_decs,
-                &rolls,
-                &*ephem as &dyn EphemerisBase,
-                time_idx,
-            )?
-        } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
-            run_roll_sweep(
-                &base_config,
-                &target_ras,
-                &target_decs,
-                &rolls,
-                &*ephem as &dyn EphemerisBase,
-                time_idx,
-            )?
-        } else if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
-            run_roll_sweep(
-                &base_config,
-                &target_ras,
-                &target_decs,
-                &rolls,
-                &*ephem as &dyn EphemerisBase,
-                time_idx,
-            )?
-        } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
-            ));
-        };
+            )
+        })?;
 
         // Collapse contiguous valid (not-violated) samples into (lo, hi) intervals.
         let mut intervals: Vec<(f64, f64)> = Vec::new();

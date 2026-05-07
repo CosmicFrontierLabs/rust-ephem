@@ -131,6 +131,9 @@ from rust_ephem.constraints import (
     SAAConstraint as SAAConstraint,
 )
 from rust_ephem.constraints import (
+    SolarRollConstraint as SolarRollConstraint,
+)
+from rust_ephem.constraints import (
     SunConstraint as SunConstraint,
 )
 from rust_ephem.constraints import (
@@ -156,6 +159,7 @@ __all__ = [
     "AtLeastConstraint",
     "MoonPhaseConstraint",
     "SAAConstraint",
+    "SolarRollConstraint",
     "AltAzConstraint",
     "OrbitRamConstraint",
     "OrbitPoleConstraint",

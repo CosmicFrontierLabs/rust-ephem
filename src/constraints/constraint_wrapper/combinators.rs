@@ -277,6 +277,50 @@ impl ConstraintEvaluator for AndEvaluator {
         Ok(result)
     }
 
+    fn in_constraint_batch_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        roll_deg: f64,
+    ) -> pyo3::PyResult<Array2<bool>> {
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+        let times = ephemeris.get_times()?;
+        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
+        let results: Result<Vec<_>, _> = self
+            .constraints
+            .iter()
+            .map(|c| {
+                c.in_constraint_batch_at_roll(
+                    ephemeris,
+                    target_ras,
+                    target_decs,
+                    time_indices,
+                    roll_deg,
+                )
+            })
+            .collect();
+        let results = results?;
+        let n_targets = target_ras.len();
+        if results.is_empty() {
+            return Ok(Array2::from_elem((n_targets, n_times), true));
+        }
+        let mut result = results[0].clone();
+        for sub_result in &results[1..] {
+            for i in 0..n_targets {
+                for j in 0..n_times {
+                    result[[i, j]] = result[[i, j]] && sub_result[[i, j]];
+                }
+            }
+        }
+        Ok(result)
+    }
+
     fn is_roll_dependent(&self) -> bool {
         self.constraints.iter().any(|c| c.is_roll_dependent())
     }
@@ -530,6 +574,50 @@ impl ConstraintEvaluator for OrEvaluator {
         Ok(result)
     }
 
+    fn in_constraint_batch_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        roll_deg: f64,
+    ) -> pyo3::PyResult<Array2<bool>> {
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+        let times = ephemeris.get_times()?;
+        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
+        let results: Result<Vec<_>, _> = self
+            .constraints
+            .iter()
+            .map(|c| {
+                c.in_constraint_batch_at_roll(
+                    ephemeris,
+                    target_ras,
+                    target_decs,
+                    time_indices,
+                    roll_deg,
+                )
+            })
+            .collect();
+        let results = results?;
+        let n_targets = target_ras.len();
+        if results.is_empty() {
+            return Ok(Array2::from_elem((n_targets, n_times), false));
+        }
+        let mut result = results[0].clone();
+        for sub_result in &results[1..] {
+            for i in 0..n_targets {
+                for j in 0..n_times {
+                    result[[i, j]] = result[[i, j]] || sub_result[[i, j]];
+                }
+            }
+        }
+        Ok(result)
+    }
+
     fn is_roll_dependent(&self) -> bool {
         self.constraints.iter().any(|c| c.is_roll_dependent())
     }
@@ -737,6 +825,33 @@ impl ConstraintEvaluator for NotEvaluator {
 
         // NOT logic: invert all values
         Ok(sub_result.into_iter().map(|v| !v).collect())
+    }
+
+    fn in_constraint_batch_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        roll_deg: f64,
+    ) -> pyo3::PyResult<Array2<bool>> {
+        let times = ephemeris.get_times()?;
+        let sub_result = self.constraint.in_constraint_batch_at_roll(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            roll_deg,
+        )?;
+        let n_targets = target_ras.len();
+        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+        for i in 0..n_targets {
+            for j in 0..n_times {
+                result[[i, j]] = !sub_result[[i, j]];
+            }
+        }
+        Ok(result)
     }
 
     fn is_roll_dependent(&self) -> bool {
@@ -962,6 +1077,46 @@ impl ConstraintEvaluator for XorEvaluator {
             result.push(violation_count == 1);
         }
 
+        Ok(result)
+    }
+
+    fn in_constraint_batch_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        roll_deg: f64,
+    ) -> pyo3::PyResult<Array2<bool>> {
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+        let times = ephemeris.get_times()?;
+        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
+        let results: Result<Vec<_>, _> = self
+            .constraints
+            .iter()
+            .map(|c| {
+                c.in_constraint_batch_at_roll(
+                    ephemeris,
+                    target_ras,
+                    target_decs,
+                    time_indices,
+                    roll_deg,
+                )
+            })
+            .collect();
+        let results = results?;
+        let n_targets = target_ras.len();
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+        for i in 0..n_targets {
+            for j in 0..n_times {
+                let count = results.iter().filter(|r| r[[i, j]]).count();
+                result[[i, j]] = count == 1;
+            }
+        }
         Ok(result)
     }
 
@@ -1203,6 +1358,54 @@ impl ConstraintEvaluator for AtLeastEvaluator {
             result.push(violation_count >= self.min_violated);
         }
 
+        Ok(result)
+    }
+
+    fn in_constraint_batch_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        roll_deg: f64,
+    ) -> pyo3::PyResult<Array2<bool>> {
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+        let times = ephemeris.get_times()?;
+        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
+        let results: Result<Vec<_>, _> = self
+            .constraints
+            .iter()
+            .map(|c| {
+                c.in_constraint_batch_at_roll(
+                    ephemeris,
+                    target_ras,
+                    target_decs,
+                    time_indices,
+                    roll_deg,
+                )
+            })
+            .collect();
+        let results = results?;
+        let n_targets = target_ras.len();
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+        for i in 0..n_targets {
+            for j in 0..n_times {
+                let mut count = 0usize;
+                for sub_result in &results {
+                    if sub_result[[i, j]] {
+                        count += 1;
+                        if count >= self.min_violated {
+                            break;
+                        }
+                    }
+                }
+                result[[i, j]] = count >= self.min_violated;
+            }
+        }
         Ok(result)
     }
 

@@ -5,6 +5,10 @@
 /// the constraint JSON tree and calls `in_constraint_batch` **once per leaf constraint**
 /// with all N pre-rotated target directions.  This reduces the call count from
 /// `O(N × leaves)` to `O(leaves)`.
+use crate::constraints::solar_roll::{
+    circular_diff_deg as solar_circular_diff_deg,
+    roll_is_unconstrained as solar_roll_unconstrained, solar_optimal_roll_deg, SolarRollConfig,
+};
 use crate::ephemeris::ephemeris_common::EphemerisBase;
 use pyo3::PyResult;
 
@@ -397,6 +401,26 @@ pub(super) fn roll_sweep_vec(
                 result[i] = count == 1;
             }
             Ok(result)
+        }
+
+        // SolarRoll: analytically check each roll sample against the solar-optimal roll.
+        Some("solar_roll") => {
+            let cfg: SolarRollConfig = serde_json::from_value(config.clone()).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Invalid solar_roll constraint JSON: {e}"
+                ))
+            })?;
+            Ok((0..n)
+                .map(|i| {
+                    let target = rsv_radec_to_unit(target_ras[i], target_decs[i]);
+                    if solar_roll_unconstrained(&target, sun_unit, cfg.panel_normal) {
+                        false
+                    } else {
+                        let opt = solar_optimal_roll_deg(&target, sun_unit, cfg.panel_normal);
+                        solar_circular_diff_deg(rolls[i], opt) > cfg.tolerance_deg
+                    }
+                })
+                .collect())
         }
 
         _ => {

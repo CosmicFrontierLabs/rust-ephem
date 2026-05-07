@@ -1529,7 +1529,7 @@ All Pydantic constraint models inherit these methods:
    :type target_roll: float or None
    :param int n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
       and the constraint is roll-dependent.  Default
-      :data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES` (72 ≈ 5° resolution).
+      :data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES` (360 ≈ 1° resolution).
       Ignored when ``target_roll`` is given or no pitch/yaw offset is present.
    :returns: ConstraintResult containing violation windows
    :rtype: ConstraintResult
@@ -1553,7 +1553,7 @@ All Pydantic constraint models inherit these methods:
    :type target_rolls: list[float | None] or None
    :param int n_roll_samples: Number of roll angles to sweep when a target has ``target_roll=None``
       and the constraint is roll-dependent. Default
-      :data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES` (72 ≈ 5° resolution).
+      :data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES` (360 ≈ 1° resolution).
    :returns: List of ``ConstraintResult`` objects, one per input target
    :rtype: list[ConstraintResult]
 
@@ -1659,7 +1659,8 @@ All Pydantic constraint models inherit these methods:
    :param int n_roll_samples: Number of spacecraft roll angles to sweep when ``target_roll``
       is not specified (uniformly spaced over [0°, 360°)). Ignored when ``target_roll`` is
       given or no pitch/yaw offset is present. Default
-      :data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES` (72 ≈ 5° resolution).
+      :data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES` (360 ≈ 1° resolution).
+      Can be reduced (e.g., 72 for 5° resolution) for faster evaluation.
    :param float target_roll: Spacecraft roll angle about +X (degrees).  When ``None``
       (default), sweeps all roll angles for boresight-offset FoR.
    :returns: Visible solid angle in steradians, range ``[0, 4π]``
