@@ -7,7 +7,7 @@
 /// `O(N × leaves)` to `O(leaves)`.
 use crate::constraints::solar_roll::{
     circular_diff_deg as solar_circular_diff_deg,
-    roll_is_unconstrained as solar_roll_unconstrained, solar_optimal_roll_deg,
+    roll_is_unconstrained as solar_roll_unconstrained, solar_optimal_roll_deg, SolarRollConfig,
 };
 use crate::ephemeris::ephemeris_common::EphemerisBase;
 use pyo3::PyResult;
@@ -405,47 +405,19 @@ pub(super) fn roll_sweep_vec(
 
         // SolarRoll: analytically check each roll sample against the solar-optimal roll.
         Some("solar_roll") => {
-            let tolerance_deg = config
-                .get("tolerance_deg")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
-            let panel_normal: [f64; 3] = match config.get("panel_normal") {
-                None | Some(serde_json::Value::Null) => [0.0, 1.0, 0.0],
-                Some(v) => {
-                    let arr = v.as_array().ok_or_else(|| {
-                        pyo3::exceptions::PyValueError::new_err(
-                            "solar_roll: panel_normal must be a 3-element array",
-                        )
-                    })?;
-                    if arr.len() != 3 {
-                        return Err(pyo3::exceptions::PyValueError::new_err(
-                            "solar_roll: panel_normal must have exactly 3 elements",
-                        ));
-                    }
-                    let mut out = [0.0_f64; 3];
-                    for (i, item) in arr.iter().enumerate() {
-                        out[i] = item.as_f64().ok_or_else(|| {
-                            pyo3::exceptions::PyValueError::new_err(
-                                "solar_roll: panel_normal elements must be finite numbers",
-                            )
-                        })?;
-                        if !out[i].is_finite() {
-                            return Err(pyo3::exceptions::PyValueError::new_err(
-                                "solar_roll: panel_normal elements must be finite numbers",
-                            ));
-                        }
-                    }
-                    out
-                }
-            };
+            let cfg: SolarRollConfig = serde_json::from_value(config.clone()).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Invalid solar_roll constraint JSON: {e}"
+                ))
+            })?;
             Ok((0..n)
                 .map(|i| {
                     let target = rsv_radec_to_unit(target_ras[i], target_decs[i]);
-                    if solar_roll_unconstrained(&target, sun_unit, panel_normal) {
+                    if solar_roll_unconstrained(&target, sun_unit, cfg.panel_normal) {
                         false
                     } else {
-                        let opt = solar_optimal_roll_deg(&target, sun_unit, panel_normal);
-                        solar_circular_diff_deg(rolls[i], opt) > tolerance_deg
+                        let opt = solar_optimal_roll_deg(&target, sun_unit, cfg.panel_normal);
+                        solar_circular_diff_deg(rolls[i], opt) > cfg.tolerance_deg
                     }
                 })
                 .collect())
