@@ -374,6 +374,81 @@ impl ConstraintEvaluator for BrightStarEvaluator {
         Ok(result)
     }
 
+    /// Cached-projection sweep: project nearby stars per target ONCE, then test
+    /// `n_roll_samples` rolls against the cached tangent-plane offsets.  Returns
+    /// (n_targets × n_times) where true = violated at every sampled roll.
+    /// Falls back to `in_constraint_batch` for circle and fixed-roll polygon modes.
+    fn in_constraint_batch_constrained_at_every_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        n_roll_samples: usize,
+    ) -> PyResult<Array2<bool>> {
+        let vertices = match &self.fov {
+            FovDefinition::Polygon {
+                vertices,
+                roll_rad: None,
+            } => vertices,
+            _ => return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices),
+        };
+
+        let all_times = ephemeris.get_times()?;
+        let n_times = match time_indices {
+            Some(idx) => idx.len(),
+            None => all_times.len(),
+        };
+        let n_targets = target_ras.len();
+
+        // Pre-compute (sin, cos) of each candidate roll once.
+        let roll_table: Vec<(f64, f64)> = (0..n_roll_samples)
+            .map(|step| {
+                let roll = step as f64 * (2.0 * PI / n_roll_samples as f64);
+                roll.sin_cos()
+            })
+            .collect();
+
+        // Each target is independent and time-invariant: parallelise across targets,
+        // do gnomonic projection ONCE per target, then sweep cached rolls.
+        let violated: Vec<bool> = target_ras
+            .par_iter()
+            .zip(target_decs.par_iter())
+            .map(|(&ra_deg, &dec_deg)| {
+                let target_ra_rad = ra_deg.to_radians();
+                let target_dec_rad = dec_deg.to_radians();
+                let (sin_tdec, cos_tdec) = target_dec_rad.sin_cos();
+                let (sin_tra, cos_tra) = target_ra_rad.sin_cos();
+                let target_unit = [cos_tdec * cos_tra, cos_tdec * sin_tra, sin_tdec];
+                let nearby =
+                    self.nearby_tangent_offsets(target_unit, target_ra_rad, sin_tdec, cos_tdec);
+                if nearby.is_empty() {
+                    return false;
+                }
+                for &(sin_roll, cos_roll) in &roll_table {
+                    let any_blocked = nearby.iter().any(|&(east, north)| {
+                        let (u, v) = Self::to_instrument(east, north, sin_roll, cos_roll);
+                        Self::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
+                    });
+                    if !any_blocked {
+                        return false; // clear roll exists for this target
+                    }
+                }
+                true
+            })
+            .collect();
+
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+        for (i, &v) in violated.iter().enumerate() {
+            if v {
+                for j in 0..n_times {
+                    result[[i, j]] = true;
+                }
+            }
+        }
+        Ok(result)
+    }
+
     /// Hot path for coordinated roll sweep: evaluate polygon at `roll_deg` without
     /// JSON round-trips.  Circle mode and fixed-roll polygon delegate unchanged.
     fn in_constraint_batch_at_roll(

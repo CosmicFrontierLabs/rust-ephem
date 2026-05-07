@@ -761,6 +761,48 @@ pub trait ConstraintEvaluator: Send + Sync {
         self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices)
     }
 
+    /// Sweep `n_roll_samples` roll angles and return targets that are violated at *every* roll
+    /// (i.e., no clear roll exists).  Used by `in_constraint_batch(target_rolls=None)`.
+    ///
+    /// Default: roll-independent evaluators bypass the sweep with a single
+    /// `in_constraint_batch` call; roll-dependent ones loop calling `in_constraint_batch_at_roll`
+    /// and AND-accumulate.  Combinators override this to hoist roll-independent children out
+    /// of the loop, and BrightStar overrides it to reuse its cached gnomonic projections.
+    fn in_constraint_batch_constrained_at_every_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        n_roll_samples: usize,
+    ) -> PyResult<Array2<bool>> {
+        if !self.is_roll_dependent() {
+            return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices);
+        }
+        let roll_step = 360.0 / n_roll_samples as f64;
+        let mut acc: Option<Array2<bool>> = None;
+        for step in 0..n_roll_samples {
+            if let Some(ref a) = acc {
+                if a.iter().all(|&b| !b) {
+                    break;
+                }
+            }
+            let roll_deg = step as f64 * roll_step;
+            let step_result = self.in_constraint_batch_at_roll(
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices,
+                roll_deg,
+            )?;
+            match acc {
+                None => acc = Some(step_result),
+                Some(ref mut a) => a.zip_mut_with(&step_result, |x, &y| *x &= y),
+            }
+        }
+        Ok(acc.unwrap_or_else(|| Array2::from_elem((target_ras.len(), 0), false)))
+    }
+
     /// Get constraint name
     fn name(&self) -> String;
 
