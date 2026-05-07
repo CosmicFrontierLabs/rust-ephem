@@ -409,21 +409,35 @@ pub(super) fn roll_sweep_vec(
                 .get("tolerance_deg")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0);
-            let panel_normal: [f64; 3] = config
-                .get("panel_normal")
-                .and_then(|v| v.as_array())
-                .and_then(|a| {
-                    if a.len() == 3 {
-                        Some([
-                            a[0].as_f64().unwrap_or(0.0),
-                            a[1].as_f64().unwrap_or(1.0),
-                            a[2].as_f64().unwrap_or(0.0),
-                        ])
-                    } else {
-                        None
+            let panel_normal: [f64; 3] = match config.get("panel_normal") {
+                None | Some(serde_json::Value::Null) => [0.0, 1.0, 0.0],
+                Some(v) => {
+                    let arr = v.as_array().ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(
+                            "solar_roll: panel_normal must be a 3-element array",
+                        )
+                    })?;
+                    if arr.len() != 3 {
+                        return Err(pyo3::exceptions::PyValueError::new_err(
+                            "solar_roll: panel_normal must have exactly 3 elements",
+                        ));
                     }
-                })
-                .unwrap_or([0.0, 1.0, 0.0]);
+                    let mut out = [0.0_f64; 3];
+                    for (i, item) in arr.iter().enumerate() {
+                        out[i] = item.as_f64().ok_or_else(|| {
+                            pyo3::exceptions::PyValueError::new_err(
+                                "solar_roll: panel_normal elements must be finite numbers",
+                            )
+                        })?;
+                        if !out[i].is_finite() {
+                            return Err(pyo3::exceptions::PyValueError::new_err(
+                                "solar_roll: panel_normal elements must be finite numbers",
+                            ));
+                        }
+                    }
+                    out
+                }
+            };
             Ok((0..n)
                 .map(|i| {
                     let target = rsv_radec_to_unit(target_ras[i], target_decs[i]);
