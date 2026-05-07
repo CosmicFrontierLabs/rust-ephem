@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.9.2...v0.10.0) (2026-05-07)
+
+
+### Features
+
+* add new constraint that restricts roll to set range based on solar panel illumination ([#163](https://github.com/CosmicFrontierLabs/rust-ephem/issues/163)) ([c2b7951](https://github.com/CosmicFrontierLabs/rust-ephem/commit/c2b79518129be9f76d67031fad139b38c2e0ef7f))
+
 ## [0.9.2](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.9.1...v0.9.2) (2026-04-29)
 
 
