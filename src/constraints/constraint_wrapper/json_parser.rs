@@ -335,6 +335,11 @@ impl ConstraintSpec {
                     ));
                 }
                 let flattened = ConstraintSpec::flatten_and(constraints);
+                if flattened.is_empty() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "AND requires at least one sub-constraint",
+                    ));
+                }
                 let evaluators = ConstraintSpec::into_sub_evaluators(flattened)?;
                 Ok(Box::new(AndEvaluator {
                     constraints: evaluators,
@@ -347,6 +352,11 @@ impl ConstraintSpec {
                     ));
                 }
                 let flattened = ConstraintSpec::flatten_or(constraints);
+                if flattened.is_empty() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "OR requires at least one sub-constraint",
+                    ));
+                }
                 let evaluators = ConstraintSpec::into_sub_evaluators(flattened)?;
                 Ok(Box::new(OrEvaluator {
                     constraints: evaluators,

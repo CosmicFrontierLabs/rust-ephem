@@ -394,10 +394,9 @@ impl ConstraintEvaluator for BrightStarEvaluator {
             _ => return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices),
         };
 
-        let all_times = ephemeris.get_times()?;
         let n_times = match time_indices {
             Some(idx) => idx.len(),
-            None => all_times.len(),
+            None => ephemeris.get_times()?.len(),
         };
         let n_targets = target_ras.len();
 

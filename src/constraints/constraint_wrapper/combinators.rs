@@ -339,8 +339,10 @@ impl ConstraintEvaluator for AndEvaluator {
             return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices);
         }
 
-        let times = ephemeris.get_times()?;
-        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
+        let n_times = match time_indices {
+            Some(idx) => idx.len(),
+            None => ephemeris.get_times()?.len(),
+        };
         let n_targets = target_ras.len();
 
         let (indep_children, dep_children): (Vec<_>, Vec<_>) = self
@@ -767,8 +769,10 @@ impl ConstraintEvaluator for OrEvaluator {
             return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices);
         }
 
-        let times = ephemeris.get_times()?;
-        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
+        let n_times = match time_indices {
+            Some(idx) => idx.len(),
+            None => ephemeris.get_times()?.len(),
+        };
         let n_targets = target_ras.len();
 
         let (indep_children, dep_children): (Vec<_>, Vec<_>) = self
