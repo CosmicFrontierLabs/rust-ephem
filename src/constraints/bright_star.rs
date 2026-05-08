@@ -528,6 +528,7 @@ impl ConstraintEvaluator for BrightStarEvaluator {
             FovDefinition::Circle { cos_radius } => {
                 // Circle mode is not roll-dependent; evaluate normally.
                 return Ok((0..n_targets)
+                    .into_par_iter()
                     .map(|i| {
                         let target_unit = [
                             target_unit_vectors[[i, 0]],
@@ -545,6 +546,7 @@ impl ConstraintEvaluator for BrightStarEvaluator {
         let (sin_roll, cos_roll) = effective_roll_rad.sin_cos();
 
         Ok((0..n_targets)
+            .into_par_iter()
             .map(|i| {
                 let ux = target_unit_vectors[[i, 0]];
                 let uy = target_unit_vectors[[i, 1]];
@@ -561,6 +563,109 @@ impl ConstraintEvaluator for BrightStarEvaluator {
                 })
             })
             .collect())
+    }
+
+    /// Cached-projection FoR sweep: project nearby stars per target ONCE, then test
+    /// `n_roll_samples` rolls against the cached tangent-plane offsets.  Mirrors
+    /// `in_constraint_batch_constrained_at_every_roll` but operates on the unit-vector
+    /// grid that the FoR pipeline supplies, avoiding the 360× re-projection that the
+    /// default core-trait sweep would otherwise do via `field_of_regard_violated_at_roll`.
+    fn field_of_regard_violated_batch(
+        &self,
+        _ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        _time_index: usize,
+        n_roll_samples: usize,
+    ) -> PyResult<Vec<bool>> {
+        let n_targets = target_unit_vectors.nrows();
+
+        match &self.fov {
+            FovDefinition::Circle { cos_radius } => Ok((0..n_targets)
+                .into_par_iter()
+                .map(|i| {
+                    let target_unit = [
+                        target_unit_vectors[[i, 0]],
+                        target_unit_vectors[[i, 1]],
+                        target_unit_vectors[[i, 2]],
+                    ];
+                    self.any_star_in_circle(target_unit, *cos_radius)
+                })
+                .collect()),
+
+            FovDefinition::Polygon {
+                vertices,
+                roll_rad: Some(roll),
+            } => {
+                let (sin_roll, cos_roll) = roll.sin_cos();
+                Ok((0..n_targets)
+                    .into_par_iter()
+                    .map(|i| {
+                        let ux = target_unit_vectors[[i, 0]];
+                        let uy = target_unit_vectors[[i, 1]];
+                        let uz = target_unit_vectors[[i, 2]];
+                        let target_ra_rad = uy.atan2(ux);
+                        let target_dec_rad = uz.clamp(-1.0, 1.0).asin();
+                        let (sin_tdec, cos_tdec) = target_dec_rad.sin_cos();
+                        let nearby = self.nearby_tangent_offsets(
+                            [ux, uy, uz],
+                            target_ra_rad,
+                            sin_tdec,
+                            cos_tdec,
+                        );
+                        nearby.iter().any(|&(east, north)| {
+                            let (u, v) = Self::to_instrument(east, north, sin_roll, cos_roll);
+                            Self::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
+                        })
+                    })
+                    .collect())
+            }
+
+            FovDefinition::Polygon {
+                vertices,
+                roll_rad: None,
+            } => {
+                if n_roll_samples == 0 {
+                    return Ok(vec![false; n_targets]);
+                }
+                let roll_table: Vec<(f64, f64)> = (0..n_roll_samples)
+                    .map(|step| {
+                        let roll = step as f64 * (2.0 * PI / n_roll_samples as f64);
+                        roll.sin_cos()
+                    })
+                    .collect();
+
+                Ok((0..n_targets)
+                    .into_par_iter()
+                    .map(|i| {
+                        let ux = target_unit_vectors[[i, 0]];
+                        let uy = target_unit_vectors[[i, 1]];
+                        let uz = target_unit_vectors[[i, 2]];
+                        let target_ra_rad = uy.atan2(ux);
+                        let target_dec_rad = uz.clamp(-1.0, 1.0).asin();
+                        let (sin_tdec, cos_tdec) = target_dec_rad.sin_cos();
+                        let nearby = self.nearby_tangent_offsets(
+                            [ux, uy, uz],
+                            target_ra_rad,
+                            sin_tdec,
+                            cos_tdec,
+                        );
+                        if nearby.is_empty() {
+                            return false; // accessible at every roll
+                        }
+                        for &(sin_roll, cos_roll) in &roll_table {
+                            let any_blocked = nearby.iter().any(|&(east, north)| {
+                                let (u, v) = Self::to_instrument(east, north, sin_roll, cos_roll);
+                                Self::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
+                            });
+                            if !any_blocked {
+                                return false; // a clear roll exists for this target
+                            }
+                        }
+                        true // every roll blocked
+                    })
+                    .collect())
+            }
+        }
     }
 
     fn name(&self) -> String {
