@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.10.0...v0.10.1) (2026-05-09)
+
+
+### Bug Fixes
+
+* **constraints:** Solar roll optimization ([#167](https://github.com/CosmicFrontierLabs/rust-ephem/issues/167)) ([6b731a7](https://github.com/CosmicFrontierLabs/rust-ephem/commit/6b731a7264717491f0c35a8e15688ce39e2220be))
+
 ## [0.10.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.9.2...v0.10.0) (2026-05-07)
 
 
