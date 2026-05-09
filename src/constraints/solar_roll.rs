@@ -358,6 +358,130 @@ impl ConstraintEvaluator for SolarRollEvaluator {
         Ok(result)
     }
 
+    /// Whether a (target, time) pair is violated at *every* sampled roll over [0°, 360°)
+    /// is fully determined by the optimal roll — independent of the candidate roll.
+    /// The default trait implementation re-runs `in_constraint_batch_at_roll` `n_roll_samples`
+    /// times (recomputing every optimal roll from scratch on each pass); here we compute
+    /// the optimum once per cell and reduce the per-cell test to a single mod operation.
+    fn in_constraint_batch_constrained_at_every_roll(
+        &self,
+        ephemeris: &dyn EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        n_roll_samples: usize,
+    ) -> PyResult<Array2<bool>> {
+        if self.roll_deg.is_some() {
+            // Fixed roll: roll-independent — the trait default already returns
+            // `in_constraint_batch` directly for non-roll-dependent leaves.
+            return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices);
+        }
+
+        let (times_filtered,) = extract_time_data!(ephemeris, time_indices);
+        let n_targets = target_ras.len();
+        let n_times = times_filtered.len();
+        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
+
+        if n_targets == 0 || n_times == 0 || n_roll_samples == 0 {
+            return Ok(result);
+        }
+
+        let sun = ephemeris.get_sun_positions()?;
+        let obs = ephemeris.get_gcrs_positions()?;
+        let step = 360.0 / n_roll_samples as f64;
+
+        for j in 0..n_targets {
+            let target = radec_to_unit(target_ras[j], target_decs[j]);
+            for i in 0..n_times {
+                let source_i = time_indices.map_or(i, |indices| indices[i]);
+                let v = [
+                    sun[[source_i, 0]] - obs[[source_i, 0]],
+                    sun[[source_i, 1]] - obs[[source_i, 1]],
+                    sun[[source_i, 2]] - obs[[source_i, 2]],
+                ];
+                let n = norm3(v);
+                let sun_unit = if n < NEAR_ZERO {
+                    [1.0, 0.0, 0.0]
+                } else {
+                    [v[0] / n, v[1] / n, v[2] / n]
+                };
+                if roll_is_unconstrained(&target, &sun_unit, self.panel_normal) {
+                    continue;
+                }
+                let opt = solar_optimal_roll_deg(&target, &sun_unit, self.panel_normal);
+                let phase = opt.rem_euclid(step);
+                let min_dist = phase.min(step - phase);
+                if min_dist > self.tolerance_deg {
+                    result[[j, i]] = true;
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Same optimisation as `in_constraint_batch_constrained_at_every_roll` for the
+    /// FoR sweep path: compute the optimal roll once per target and reduce the
+    /// per-roll test to a constant-time modular comparison.
+    fn field_of_regard_violated_batch(
+        &self,
+        ephemeris: &dyn EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_index: usize,
+        n_roll_samples: usize,
+    ) -> PyResult<Vec<bool>> {
+        if self.roll_deg.is_some() {
+            // Fixed roll: result is identical at every candidate roll, so a single
+            // evaluation suffices — matches the default fast path for roll-independent
+            // constraints.
+            return self.field_of_regard_violated_at_roll(
+                ephemeris,
+                target_unit_vectors,
+                time_index,
+                0.0,
+            );
+        }
+
+        let n_targets = target_unit_vectors.nrows();
+        if n_targets == 0 || n_roll_samples == 0 {
+            return Ok(vec![false; n_targets]);
+        }
+
+        let sun = ephemeris.get_sun_positions()?;
+        let obs = ephemeris.get_gcrs_positions()?;
+        let v = [
+            sun[[time_index, 0]] - obs[[time_index, 0]],
+            sun[[time_index, 1]] - obs[[time_index, 1]],
+            sun[[time_index, 2]] - obs[[time_index, 2]],
+        ];
+        let n = norm3(v);
+        let sun_unit = if n < NEAR_ZERO {
+            [1.0, 0.0, 0.0]
+        } else {
+            [v[0] / n, v[1] / n, v[2] / n]
+        };
+
+        let step = 360.0 / n_roll_samples as f64;
+        let mut result = vec![false; n_targets];
+        for i in 0..n_targets {
+            let target = [
+                target_unit_vectors[[i, 0]],
+                target_unit_vectors[[i, 1]],
+                target_unit_vectors[[i, 2]],
+            ];
+            if roll_is_unconstrained(&target, &sun_unit, self.panel_normal) {
+                continue;
+            }
+            let opt = solar_optimal_roll_deg(&target, &sun_unit, self.panel_normal);
+            let phase = opt.rem_euclid(step);
+            let min_dist = phase.min(step - phase);
+            if min_dist > self.tolerance_deg {
+                result[i] = true;
+            }
+        }
+        Ok(result)
+    }
+
     /// When no fixed roll is configured the constraint participates in the
     /// field-of-regard roll sweep: each candidate roll angle is checked for
     /// solar compliance, so only solar-valid rolls contribute accessible sky.

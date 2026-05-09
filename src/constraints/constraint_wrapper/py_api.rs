@@ -1516,53 +1516,18 @@ impl PyConstraint {
         // coordinated: the same roll angle is injected into every sub-constraint simultaneously
         // so that, e.g., SolarRollConstraint and BodyConstraint share the same roll value.
         if target_rolls.is_none() {
-            if self.evaluator.is_roll_dependent() {
-                // Sweep roll angles.  A target is constrained (true) only when EVERY roll
-                // violates at least one sub-constraint, meaning no valid roll exists.
-                // Extract the ephemeris once and call in_constraint_batch_at_roll in the
-                // loop — no JSON round-trips, no evaluator reconstruction per step.
-                let roll_step = 360.0 / n_roll_samples as f64;
-                let mut acc: Option<ndarray::Array2<bool>> = None;
-
-                self.with_ephemeris(bound, |ephem_ref| {
-                    for step in 0..n_roll_samples {
-                        if let Some(ref a) = acc {
-                            if a.iter().all(|&b| !b) {
-                                break;
-                            }
-                        }
-                        let roll_deg = step as f64 * roll_step;
-                        let step_result = self.evaluator.in_constraint_batch_at_roll(
-                            ephem_ref,
-                            &target_ras,
-                            &target_decs,
-                            time_indices.as_deref(),
-                            roll_deg,
-                        )?;
-                        match acc {
-                            None => acc = Some(step_result),
-                            Some(ref mut a) => a.zip_mut_with(&step_result, |x, &y| *x &= y),
-                        }
-                    }
-                    Ok(())
-                })?;
-
-                let result_array =
-                    acc.unwrap_or_else(|| ndarray::Array2::from_elem((target_ras.len(), 0), false));
-                use numpy::IntoPyArray;
-                return Ok(result_array.into_pyarray(py).into());
-            }
-
-            // Roll-independent: original behaviour — evaluate with the stored evaluator.
-            let result_array = self.with_effective_evaluator(None, |evaluator| {
-                self.with_ephemeris(bound, |ephem_ref| {
-                    evaluator.in_constraint_batch(
+            // Single dispatch: evaluators that aren't roll-dependent take the fast path
+            // inside the trait method; combinators hoist roll-independent children; leaves
+            // like BrightStar reuse cached projections across the sweep.
+            let result_array = self.with_ephemeris(bound, |ephem_ref| {
+                self.evaluator
+                    .in_constraint_batch_constrained_at_every_roll(
                         ephem_ref,
                         &target_ras,
                         &target_decs,
                         time_indices.as_deref(),
+                        n_roll_samples,
                     )
-                })
             })?;
 
             use numpy::IntoPyArray;

@@ -325,6 +325,97 @@ impl ConstraintEvaluator for AndEvaluator {
         self.constraints.iter().any(|c| c.is_roll_dependent())
     }
 
+    /// Hoist roll-independent children: `AND_step (V_indep ∧ V_dep_at_step)
+    /// = V_indep ∧ AND_step (V_dep_at_step)` since V_indep doesn't depend on the roll.
+    fn in_constraint_batch_constrained_at_every_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        n_roll_samples: usize,
+    ) -> PyResult<Array2<bool>> {
+        if !self.is_roll_dependent() {
+            return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices);
+        }
+
+        let n_times = match time_indices {
+            Some(idx) => idx.len(),
+            None => ephemeris.get_times()?.len(),
+        };
+        let n_targets = target_ras.len();
+
+        let (indep_children, dep_children): (Vec<_>, Vec<_>) = self
+            .constraints
+            .iter()
+            .partition(|c| !c.is_roll_dependent());
+
+        // V_indep_and — AND over all roll-independent children, computed once.
+        let mut v_indep: Option<Array2<bool>> = None;
+        for c in &indep_children {
+            let r = c.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices)?;
+            match v_indep {
+                None => v_indep = Some(r),
+                Some(ref mut a) => a.zip_mut_with(&r, |x, &y| *x &= y),
+            }
+        }
+
+        if dep_children.is_empty() {
+            return Ok(
+                v_indep.unwrap_or_else(|| Array2::<bool>::from_elem((n_targets, n_times), true))
+            );
+        }
+
+        if dep_children.len() == 1 && indep_children.is_empty() {
+            return dep_children[0].in_constraint_batch_constrained_at_every_roll(
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices,
+                n_roll_samples,
+            );
+        }
+
+        // AND_step (AND over dep_children of in_constraint_batch_at_roll).
+        let roll_step = 360.0 / n_roll_samples as f64;
+        let mut acc: Option<Array2<bool>> = None;
+        for step in 0..n_roll_samples {
+            if let Some(ref a) = acc {
+                if a.iter().all(|&b| !b) {
+                    break;
+                }
+            }
+            let roll_deg = step as f64 * roll_step;
+            let mut step_and: Option<Array2<bool>> = None;
+            for c in &dep_children {
+                let r = c.in_constraint_batch_at_roll(
+                    ephemeris,
+                    target_ras,
+                    target_decs,
+                    time_indices,
+                    roll_deg,
+                )?;
+                match step_and {
+                    None => step_and = Some(r),
+                    Some(ref mut a) => a.zip_mut_with(&r, |x, &y| *x &= y),
+                }
+            }
+            let step_and =
+                step_and.unwrap_or_else(|| Array2::<bool>::from_elem((n_targets, n_times), true));
+            match acc {
+                None => acc = Some(step_and),
+                Some(ref mut a) => a.zip_mut_with(&step_and, |x, &y| *x &= y),
+            }
+        }
+
+        let mut result =
+            acc.unwrap_or_else(|| Array2::<bool>::from_elem((n_targets, n_times), false));
+        if let Some(v) = v_indep {
+            result.zip_mut_with(&v, |x, &y| *x &= y);
+        }
+        Ok(result)
+    }
+
     fn field_of_regard_violated_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -348,6 +439,47 @@ impl ConstraintEvaluator for AndEvaluator {
                 target_unit_vectors,
                 time_index,
                 roll_deg,
+            )?;
+            for i in 0..n_targets {
+                result[i] = result[i] && sub[i];
+            }
+        }
+        Ok(result)
+    }
+
+    /// AND decomposes trivially through the universal quantifier:
+    /// `∀θ. ⋀_c c(θ) violated  =  ⋀_c (∀θ. c(θ) violated)`,
+    /// i.e. the AND combinator's FoR-violation is the AND of each child's FoR-violation.
+    /// Each child therefore gets to use its own optimised `field_of_regard_violated_batch`
+    /// (e.g. bright_star's cached gnomonic projection), avoiding the default coupled sweep
+    /// that would re-call every child once per roll step.
+    fn field_of_regard_violated_batch(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_index: usize,
+        n_roll_samples: usize,
+    ) -> PyResult<Vec<bool>> {
+        let n_targets = target_unit_vectors.nrows();
+        if self.constraints.is_empty() {
+            return Ok(vec![true; n_targets]);
+        }
+
+        let mut result = self.constraints[0].field_of_regard_violated_batch(
+            ephemeris,
+            target_unit_vectors,
+            time_index,
+            n_roll_samples,
+        )?;
+        for c in &self.constraints[1..] {
+            if result.iter().all(|&v| !v) {
+                return Ok(result); // every target already accessible — AND can't flip it back
+            }
+            let sub = c.field_of_regard_violated_batch(
+                ephemeris,
+                target_unit_vectors,
+                time_index,
+                n_roll_samples,
             )?;
             for i in 0..n_targets {
                 result[i] = result[i] && sub[i];
@@ -622,6 +754,89 @@ impl ConstraintEvaluator for OrEvaluator {
         self.constraints.iter().any(|c| c.is_roll_dependent())
     }
 
+    /// Hoist roll-independent children: `AND_step (V_indep ∨ V_dep_at_step)
+    /// = V_indep ∨ AND_step (V_dep_at_step)` since V_indep doesn't depend on the roll.
+    /// Avoids re-evaluating roll-independent siblings 360 times in the outer sweep.
+    fn in_constraint_batch_constrained_at_every_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        n_roll_samples: usize,
+    ) -> PyResult<Array2<bool>> {
+        if !self.is_roll_dependent() {
+            return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices);
+        }
+
+        let n_times = match time_indices {
+            Some(idx) => idx.len(),
+            None => ephemeris.get_times()?.len(),
+        };
+        let n_targets = target_ras.len();
+
+        let (indep_children, dep_children): (Vec<_>, Vec<_>) = self
+            .constraints
+            .iter()
+            .partition(|c| !c.is_roll_dependent());
+
+        // V_indep_or — OR of all roll-independent children, computed once.
+        let mut v_indep = Array2::<bool>::from_elem((n_targets, n_times), false);
+        for c in &indep_children {
+            let r = c.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices)?;
+            v_indep.zip_mut_with(&r, |x, &y| *x |= y);
+        }
+
+        if dep_children.is_empty() {
+            return Ok(v_indep);
+        }
+
+        // For roll-dependent children, recurse into their swept method when possible —
+        // BUT only when there's a single dep child, since we need per-step values to OR
+        // across siblings.  With multiple dep children we must loop step-by-step.
+        if dep_children.len() == 1 && indep_children.is_empty() {
+            return dep_children[0].in_constraint_batch_constrained_at_every_roll(
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices,
+                n_roll_samples,
+            );
+        }
+
+        // AND_step (OR over dep_children of in_constraint_batch_at_roll).
+        let roll_step = 360.0 / n_roll_samples as f64;
+        let mut acc: Option<Array2<bool>> = None;
+        for step in 0..n_roll_samples {
+            if let Some(ref a) = acc {
+                if a.iter().all(|&b| !b) {
+                    break;
+                }
+            }
+            let roll_deg = step as f64 * roll_step;
+            let mut step_or = Array2::<bool>::from_elem((n_targets, n_times), false);
+            for c in &dep_children {
+                let r = c.in_constraint_batch_at_roll(
+                    ephemeris,
+                    target_ras,
+                    target_decs,
+                    time_indices,
+                    roll_deg,
+                )?;
+                step_or.zip_mut_with(&r, |x, &y| *x |= y);
+            }
+            match acc {
+                None => acc = Some(step_or),
+                Some(ref mut a) => a.zip_mut_with(&step_or, |x, &y| *x &= y),
+            }
+        }
+
+        let mut result =
+            acc.unwrap_or_else(|| Array2::<bool>::from_elem((n_targets, n_times), false));
+        result.zip_mut_with(&v_indep, |x, &y| *x |= y);
+        Ok(result)
+    }
+
     fn field_of_regard_violated_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -651,6 +866,95 @@ impl ConstraintEvaluator for OrEvaluator {
             }
         }
         Ok(result)
+    }
+
+    /// Mirror of `in_constraint_batch_constrained_at_every_roll` for the FoR path.
+    ///
+    /// Hoist roll-independent children out of the sweep — they evaluate to a constant
+    /// `V_indep_or` per target, so a target with `V_indep_or[i] = true` is FoR-violated
+    /// regardless of θ and is removed from the dep sweep entirely.  When there is exactly
+    /// one roll-dependent child left, delegate to its own optimised
+    /// `field_of_regard_violated_batch` (this is the `OR(sun_prox, bright_star)` shape that
+    /// users typically write).  Multiple dep children stay coupled and sweep together.
+    fn field_of_regard_violated_batch(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_index: usize,
+        n_roll_samples: usize,
+    ) -> PyResult<Vec<bool>> {
+        let n_targets = target_unit_vectors.nrows();
+        if self.constraints.is_empty() {
+            return Ok(vec![false; n_targets]);
+        }
+
+        let (indep_children, dep_children): (Vec<_>, Vec<_>) = self
+            .constraints
+            .iter()
+            .partition(|c| !c.is_roll_dependent());
+
+        // V_indep_or — OR of all roll-independent children, evaluated once each.
+        let mut v_indep = vec![false; n_targets];
+        for c in &indep_children {
+            let sub = c.field_of_regard_violated_batch(
+                ephemeris,
+                target_unit_vectors,
+                time_index,
+                n_roll_samples,
+            )?;
+            for i in 0..n_targets {
+                v_indep[i] = v_indep[i] || sub[i];
+            }
+        }
+
+        if dep_children.is_empty() {
+            return Ok(v_indep);
+        }
+
+        // Singleton dep-child: result[i] = V_indep_or[i] || dep_for_violated[i].
+        if dep_children.len() == 1 {
+            let dep_for = dep_children[0].field_of_regard_violated_batch(
+                ephemeris,
+                target_unit_vectors,
+                time_index,
+                n_roll_samples,
+            )?;
+            return Ok((0..n_targets).map(|i| v_indep[i] || dep_for[i]).collect());
+        }
+
+        // Multiple dep children: must couple at each θ.
+        // accessible[i] = ∃θ: every dep child not violated at θ; targets with v_indep[i]
+        // are excluded from this — they're already FoR-violated.
+        let roll_step_deg = 360.0 / n_roll_samples as f64;
+        let mut accessible = vec![false; n_targets];
+        for step in 0..n_roll_samples {
+            // Early-exit when every non-pre-violated target has found a clear roll.
+            if (0..n_targets).all(|i| v_indep[i] || accessible[i]) {
+                break;
+            }
+            let roll_deg = step as f64 * roll_step_deg;
+            let mut step_or_violated = vec![false; n_targets];
+            for c in &dep_children {
+                let r = c.field_of_regard_violated_at_roll(
+                    ephemeris,
+                    target_unit_vectors,
+                    time_index,
+                    roll_deg,
+                )?;
+                for i in 0..n_targets {
+                    step_or_violated[i] = step_or_violated[i] || r[i];
+                }
+            }
+            for i in 0..n_targets {
+                if !accessible[i] && !v_indep[i] && !step_or_violated[i] {
+                    accessible[i] = true;
+                }
+            }
+        }
+
+        Ok((0..n_targets)
+            .map(|i| v_indep[i] || !accessible[i])
+            .collect())
     }
 
     fn name(&self) -> String {

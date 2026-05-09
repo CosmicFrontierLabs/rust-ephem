@@ -333,31 +333,12 @@ class RustConstraintMixin(BaseModel):
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> npt.NDArray[np.bool_]:
         """Evaluate a batch where all targets share the same roll semantics."""
-        if target_roll is None and self._is_roll_dependent():
-            # Sweep all spacecraft roll angles; a cell is violated only if blocked at
-            # every roll (AND across the sweep).
-            roll_step = 360.0 / n_roll_samples
-            combined: npt.NDArray[np.bool_] | None = None
-            for i in range(n_roll_samples):
-                r = i * roll_step
-                arr = np.asarray(
-                    self._resolve_rust_constraint(target_roll=r).in_constraint_batch(
-                        ephemeris, target_ras, target_decs, times, indices
-                    ),
-                    dtype=bool,
-                )
-                combined = (
-                    arr
-                    if combined is None
-                    else cast(npt.NDArray[np.bool_], combined & arr)
-                )
-            return cast(
-                npt.NDArray[np.bool_],
-                combined
-                if combined is not None
-                else np.ones((len(target_ras), 0), dtype=bool),
-            )
-
+        # When target_roll is None and the tree is roll-dependent the Rust backend
+        # performs the coordinated roll sweep internally (combinators hoist
+        # roll-independent siblings out of the loop, BrightStar caches its gnomonic
+        # projections, SolarRoll computes the optimal roll once per cell).  Delegate
+        # to it directly instead of looping in Python and rebuilding a fresh Rust
+        # constraint per roll step.
         rust_constraint = self._resolve_rust_constraint(
             target_roll=target_roll,
         )

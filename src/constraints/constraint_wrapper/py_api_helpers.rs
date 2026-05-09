@@ -133,34 +133,13 @@ impl PyConstraint {
         time_indices: Option<&[usize]>,
         n_roll_samples: usize,
     ) -> PyResult<ndarray::Array2<bool>> {
-        if !evaluator.is_roll_dependent() {
-            return evaluator.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices);
-        }
-
-        // Sweep roll angles and require violation at every roll to mark a cell violated.
-        let roll_step = 360.0 / n_roll_samples as f64;
-        let mut acc: Option<ndarray::Array2<bool>> = None;
-        for step in 0..n_roll_samples {
-            if let Some(ref a) = acc {
-                if a.iter().all(|&b| !b) {
-                    break;
-                }
-            }
-            let roll_deg = step as f64 * roll_step;
-            let step_result = evaluator.in_constraint_batch_at_roll(
-                ephemeris,
-                target_ras,
-                target_decs,
-                time_indices,
-                roll_deg,
-            )?;
-            match acc {
-                None => acc = Some(step_result),
-                Some(ref mut a) => a.zip_mut_with(&step_result, |x, &y| *x &= y),
-            }
-        }
-
-        Ok(acc.unwrap_or_else(|| ndarray::Array2::from_elem((target_ras.len(), 0), false)))
+        evaluator.in_constraint_batch_constrained_at_every_roll(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            n_roll_samples,
+        )
     }
 
     pub(super) fn with_effective_evaluator<T, F>(

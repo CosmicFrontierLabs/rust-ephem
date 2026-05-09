@@ -203,6 +203,41 @@ impl ConstraintSpec {
             .collect()
     }
 
+    /// Flatten nested same-kind chains into a single n-ary node.  The Python `|`/`&`
+    /// operators produce left-deep binary trees (e.g. `OR(OR(OR(a,b),c),d)`); flattening
+    /// gives a single OR/AND with all siblings, which lets the per-level
+    /// `in_constraint_batch_constrained_at_every_roll` hoist all roll-independent siblings
+    /// out of the outer roll sweep instead of only the ones at the topmost level.
+    fn flatten_or(constraints: Vec<ConstraintSpec>) -> Vec<ConstraintSpec> {
+        let mut out = Vec::with_capacity(constraints.len());
+        for c in constraints {
+            match c {
+                ConstraintSpec::Or {
+                    constraints: nested,
+                } => {
+                    out.extend(Self::flatten_or(nested));
+                }
+                other => out.push(other),
+            }
+        }
+        out
+    }
+
+    fn flatten_and(constraints: Vec<ConstraintSpec>) -> Vec<ConstraintSpec> {
+        let mut out = Vec::with_capacity(constraints.len());
+        for c in constraints {
+            match c {
+                ConstraintSpec::And {
+                    constraints: nested,
+                } => {
+                    out.extend(Self::flatten_and(nested));
+                }
+                other => out.push(other),
+            }
+        }
+        out
+    }
+
     fn into_evaluator(self) -> PyResult<Box<dyn ConstraintEvaluator>> {
         match self {
             ConstraintSpec::Sun {
@@ -299,7 +334,13 @@ impl ConstraintSpec {
                         "AND requires at least one sub-constraint",
                     ));
                 }
-                let evaluators = ConstraintSpec::into_sub_evaluators(constraints)?;
+                let flattened = ConstraintSpec::flatten_and(constraints);
+                if flattened.is_empty() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "AND requires at least one sub-constraint",
+                    ));
+                }
+                let evaluators = ConstraintSpec::into_sub_evaluators(flattened)?;
                 Ok(Box::new(AndEvaluator {
                     constraints: evaluators,
                 }))
@@ -310,7 +351,13 @@ impl ConstraintSpec {
                         "OR requires at least one sub-constraint",
                     ));
                 }
-                let evaluators = ConstraintSpec::into_sub_evaluators(constraints)?;
+                let flattened = ConstraintSpec::flatten_or(constraints);
+                if flattened.is_empty() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "OR requires at least one sub-constraint",
+                    ));
+                }
+                let evaluators = ConstraintSpec::into_sub_evaluators(flattened)?;
                 Ok(Box::new(OrEvaluator {
                     constraints: evaluators,
                 }))
