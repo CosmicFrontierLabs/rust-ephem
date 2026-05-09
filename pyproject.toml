@@ -53,9 +53,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0", "astropy>=5.0", "pytest-cov>=7.0.0"]
+test = ["pytest>=7.0", "astropy>=5.0", "pytest-cov>=7.0.0", "duckdb>=0.10.0", "pyarrow>=14.0"]
 docs = ["sphinx>=6.0", "sphinx-rtd-theme"]
 dev = ["mypy", "ruff", "prek", "maturin"]
+parquet = ["duckdb>=0.10.0"]
 all = [
     "pytest>=7.0",
     "astropy>=5.0",
@@ -66,6 +67,8 @@ all = [
     "ruff",
     "prek",
     "maturin",
+    "duckdb>=0.10.0",
+    "pyarrow>=14.0",
 ]
 
 [project.urls]

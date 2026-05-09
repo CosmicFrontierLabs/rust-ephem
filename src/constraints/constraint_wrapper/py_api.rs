@@ -20,6 +20,7 @@ use crate::ephemeris::ephemeris_common::EphemerisBase;
 use crate::ephemeris::FileEphemeris;
 use crate::ephemeris::GroundEphemeris;
 use crate::ephemeris::OEMEphemeris;
+use crate::ephemeris::ParquetEphemeris;
 use crate::ephemeris::SPICEEphemeris;
 use crate::ephemeris::TLEEphemeris;
 use chrono::{DateTime, Utc};
@@ -1297,7 +1298,7 @@ impl PyConstraint {
     /// Evaluate constraint against any supported ephemeris type
     ///
     /// Args:
-    ///     ephemeris: One of `TLEEphemeris`, `SPICEEphemeris`, or `GroundEphemeris`
+    ///     ephemeris: One of `TLEEphemeris`, `SPICEEphemeris`, `GroundEphemeris`, `OEMEphemeris`, `FileEphemeris`, or `ParquetEphemeris`
     ///     target_ra (float): Target right ascension in degrees (ICRS/J2000)
     ///     target_dec (float): Target declination in degrees (ICRS/J2000)
     ///     times (datetime or list[datetime], optional): Specific time(s) to evaluate.
@@ -1457,7 +1458,7 @@ impl PyConstraint {
     /// and columns correspond to times.
     ///
     /// Args:
-    ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+    ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
     ///     target_ras (array-like): Array of right ascensions in degrees (ICRS/J2000)
     ///     target_decs (array-like): Array of declinations in degrees (ICRS/J2000)
     ///     times (datetime or list[datetime], optional): Specific times to evaluate
@@ -1591,7 +1592,7 @@ impl PyConstraint {
     /// over all possible roll states.
     ///
     /// Args:
-    ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+    ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
     ///     time (datetime, optional): Specific timestamp to evaluate (must exist in ephemeris)
     ///     index (int, optional): Specific time index to evaluate
     ///     n_points (int, optional): Number of sky samples (Fibonacci sphere). Default 20000.
@@ -1642,7 +1643,7 @@ impl PyConstraint {
     /// Args:
     ///     time (datetime or list[datetime] or numpy.ndarray): Time(s) to check (must exist in ephemeris).
     ///           Can be a single datetime, list of datetimes, or numpy array of datetimes.
-    ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+    ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
     ///     target_ra (float): Target right ascension in degrees (ICRS/J2000)
     ///     target_dec (float): Target declination in degrees (ICRS/J2000)
     ///
@@ -1668,6 +1669,8 @@ impl PyConstraint {
             } else if let Ok(ephem) = ephemeris.extract::<PyRef<OEMEphemeris>>() {
                 ephem.data().times.as_ref().cloned()
             } else if let Ok(ephem) = ephemeris.extract::<PyRef<FileEphemeris>>() {
+                ephem.data().times.as_ref().cloned()
+            } else if let Ok(ephem) = ephemeris.extract::<PyRef<ParquetEphemeris>>() {
                 ephem.data().times.as_ref().cloned()
             } else {
                 None
@@ -1768,7 +1771,7 @@ impl PyConstraint {
     ///
     /// Args:
     ///     time (datetime): The time to check (must exist in ephemeris)
-    ///     ephemeris: One of `TLEEphemeris`, `SPICEEphemeris`, or `GroundEphemeris`
+    ///     ephemeris: One of `TLEEphemeris`, `SPICEEphemeris`, `GroundEphemeris`, `OEMEphemeris`, `FileEphemeris`, or `ParquetEphemeris`
     ///     target_ra (float): Target right ascension in degrees (ICRS/J2000)
     ///     target_dec (float): Target declination in degrees (ICRS/J2000)
     ///
@@ -1849,7 +1852,7 @@ impl PyConstraint {
     ///
     /// Args:
     ///     time (datetime): Timestamp to evaluate (must exist in ephemeris).
-    ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+    ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
     ///     target_ra (float): Target right ascension in degrees (ICRS/J2000)
     ///     target_dec (float): Target declination in degrees (ICRS/J2000)
     ///     n_roll_samples (int, optional): Number of roll angles to sweep uniformly over
@@ -1937,7 +1940,7 @@ impl PyConstraint {
     /// 2. Body lookup: Provide `body` name/ID and optionally `use_horizons` to query positions
     ///
     /// Args:
-    ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+    ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
     ///     target_ras (list[float], optional): Array of right ascensions in degrees (ICRS/J2000)
     ///     target_decs (list[float], optional): Array of declinations in degrees (ICRS/J2000)
     ///     times (datetime or list[datetime], optional): Specific times to evaluate (must match ras/decs length)

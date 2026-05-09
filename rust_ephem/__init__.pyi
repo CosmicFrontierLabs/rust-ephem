@@ -17,6 +17,9 @@ from rust_ephem._rust_ephem import (
     OEMEphemeris as OEMEphemeris,
 )
 from rust_ephem._rust_ephem import (
+    ParquetEphemeris as ParquetEphemeris,
+)
+from rust_ephem._rust_ephem import (
     PositionVelocityData as PositionVelocityData,
 )
 from rust_ephem._rust_ephem import (
@@ -177,6 +180,7 @@ __all__ = [
     "OEMEphemeris",
     "GroundEphemeris",
     "FileEphemeris",
+    "ParquetEphemeris",
     "PositionVelocityData",
     "Constraint",
     "ConstraintResult",

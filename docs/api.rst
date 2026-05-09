@@ -26,8 +26,9 @@ Classes
 
 **Ephemeris** (Abstract Base Class)
   Common interface for all ephemeris types. All concrete ephemeris classes
-  (TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris) implement this
-  interface and can be used interchangeably where an ``Ephemeris`` is expected.
+  (TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris,
+  ParquetEphemeris) implement this interface and can be used interchangeably
+  where an ``Ephemeris`` is expected.
 
   Use ``isinstance(obj, Ephemeris)`` to check if an object is any ephemeris type.
 
@@ -55,7 +56,7 @@ Classes
     * ``calculate_airmass(ra_deg, dec_deg, time_indices=None)`` — Calculate astronomical airmass for target
 
   **Type Alias:**
-    ``EphemerisType = TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris | FileEphemeris``
+    ``EphemerisType = TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris | FileEphemeris | ParquetEphemeris``
 
 **TLEEphemeris**
   Propagate Two-Line Element (TLE) sets with SGP4 and convert to coordinate frames.
@@ -433,6 +434,77 @@ Classes
 
   See :doc:`ephemeris_file` for worked examples.
 
+**ParquetEphemeris**
+  Load pre-computed state vectors from a Parquet file via DuckDB and resample
+  to a uniform output grid via Hermite interpolation. Supports local files,
+  globs, and cloud object stores (S3, DigitalOcean Spaces, GCS, R2, HTTPS).
+
+  Requires the optional ``duckdb`` Python package
+  (``pip install rust-ephem[parquet]`` or ``pip install duckdb``).
+
+  **Constructor:**
+    ``ParquetEphemeris(source, begin, end, step_size=60, *, polar_motion=False, time_col=None, pos_cols=None, vel_cols=None, position_unit=None, velocity_unit=None, frame=None, s3_endpoint=None, s3_region=None, where_clause=None)``
+
+    * ``source`` — Path or URI to the Parquet file. Supports local paths and
+      globs, ``s3://``, ``gcs://``, ``r2://``, ``http(s)://``
+    * ``begin`` — Start time for the output grid (Python datetime, UTC)
+    * ``end`` — End time for the output grid (Python datetime, UTC)
+    * ``step_size`` — Output time step in seconds (default: 60)
+    * ``polar_motion`` — Apply polar motion correction (default: False)
+    * ``time_col`` — Name of the timestamp column (default: ``"time"``)
+    * ``pos_cols`` — Names of the three position columns
+      (default: ``("x", "y", "z")``)
+    * ``vel_cols`` — Names of the three velocity columns
+      (default: ``("vx", "vy", "vz")``)
+    * ``position_unit`` — Position unit in the source: ``"km"`` (default), ``"m"``, ``"cm"``
+    * ``velocity_unit`` — Velocity unit in the source: ``"km/s"`` (default), ``"m/s"``, ``"cm/s"``
+    * ``frame`` — Coordinate frame of the source. Default ``"GCRS"``.
+      GCRS-compatible: ``"J2000"``, ``"EME2000"``, ``"GCRF"``, ``"GCRS"``, ``"ICRF"``.
+      Earth-fixed: ``"ITRS"``, ``"ECEF"``, ``"ECF"``, ``"FIXED"``, ``"TERRESTRIAL"``
+    * ``s3_endpoint`` — Custom S3 endpoint host for S3-compatible services
+      (e.g. ``"nyc3.digitaloceanspaces.com"`` for DigitalOcean Spaces)
+    * ``s3_region`` — Override S3 region. Falls back to ``AWS_REGION`` env var.
+    * ``where_clause`` — Extra SQL ``WHERE`` predicate to apply to the Parquet
+      (e.g. ``"sat_id = 42"``). Combined via ``AND`` with the time-range filter.
+
+  **Authentication:**
+    Cloud access uses DuckDB's ``credential_chain`` SECRET, which transparently
+    picks up the standard AWS environment variables: ``AWS_ACCESS_KEY_ID``,
+    ``AWS_SECRET_ACCESS_KEY``, ``AWS_REGION``, ``AWS_SESSION_TOKEN``.
+
+  **Raises:**
+    * ``ImportError`` — If the ``duckdb`` package is not installed
+    * ``ValueError`` — If column names are not safe identifiers, the requested
+      time range exceeds the Parquet's data range (with a 1 hour margin),
+      units are unrecognised, or the frame is unsupported
+
+  **Attributes (read-only):**
+    * ``source`` — Path or URI for the Parquet data
+    * ``file_path`` — Alias for ``source`` (matches ``FileEphemeris`` for
+      consistency)
+    * ``source_frame`` — Coordinate frame as specified
+    * ``source_position_unit`` — Position unit as specified (before km conversion)
+    * ``source_velocity_unit`` — Velocity unit as specified (before km/s conversion)
+    * ``file_pv`` — Raw state vectors loaded from the Parquet (km, km/s)
+      before resampling (PositionVelocityData)
+    * ``file_timestamp`` — Raw timestamps from the Parquet before resampling (list of datetime)
+    * ``gcrs_pv`` — Interpolated position/velocity in GCRS frame (PositionVelocityData)
+    * ``itrs_pv`` — Position/velocity in ITRS frame (PositionVelocityData)
+    * ``sun_pv``, ``moon_pv`` — Sun/Moon position/velocity in GCRS frame (PositionVelocityData)
+    * ``timestamp`` — Output grid timestamps (NumPy datetime64 array)
+    * ``gcrs``, ``itrs``, ``earth``, ``sun``, ``moon`` — astropy SkyCoord objects
+    * ``latitude_deg``, ``longitude_deg``, ``height_m`` — Geodetic coordinates
+    * All other standard ``Ephemeris`` properties (angular radii, RA/Dec arrays, etc.)
+
+  **Methods:**
+    * ``index(time)`` — Find the index of the closest output-grid timestamp to the given datetime
+    * ``get_body_pv(body)``, ``get_body(body)`` — Solar system body position/velocity and SkyCoord
+    * ``moon_illumination(time_indices=None)`` — Moon illumination fraction (0–1) as seen from spacecraft
+    * ``radec_to_altaz(ra_deg, dec_deg, time_indices=None)`` — Convert RA/Dec to Alt/Az
+    * ``calculate_airmass(ra_deg, dec_deg, time_indices=None)`` — Astronomical airmass
+
+  See :doc:`ephemeris_parquet` for worked examples.
+
 **Constraint**
   Evaluate astronomical observation constraints against ephemeris data.
 
@@ -456,7 +528,7 @@ Classes
   **Methods:**
     * ``evaluate(ephemeris, target_ra, target_dec, times=None, indices=None)`` — Evaluate constraint against ephemeris data
 
-      - ``ephemeris`` — Any ``Ephemeris`` object (TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, or FileEphemeris)
+      - ``ephemeris`` — Any ``Ephemeris`` object (TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris)
       - ``target_ra`` — Target right ascension in degrees (ICRS/J2000)
       - ``target_dec`` — Target declination in degrees (ICRS/J2000)
       - ``times`` — Optional: specific datetime(s) to evaluate (must exist in ephemeris)
@@ -465,7 +537,7 @@ Classes
 
     * ``evaluate_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None)`` — Convenience batch API returning one ``ConstraintResult`` per target
 
-      - ``ephemeris`` — Any ``Ephemeris`` object (TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, or FileEphemeris)
+      - ``ephemeris`` — Any ``Ephemeris`` object (TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris)
       - ``target_ras`` — List of target right ascensions in degrees (ICRS/J2000)
       - ``target_decs`` — List of target declinations in degrees (ICRS/J2000)
       - ``times`` — Optional: specific datetime(s) to evaluate (must exist in ephemeris)
@@ -476,7 +548,7 @@ Classes
 
     * ``in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None)`` — **[Recommended]** Vectorized batch evaluation for multiple targets
 
-      - ``ephemeris`` — Any ``Ephemeris`` object (TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, or FileEphemeris)
+      - ``ephemeris`` — Any ``Ephemeris`` object (TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris)
       - ``target_ras`` — List/array of target right ascensions in degrees (ICRS/J2000)
       - ``target_decs`` — List/array of target declinations in degrees (ICRS/J2000)
       - ``times`` — Optional: specific datetime(s) to evaluate (must exist in ephemeris)
@@ -494,7 +566,7 @@ Classes
 
     * ``instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, target_roll=None)`` — Compute instantaneous visible sky solid angle. When ``target_roll`` is not specified, sweeps ``n_roll_samples`` spacecraft roll angles for boresight-offset constraints with non-zero pitch/yaw, giving the total accessible sky over all roll states.
 
-      - ``ephemeris`` — Any ``Ephemeris`` object (TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, or FileEphemeris)
+      - ``ephemeris`` — Any ``Ephemeris`` object (TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris)
       - ``time`` — Optional datetime to evaluate (must exist in ephemeris)
       - ``index`` — Optional ephemeris index to evaluate
       - ``n_points`` — Number of sky samples (Fibonacci sphere integration, default :data:`DEFAULT_N_POINTS`)

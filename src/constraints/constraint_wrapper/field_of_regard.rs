@@ -3,6 +3,7 @@ use crate::ephemeris::ephemeris_common::EphemerisBase;
 use crate::ephemeris::FileEphemeris;
 use crate::ephemeris::GroundEphemeris;
 use crate::ephemeris::OEMEphemeris;
+use crate::ephemeris::ParquetEphemeris;
 use crate::ephemeris::SPICEEphemeris;
 use crate::ephemeris::TLEEphemeris;
 use ndarray::Array2;
@@ -172,9 +173,11 @@ where
             ephem.get_times()?.len()
         } else if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
             ephem.get_times()?.len()
+        } else if let Ok(ephem) = bound.extract::<PyRef<ParquetEphemeris>>() {
+            ephem.get_times()?.len()
         } else {
             return Err(pyo3::exceptions::PyTypeError::new_err(
-                "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
+                "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris",
             ));
         };
 
@@ -207,9 +210,11 @@ where
         evaluate_batch(&*ephem as &dyn EphemerisBase)?
     } else if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
         evaluate_batch(&*ephem as &dyn EphemerisBase)?
+    } else if let Ok(ephem) = bound.extract::<PyRef<ParquetEphemeris>>() {
+        evaluate_batch(&*ephem as &dyn EphemerisBase)?
     } else {
         return Err(pyo3::exceptions::PyTypeError::new_err(
-            "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
+            "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris",
         ));
     };
 
