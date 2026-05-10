@@ -260,7 +260,11 @@ impl ParquetEphemeris {
         self.file_times
             .iter()
             .map(|dt| {
-                let pydt = PyDateTime::from_timestamp(py, dt.timestamp() as f64, Some(&utc_tz))?;
+                let pydt = PyDateTime::from_timestamp(
+                    py,
+                    dt.timestamp_micros() as f64 / 1_000_000.0,
+                    Some(&utc_tz),
+                )?;
                 Ok(pydt.into_any().unbind())
             })
             .collect()
@@ -864,10 +868,9 @@ fn load_via_duckdb(
     );
 
     // Pull a margin around [begin, end] so Hermite interpolation has neighbours.
-    let margin = chrono::Duration::seconds(TIME_FILTER_MARGIN_SECS);
-    let begin_us =
-        (*begin - margin).timestamp() * 1_000_000 + (begin.timestamp_subsec_micros() as i64);
-    let end_us = (*end + margin).timestamp() * 1_000_000 + (end.timestamp_subsec_micros() as i64);
+    let margin_us = TIME_FILTER_MARGIN_SECS * 1_000_000;
+    let begin_us = begin.timestamp_micros() - margin_us;
+    let end_us = end.timestamp_micros() + margin_us;
 
     let params = PyTuple::new(
         py,
