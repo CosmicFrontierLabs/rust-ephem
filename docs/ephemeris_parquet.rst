@@ -143,10 +143,10 @@ If your schema uses non-default names:
         vel_cols=("rdotx", "rdoty", "rdotz"),
     )
 
-Column names must be valid SQL identifiers
-(``[A-Za-z_][A-Za-z0-9_]*``). Names with spaces or punctuation are rejected
-to prevent SQL injection — re-name them in your data or query before
-ingestion.
+Column names may contain only ASCII letters, digits, and underscores
+(``[A-Za-z0-9_]+``). This includes names that begin with a digit. Names
+with spaces or punctuation are rejected to prevent SQL injection — re-name
+them in your data or query before ingestion.
 
 Reading from S3
 ---------------
