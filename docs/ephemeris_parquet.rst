@@ -201,20 +201,23 @@ push it down to Parquet row groups.
 Unit overrides
 --------------
 
-If your Parquet stores positions in metres:
+By default ``ParquetEphemeris`` assumes position columns are in **km** and
+velocity columns in **km/s**. If your file uses different units, pass the
+``unit`` kwarg — velocity is inferred as ``unit + "/s"``:
 
 .. code-block:: python
 
     eph = re.ParquetEphemeris(
         "states_meters.parquet",
         begin=begin, end=end,
-        position_unit="m",
-        velocity_unit="m/s",
+        unit="m",          # position in m, velocity in m/s
     )
 
     # All standard properties (gcrs_pv, latitude_deg, …) are still in km / km/s.
-    print(eph.source_position_unit)   # "m" (as supplied)
+    print(eph.source_unit)            # "m" (as supplied)
     print(eph.gcrs_pv.position_unit)  # "km" (internal representation)
+
+Supported values: ``"km"`` (default), ``"m"``, ``"cm"``.
 
 Earth-fixed (ITRS/ECEF) input
 -----------------------------

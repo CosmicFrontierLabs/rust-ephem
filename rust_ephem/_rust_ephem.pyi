@@ -2902,6 +2902,9 @@ class ParquetEphemeris(Ephemeris):
     The timestamp column must be castable to ``TIMESTAMP`` (DuckDB-compatible:
     a TIMESTAMP/TIMESTAMPTZ column or a string in ISO 8601 format).
 
+    Units default to ``km`` / ``km/s``. Pass ``unit="m"`` or ``unit="cm"``
+    if your file uses different units; velocity is assumed to be ``unit/s``.
+
     Authentication
     --------------
     Cloud access uses DuckDB's ``credential_chain`` provider, which picks up
@@ -2938,8 +2941,7 @@ class ParquetEphemeris(Ephemeris):
         time_col: str | None = None,
         pos_cols: tuple[str, str, str] | None = None,
         vel_cols: tuple[str, str, str] | None = None,
-        position_unit: str | None = None,
-        velocity_unit: str | None = None,
+        unit: str | None = None,
         frame: str | None = None,
         s3_endpoint: str | None = None,
         s3_region: str | None = None,
@@ -2960,10 +2962,10 @@ class ParquetEphemeris(Ephemeris):
                 Default ``("x", "y", "z")``.
             vel_cols: Names of the three velocity columns.
                 Default ``("vx", "vy", "vz")``.
-            position_unit: Position unit in the source file.
-                Supported: ``"km"`` (default), ``"m"``, ``"cm"``.
-            velocity_unit: Velocity unit in the source file.
-                Supported: ``"km/s"`` (default), ``"m/s"``, ``"cm/s"``.
+            unit: Length unit of the source data. Supported: ``"km"``
+                (default), ``"m"``, ``"cm"``. Velocity is assumed to be the
+                same unit per second (e.g. ``"m"`` → position in m,
+                velocity in m/s).
             frame: Coordinate frame of the source data. Default ``"GCRS"``.
                 GCRS-compatible: ``"J2000"``, ``"EME2000"``, ``"GCRF"``,
                 ``"GCRS"``, ``"ICRF"``. Earth-fixed: ``"ITRS"``, ``"ECEF"``,
@@ -2980,7 +2982,7 @@ class ParquetEphemeris(Ephemeris):
             ImportError: If the ``duckdb`` package is not installed.
             ValueError: If column names are not safe identifiers, the
                 requested time range exceeds the Parquet's data range,
-                units are unrecognised, or the frame is unsupported.
+                unit is unrecognised, or the frame is unsupported.
         """
         ...
 
@@ -3000,13 +3002,8 @@ class ParquetEphemeris(Ephemeris):
         ...
 
     @property
-    def source_position_unit(self) -> str:
-        """Position unit as specified for the source (before km conversion)."""
-        ...
-
-    @property
-    def source_velocity_unit(self) -> str:
-        """Velocity unit as specified for the source (before km/s conversion)."""
+    def source_unit(self) -> str:
+        """Length unit of the source data (e.g. ``"km"``, ``"m"``, ``"cm"``)."""
         ...
 
     @property

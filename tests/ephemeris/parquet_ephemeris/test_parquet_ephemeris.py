@@ -47,8 +47,7 @@ def test_source_property(gcrs_parquet: str) -> None:
 
 def test_default_units_and_frame(gcrs_parquet: str) -> None:
     eph = ParquetEphemeris(gcrs_parquet, BEGIN, END, STEP)
-    assert eph.source_position_unit == "km"
-    assert eph.source_velocity_unit == "km/s"
+    assert eph.source_unit == "km"
     assert eph.source_frame == "GCRS"
 
 
@@ -151,8 +150,7 @@ def test_meters_unit_override(meters_parquet: str) -> None:
         BEGIN,
         END,
         STEP,
-        position_unit="m",
-        velocity_unit="m/s",
+        unit="m",
     )
     radii = np.linalg.norm(eph.gcrs_pv.position, axis=1)
     # Should be in km after conversion, ~7000 km.
