@@ -58,7 +58,8 @@ pub struct ParquetEphemeris {
     file_times: Vec<DateTime<Utc>>,
     /// Raw state vectors in km / km/s (after unit conversion, before resampling).
     file_states: Array2<f64>,
-    source_unit: String,
+    source_position_unit: String,
+    source_velocity_unit: String,
     source_frame: String,
 }
 
@@ -74,7 +75,8 @@ impl ParquetEphemeris {
         time_col=None,
         pos_cols=None,
         vel_cols=None,
-        unit=None,
+        position_unit=None,
+        velocity_unit=None,
         frame=None,
         s3_endpoint=None,
         s3_region=None,
@@ -90,7 +92,8 @@ impl ParquetEphemeris {
         time_col: Option<String>,
         pos_cols: Option<(String, String, String)>,
         vel_cols: Option<(String, String, String)>,
-        unit: Option<String>,
+        position_unit: Option<String>,
+        velocity_unit: Option<String>,
         frame: Option<String>,
         s3_endpoint: Option<String>,
         s3_region: Option<String>,
@@ -146,12 +149,12 @@ impl ParquetEphemeris {
         }
 
         // ── Resolve effective units and frame ───────────────────────────────
-        let eff_unit = unit.unwrap_or_else(|| "km".to_string());
-        let eff_vel_unit = format!("{}/s", eff_unit);
+        let eff_pos_unit = position_unit.unwrap_or_else(|| "km".to_string());
+        let eff_vel_unit = velocity_unit.unwrap_or_else(|| format!("{}/s", eff_pos_unit));
         let eff_frame = frame.unwrap_or_else(|| "GCRS".to_string());
 
         // ── Convert units to km / km/s ──────────────────────────────────────
-        let file_states = apply_unit_conversion(&raw_states, &eff_unit, &eff_vel_unit)?;
+        let file_states = apply_unit_conversion(&raw_states, &eff_pos_unit, &eff_vel_unit)?;
 
         // ── Validate requested time range against returned data ─────────────
         let n_file = raw_times.len();
@@ -183,7 +186,8 @@ impl ParquetEphemeris {
             },
             file_times: raw_times,
             file_states,
-            source_unit: eff_unit,
+            source_position_unit: eff_pos_unit,
+            source_velocity_unit: eff_vel_unit,
             source_frame: eff_frame.clone(),
         };
 
@@ -228,8 +232,13 @@ impl ParquetEphemeris {
     }
 
     #[getter]
-    fn source_unit(&self) -> &str {
-        &self.source_unit
+    fn source_position_unit(&self) -> &str {
+        &self.source_position_unit
+    }
+
+    #[getter]
+    fn source_velocity_unit(&self) -> &str {
+        &self.source_velocity_unit
     }
 
     #[getter]

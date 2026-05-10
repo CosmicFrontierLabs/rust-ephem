@@ -42,7 +42,8 @@ class TestBasicConstruction:
 
     def test_default_units_and_frame(self, gcrs_parquet: str) -> None:
         eph = ParquetEphemeris(gcrs_parquet, BEGIN, END, STEP)
-        assert eph.source_unit == "km"
+        assert eph.source_position_unit == "km"
+        assert eph.source_velocity_unit == "km/s"
         assert eph.source_frame == "GCRS"
 
     def test_polar_motion_defaults_false(self, gcrs_parquet: str) -> None:
@@ -137,12 +138,40 @@ class TestUnitConversion:
             BEGIN,
             END,
             STEP,
-            unit="m",
+            position_unit="m",
         )
         radii = np.linalg.norm(eph.gcrs_pv.position, axis=1)
         # Should be in km after conversion, ~7000 km.
         assert np.all(radii > 6000)
         assert np.all(radii < 8000)
+        assert eph.source_position_unit == "m"
+        assert eph.source_velocity_unit == "m/s"
+
+    def test_explicit_velocity_unit_preserved(self, meters_parquet: str) -> None:
+        eph = ParquetEphemeris(
+            meters_parquet,
+            BEGIN,
+            END,
+            STEP,
+            position_unit="m",
+            velocity_unit="m/s",
+        )
+        assert eph.source_position_unit == "m"
+        assert eph.source_velocity_unit == "m/s"
+
+    def test_meters_file_pv_converted_to_km(self, meters_parquet: str) -> None:
+        """file_pv should expose values in km / km/s after unit conversion."""
+        eph = ParquetEphemeris(
+            meters_parquet,
+            BEGIN,
+            END,
+            STEP,
+            position_unit="m",
+            velocity_unit="m/s",
+        )
+        # At t=0 the circular orbit starts at (R, 0, 0) with velocity (0, V, 0).
+        assert eph.file_pv.position[0, 0] == pytest.approx(7000.0, rel=1e-4)
+        assert eph.file_pv.velocity[0, 1] == pytest.approx(_V_NOMINAL, rel=1e-4)
 
 
 class TestErrors:
@@ -166,6 +195,26 @@ class TestErrors:
     def test_unsupported_frame_raises(self, gcrs_parquet: str) -> None:
         with pytest.raises(ValueError, match="Unsupported coordinate frame"):
             ParquetEphemeris(gcrs_parquet, BEGIN, END, STEP, frame="GALACTIC")
+
+    def test_unknown_position_unit_raises(self, gcrs_parquet: str) -> None:
+        with pytest.raises(ValueError, match="Unknown position unit"):
+            ParquetEphemeris(
+                gcrs_parquet,
+                BEGIN,
+                END,
+                STEP,
+                position_unit="furlongs",
+            )
+
+    def test_unknown_velocity_unit_raises(self, gcrs_parquet: str) -> None:
+        with pytest.raises(ValueError, match="Unknown velocity unit"):
+            ParquetEphemeris(
+                gcrs_parquet,
+                BEGIN,
+                END,
+                STEP,
+                velocity_unit="furlongs/fortnight",
+            )
 
 
 class TestConstraintIntegration:

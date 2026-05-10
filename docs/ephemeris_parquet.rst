@@ -202,22 +202,33 @@ Unit overrides
 --------------
 
 By default ``ParquetEphemeris`` assumes position columns are in **km** and
-velocity columns in **km/s**. If your file uses different units, pass the
-``unit`` kwarg — velocity is inferred as ``unit + "/s"``:
+velocity columns in **km/s**. Pass ``position_unit`` and/or ``velocity_unit``
+to override either independently:
 
 .. code-block:: python
 
+    # Position and velocity both in metres / m/s
     eph = re.ParquetEphemeris(
         "states_meters.parquet",
         begin=begin, end=end,
-        unit="m",          # position in m, velocity in m/s
+        position_unit="m",   # position in m
+        velocity_unit="m/s", # velocity in m/s
+    )
+
+    # If only position_unit is given, velocity defaults to position_unit + "/s"
+    eph = re.ParquetEphemeris(
+        "states_meters.parquet",
+        begin=begin, end=end,
+        position_unit="m",   # implies velocity_unit="m/s"
     )
 
     # All standard properties (gcrs_pv, latitude_deg, …) are still in km / km/s.
-    print(eph.source_unit)            # "m" (as supplied)
+    print(eph.source_position_unit)   # "m" (as supplied)
+    print(eph.source_velocity_unit)   # "m/s" (as supplied or derived)
     print(eph.gcrs_pv.position_unit)  # "km" (internal representation)
 
-Supported values: ``"km"`` (default), ``"m"``, ``"cm"``.
+Supported values: ``position_unit``: ``"km"`` (default), ``"m"``, ``"cm"``.
+``velocity_unit``: ``"km/s"`` (default), ``"m/s"``, ``"cm/s"``.
 
 Earth-fixed (ITRS/ECEF) input
 -----------------------------

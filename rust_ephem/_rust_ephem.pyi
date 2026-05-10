@@ -2902,8 +2902,9 @@ class ParquetEphemeris(Ephemeris):
     The timestamp column must be castable to ``TIMESTAMP`` (DuckDB-compatible:
     a TIMESTAMP/TIMESTAMPTZ column or a string in ISO 8601 format).
 
-    Units default to ``km`` / ``km/s``. Pass ``unit="m"`` or ``unit="cm"``
-    if your file uses different units; velocity is assumed to be ``unit/s``.
+    Units default to ``km`` / ``km/s``. Pass ``position_unit="m"`` (or ``"cm"``)
+    and optionally ``velocity_unit="m/s"`` to override; if only ``position_unit``
+    is given, velocity is assumed to be ``position_unit/s``.
 
     Authentication
     --------------
@@ -2941,7 +2942,8 @@ class ParquetEphemeris(Ephemeris):
         time_col: str | None = None,
         pos_cols: tuple[str, str, str] | None = None,
         vel_cols: tuple[str, str, str] | None = None,
-        unit: str | None = None,
+        position_unit: str | None = None,
+        velocity_unit: str | None = None,
         frame: str | None = None,
         s3_endpoint: str | None = None,
         s3_region: str | None = None,
@@ -2962,10 +2964,11 @@ class ParquetEphemeris(Ephemeris):
                 Default ``("x", "y", "z")``.
             vel_cols: Names of the three velocity columns.
                 Default ``("vx", "vy", "vz")``.
-            unit: Length unit of the source data. Supported: ``"km"``
-                (default), ``"m"``, ``"cm"``. Velocity is assumed to be the
-                same unit per second (e.g. ``"m"`` → position in m,
-                velocity in m/s).
+            position_unit: Position unit of the source data. Supported:
+                ``"km"`` (default), ``"m"``, ``"cm"``.
+            velocity_unit: Velocity unit of the source data. Supported:
+                ``"km/s"`` (default), ``"m/s"``, ``"cm/s"``. If omitted,
+                defaults to ``position_unit + "/s"``.
             frame: Coordinate frame of the source data. Default ``"GCRS"``.
                 GCRS-compatible: ``"J2000"``, ``"EME2000"``, ``"GCRF"``,
                 ``"GCRS"``, ``"ICRF"``. Earth-fixed: ``"ITRS"``, ``"ECEF"``,
@@ -3002,8 +3005,13 @@ class ParquetEphemeris(Ephemeris):
         ...
 
     @property
-    def source_unit(self) -> str:
-        """Length unit of the source data (e.g. ``"km"``, ``"m"``, ``"cm"``)."""
+    def source_position_unit(self) -> str:
+        """Position unit of the source data (e.g. ``"km"``, ``"m"``, ``"cm"``)."""
+        ...
+
+    @property
+    def source_velocity_unit(self) -> str:
+        """Velocity unit of the source data (e.g. ``"km/s"``, ``"m/s"``, ``"cm/s"``)."""
         ...
 
     @property
