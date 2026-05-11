@@ -40,6 +40,7 @@ Key Features
    - **GroundEphemeris**: Fixed ground station positions
    - **OEMEphemeris**: CCSDS Orbit Ephemeris Message files
    - **FileEphemeris**: Generic simulator output files (offset-based, ISO 8601, CSV, …)
+   - **ParquetEphemeris**: Parquet state-vector files via DuckDB (local, S3, Spaces, GCS, R2, HTTPS)
 
 🎛️ **Flexible Constraints**
    Evaluate observational constraints (Sun/Moon avoidance, Earth limb, eclipses)
@@ -130,6 +131,7 @@ Documentation Contents
    ephemeris_ground
    ephemeris_oem
    ephemeris_file
+   ephemeris_parquet
    ephemeris_skycoord
    ephemeris_get_body
    ephemeris_horizons

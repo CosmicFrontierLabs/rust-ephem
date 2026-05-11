@@ -34,6 +34,7 @@ Core Capabilities
 - **Ground observatory ephemeris** for fixed Earth locations
 - **OEM file support** for CCSDS Orbit Ephemeris Messages
 - **Generic file ephemeris** for pre-computed simulator output files in various text formats
+- **Parquet ephemeris** for columnar state-vector files (local or S3 / Spaces / GCS / R2 / HTTPS) via DuckDB
 - **JPL Horizons integration** for asteroids, comets, and spacecraft
 - **Coordinate transformations** between TEME, ITRS, and GCRS frames
 - **Time system conversions** (TAI, UT1, UTC) with leap seconds

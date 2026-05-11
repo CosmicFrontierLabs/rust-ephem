@@ -3,6 +3,7 @@ use crate::ephemeris::ephemeris_common::EphemerisBase;
 use crate::ephemeris::FileEphemeris;
 use crate::ephemeris::GroundEphemeris;
 use crate::ephemeris::OEMEphemeris;
+use crate::ephemeris::ParquetEphemeris;
 use crate::ephemeris::SPICEEphemeris;
 use crate::ephemeris::TLEEphemeris;
 use pyo3::prelude::*;
@@ -98,9 +99,12 @@ impl PyConstraint {
         if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
             return f(&*ephem as &dyn EphemerisBase);
         }
+        if let Ok(ephem) = bound.extract::<PyRef<ParquetEphemeris>>() {
+            return f(&*ephem as &dyn EphemerisBase);
+        }
 
         Err(pyo3::exceptions::PyTypeError::new_err(
-            "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, or FileEphemeris",
+            "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris",
         ))
     }
 
@@ -388,9 +392,15 @@ impl PyConstraint {
                 target_ras,
                 target_decs,
             )
+        } else if let Ok(ephem) = bound.extract::<PyRef<ParquetEphemeris>>() {
+            self.evaluator.in_constraint_batch_diagonal(
+                &*ephem as &dyn EphemerisBase,
+                target_ras,
+                target_decs,
+            )
         } else {
             Err(pyo3::exceptions::PyTypeError::new_err(
-                "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris",
+                "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris",
             ))
         }
     }

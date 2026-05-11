@@ -2882,6 +2882,293 @@ class FileEphemeris(Ephemeris):
         """Calculate airmass for a target at the given RA/Dec."""
         ...
 
+class ParquetEphemeris(Ephemeris):
+    """
+    Ephemeris that reads pre-computed state vectors from a Parquet file via DuckDB.
+
+    Sources
+    -------
+    - Local files: ``"path/to/file.parquet"`` or globs (``"data/sat_*.parquet"``).
+    - S3: ``"s3://bucket/key.parquet"``.
+    - DigitalOcean Spaces / other S3-compatibles: pass ``s3_endpoint=...``.
+    - HTTP(S): ``"https://host/path.parquet"`` (public buckets / CDNs).
+
+    Schema
+    ------
+    The Parquet file must have at minimum a timestamp column and three position
+    + three velocity columns. Defaults: ``time``, ``x/y/z``, ``vx/vy/vz``.
+    Override via ``time_col``, ``pos_cols``, ``vel_cols``.
+
+    The timestamp column must be castable to ``TIMESTAMP`` (DuckDB-compatible:
+    a TIMESTAMP/TIMESTAMPTZ column or a string in ISO 8601 format).
+
+    Units default to ``km`` / ``km/s``. Pass ``position_unit="m"`` (or ``"cm"``)
+    and optionally ``velocity_unit="m/s"`` to override; if only ``position_unit``
+    is given, velocity is assumed to be ``position_unit/s``.
+
+    Authentication
+    --------------
+    Cloud access uses DuckDB's ``credential_chain`` provider, which picks up
+    the standard AWS environment variables: ``AWS_ACCESS_KEY_ID``,
+    ``AWS_SECRET_ACCESS_KEY``, ``AWS_REGION``, ``AWS_SESSION_TOKEN``. For
+    DigitalOcean Spaces, additionally pass ``s3_endpoint``
+    (e.g. ``"nyc3.digitaloceanspaces.com"``).
+
+    Requires the ``duckdb`` Python package: ``pip install rust-ephem[parquet]``
+    or ``pip install duckdb``.
+
+    Example
+    -------
+    >>> from datetime import datetime, timezone
+    >>> begin = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    >>> end = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    >>> ephem = ParquetEphemeris(
+    ...     "s3://my-bucket/sat42.parquet",
+    ...     begin, end, step_size=60,
+    ...     time_col="timestamp", pos_cols=("rx", "ry", "rz"),
+    ...     vel_cols=("vx", "vy", "vz"),
+    ...     frame="GCRS",
+    ... )
+    """
+
+    def __init__(
+        self,
+        source: str,
+        begin: datetime,
+        end: datetime,
+        step_size: int = 60,
+        *,
+        polar_motion: bool = False,
+        time_col: str | None = None,
+        pos_cols: tuple[str, str, str] | None = None,
+        vel_cols: tuple[str, str, str] | None = None,
+        position_unit: str | None = None,
+        velocity_unit: str | None = None,
+        frame: str | None = None,
+        s3_endpoint: str | None = None,
+        s3_region: str | None = None,
+        where_clause: str | None = None,
+    ) -> None:
+        """
+        Initialise a ParquetEphemeris.
+
+        Args:
+            source: Path or URI to the Parquet file. Supports local paths,
+                ``s3://``, ``gcs://``, ``r2://``, and ``http(s)://``.
+            begin: Start of the output time grid (UTC).
+            end: End of the output time grid (UTC).
+            step_size: Output time step in seconds (default 60).
+            polar_motion: Apply polar motion correction (default False).
+            time_col: Name of the timestamp column. Default ``"time"``.
+            pos_cols: Names of the three position columns.
+                Default ``("x", "y", "z")``.
+            vel_cols: Names of the three velocity columns.
+                Default ``("vx", "vy", "vz")``.
+            position_unit: Position unit of the source data. Supported:
+                ``"km"`` (default), ``"m"``, ``"cm"``.
+            velocity_unit: Velocity unit of the source data. Supported:
+                ``"km/s"`` (default), ``"m/s"``, ``"cm/s"``. If omitted,
+                defaults to ``position_unit + "/s"``.
+            frame: Coordinate frame of the source data. Default ``"GCRS"``.
+                GCRS-compatible: ``"J2000"``, ``"EME2000"``, ``"GCRF"``,
+                ``"GCRS"``, ``"ICRF"``. Earth-fixed: ``"ITRS"``, ``"ECEF"``,
+                ``"ECF"``, ``"FIXED"``, ``"TERRESTRIAL"``.
+            s3_endpoint: Custom S3 endpoint for S3-compatible services.
+                Example: ``"nyc3.digitaloceanspaces.com"`` for DigitalOcean
+                Spaces.
+            s3_region: Override S3 region. Falls back to ``AWS_REGION`` env var.
+            where_clause: Extra SQL ``WHERE`` predicate to apply to the
+                Parquet (e.g. ``"sat_id = 42"``). Combined via ``AND`` with
+                the time-range filter.
+
+        Raises:
+            ImportError: If the ``duckdb`` package is not installed.
+            ValueError: If column names are not safe identifiers, the
+                requested time range exceeds the Parquet's data range,
+                unit is unrecognised, or the frame is unsupported.
+        """
+        ...
+
+    @property
+    def source(self) -> str:
+        """Source path or URI for the Parquet data."""
+        ...
+
+    @property
+    def file_path(self) -> str:
+        """Alias for ``source``."""
+        ...
+
+    @property
+    def polar_motion(self) -> bool:
+        """Whether polar motion correction is applied."""
+        ...
+
+    @property
+    def source_position_unit(self) -> str:
+        """Position unit of the source data (e.g. ``"km"``, ``"m"``, ``"cm"``)."""
+        ...
+
+    @property
+    def source_velocity_unit(self) -> str:
+        """Velocity unit of the source data (e.g. ``"km/s"``, ``"m/s"``, ``"cm/s"``)."""
+        ...
+
+    @property
+    def source_frame(self) -> str:
+        """Coordinate frame as specified for the source."""
+        ...
+
+    @property
+    def file_pv(self) -> PositionVelocityData:
+        """Raw position/velocity from the Parquet (in km, km/s) before resampling."""
+        ...
+
+    @property
+    def file_timestamp(self) -> list[datetime]:
+        """Raw timestamps from the Parquet before resampling."""
+        ...
+
+    @property
+    def begin(self) -> datetime:
+        """Start time of the output ephemeris grid."""
+        ...
+
+    @property
+    def end(self) -> datetime:
+        """End time of the output ephemeris grid."""
+        ...
+
+    @property
+    def step_size(self) -> int:
+        """Output time step in seconds."""
+        ...
+
+    @property
+    def gcrs_pv(self) -> PositionVelocityData:
+        """Position and velocity in GCRS frame (interpolated to the output grid)."""
+        ...
+
+    @property
+    def itrs_pv(self) -> PositionVelocityData:
+        """Position and velocity in ITRS (Earth-fixed) frame."""
+        ...
+
+    @property
+    def itrs(self) -> Any: ...
+    @property
+    def gcrs(self) -> Any: ...
+    @property
+    def earth(self) -> Any: ...
+    @property
+    def sun(self) -> Any: ...
+    @property
+    def moon(self) -> Any: ...
+    @property
+    def timestamp(self) -> npt.NDArray[np.datetime64]: ...
+    @property
+    def sun_pv(self) -> PositionVelocityData: ...
+    @property
+    def moon_pv(self) -> PositionVelocityData: ...
+    @property
+    def obsgeoloc(self) -> Any: ...
+    @property
+    def obsgeovel(self) -> Any: ...
+    @property
+    def latitude(self) -> Any: ...
+    @property
+    def latitude_deg(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def latitude_rad(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def longitude(self) -> Any: ...
+    @property
+    def longitude_deg(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def longitude_rad(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def height(self) -> Any: ...
+    @property
+    def height_m(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def height_km(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def sun_radius(self) -> Any: ...
+    @property
+    def sun_radius_deg(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def sun_radius_rad(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def moon_radius(self) -> Any: ...
+    @property
+    def moon_radius_deg(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def moon_radius_rad(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def earth_radius(self) -> Any: ...
+    @property
+    def earth_radius_deg(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def earth_radius_rad(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def sun_ra_deg(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def sun_dec_deg(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def moon_ra_deg(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def moon_dec_deg(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def earth_ra_deg(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def earth_dec_deg(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def sun_ra_rad(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def sun_dec_rad(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def moon_ra_rad(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def moon_dec_rad(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def earth_ra_rad(self) -> npt.NDArray[np.float64]: ...
+    @property
+    def earth_dec_rad(self) -> npt.NDArray[np.float64]: ...
+    def index(self, time: datetime) -> int: ...
+    def moon_illumination(
+        self, time_indices: list[int] | None = None
+    ) -> list[float]: ...
+    def get_body_pv(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> PositionVelocityData: ...
+    def get_body(
+        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+    ) -> Any: ...
+    def radec_to_altaz(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> npt.NDArray[np.float64]: ...
+    def calculate_airmass(
+        self,
+        ra_deg: float,
+        dec_deg: float,
+        time_indices: list[int] | None = None,
+    ) -> list[float]: ...
+
 class GroundEphemeris(Ephemeris):
     """Ephemeris for a fixed ground location"""
 

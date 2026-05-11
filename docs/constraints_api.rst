@@ -527,7 +527,7 @@ Evaluation Methods
 
    Evaluate constraint against ephemeris data.
 
-   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
    :param float target_ra: Target right ascension in degrees (ICRS/J2000)
    :param float target_dec: Target declination in degrees (ICRS/J2000)
    :param times: Optional specific time(s) to evaluate (datetime or list of datetimes)
@@ -569,7 +569,7 @@ Evaluation Methods
    (e.g., ``SunConstraint``) which wrap this API with
    ``RustConstraintMixin.in_constraint_batch()`` instead.
 
-   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
    :param list target_ras: List of target right ascensions in degrees (ICRS/J2000)
    :param list target_decs: List of target declinations in degrees (ICRS/J2000)
    :param times: Optional specific time(s) to evaluate
@@ -618,7 +618,7 @@ Evaluation Methods
    use the Pydantic constraint models (e.g., ``SunConstraint``) which wrap this API
    with ``RustConstraintMixin.evaluate_batch()`` instead.
 
-   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
    :param list target_ras: List of target right ascensions in degrees (ICRS/J2000)
    :param list target_decs: List of target declinations in degrees (ICRS/J2000)
    :param times: Optional specific time(s) to evaluate
@@ -640,7 +640,7 @@ Evaluation Methods
    :param time: The time(s) to check (must exist in ephemeris timestamps).
                 Can be a single datetime, list of datetimes, or numpy array of datetimes.
    :type time: datetime or list[datetime] or numpy.ndarray
-   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
    :param float target_ra: Target right ascension in degrees (ICRS/J2000)
    :param float target_dec: Target declination in degrees (ICRS/J2000)
    :param target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and the
@@ -690,7 +690,7 @@ Evaluation Methods
 
    :param time: A single datetime to evaluate (must exist in ephemeris).
    :type time: datetime
-   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
    :param float target_ra: Target right ascension in degrees (ICRS/J2000)
    :param float target_dec: Target declination in degrees (ICRS/J2000)
    :param int n_roll_samples: Number of uniformly-spaced roll angles to test over [0°, 360°).
@@ -715,7 +715,7 @@ Evaluation Methods
 
    Compute instantaneous field of regard in steradians.
 
-   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
    :param time: Optional datetime to evaluate (must exist in ephemeris)
    :type time: datetime or None
    :param index: Optional ephemeris index to evaluate
@@ -1516,7 +1516,7 @@ All Pydantic constraint models inherit these methods:
 
    This method lazily creates the corresponding Rust constraint object on first use.
 
-   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
    :param float target_ra: Target right ascension in degrees (ICRS/J2000)
    :param float target_dec: Target declination in degrees (ICRS/J2000)
    :param times: Optional specific time(s) to evaluate
@@ -1541,7 +1541,7 @@ All Pydantic constraint models inherit these methods:
    This is the **recommended high-level API** for batch constraint evaluation. Supports per-target
    roll angles and automatic roll-sweeping for roll-dependent constraints.
 
-   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
    :param list target_ras: List of target right ascensions in degrees (ICRS/J2000)
    :param list target_decs: List of target declinations in degrees (ICRS/J2000)
    :param times: Optional specific time(s) to evaluate
@@ -1563,7 +1563,7 @@ All Pydantic constraint models inherit these methods:
 
    Supports per-target roll angles and automatic roll-sweeping for roll-dependent constraints.
 
-   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
    :param list target_ras: List of target right ascensions in degrees
    :param list target_decs: List of target declinations in degrees
    :param times: Optional specific time(s) to evaluate
@@ -1600,7 +1600,7 @@ All Pydantic constraint models inherit these methods:
    :param time: The time(s) to check (must exist in ephemeris). Can be a single datetime,
                 list of datetimes, or numpy array of datetimes.
    :type time: datetime or list[datetime] or numpy.ndarray
-   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
    :param float target_ra: Target right ascension in degrees
    :param float target_dec: Target declination in degrees
    :param target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and the
@@ -1627,7 +1627,7 @@ All Pydantic constraint models inherit these methods:
 
    :param time: A single datetime to evaluate (must exist in ephemeris).
    :type time: datetime
-   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
    :param float target_ra: Target right ascension in degrees (ICRS/J2000)
    :param float target_dec: Target declination in degrees (ICRS/J2000)
    :param int n_roll_samples: Number of uniformly-spaced roll angles to test over [0°, 360°).
@@ -1649,7 +1649,7 @@ All Pydantic constraint models inherit these methods:
    constraint.  This gives the maximum accessible sky over all possible spacecraft
    orientations.  Pass ``target_roll`` to evaluate at a specific spacecraft roll angle.
 
-   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
    :param time: Specific datetime to evaluate (must exist in ephemeris)
    :type time: datetime or None
    :param index: Specific time index to evaluate

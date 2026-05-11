@@ -14,6 +14,7 @@ from ._rust_ephem import (
     FileEphemeris,
     GroundEphemeris,
     OEMEphemeris,
+    ParquetEphemeris,
     PositionVelocityData,
     SPICEEphemeris,
     TLEEphemeris,
@@ -536,9 +537,15 @@ Ephemeris.register(SPICEEphemeris)
 Ephemeris.register(OEMEphemeris)
 Ephemeris.register(GroundEphemeris)
 Ephemeris.register(FileEphemeris)
+Ephemeris.register(ParquetEphemeris)
 
 
 # Also create a Union type for type checking
 EphemerisType = (
-    TLEEphemeris | SPICEEphemeris | OEMEphemeris | GroundEphemeris | FileEphemeris
+    TLEEphemeris
+    | SPICEEphemeris
+    | OEMEphemeris
+    | GroundEphemeris
+    | FileEphemeris
+    | ParquetEphemeris
 )
