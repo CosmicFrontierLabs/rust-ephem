@@ -394,6 +394,12 @@ fn create_spacetrack_agent(
     Ok(agent)
 }
 
+/// Return true if `epoch` is within `tolerance_days` of the current UTC time
+fn is_epoch_now(epoch: &DateTime<Utc>, tolerance_days: f64) -> bool {
+    let diff_secs = (Utc::now() - *epoch).num_seconds().abs() as f64;
+    diff_secs <= tolerance_days * 86400.0
+}
+
 /// Fetch TLE from Space-Track.org by NORAD ID for a specific epoch
 ///
 /// This function queries Space-Track.org's GP history data to find the TLE
@@ -429,35 +435,46 @@ pub fn fetch_tle_from_spacetrack(
     // Create authenticated agent
     let agent = create_spacetrack_agent(&creds)?;
 
-    // Format the epoch range for the query
-    // We search for TLEs within the tolerance window around the target epoch
-    let start_epoch = *target_epoch - chrono::Duration::days(tolerance as i64);
-    let end_epoch = *target_epoch + chrono::Duration::days(tolerance as i64);
-
-    let start_str = start_epoch.format("%Y-%m-%d").to_string();
-    let end_str = end_epoch.format("%Y-%m-%d").to_string();
-
-    // Query the GP history class to find TLEs near the target epoch
-    // We order by epoch descending and get the one closest to our target
-    let query_url = format!(
-        "{}/basicspacedata/query/class/gp_history/NORAD_CAT_ID/{}/EPOCH/{}--{}/orderby/EPOCH%20desc/format/tle",
-        SPACETRACK_API_BASE, norad_id, start_str, end_str
-    );
-
-    #[cfg(debug_assertions)]
-    eprintln!("Space-Track query URL: {}", query_url);
-
-    let mut response = agent.get(&query_url).call()?;
-
-    if response.status() != 200 {
-        return Err(format!(
-            "Space-Track.org query failed with status: {}",
-            response.status()
-        )
-        .into());
-    }
-
-    let body = response.body_mut().read_to_string()?;
+    // If the target epoch is essentially "now", use the /gp endpoint which returns
+    // the current most-recent TLE without requiring epoch range or sort parameters.
+    // Otherwise query /gp_history with an epoch window around the target.
+    let body = if is_epoch_now(target_epoch, tolerance) {
+        let query_url = format!(
+            "{}/basicspacedata/query/class/gp/NORAD_CAT_ID/{}/format/tle",
+            SPACETRACK_API_BASE, norad_id
+        );
+        #[cfg(debug_assertions)]
+        eprintln!("Space-Track /gp (current) query URL: {}", query_url);
+        let mut response = agent.get(&query_url).call()?;
+        if response.status() != 200 {
+            return Err(format!(
+                "Space-Track.org /gp query failed with status: {}",
+                response.status()
+            )
+            .into());
+        }
+        response.body_mut().read_to_string()?
+    } else {
+        let start_epoch = *target_epoch - chrono::Duration::days(tolerance as i64);
+        let end_epoch = *target_epoch + chrono::Duration::days(tolerance as i64);
+        let start_str = start_epoch.format("%Y-%m-%d").to_string();
+        let end_str = end_epoch.format("%Y-%m-%d").to_string();
+        let query_url = format!(
+            "{}/basicspacedata/query/class/gp_history/NORAD_CAT_ID/{}/EPOCH/{}--{}/orderby/EPOCH%20desc/format/tle",
+            SPACETRACK_API_BASE, norad_id, start_str, end_str
+        );
+        #[cfg(debug_assertions)]
+        eprintln!("Space-Track /gp_history query URL: {}", query_url);
+        let mut response = agent.get(&query_url).call()?;
+        if response.status() != 200 {
+            return Err(format!(
+                "Space-Track.org query failed with status: {}",
+                response.status()
+            )
+            .into());
+        }
+        response.body_mut().read_to_string()?
+    };
 
     if body.trim().is_empty() {
         return Err(format!(
