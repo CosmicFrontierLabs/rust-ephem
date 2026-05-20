@@ -105,4 +105,4 @@ pub const TLE_CACHE_TTL: u64 = 86_400;
 /// How close to "now" a target epoch must be for the /gp (current) endpoint to be used
 /// instead of /gp_history. Intentionally short so requests for recent historical epochs
 /// (hours to days ago) still go to /gp_history and retrieve the TLE nearest that time.
-pub const GP_NOW_THRESHOLD_SECS: f64 = 3600.0; // 1 hour
+pub const GP_NOW_THRESHOLD_SECS: f64 = 172800.0; // 2 days
