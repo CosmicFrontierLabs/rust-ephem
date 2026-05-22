@@ -101,3 +101,8 @@ pub const SPACETRACK_CACHE_MAX_ENTRIES: usize = 1000;
 
 /// TTL for cached TLE downloads (24 hours)
 pub const TLE_CACHE_TTL: u64 = 86_400;
+
+/// How close to "now" a target epoch must be for the /gp (current) endpoint to be used
+/// instead of /gp_history. Intentionally short so requests for recent historical epochs
+/// (hours to days ago) still go to /gp_history and retrieve the TLE nearest that time.
+pub const GP_NOW_THRESHOLD_SECS: f64 = 172800.0; // 2 days
