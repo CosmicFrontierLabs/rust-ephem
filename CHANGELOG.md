@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.11.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.10.1...v0.11.0) (2026-06-07)
+
+
+### Features
+
+* add tle element helpers ([#173](https://github.com/CosmicFrontierLabs/rust-ephem/issues/173)) ([bd6147d](https://github.com/CosmicFrontierLabs/rust-ephem/commit/bd6147dc2a44490b5cfec742235fd0bdc62dcf95))
+* **ephemeris:** add support for reading ephemeris from parquet files ([#169](https://github.com/CosmicFrontierLabs/rust-ephem/issues/169)) ([9ac6da3](https://github.com/CosmicFrontierLabs/rust-ephem/commit/9ac6da3adf6b4dfb40f49734ba56f210b3d44e27))
+
+
+### Bug Fixes
+
+* make fetching of current epoch tles use /gp endpoint ([#171](https://github.com/CosmicFrontierLabs/rust-ephem/issues/171)) ([eae5430](https://github.com/CosmicFrontierLabs/rust-ephem/commit/eae5430bbd8b3f1856516c9b47e9d83e2f7c4ce9))
+
 ## [0.10.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.10.0...v0.10.1) (2026-05-09)
 
 
