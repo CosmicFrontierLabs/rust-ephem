@@ -78,6 +78,11 @@ class TLERecord(BaseModel):
         ...
 
     @property
+    def mean_motion_rad_s(self) -> float:
+        """Derived mean motion (rad/s) from line2 mean motion."""
+        ...
+
+    @property
     def true_anomaly_deg(self) -> float:
         """Derived true anomaly (deg) from mean anomaly and eccentricity."""
         ...

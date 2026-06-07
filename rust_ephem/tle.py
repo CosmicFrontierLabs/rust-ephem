@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta
-from typing import Any, cast
+from typing import Any
 
 from pydantic import BaseModel, Field, computed_field, model_validator
 
@@ -163,6 +163,12 @@ class TLERecord(BaseModel):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
+    def mean_motion_rad_s(self) -> float:
+        """Derived mean motion (rad/s) from line2 mean motion."""
+        return self.mean_motion_rev_per_day * 2.0 * math.pi / _SECONDS_PER_DAY
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
     def true_anomaly_deg(self) -> float:
         """Derived true anomaly (deg) from mean anomaly and eccentricity."""
         return true_anomaly_from_mean_anomaly(self.mean_anomaly_deg, self.eccentricity)
@@ -171,9 +177,7 @@ class TLERecord(BaseModel):
     @property
     def semimajor_axis_m(self) -> float:
         """Derived semimajor axis (m) using WGS72 Earth's gravitational parameter."""
-        mean_motion_rev_per_day = cast(float, self.mean_motion_rev_per_day)
-        mean_motion_rad_s = mean_motion_rev_per_day * 2.0 * math.pi / _SECONDS_PER_DAY
-        return (WGS72_EARTH_MU_M3_S2 / mean_motion_rad_s**2) ** (1.0 / 3.0)
+        return math.pow(WGS72_EARTH_MU_M3_S2 / self.mean_motion_rad_s**2, 1.0 / 3.0)
 
     def to_tle_string(self) -> str:
         """
@@ -200,10 +204,12 @@ class TLERecord(BaseModel):
         osculating elements.
         """
 
-        mean_motion_rad_s = (
-            self.mean_motion_rev_per_day * 2.0 * math.pi / _SECONDS_PER_DAY
+        semimajor_axis_m = (
+            self.semimajor_axis_m
+            if mu_m3_s2 == WGS72_EARTH_MU_M3_S2
+            else math.pow(mu_m3_s2 / self.mean_motion_rad_s**2, 1.0 / 3.0)
         )
-        semimajor_axis_m = (mu_m3_s2 / mean_motion_rad_s**2) ** (1.0 / 3.0)
+
         return {
             "SemimajorAxis_m": semimajor_axis_m,
             "Eccentricity": self.eccentricity,
