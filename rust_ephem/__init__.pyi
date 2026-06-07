@@ -150,6 +150,20 @@ from .ephemeris import (
 from .ephemeris import (
     EphemerisType as EphemerisType,
 )
+from .tle import (
+    WGS72_EARTH_MU_M3_S2 as WGS72_EARTH_MU_M3_S2,
+)
+
+# Re-export from tle
+from .tle import (
+    TLERecord as TLERecord,
+)
+from .tle import (
+    fetch_tle as fetch_tle,
+)
+from .tle import (
+    true_anomaly_from_mean_anomaly as true_anomaly_from_mean_anomaly,
+)
 
 __all__ = [
     "SunConstraint",

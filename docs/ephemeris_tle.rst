@@ -162,6 +162,44 @@ which returns a ``TLERecord`` object. This is useful when you need to:
 - **Validation**: Verify the TLE was fetched from the expected source
 - **Reuse**: Fetch once, create multiple ephemeris objects with different time ranges
 
+TLERecord Derived Fields
+------------------------
+
+``TLERecord`` exposes parsed and derived element fields populated when the
+model validates ``line1`` and ``line2``. These provide direct access to
+commonly used TLE values without manual column slicing.
+
+Available helpers include:
+
+- ``mean_motion_dot_rev_per_day2``
+- ``mean_motion_ddot_rev_per_day3``
+- ``bstar_drag``
+- ``ephemeris_type``
+- ``element_set_number``
+- ``revolution_number_at_epoch``
+- ``inclination_deg``
+- ``right_ascension_deg``
+- ``eccentricity``
+- ``arg_periapsis_deg``
+- ``mean_anomaly_deg``
+- ``mean_motion_rev_per_day``
+- ``mean_motion_rad_s``
+- ``true_anomaly_deg``
+- ``semimajor_axis_m`` (derived using WGS72 Earth gravitational parameter)
+
+.. code-block:: python
+
+    tle = rust_ephem.fetch_tle(norad_id=25544)
+
+    print(tle.inclination_deg)
+    print(tle.mean_motion_rev_per_day)
+    print(tle.mean_motion_rad_s)
+    print(tle.semimajor_axis_m)
+
+For convenience, ``classical_elements(mu_m3_s2=...)`` returns the same element
+set as a dictionary. When ``mu_m3_s2`` is overridden, ``SemimajorAxis_m`` is
+recomputed using the supplied gravitational parameter.
+
 .. code-block:: python
 
     # Serialize TLE for storage

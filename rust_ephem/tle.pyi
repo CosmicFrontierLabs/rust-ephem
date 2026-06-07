@@ -1,8 +1,15 @@
 """Type stubs for the TLE module"""
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel
+
+WGS72_EARTH_MU_M3_S2: float
+
+def true_anomaly_from_mean_anomaly(
+    mean_anomaly_deg: float, eccentricity: float
+) -> float: ...
 
 class TLERecord(BaseModel):
     """
@@ -21,24 +28,38 @@ class TLERecord(BaseModel):
 
     line1: str
     line2: str
-    name: str | None
-    epoch: datetime
-    source: str | None
+    name: str | None = None
+    epoch: datetime = ...
+    source: str | None = None
 
-    @property
-    def norad_id(self) -> int:
-        """Extract NORAD catalog ID from line1."""
-        ...
+    def __init__(
+        self,
+        *,
+        line1: str,
+        line2: str,
+        name: str | None = ...,
+        epoch: datetime = ...,
+        source: str | None = ...,
+    ) -> None: ...
 
-    @property
-    def classification(self) -> str:
-        """Extract classification from line1 (U=unclassified, C=classified, S=secret)."""
-        ...
-
-    @property
-    def international_designator(self) -> str:
-        """Extract international designator from line1."""
-        ...
+    norad_id: int
+    classification: str
+    international_designator: str
+    mean_motion_dot_rev_per_day2: float
+    mean_motion_ddot_rev_per_day3: float
+    bstar_drag: float
+    ephemeris_type: int
+    element_set_number: int
+    revolution_number_at_epoch: int
+    inclination_deg: float
+    right_ascension_deg: float
+    eccentricity: float
+    arg_periapsis_deg: float
+    mean_anomaly_deg: float
+    mean_motion_rev_per_day: float
+    mean_motion_rad_s: float
+    true_anomaly_deg: float
+    semimajor_axis_m: float
 
     def to_tle_string(self) -> str:
         """
@@ -47,6 +68,10 @@ class TLERecord(BaseModel):
         Returns:
             2-line or 3-line TLE string depending on whether name is set.
         """
+        ...
+
+    def classical_elements(self, mu_m3_s2: float = ...) -> dict[str, Any]:
+        """Return TLE mean classical elements at the TLE epoch."""
         ...
 
 def fetch_tle(

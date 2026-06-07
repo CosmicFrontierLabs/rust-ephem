@@ -735,13 +735,34 @@ Data Models
     * ``epoch`` (datetime) — TLE epoch timestamp (extracted from line1)
     * ``source`` (str | None) — Source of the TLE data (e.g., 'celestrak', 'spacetrack', 'file', 'url')
 
-  **Computed Properties:**
+  **Derived Fields:**
     * ``norad_id`` (int) — NORAD catalog ID extracted from line1
     * ``classification`` (str) — Classification from line1 (U=unclassified, C=classified, S=secret)
     * ``international_designator`` (str) — International designator extracted from line1
+    * ``mean_motion_dot_rev_per_day2`` (float) — First derivative of mean motion from line1
+    * ``mean_motion_ddot_rev_per_day3`` (float) — Second derivative of mean motion from line1
+    * ``bstar_drag`` (float) — BSTAR drag term from line1
+    * ``ephemeris_type`` (int) — Ephemeris type from line1
+    * ``element_set_number`` (int) — Element set number from line1
+    * ``revolution_number_at_epoch`` (int) — Revolution number at epoch from line2
+    * ``inclination_deg`` (float) — Inclination extracted from line2
+    * ``right_ascension_deg`` (float) — RAAN extracted from line2
+    * ``eccentricity`` (float) — Eccentricity extracted from line2
+    * ``arg_periapsis_deg`` (float) — Argument of periapsis extracted from line2
+    * ``mean_anomaly_deg`` (float) — Mean anomaly extracted from line2
+    * ``mean_motion_rev_per_day`` (float) — Mean motion extracted from line2
+    * ``mean_motion_rad_s`` (float) — Mean motion in radians/second
+    * ``true_anomaly_deg`` (float) — True anomaly derived from mean anomaly and eccentricity
+    * ``semimajor_axis_m`` (float) — Semimajor axis derived using WGS72 gravitational parameter
 
   **Methods:**
     * ``to_tle_string()`` — Convert to a 2-line or 3-line TLE string format
+    * ``classical_elements(mu_m3_s2=WGS72_EARTH_MU_M3_S2)`` — Return a dictionary of mean classical elements
+      with keys ``SemimajorAxis_m``, ``Eccentricity``, ``Inclination_deg``,
+      ``RightAscension_deg``, ``ArgPeriapsis_deg``, ``TrueAnomaly_deg``,
+      ``MeanAnomaly_deg``, ``MeanMotion_rev_per_day``, and
+      ``GravitationalParameter_m3_s2``. If ``mu_m3_s2`` is overridden,
+      ``SemimajorAxis_m`` is recomputed with the supplied value.
     * ``model_dump()`` — Convert to dictionary (Pydantic)
     * ``model_dump_json()`` — Convert to JSON string (Pydantic)
 
