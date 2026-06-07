@@ -11,7 +11,7 @@ import math
 from datetime import datetime, timedelta
 from typing import Any
 
-from pydantic import BaseModel, Field, computed_field, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from ._rust_ephem import fetch_tle as _fetch_tle
 
@@ -55,6 +55,23 @@ def true_anomaly_from_mean_anomaly(
     return _normalize_degrees(math.degrees(true_anomaly_rad))
 
 
+def _parse_tle_assumed_decimal(value: str) -> float:
+    """Parse TLE implied-decimal notation (e.g. "-11606-4", " 00000-0")."""
+    if len(value) != 8:
+        raise ValueError(f"Expected 8-character TLE field, got {len(value)}")
+
+    mantissa_sign = -1.0 if value[0] == "-" else 1.0
+    mantissa_digits = value[1:6].strip()
+    exponent_sign = -1 if value[6] == "-" else 1
+    exponent = int(value[7])
+
+    if not mantissa_digits:
+        return 0.0
+
+    mantissa = float(f"0.{mantissa_digits}")
+    return mantissa_sign * mantissa * (10.0 ** (exponent_sign * exponent))
+
+
 class TLERecord(BaseModel):
     """
     A Two-Line Element (TLE) record with optional metadata.
@@ -80,6 +97,30 @@ class TLERecord(BaseModel):
     epoch: datetime = Field(..., description="TLE epoch timestamp")
     source: str | None = Field(None, description="Source of the TLE data")
 
+    # Derived from line1
+    norad_id: int = 0
+    classification: str = ""
+    international_designator: str = ""
+    mean_motion_dot_rev_per_day2: float = 0.0
+    mean_motion_ddot_rev_per_day3: float = 0.0
+    bstar_drag: float = 0.0
+    ephemeris_type: int = 0
+    element_set_number: int = 0
+
+    # Derived from line2
+    revolution_number_at_epoch: int = 0
+    inclination_deg: float = 0.0
+    right_ascension_deg: float = 0.0
+    eccentricity: float = 0.0
+    arg_periapsis_deg: float = 0.0
+    mean_anomaly_deg: float = 0.0
+    mean_motion_rev_per_day: float = 0.0
+
+    # Derived from line2 mean elements
+    mean_motion_rad_s: float = 0.0
+    true_anomaly_deg: float = 0.0
+    semimajor_axis_m: float = 0.0
+
     @model_validator(mode="before")
     def _validate_tle_lines(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Validate that line1 and line2 conform to TLE format."""
@@ -89,6 +130,11 @@ class TLERecord(BaseModel):
         if not (line1.startswith("1 ") and line2.startswith("2 ")):
             raise ValueError(
                 "Invalid TLE format: line1 must start with '1 ' and line2 with '2 '"
+            )
+
+        if len(line1) < 69 or len(line2) < 69:
+            raise ValueError(
+                "Invalid TLE format: line1 and line2 must each be at least 69 characters"
             )
 
         if not values.get("epoch") and len(line1) >= 19:
@@ -105,79 +151,40 @@ class TLERecord(BaseModel):
             except Exception as exc:
                 raise ValueError(f"Failed to parse epoch from line1: {exc}") from exc
 
+        # Populate all simple TLE-derived fields up front so they are stored values
+        # rather than per-access property computations.
+        values["norad_id"] = int(line1[2:7].strip())
+        values["classification"] = line1[7]
+        values["international_designator"] = line1[9:17].strip()
+        values["mean_motion_dot_rev_per_day2"] = float(line1[33:43])
+        values["mean_motion_ddot_rev_per_day3"] = _parse_tle_assumed_decimal(
+            line1[44:52]
+        )
+        values["bstar_drag"] = _parse_tle_assumed_decimal(line1[53:61])
+        values["ephemeris_type"] = int(line1[62])
+        values["element_set_number"] = int(line1[64:68].strip())
+
+        eccentricity = float("0." + line2[26:33])
+        mean_anomaly_deg = float(line2[43:51])
+        mean_motion_rev_per_day = float(line2[52:63])
+        mean_motion_rad_s = mean_motion_rev_per_day * 2.0 * math.pi / _SECONDS_PER_DAY
+
+        values["revolution_number_at_epoch"] = int(line2[63:68].strip())
+        values["inclination_deg"] = float(line2[8:16])
+        values["right_ascension_deg"] = float(line2[17:25])
+        values["eccentricity"] = eccentricity
+        values["arg_periapsis_deg"] = float(line2[34:42])
+        values["mean_anomaly_deg"] = mean_anomaly_deg
+        values["mean_motion_rev_per_day"] = mean_motion_rev_per_day
+        values["mean_motion_rad_s"] = mean_motion_rad_s
+        values["true_anomaly_deg"] = true_anomaly_from_mean_anomaly(
+            mean_anomaly_deg, eccentricity
+        )
+        values["semimajor_axis_m"] = math.pow(
+            WGS72_EARTH_MU_M3_S2 / mean_motion_rad_s**2, 1.0 / 3.0
+        )
+
         return values
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def norad_id(self) -> int:
-        """Extract NORAD catalog ID from line1."""
-        return int(self.line1[2:7].strip())
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def classification(self) -> str:
-        """Extract classification from line1 (U=unclassified, C=classified, S=secret)."""
-        return self.line1[7]
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def international_designator(self) -> str:
-        """Extract international designator from line1."""
-        return self.line1[9:17].strip()
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def inclination_deg(self) -> float:
-        """Extract inclination (deg) from line2."""
-        return float(self.line2[8:16])
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def right_ascension_deg(self) -> float:
-        """Extract RAAN (deg) from line2."""
-        return float(self.line2[17:25])
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def eccentricity(self) -> float:
-        """Extract eccentricity from line2."""
-        return float("0." + self.line2[26:33])
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def arg_periapsis_deg(self) -> float:
-        """Extract argument of periapsis (deg) from line2."""
-        return float(self.line2[34:42])
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def mean_anomaly_deg(self) -> float:
-        """Extract mean anomaly (deg) from line2."""
-        return float(self.line2[43:51])
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def mean_motion_rev_per_day(self) -> float:
-        """Extract mean motion (rev/day) from line2."""
-        return float(self.line2[52:63])
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def mean_motion_rad_s(self) -> float:
-        """Derived mean motion (rad/s) from line2 mean motion."""
-        return self.mean_motion_rev_per_day * 2.0 * math.pi / _SECONDS_PER_DAY
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def true_anomaly_deg(self) -> float:
-        """Derived true anomaly (deg) from mean anomaly and eccentricity."""
-        return true_anomaly_from_mean_anomaly(self.mean_anomaly_deg, self.eccentricity)
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def semimajor_axis_m(self) -> float:
-        """Derived semimajor axis (m) using WGS72 Earth's gravitational parameter."""
-        return math.pow(WGS72_EARTH_MU_M3_S2 / self.mean_motion_rad_s**2, 1.0 / 3.0)
 
     def to_tle_string(self) -> str:
         """

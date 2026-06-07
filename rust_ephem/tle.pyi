@@ -32,65 +32,34 @@ class TLERecord(BaseModel):
     epoch: datetime = ...
     source: str | None = None
 
-    @property
-    def norad_id(self) -> int:
-        """Extract NORAD catalog ID from line1."""
-        ...
+    def __init__(
+        self,
+        *,
+        line1: str,
+        line2: str,
+        name: str | None = ...,
+        epoch: datetime = ...,
+        source: str | None = ...,
+    ) -> None: ...
 
-    @property
-    def classification(self) -> str:
-        """Extract classification from line1 (U=unclassified, C=classified, S=secret)."""
-        ...
-
-    @property
-    def international_designator(self) -> str:
-        """Extract international designator from line1."""
-        ...
-
-    @property
-    def inclination_deg(self) -> float:
-        """Extract inclination (deg) from line2."""
-        ...
-
-    @property
-    def right_ascension_deg(self) -> float:
-        """Extract RAAN (deg) from line2."""
-        ...
-
-    @property
-    def eccentricity(self) -> float:
-        """Extract eccentricity from line2."""
-        ...
-
-    @property
-    def arg_periapsis_deg(self) -> float:
-        """Extract argument of periapsis (deg) from line2."""
-        ...
-
-    @property
-    def mean_anomaly_deg(self) -> float:
-        """Extract mean anomaly (deg) from line2."""
-        ...
-
-    @property
-    def mean_motion_rev_per_day(self) -> float:
-        """Extract mean motion (rev/day) from line2."""
-        ...
-
-    @property
-    def mean_motion_rad_s(self) -> float:
-        """Derived mean motion (rad/s) from line2 mean motion."""
-        ...
-
-    @property
-    def true_anomaly_deg(self) -> float:
-        """Derived true anomaly (deg) from mean anomaly and eccentricity."""
-        ...
-
-    @property
-    def semimajor_axis_m(self) -> float:
-        """Derived semimajor axis (m) using WGS72 Earth's gravitational parameter."""
-        ...
+    norad_id: int
+    classification: str
+    international_designator: str
+    mean_motion_dot_rev_per_day2: float
+    mean_motion_ddot_rev_per_day3: float
+    bstar_drag: float
+    ephemeris_type: int
+    element_set_number: int
+    revolution_number_at_epoch: int
+    inclination_deg: float
+    right_ascension_deg: float
+    eccentricity: float
+    arg_periapsis_deg: float
+    mean_anomaly_deg: float
+    mean_motion_rev_per_day: float
+    mean_motion_rad_s: float
+    true_anomaly_deg: float
+    semimajor_axis_m: float
 
     def to_tle_string(self) -> str:
         """

@@ -62,6 +62,7 @@ __all__ = [
     "ConstraintConfig",
     "SunConstraint",
     "MoonConstraint",
+    "BrightStarConstraint",
     "EarthLimbConstraint",
     "EclipseConstraint",
     "BodyConstraint",
@@ -111,6 +112,5 @@ __all__ = [
     "WGS72_EARTH_MU_M3_S2",
     "fetch_tle",
     "true_anomaly_from_mean_anomaly",
-    "BrightStarConstraint",
     "get_bright_stars",
 ]

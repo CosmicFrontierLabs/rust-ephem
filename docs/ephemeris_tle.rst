@@ -171,6 +171,12 @@ manual column slicing.
 
 Available helpers include:
 
+- ``mean_motion_dot_rev_per_day2``
+- ``mean_motion_ddot_rev_per_day3``
+- ``bstar_drag``
+- ``ephemeris_type``
+- ``element_set_number``
+- ``revolution_number_at_epoch``
 - ``inclination_deg``
 - ``right_ascension_deg``
 - ``eccentricity``

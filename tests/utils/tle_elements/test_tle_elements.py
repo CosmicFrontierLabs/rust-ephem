@@ -42,6 +42,24 @@ class TestTrueAnomalyFromMeanAnomaly:
 
 
 class TestClassicalElements:
+    def test_line1_mean_motion_dot_property(self, iss_tle: TLERecord) -> None:
+        assert iss_tle.mean_motion_dot_rev_per_day2 == pytest.approx(-0.00002182)
+
+    def test_line1_mean_motion_ddot_property(self, iss_tle: TLERecord) -> None:
+        assert iss_tle.mean_motion_ddot_rev_per_day3 == pytest.approx(0.0)
+
+    def test_line1_bstar_drag_property(self, iss_tle: TLERecord) -> None:
+        assert iss_tle.bstar_drag == pytest.approx(-1.1606e-5)
+
+    def test_line1_ephemeris_type_property(self, iss_tle: TLERecord) -> None:
+        assert iss_tle.ephemeris_type == 0
+
+    def test_line1_element_set_number_property(self, iss_tle: TLERecord) -> None:
+        assert iss_tle.element_set_number == 292
+
+    def test_line2_revolution_number_property(self, iss_tle: TLERecord) -> None:
+        assert iss_tle.revolution_number_at_epoch == 56353
+
     def test_inclination_property(self, iss_tle: TLERecord) -> None:
         assert iss_tle.inclination_deg == pytest.approx(51.6416)
 
