@@ -162,12 +162,12 @@ which returns a ``TLERecord`` object. This is useful when you need to:
 - **Validation**: Verify the TLE was fetched from the expected source
 - **Reuse**: Fetch once, create multiple ephemeris objects with different time ranges
 
-TLERecord Element Helpers
--------------------------
+TLERecord Derived Fields
+------------------------
 
-``TLERecord`` exposes parsed and derived element helpers as computed properties.
-These provide direct access to commonly used values from TLE line 2 without
-manual column slicing.
+``TLERecord`` exposes parsed and derived element fields populated when the
+model validates ``line1`` and ``line2``. These provide direct access to
+commonly used TLE values without manual column slicing.
 
 Available helpers include:
 
@@ -185,7 +185,7 @@ Available helpers include:
 - ``mean_motion_rev_per_day``
 - ``mean_motion_rad_s``
 - ``true_anomaly_deg``
-- ``semimajor_axis_m`` (computed using WGS72 Earth gravitational parameter)
+- ``semimajor_axis_m`` (derived using WGS72 Earth gravitational parameter)
 
 .. code-block:: python
 
