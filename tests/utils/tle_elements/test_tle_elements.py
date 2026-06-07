@@ -95,6 +95,4 @@ class TestClassicalElements:
     ) -> None:
         elements = iss_tle.classical_elements()
         # For e ≈ 0.0007 the max difference between ν and M is ~0.08°
-        assert abs(
-            elements["TrueAnomaly_deg"] - elements["MeanAnomaly_deg"]
-        ) < pytest.approx(0.1)
+        assert abs(elements["TrueAnomaly_deg"] - elements["MeanAnomaly_deg"]) < 0.1
