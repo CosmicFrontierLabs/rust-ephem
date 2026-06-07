@@ -199,22 +199,22 @@ class TLERecord(BaseModel):
         These are TLE mean elements at the TLE epoch, not propagated
         osculating elements.
         """
-        eccentricity = self.eccentricity
-        mean_anomaly_deg = self.mean_anomaly_deg
-        mean_motion_rev_per_day = self.mean_motion_rev_per_day
-        mean_motion_rad_s = mean_motion_rev_per_day * 2.0 * math.pi / _SECONDS_PER_DAY
+
+        mean_motion_rad_s = (
+            self.mean_motion_rev_per_day * 2.0 * math.pi / _SECONDS_PER_DAY
+        )
         semimajor_axis_m = (mu_m3_s2 / mean_motion_rad_s**2) ** (1.0 / 3.0)
         return {
             "SemimajorAxis_m": semimajor_axis_m,
-            "Eccentricity": eccentricity,
+            "Eccentricity": self.eccentricity,
             "Inclination_deg": self.inclination_deg,
             "RightAscension_deg": self.right_ascension_deg,
             "ArgPeriapsis_deg": self.arg_periapsis_deg,
             "TrueAnomaly_deg": true_anomaly_from_mean_anomaly(
-                mean_anomaly_deg, eccentricity
+                self.mean_anomaly_deg, self.eccentricity
             ),
-            "MeanAnomaly_deg": mean_anomaly_deg,
-            "MeanMotion_rev_per_day": mean_motion_rev_per_day,
+            "MeanAnomaly_deg": self.mean_anomaly_deg,
+            "MeanMotion_rev_per_day": self.mean_motion_rev_per_day,
             "GravitationalParameter_m3_s2": mu_m3_s2,
         }
 
