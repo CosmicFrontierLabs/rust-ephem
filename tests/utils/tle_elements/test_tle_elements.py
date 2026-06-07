@@ -42,6 +42,39 @@ class TestTrueAnomalyFromMeanAnomaly:
 
 
 class TestClassicalElements:
+    def test_inclination_property(self, iss_tle: TLERecord) -> None:
+        assert iss_tle.inclination_deg == pytest.approx(51.6416)
+
+    def test_raan_property(self, iss_tle: TLERecord) -> None:
+        assert iss_tle.right_ascension_deg == pytest.approx(247.4627)
+
+    def test_eccentricity_property(self, iss_tle: TLERecord) -> None:
+        assert iss_tle.eccentricity == pytest.approx(0.0006703)
+
+    def test_arg_periapsis_property(self, iss_tle: TLERecord) -> None:
+        assert iss_tle.arg_periapsis_deg == pytest.approx(130.5360)
+
+    def test_mean_anomaly_property(self, iss_tle: TLERecord) -> None:
+        assert iss_tle.mean_anomaly_deg == pytest.approx(325.0288)
+
+    def test_mean_motion_property_uses_column_slice_not_split(
+        self, iss_tle: TLERecord
+    ) -> None:
+        # line2[52:63] = "15.72125391"; .split()[7] = "15.72125391563537" (wrong)
+        assert iss_tle.mean_motion_rev_per_day == pytest.approx(15.72125391)
+
+    def test_true_anomaly_property(self, iss_tle: TLERecord) -> None:
+        assert iss_tle.true_anomaly_deg == pytest.approx(
+            true_anomaly_from_mean_anomaly(
+                iss_tle.mean_anomaly_deg, iss_tle.eccentricity
+            )
+        )
+
+    def test_semimajor_axis_property(self, iss_tle: TLERecord) -> None:
+        n = 15.72125391 * 2.0 * math.pi / 86400.0
+        expected_a = (WGS72_EARTH_MU_M3_S2 / n**2) ** (1.0 / 3.0)
+        assert iss_tle.semimajor_axis_m == pytest.approx(expected_a, rel=1e-9)
+
     def test_inclination(self, iss_tle: TLERecord) -> None:
         assert iss_tle.classical_elements()["Inclination_deg"] == pytest.approx(51.6416)
 

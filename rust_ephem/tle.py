@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, Field, computed_field, model_validator
 
@@ -125,6 +125,56 @@ class TLERecord(BaseModel):
         """Extract international designator from line1."""
         return self.line1[9:17].strip()
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def inclination_deg(self) -> float:
+        """Extract inclination (deg) from line2."""
+        return float(self.line2[8:16])
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def right_ascension_deg(self) -> float:
+        """Extract RAAN (deg) from line2."""
+        return float(self.line2[17:25])
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def eccentricity(self) -> float:
+        """Extract eccentricity from line2."""
+        return float("0." + self.line2[26:33])
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def arg_periapsis_deg(self) -> float:
+        """Extract argument of periapsis (deg) from line2."""
+        return float(self.line2[34:42])
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def mean_anomaly_deg(self) -> float:
+        """Extract mean anomaly (deg) from line2."""
+        return float(self.line2[43:51])
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def mean_motion_rev_per_day(self) -> float:
+        """Extract mean motion (rev/day) from line2."""
+        return float(self.line2[52:63])
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def true_anomaly_deg(self) -> float:
+        """Derived true anomaly (deg) from mean anomaly and eccentricity."""
+        return true_anomaly_from_mean_anomaly(self.mean_anomaly_deg, self.eccentricity)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def semimajor_axis_m(self) -> float:
+        """Derived semimajor axis (m) using WGS72 Earth's gravitational parameter."""
+        mean_motion_rev_per_day = cast(float, self.mean_motion_rev_per_day)
+        mean_motion_rad_s = mean_motion_rev_per_day * 2.0 * math.pi / _SECONDS_PER_DAY
+        return (WGS72_EARTH_MU_M3_S2 / mean_motion_rad_s**2) ** (1.0 / 3.0)
+
     def to_tle_string(self) -> str:
         """
         Convert to a TLE string format.
@@ -149,18 +199,17 @@ class TLERecord(BaseModel):
         These are TLE mean elements at the TLE epoch, not propagated
         osculating elements.
         """
-        line2 = self.line2
-        eccentricity = float("0." + line2[26:33])
-        mean_anomaly_deg = float(line2[43:51])
-        mean_motion_rev_per_day = float(line2[52:63])
+        eccentricity = self.eccentricity
+        mean_anomaly_deg = self.mean_anomaly_deg
+        mean_motion_rev_per_day = self.mean_motion_rev_per_day
         mean_motion_rad_s = mean_motion_rev_per_day * 2.0 * math.pi / _SECONDS_PER_DAY
         semimajor_axis_m = (mu_m3_s2 / mean_motion_rad_s**2) ** (1.0 / 3.0)
         return {
             "SemimajorAxis_m": semimajor_axis_m,
             "Eccentricity": eccentricity,
-            "Inclination_deg": float(line2[8:16]),
-            "RightAscension_deg": float(line2[17:25]),
-            "ArgPeriapsis_deg": float(line2[34:42]),
+            "Inclination_deg": self.inclination_deg,
+            "RightAscension_deg": self.right_ascension_deg,
+            "ArgPeriapsis_deg": self.arg_periapsis_deg,
             "TrueAnomaly_deg": true_anomaly_from_mean_anomaly(
                 mean_anomaly_deg, eccentricity
             ),
