@@ -51,7 +51,12 @@ from .constraints import (
     XorConstraint,
 )
 from .ephemeris import Ephemeris, EphemerisType
-from .tle import TLERecord, fetch_tle
+from .tle import (
+    WGS72_EARTH_MU_M3_S2,
+    TLERecord,
+    fetch_tle,
+    true_anomaly_from_mean_anomaly,
+)
 
 __all__ = [
     "ConstraintConfig",
@@ -103,7 +108,9 @@ __all__ = [
     "init_eop_provider",
     "get_cache_dir",
     "TLERecord",
+    "WGS72_EARTH_MU_M3_S2",
     "fetch_tle",
+    "true_anomaly_from_mean_anomaly",
     "BrightStarConstraint",
     "get_bright_stars",
 ]

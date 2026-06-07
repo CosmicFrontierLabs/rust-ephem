@@ -1,8 +1,15 @@
 """Type stubs for the TLE module"""
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel
+
+WGS72_EARTH_MU_M3_S2: float
+
+def true_anomaly_from_mean_anomaly(
+    mean_anomaly_deg: float, eccentricity: float
+) -> float: ...
 
 class TLERecord(BaseModel):
     """
@@ -21,9 +28,9 @@ class TLERecord(BaseModel):
 
     line1: str
     line2: str
-    name: str | None
-    epoch: datetime
-    source: str | None
+    name: str | None = None
+    epoch: datetime = ...
+    source: str | None = None
 
     @property
     def norad_id(self) -> int:
@@ -47,6 +54,10 @@ class TLERecord(BaseModel):
         Returns:
             2-line or 3-line TLE string depending on whether name is set.
         """
+        ...
+
+    def classical_elements(self, mu_m3_s2: float = ...) -> dict[str, Any]:
+        """Return TLE mean classical elements at the TLE epoch."""
         ...
 
 def fetch_tle(

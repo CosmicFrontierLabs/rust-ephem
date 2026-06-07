@@ -7,12 +7,52 @@ that can retrieve TLEs from various sources (files, URLs, Celestrak, Space-Track
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel, Field, computed_field, model_validator
 
 from ._rust_ephem import fetch_tle as _fetch_tle
+
+_SECONDS_PER_DAY = 86400.0
+WGS72_EARTH_MU_M3_S2 = 398600.8e9
+
+
+def _normalize_degrees(value: float) -> float:
+    return value % 360.0
+
+
+def _solve_eccentric_anomaly(mean_anomaly_rad: float, eccentricity: float) -> float:
+    if not 0.0 <= eccentricity < 1.0:
+        raise ValueError(
+            f"Only elliptical TLE eccentricities are supported; got {eccentricity}"
+        )
+    eccentric_anomaly = mean_anomaly_rad if eccentricity < 0.8 else math.pi
+    for _ in range(50):
+        denominator = 1.0 - eccentricity * math.cos(eccentric_anomaly)
+        delta = (
+            eccentric_anomaly
+            - eccentricity * math.sin(eccentric_anomaly)
+            - mean_anomaly_rad
+        ) / denominator
+        eccentric_anomaly -= delta
+        if abs(delta) < 1e-14:
+            break
+    return eccentric_anomaly
+
+
+def true_anomaly_from_mean_anomaly(
+    mean_anomaly_deg: float, eccentricity: float
+) -> float:
+    """Convert mean anomaly to true anomaly for an elliptical orbit."""
+    mean_anomaly_rad = math.radians(_normalize_degrees(mean_anomaly_deg))
+    eccentric_anomaly = _solve_eccentric_anomaly(mean_anomaly_rad, eccentricity)
+    true_anomaly_rad = math.atan2(
+        math.sqrt(1.0 - eccentricity**2) * math.sin(eccentric_anomaly),
+        math.cos(eccentric_anomaly) - eccentricity,
+    )
+    return _normalize_degrees(math.degrees(true_anomaly_rad))
 
 
 class TLERecord(BaseModel):
@@ -95,6 +135,39 @@ class TLERecord(BaseModel):
         if self.name:
             return f"{self.name}\n{self.line1}\n{self.line2}"
         return f"{self.line1}\n{self.line2}"
+
+    def classical_elements(
+        self, mu_m3_s2: float = WGS72_EARTH_MU_M3_S2
+    ) -> dict[str, Any]:
+        """Return TLE mean classical elements at the TLE epoch.
+
+        Extracts inclination, RAAN, eccentricity, argument of perigee, mean
+        anomaly, and mean motion from TLE line 2 using fixed-width column
+        positions. Semimajor axis and true anomaly are derived from those
+        mean elements.
+
+        These are TLE mean elements at the TLE epoch, not propagated
+        osculating elements.
+        """
+        line2 = self.line2
+        eccentricity = float("0." + line2[26:33])
+        mean_anomaly_deg = float(line2[43:51])
+        mean_motion_rev_per_day = float(line2[52:63])
+        mean_motion_rad_s = mean_motion_rev_per_day * 2.0 * math.pi / _SECONDS_PER_DAY
+        semimajor_axis_m = (mu_m3_s2 / mean_motion_rad_s**2) ** (1.0 / 3.0)
+        return {
+            "SemimajorAxis_m": semimajor_axis_m,
+            "Eccentricity": eccentricity,
+            "Inclination_deg": float(line2[8:16]),
+            "RightAscension_deg": float(line2[17:25]),
+            "ArgPeriapsis_deg": float(line2[34:42]),
+            "TrueAnomaly_deg": true_anomaly_from_mean_anomaly(
+                mean_anomaly_deg, eccentricity
+            ),
+            "MeanAnomaly_deg": mean_anomaly_deg,
+            "MeanMotion_rev_per_day": mean_motion_rev_per_day,
+            "GravitationalParameter_m3_s2": mu_m3_s2,
+        }
 
     model_config = {"frozen": True}
 
