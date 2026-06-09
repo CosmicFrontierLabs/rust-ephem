@@ -17,6 +17,8 @@ use crate::utils::to_skycoord::AstropyModules;
 pub struct TLEEphemeris {
     tle1: String,
     tle2: String,
+    tle_name: Option<String>,
+    tle_source: Option<String>,
     tle_epoch: chrono::DateTime<chrono::Utc>, // TLE epoch timestamp
     teme: Option<Array2<f64>>,
     itrs: Option<Array2<f64>>,
@@ -52,20 +54,44 @@ impl TLEEphemeris {
             begin.and_then(|b| crate::utils::time_utils::python_datetime_to_utc(b).ok());
 
         // Determine which method to use for getting TLE data
-        let fetched = if let (Some(l1), Some(l2)) = (tle1, tle2) {
+        let (fetched, source_override) = if let (Some(l1), Some(l2)) = (tle1, tle2) {
             // Legacy method: tle1 and tle2 parameters (direct TLE lines)
-            tle_utils::FetchedTLE::from_lines(l1, l2, None, None)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?
+            (
+                tle_utils::FetchedTLE::from_lines(l1, l2, None, None)
+                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
+                None,
+            )
         } else if let Some(tle_obj) = tle {
             // tle parameter: can be a string (file path/URL) or a TLERecord object
             if let Ok(tle_string) = tle_obj.extract::<String>() {
                 // String: file path or URL - use unified function
-                tle_utils::fetch_tle_unified(Some(&tle_string), None, None, None, None, None, None)
-                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?
+                (
+                    tle_utils::fetch_tle_unified(
+                        Some(&tle_string),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
+                    None,
+                )
             } else if tle_obj.hasattr("line1")? && tle_obj.hasattr("line2")? {
                 // Object with line1/line2 attributes (TLERecord or similar)
                 let line1: String = tle_obj.getattr("line1")?.extract()?;
                 let line2: String = tle_obj.getattr("line2")?.extract()?;
+                let name = if tle_obj.hasattr("name")? {
+                    tle_obj.getattr("name")?.extract::<Option<String>>()?
+                } else {
+                    None
+                };
+                let source = if tle_obj.hasattr("source")? {
+                    tle_obj.getattr("source")?.extract::<Option<String>>()?
+                } else {
+                    None
+                };
                 let epoch = if tle_obj.hasattr("epoch")? {
                     let epoch_obj = tle_obj.getattr("epoch")?;
                     if let Ok(epoch_dt) = epoch_obj.downcast::<PyDateTime>() {
@@ -76,8 +102,11 @@ impl TLEEphemeris {
                 } else {
                     None
                 };
-                tle_utils::FetchedTLE::from_lines(line1, line2, None, epoch)
-                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?
+                (
+                    tle_utils::FetchedTLE::from_lines(line1, line2, name, epoch)
+                        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
+                    source,
+                )
             } else {
                 return Err(pyo3::exceptions::PyTypeError::new_err(
                     "tle parameter must be a string (file path or URL) or an object with line1/line2 attributes"
@@ -102,16 +131,19 @@ impl TLEEphemeris {
                 begin_for_epoch
             };
 
-            tle_utils::fetch_tle_unified(
+            (
+                tle_utils::fetch_tle_unified(
+                    None,
+                    norad_id,
+                    norad_name.as_deref(),
+                    target_epoch.as_ref(),
+                    credentials,
+                    epoch_tolerance_days,
+                    enforce_source.as_deref(),
+                )
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
                 None,
-                norad_id,
-                norad_name.as_deref(),
-                target_epoch.as_ref(),
-                credentials,
-                epoch_tolerance_days,
-                enforce_source.as_deref(),
             )
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?
         } else {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "Must provide either (tle1, tle2), tle, norad_id, or norad_name parameters",
@@ -132,6 +164,8 @@ impl TLEEphemeris {
         let mut ephemeris: TLEEphemeris = TLEEphemeris {
             tle1: fetched.line1,
             tle2: fetched.line2,
+            tle_name: fetched.name,
+            tle_source: source_override.or_else(|| Some(fetched.source.to_string())),
             tle_epoch: fetched.epoch,
             teme: None,
             itrs: None,
@@ -194,6 +228,27 @@ impl TLEEphemeris {
     #[getter]
     fn tle2(&self) -> &str {
         &self.tle2
+    }
+
+    /// Get the TLERecord used to generate this ephemeris
+    #[getter]
+    fn tle_record(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let tle_module = py.import("rust_ephem.tle")?;
+        let tle_record_class = tle_module.getattr("TLERecord")?;
+
+        let kwargs = pyo3::types::PyDict::new(py);
+        kwargs.set_item("line1", &self.tle1)?;
+        kwargs.set_item("line2", &self.tle2)?;
+        kwargs.set_item("epoch", self.tle_epoch(py)?)?;
+
+        if let Some(name) = &self.tle_name {
+            kwargs.set_item("name", name)?;
+        }
+        if let Some(source) = &self.tle_source {
+            kwargs.set_item("source", source)?;
+        }
+
+        Ok(tle_record_class.call((), Some(&kwargs))?.into())
     }
 
     /// Get the start time of the ephemeris

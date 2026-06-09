@@ -1,13 +1,16 @@
 """Type stubs for the Rust extension module _rust_ephem"""
 
 from datetime import datetime
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 import numpy as np
 import numpy.typing as npt
 
 from .constraints import DEFAULT_N_POINTS, DEFAULT_N_ROLL_SAMPLES
 from .ephemeris import Ephemeris
+
+if TYPE_CHECKING:
+    from .tle import TLERecord
 
 @runtime_checkable
 class TLELike(Protocol):
@@ -932,6 +935,11 @@ class TLEEphemeris(Ephemeris):
     @property
     def tle_epoch(self) -> datetime:
         """Epoch timestamp extracted from the TLE (UTC datetime)"""
+        ...
+
+    @property
+    def tle_record(self) -> "TLERecord":
+        """TLERecord used to construct this ephemeris"""
         ...
 
     @property
