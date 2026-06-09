@@ -155,6 +155,10 @@ which returns a ``TLERecord`` object. This is useful when you need to:
         step_size=60
     )
 
+    # Access the exact TLERecord used for propagation
+    used_tle = sat.tle_record
+    print(used_tle.source, used_tle.epoch)
+
 **Benefits of using fetch_tle:**
 
 - **Metadata access**: Inspect TLE epoch, source, and satellite name before propagation

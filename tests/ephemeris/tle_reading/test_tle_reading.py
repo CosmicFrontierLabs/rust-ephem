@@ -40,6 +40,15 @@ class TestLegacyTLEMethod:
         # Check it has timezone info
         assert legacy_ephem.tle_epoch.tzinfo is not None
 
+    def test_legacy_exposes_tle_record(self, legacy_ephem) -> None:
+        """Test that legacy constructor still exposes a TLERecord."""
+        tle_record = legacy_ephem.tle_record
+        assert tle_record is not None
+        assert tle_record.line1 == legacy_ephem.tle1
+        assert tle_record.line2 == legacy_ephem.tle2
+        assert tle_record.epoch == legacy_ephem.tle_epoch
+        assert tle_record.source == "direct"
+
 
 class TestFileReading:
     """Test reading TLEs from files."""
@@ -425,6 +434,20 @@ class TestFetchTLE:
         assert len(ephem.timestamp) == 61
         # Epoch should match
         assert ephem.tle_epoch.year == tle_record.epoch.year
+
+    def test_ephemeris_exposes_input_tle_record(self, tle_3line_file) -> None:
+        """Test that TLEEphemeris exposes the TLERecord used for construction."""
+        tle_record = rust_ephem.fetch_tle(tle=tle_3line_file)
+        ephem = rust_ephem.TLEEphemeris(
+            tle=tle_record, begin=BEGIN, end=END, step_size=STEP_SIZE
+        )
+
+        ephem_record = ephem.tle_record
+        assert ephem_record.line1 == tle_record.line1
+        assert ephem_record.line2 == tle_record.line2
+        assert ephem_record.epoch == tle_record.epoch
+        assert ephem_record.name == tle_record.name
+        assert ephem_record.source == tle_record.source
 
     def test_fetch_tle_missing_params(self) -> None:
         """Test that fetch_tle raises error with no params."""
