@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.11.0...v0.11.1) (2026-06-09)
+
+
+### Bug Fixes
+
+* add tle_record property to TLEEphemeris ([#174](https://github.com/CosmicFrontierLabs/rust-ephem/issues/174)) ([2b33727](https://github.com/CosmicFrontierLabs/rust-ephem/commit/2b33727da790d42843c63e822dfa441ccb687d58))
+
 ## [0.11.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.10.1...v0.11.0) (2026-06-07)
 
 
