@@ -561,6 +561,48 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
         Ok(result)
     }
 
+    fn compute_named_values(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        let (times_filtered,) = extract_time_data!(ephemeris, time_indices);
+
+        let n_targets = target_ras.len();
+        let n_times = times_filtered.len();
+
+        let illuminations = ephemeris.moon_illumination(time_indices)?;
+        let moon_positions_all = ephemeris.get_moon_positions()?;
+        let observer_positions_all = ephemeris.get_gcrs_positions()?;
+
+        let moon_positions = if let Some(indices) = time_indices {
+            moon_positions_all.select(ndarray::Axis(0), indices)
+        } else {
+            moon_positions_all
+        };
+        let observer_positions = if let Some(indices) = time_indices {
+            observer_positions_all.select(ndarray::Axis(0), indices)
+        } else {
+            observer_positions_all
+        };
+
+        let moon_units = self.compute_moon_unit_vectors(&moon_positions, &observer_positions)?;
+        let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
+        let cos_angles = target_vectors.dot(&moon_units.t());
+        let moon_distance_deg =
+            cos_angles.mapv(|cos_angle| cos_angle.clamp(-1.0, 1.0).acos().to_degrees());
+
+        let moon_illumination_frac =
+            Array2::from_shape_fn((n_targets, n_times), |(_, t)| illuminations[t]);
+
+        let mut values = HashMap::new();
+        values.insert("moon_illumination_frac".to_string(), moon_illumination_frac);
+        values.insert("moon_distance_deg".to_string(), moon_distance_deg);
+        Ok(values)
+    }
+
     fn name(&self) -> String {
         self.format_name()
     }

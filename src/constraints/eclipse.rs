@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Configuration for eclipse constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +93,19 @@ impl EclipseEvaluator {
         }
 
         (false, 0.0)
+    }
+
+    /// Continuous shadow-depth proxy, independent of `umbra_only` and of whether the
+    /// point is actually violating the constraint: 0.0 = fully sunlit (or outside the
+    /// penumbra cone entirely), increasing smoothly through the penumbra and umbra to
+    /// 1.0 at the shadow axis (deepest point of the umbra).
+    fn shadow_depth_frac(obs_pos: [f64; 3], sun_pos: [f64; 3]) -> f64 {
+        match Self::shadow_geometry(obs_pos, sun_pos) {
+            Some((dist_to_axis, _umbra_radius, penumbra_radius)) if penumbra_radius > 0.0 => {
+                (1.0 - dist_to_axis / penumbra_radius).clamp(0.0, 1.0)
+            }
+            _ => 0.0,
+        }
     }
 
     /// Compute eclipse mask for all times (returns true where eclipse occurs)
@@ -252,6 +266,42 @@ impl ConstraintEvaluator for EclipseEvaluator {
         Ok(Some(result))
     }
 
+    fn compute_named_values(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        _target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        let (times_filtered, sun_filtered, obs_filtered) =
+            extract_standard_ephemeris_data!(ephemeris, time_indices);
+
+        let n_targets = target_ras.len();
+        let n_times = times_filtered.len();
+        let depths: Vec<f64> = (0..n_times)
+            .map(|i| {
+                let obs_pos = [
+                    obs_filtered[[i, 0]],
+                    obs_filtered[[i, 1]],
+                    obs_filtered[[i, 2]],
+                ];
+                let sun_pos = [
+                    sun_filtered[[i, 0]],
+                    sun_filtered[[i, 1]],
+                    sun_filtered[[i, 2]],
+                ];
+                Self::shadow_depth_frac(obs_pos, sun_pos)
+            })
+            .collect();
+
+        // Eclipse is target-independent - broadcast to all targets.
+        let eclipse_depth_frac = Array2::from_shape_fn((n_targets, n_times), |(_, t)| depths[t]);
+
+        let mut values = HashMap::new();
+        values.insert("eclipse_depth_frac".to_string(), eclipse_depth_frac);
+        Ok(values)
+    }
+
     fn name(&self) -> String {
         format!(
             "Eclipse({})",
@@ -304,5 +354,42 @@ mod tests {
 
         assert!(!in_umbra_only, "point should be outside umbra");
         assert!(in_penumbra, "point should be inside penumbra");
+    }
+
+    #[test]
+    fn test_shadow_depth_frac_fully_sunlit_is_zero() {
+        let sun_pos = [AU_TO_KM, 0.0, 0.0];
+        // Observer on the sunlit side of Earth (same side as the Sun) - never in shadow.
+        let obs_pos = [7000.0, 0.0, 0.0];
+        assert_eq!(EclipseEvaluator::shadow_depth_frac(obs_pos, sun_pos), 0.0);
+    }
+
+    #[test]
+    fn test_shadow_depth_frac_peaks_on_axis_and_decreases_outward() {
+        let sun_pos = [AU_TO_KM, 0.0, 0.0];
+        let s = 7000.0;
+        let on_axis = [-s, 0.0, 0.0];
+        let (_dist_to_axis, umbra_radius, penumbra_radius) =
+            EclipseEvaluator::shadow_geometry(on_axis, sun_pos).expect("shadow geometry");
+
+        let depth_on_axis = EclipseEvaluator::shadow_depth_frac(on_axis, sun_pos);
+        assert!(
+            (depth_on_axis - 1.0).abs() < 1e-9,
+            "depth on shadow axis should be 1.0, got {depth_on_axis}"
+        );
+
+        let mid_penumbra = [-s, 0.5 * (umbra_radius + penumbra_radius), 0.0];
+        let depth_mid = EclipseEvaluator::shadow_depth_frac(mid_penumbra, sun_pos);
+        assert!(
+            depth_mid > 0.0 && depth_mid < depth_on_axis,
+            "depth should decrease moving outward from the shadow axis, got {depth_mid}"
+        );
+
+        let outside = [-s, penumbra_radius * 1.5, 0.0];
+        let depth_outside = EclipseEvaluator::shadow_depth_frac(outside, sun_pos);
+        assert_eq!(
+            depth_outside, 0.0,
+            "depth should be zero outside the penumbra cone"
+        );
     }
 }

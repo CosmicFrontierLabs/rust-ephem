@@ -4,6 +4,7 @@ use crate::utils::vector_math::radec_to_unit_vectors_batch;
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Configuration for Orbit RAM constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -318,6 +319,68 @@ impl ConstraintEvaluator for OrbitRamEvaluator {
         }
 
         Ok(Some(result))
+    }
+
+    fn compute_named_values(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        let (times_filtered,) = extract_time_data!(ephemeris, time_indices);
+
+        let n_targets = target_ras.len();
+        let n_times = times_filtered.len();
+        let mut orbit_ram_angle_deg = Array2::<f64>::zeros((n_targets, n_times));
+
+        let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
+
+        let gcrs_data = ephemeris.data().gcrs.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("GCRS data not available in ephemeris")
+        })?;
+        if gcrs_data.ncols() < 6 {
+            return Ok(HashMap::new());
+        }
+
+        let mut ram_directions = Array2::<f64>::zeros((n_times, 3));
+        for i in 0..n_times {
+            let source_i = if let Some(indices) = time_indices {
+                indices[i]
+            } else {
+                i
+            };
+            let velocity = [
+                gcrs_data[[source_i, 3]],
+                gcrs_data[[source_i, 4]],
+                gcrs_data[[source_i, 5]],
+            ];
+            let ram_unit = crate::utils::vector_math::normalize_vector(&velocity);
+            ram_directions[[i, 0]] = ram_unit[0];
+            ram_directions[[i, 1]] = ram_unit[1];
+            ram_directions[[i, 2]] = ram_unit[2];
+        }
+
+        for j in 0..n_targets {
+            let target_vec = [
+                target_vectors[[j, 0]],
+                target_vectors[[j, 1]],
+                target_vectors[[j, 2]],
+            ];
+            for i in 0..n_times {
+                let ram_vec = [
+                    ram_directions[[i, 0]],
+                    ram_directions[[i, 1]],
+                    ram_directions[[i, 2]],
+                ];
+                let cos_angle = crate::utils::vector_math::dot_product(&target_vec, &ram_vec);
+                orbit_ram_angle_deg[[j, i]] = cos_angle.clamp(-1.0, 1.0).acos().to_degrees();
+            }
+        }
+
+        let mut values = HashMap::new();
+        values.insert("orbit_ram_angle_deg".to_string(), orbit_ram_angle_deg);
+        Ok(values)
     }
 
     fn name(&self) -> String {

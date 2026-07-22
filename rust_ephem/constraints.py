@@ -76,6 +76,7 @@ class ConstraintResult(BaseModel):
     _rust_result_ref: _RustConstraintResult | None = PrivateAttr(default=None)
     _swept_timestamps: list[datetime] | None = PrivateAttr(default=None)
     _swept_array: list[bool] | None = PrivateAttr(default=None)
+    _swept_constraint_values: dict[str, list[float]] | None = PrivateAttr(default=None)
 
     @classmethod
     def _from_rust_result(
@@ -111,6 +112,7 @@ class ConstraintResult(BaseModel):
         all_satisfied: bool,
         timestamps: list[datetime],
         constraint_array: list[bool],
+        constraint_values: dict[str, list[float]] | None = None,
     ) -> "ConstraintResult":
         """Build a result from arrays swept across multiple roll angles.
 
@@ -124,6 +126,7 @@ class ConstraintResult(BaseModel):
         )
         result._swept_timestamps = timestamps
         result._swept_array = constraint_array
+        result._swept_constraint_values = constraint_values
         return result
 
     @property
@@ -151,6 +154,19 @@ class ConstraintResult(BaseModel):
         if self._rust_result_ref is not None:
             return self._rust_result_ref.constraint_array
         return []
+
+    @property
+    def constraint_values(self) -> dict[str, list[float]]:
+        """Named continuous values computed during evaluation (e.g. ``sun_angle_deg``).
+
+        One array per key, aligned with ``timestamps``. Empty for constraints that
+        don't expose a natural scalar (e.g. polygon-based constraints).
+        """
+        if self._swept_constraint_values is not None:
+            return self._swept_constraint_values
+        if self._rust_result_ref is not None:
+            return self._rust_result_ref.constraint_values
+        return {}
 
     @property
     def visibility(self) -> list["rust_ephem.VisibilityWindow"]:
@@ -236,6 +252,7 @@ class RustConstraintMixin(BaseModel):
         constraint_name: str,
         timestamps: list[datetime],
         violated: npt.NDArray[np.bool_] | list[bool],
+        constraint_values: dict[str, list[float]] | None = None,
     ) -> ConstraintResult:
         """Build a ConstraintResult from a boolean violation mask."""
         violation_flags = np.asarray(violated, dtype=bool)
@@ -274,6 +291,7 @@ class RustConstraintMixin(BaseModel):
             all_satisfied=not bool(violation_flags.any()),
             timestamps=timestamps,
             constraint_array=violation_flags.tolist(),
+            constraint_values=constraint_values,
         )
 
     @staticmethod
@@ -331,21 +349,30 @@ class RustConstraintMixin(BaseModel):
                 target_roll=target_roll,
                 n_roll_samples=n_roll_samples,
             )
-            # Get timestamps/constraint_name from a single fixed roll (0°) to avoid
-            # redundant roll sweep. The metadata is the same regardless of roll.
-            first_result = self._resolve_rust_constraint(target_roll=0.0).evaluate(
+            # Get metadata and per-target values from a single fixed roll (0°) to
+            # avoid redundant roll sweep. The geometric values themselves don't
+            # depend on which discrete roll was swept for violation determination.
+            reference_results = self._resolve_rust_constraint(
+                target_roll=0.0
+            ).evaluate_batch(
                 ephemeris,
-                target_ras[0],
-                target_decs[0],
-                times=times,
-                indices=indices,
+                target_ras,
+                target_decs,
+                times,
+                indices,
             )
-            timestamps = self._coerce_timestamps(first_result.timestamp)
-            constraint_name = first_result.constraint_name
+            timestamps = self._coerce_timestamps(reference_results[0].timestamp)
 
             return [
-                self._build_constraint_result(constraint_name, timestamps, row)
-                for row in np.asarray(batch, dtype=bool)
+                self._build_constraint_result(
+                    reference_result.constraint_name,
+                    timestamps,
+                    row,
+                    constraint_values=reference_result.constraint_values,
+                )
+                for reference_result, row in zip(
+                    reference_results, np.asarray(batch, dtype=bool)
+                )
             ]
 
         rust_constraint = self._resolve_rust_constraint(
@@ -580,6 +607,7 @@ class RustConstraintMixin(BaseModel):
                 rust_results[0].constraint_name,
                 swept_timestamps,
                 combined,
+                constraint_values=rust_results[0].constraint_values,
             )
 
         rust_constraint = self._resolve_rust_constraint(
@@ -999,6 +1027,7 @@ class RustConstraintMixin(BaseModel):
             visibility=visibility_windows,
             all_satisfied=rust_result.all_satisfied,
             constraint_name=rust_result.constraint_name,
+            constraint_values=rust_result.constraint_values,
         )
 
     def and_(self, other: ConstraintConfig) -> AndConstraint:
@@ -1830,3 +1859,4 @@ class MovingVisibilityResult(BaseModel):
     visibility: list[VisibilityWindowResult]
     all_satisfied: bool
     constraint_name: str
+    constraint_values: dict[str, list[float]] = Field(default_factory=dict)

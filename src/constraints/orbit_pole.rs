@@ -4,6 +4,7 @@ use crate::utils::vector_math::radec_to_unit_vectors_batch;
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Configuration for Orbit Pole constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -518,6 +519,87 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
         }
 
         Ok(Some(result))
+    }
+
+    fn compute_named_values(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        let (times_filtered,) = extract_time_data!(ephemeris, time_indices);
+
+        let n_targets = target_ras.len();
+        let n_times = times_filtered.len();
+        let mut orbit_pole_angle_deg = Array2::<f64>::zeros((n_targets, n_times));
+
+        let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
+
+        let gcrs_data = ephemeris.data().gcrs.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("GCRS data not available in ephemeris")
+        })?;
+        if gcrs_data.ncols() < 6 {
+            return Ok(HashMap::new());
+        }
+
+        let mut north_pole_directions = Array2::<f64>::zeros((n_times, 3));
+        let mut south_pole_directions = Array2::<f64>::zeros((n_times, 3));
+        for i in 0..n_times {
+            let source_i = if let Some(indices) = time_indices {
+                indices[i]
+            } else {
+                i
+            };
+            let position = [
+                gcrs_data[[source_i, 0]],
+                gcrs_data[[source_i, 1]],
+                gcrs_data[[source_i, 2]],
+            ];
+            let velocity = [
+                gcrs_data[[source_i, 3]],
+                gcrs_data[[source_i, 4]],
+                gcrs_data[[source_i, 5]],
+            ];
+            let (north_pole, south_pole) = self.calculate_orbital_poles(&position, &velocity);
+            north_pole_directions[[i, 0]] = north_pole[0];
+            north_pole_directions[[i, 1]] = north_pole[1];
+            north_pole_directions[[i, 2]] = north_pole[2];
+            south_pole_directions[[i, 0]] = south_pole[0];
+            south_pole_directions[[i, 1]] = south_pole[1];
+            south_pole_directions[[i, 2]] = south_pole[2];
+        }
+
+        for j in 0..n_targets {
+            let target_vec = [
+                target_vectors[[j, 0]],
+                target_vectors[[j, 1]],
+                target_vectors[[j, 2]],
+            ];
+            for i in 0..n_times {
+                let north_pole_vec = [
+                    north_pole_directions[[i, 0]],
+                    north_pole_directions[[i, 1]],
+                    north_pole_directions[[i, 2]],
+                ];
+                let south_pole_vec = [
+                    south_pole_directions[[i, 0]],
+                    south_pole_directions[[i, 1]],
+                    south_pole_directions[[i, 2]],
+                ];
+                let cos_angle_north =
+                    crate::utils::vector_math::dot_product(&target_vec, &north_pole_vec);
+                let cos_angle_south =
+                    crate::utils::vector_math::dot_product(&target_vec, &south_pole_vec);
+                // Nearer pole = larger cosine.
+                let max_cos_angle = cos_angle_north.max(cos_angle_south);
+                orbit_pole_angle_deg[[j, i]] = max_cos_angle.clamp(-1.0, 1.0).acos().to_degrees();
+            }
+        }
+
+        let mut values = HashMap::new();
+        values.insert("orbit_pole_angle_deg".to_string(), orbit_pole_angle_deg);
+        Ok(values)
     }
 
     fn name(&self) -> String {

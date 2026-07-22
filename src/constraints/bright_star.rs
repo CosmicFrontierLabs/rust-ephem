@@ -9,6 +9,7 @@ use ndarray::Array2;
 use pyo3::PyResult;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::f64::consts::PI;
 
 /// Number of roll samples when sweeping all rolls (5° resolution)
@@ -130,6 +131,32 @@ impl BrightStarEvaluator {
             }
         }
         false
+    }
+
+    /// Angular separation (degrees) to the nearest catalog star. Empty catalogs report
+    /// 180° (no star anywhere nearby).
+    fn nearest_star_angle_deg(&self, target_ra_deg: f64, target_dec_deg: f64) -> f64 {
+        let target_dec_rad = target_dec_deg.to_radians();
+        let target_ra_rad = target_ra_deg.to_radians();
+        let (sin_dec, cos_dec) = target_dec_rad.sin_cos();
+        let (sin_ra, cos_ra) = target_ra_rad.sin_cos();
+        let target_unit = [cos_dec * cos_ra, cos_dec * sin_ra, sin_dec];
+
+        let max_cos_sep = self
+            .stars
+            .iter()
+            .map(|star| {
+                target_unit[0] * star.unit[0]
+                    + target_unit[1] * star.unit[1]
+                    + target_unit[2] * star.unit[2]
+            })
+            .fold(f64::NEG_INFINITY, f64::max);
+
+        if max_cos_sep.is_finite() {
+            max_cos_sep.clamp(-1.0, 1.0).acos().to_degrees()
+        } else {
+            180.0
+        }
     }
 
     // ── Polygon helpers ───────────────────────────────────────────────────────
@@ -665,6 +692,42 @@ impl ConstraintEvaluator for BrightStarEvaluator {
                     .collect())
             }
         }
+    }
+
+    fn compute_named_values(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        // Only circle mode has a single natural scalar; polygon mode is roll-swept
+        // and has no canonical angle to report.
+        if !matches!(self.fov, FovDefinition::Circle { .. }) {
+            return Ok(HashMap::new());
+        }
+
+        let all_times = ephemeris.get_times()?;
+        let n_times = time_indices.map(|idx| idx.len()).unwrap_or(all_times.len());
+        let n_targets = target_ras.len();
+
+        // Result is time-invariant (fixed ICRS catalog vs. fixed target direction);
+        // compute once per target and broadcast across times.
+        let nearest_deg: Vec<f64> = target_ras
+            .iter()
+            .zip(target_decs.iter())
+            .map(|(&ra, &dec)| self.nearest_star_angle_deg(ra, dec))
+            .collect();
+
+        let nearest_bright_star_angle_deg =
+            Array2::from_shape_fn((n_targets, n_times), |(j, _)| nearest_deg[j]);
+
+        let mut values = HashMap::new();
+        values.insert(
+            "nearest_bright_star_angle_deg".to_string(),
+            nearest_bright_star_angle_deg,
+        );
+        Ok(values)
     }
 
     fn name(&self) -> String {

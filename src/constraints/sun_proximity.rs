@@ -1,10 +1,14 @@
 /// Sun proximity constraint implementation
-use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
+use super::core::{
+    compute_angle_deg_batch, track_violations, ConstraintConfig, ConstraintEvaluator,
+    ConstraintResult,
+};
 use crate::utils::vector_math::radec_to_unit_vectors_batch;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Configuration for Sun proximity constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -314,6 +318,22 @@ impl ConstraintEvaluator for SunProximityEvaluator {
         }
 
         Ok(result)
+    }
+
+    fn compute_named_values(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        let (_times_filtered, sun_filtered, obs_filtered) =
+            extract_standard_ephemeris_data!(ephemeris, time_indices);
+        let angle_deg =
+            compute_angle_deg_batch(target_ras, target_decs, &sun_filtered, &obs_filtered);
+        let mut values = HashMap::new();
+        values.insert("sun_angle_deg".to_string(), angle_deg);
+        Ok(values)
     }
 
     fn name(&self) -> String {

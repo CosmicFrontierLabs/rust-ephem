@@ -15,6 +15,7 @@ class DummyRustResult:
         self.constraint_name: str = "DummyConstraint"
         self._in_constraint_calls: list[datetime] = []
         self._in_constraint_return: bool = True
+        self.constraint_values: dict[str, list[float]] = {}
 
     def in_constraint(self, time: datetime) -> bool:
         self._in_constraint_calls.append(time)

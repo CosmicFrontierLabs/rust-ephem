@@ -109,6 +109,15 @@ class ConstraintResult:
         ...
 
     @property
+    def constraint_values(self) -> dict[str, list[float]]:
+        """Named continuous values computed during evaluation (e.g. ``sun_angle_deg``).
+
+        One array per key, aligned with ``timestamp``. Empty for constraints that
+        don't expose a natural scalar (e.g. polygon-based constraints).
+        """
+        ...
+
+    @property
     def visibility(self) -> list[VisibilityWindow]:
         """List of time windows when constraint was satisfied (target was visible)."""
         ...
@@ -177,6 +186,15 @@ class MovingBodyResult:
     @property
     def constraint_array(self) -> list[bool]:
         """Boolean array where True indicates constraint violation at that timestamp."""
+        ...
+
+    @property
+    def constraint_values(self) -> dict[str, list[float]]:
+        """Named continuous values computed during evaluation (e.g. ``sun_angle_deg``).
+
+        One array per key, aligned with ``timestamp``. Empty for constraints that
+        don't expose a natural scalar (e.g. polygon-based constraints).
+        """
         ...
 
     @property

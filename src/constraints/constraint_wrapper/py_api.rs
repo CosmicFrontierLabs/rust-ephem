@@ -2148,6 +2148,12 @@ impl PyConstraint {
 
         let all_satisfied = !constraint_vec.iter().any(|&v| v);
 
+        // Compute named continuous values (diagonal: target_i paired with time_i).
+        let values = self.with_ephemeris(bound, |ephem_ref| {
+            self.evaluator
+                .compute_named_values_diagonal(ephem_ref, &ras, &decs)
+        })?;
+
         Ok(MovingBodyResult::new(
             violations,
             all_satisfied,
@@ -2156,7 +2162,8 @@ impl PyConstraint {
             ras,
             decs,
             constraint_vec,
-        ))
+        )
+        .with_constraint_values(values))
     }
 
     /// Get constraint configuration as JSON string

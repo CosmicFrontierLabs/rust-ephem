@@ -3,6 +3,7 @@ use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, Const
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Twilight type for daytime constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,6 +176,26 @@ impl ConstraintEvaluator for DaytimeEvaluator {
         }
 
         Ok(Some(result))
+    }
+
+    fn compute_named_values(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        _target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        let sun_altitudes =
+            crate::utils::celestial::calculate_sun_altitudes_batch_fast(ephemeris, time_indices);
+
+        let n_targets = target_ras.len();
+        let n_times = sun_altitudes.len();
+        let sun_altitude_deg =
+            Array2::from_shape_fn((n_targets, n_times), |(_, t)| sun_altitudes[t]);
+
+        let mut values = HashMap::new();
+        values.insert("sun_altitude_deg".to_string(), sun_altitude_deg);
+        Ok(values)
     }
 
     fn name(&self) -> String {

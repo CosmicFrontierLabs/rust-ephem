@@ -13,6 +13,7 @@ use crate::utils::time_utils::{python_datetime_to_utc, utc_to_python_datetime};
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::prelude::*;
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::OnceLock;
 
@@ -100,6 +101,10 @@ pub struct ConstraintResult {
     /// Constraint name/description
     #[pyo3(get)]
     pub constraint_name: String,
+    /// Named continuous values computed during evaluation (e.g. `sun_angle_deg`),
+    /// one array per key, aligned with `times`/`timestamp`.
+    #[pyo3(get)]
+    pub constraint_values: HashMap<String, Vec<f64>>,
     /// Evaluation times as Rust DateTime<Utc>, not directly exposed to Python
     pub times: Vec<DateTime<Utc>>,
     /// Step size in seconds between timestamps (for O(1) index lookup)
@@ -130,12 +135,19 @@ impl ConstraintResult {
             violations,
             all_satisfied,
             constraint_name,
+            constraint_values: HashMap::new(),
             times,
             step_seconds,
             timestamp_cache: OnceLock::new(),
             constraint_vec_cache: OnceLock::new(),
             constraint_array_cache: OnceLock::new(),
         }
+    }
+
+    /// Attach named continuous values computed during evaluation.
+    pub fn with_constraint_values(mut self, constraint_values: HashMap<String, Vec<f64>>) -> Self {
+        self.constraint_values = constraint_values;
+        self
     }
 }
 
@@ -368,6 +380,10 @@ pub struct MovingBodyResult {
     /// Declinations in degrees for each timestamp
     #[pyo3(get)]
     pub decs: Vec<f64>,
+    /// Named continuous values computed during evaluation (e.g. `sun_angle_deg`),
+    /// one array per key, aligned with `times`/`timestamp`.
+    #[pyo3(get)]
+    pub constraint_values: HashMap<String, Vec<f64>>,
     /// Evaluation times as Rust DateTime<Utc>, not directly exposed to Python
     pub times: Vec<DateTime<Utc>>,
     /// Step size in seconds between timestamps (for O(1) index lookup)
@@ -399,10 +415,17 @@ impl MovingBodyResult {
             constraint_name,
             ras,
             decs,
+            constraint_values: HashMap::new(),
             times,
             step_seconds,
             constraint_vec,
         }
+    }
+
+    /// Attach named continuous values computed during evaluation.
+    pub fn with_constraint_values(mut self, constraint_values: HashMap<String, Vec<f64>>) -> Self {
+        self.constraint_values = constraint_values;
+        self
     }
 }
 
@@ -561,6 +584,44 @@ pub trait ConstraintEvaluator: Send + Sync {
         target_dec: f64,
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult>;
+
+    /// Compute named continuous values (e.g. `sun_angle_deg`) for each target/time,
+    /// mirroring the geometry already computed by `in_constraint_batch` before it gets
+    /// thresholded into a boolean. Called once per `evaluate()`/`evaluate_batch()` call
+    /// (never inside a roll-sweep loop), so this can afford to recompute the underlying
+    /// scalar rather than sharing state with the boolean path.
+    ///
+    /// # Returns
+    /// Map from value name to an (M x N) array (targets x times), matching the shape of
+    /// `in_constraint_batch`. Default: no named values (constraint doesn't expose one).
+    fn compute_named_values(
+        &self,
+        _ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        _target_ras: &[f64],
+        _target_decs: &[f64],
+        _time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        Ok(HashMap::new())
+    }
+
+    /// Diagonal variant of `compute_named_values` for moving-body evaluation: target_i
+    /// paired with time_i only. Default falls back to the full batch and extracts the
+    /// diagonal, mirroring `in_constraint_batch_diagonal`'s default.
+    fn compute_named_values_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<HashMap<String, Vec<f64>>> {
+        let n = target_ras.len();
+        let time_indices: Vec<usize> = (0..n).collect();
+        let full =
+            self.compute_named_values(ephemeris, target_ras, target_decs, Some(&time_indices))?;
+        Ok(full
+            .into_iter()
+            .map(|(key, arr)| (key, (0..n).map(|i| arr[[i, i]]).collect()))
+            .collect())
+    }
 
     /// Check if targets are in-constraint for multiple RA/Dec positions (vectorized)
     ///
@@ -892,6 +953,72 @@ macro_rules! impl_proximity_evaluator {
             }
         }
     };
+}
+
+/// Compute the angular separation (degrees) between each target direction and a
+/// celestial body's apparent position (as seen from the observer), for every
+/// target/time combination. Mirrors the cosine-based geometry already computed
+/// inline by each proximity constraint's `in_constraint_batch`, minus the
+/// thresholding — used to populate `compute_named_values` (e.g. `sun_angle_deg`,
+/// `moon_angle_deg`, `body_angle_deg`) without duplicating that math.
+///
+/// # Returns
+/// (M x N) array (targets x times) of angles in degrees.
+pub(crate) fn compute_angle_deg_batch(
+    target_ras: &[f64],
+    target_decs: &[f64],
+    body_positions: &Array2<f64>,
+    observer_positions: &Array2<f64>,
+) -> Array2<f64> {
+    let n_targets = target_ras.len();
+    let n_times = body_positions.nrows();
+    let target_vectors =
+        crate::utils::vector_math::radec_to_unit_vectors_batch(target_ras, target_decs);
+
+    let mut result = Array2::<f64>::zeros((n_targets, n_times));
+
+    for t in 0..n_times {
+        let body_pos = [
+            body_positions[[t, 0]],
+            body_positions[[t, 1]],
+            body_positions[[t, 2]],
+        ];
+        let obs_pos = [
+            observer_positions[[t, 0]],
+            observer_positions[[t, 1]],
+            observer_positions[[t, 2]],
+        ];
+
+        let body_rel = [
+            body_pos[0] - obs_pos[0],
+            body_pos[1] - obs_pos[1],
+            body_pos[2] - obs_pos[2],
+        ];
+        let body_dist =
+            (body_rel[0] * body_rel[0] + body_rel[1] * body_rel[1] + body_rel[2] * body_rel[2])
+                .sqrt();
+        let body_unit = [
+            body_rel[0] / body_dist,
+            body_rel[1] / body_dist,
+            body_rel[2] / body_dist,
+        ];
+
+        for target_idx in 0..n_targets {
+            let target_vec = [
+                target_vectors[[target_idx, 0]],
+                target_vectors[[target_idx, 1]],
+                target_vectors[[target_idx, 2]],
+            ];
+
+            let cos_angle = target_vec[0] * body_unit[0]
+                + target_vec[1] * body_unit[1]
+                + target_vec[2] * body_unit[2];
+
+            result[[target_idx, t]] = cos_angle.clamp(-1.0, 1.0).acos().to_degrees();
+        }
+    }
+
+    result
 }
 
 // Helper function for tracking violation windows
