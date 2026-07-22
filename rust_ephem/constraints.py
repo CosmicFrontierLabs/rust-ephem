@@ -15,10 +15,18 @@ from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
 import numpy as np
 import numpy.typing as npt
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    TypeAdapter,
+    model_validator,
+)
 
 import rust_ephem
 
+from ._rust_ephem import ConstraintResult as _RustConstraintResult
 from .ephemeris import Ephemeris
 
 #: Default number of roll-angle samples used when sweeping spacecraft roll in
@@ -57,26 +65,29 @@ class ConstraintResult(BaseModel):
     )
     constraint_name: str = Field(..., description="Name/description of the constraint")
 
-    # Store reference to Rust result for lazy access to timestamps/constraint_array
+    # Backing store for lazy access to timestamps/constraint_array/visibility, set at
+    # construction time. Either a live Rust ConstraintResult (single-evaluation case)
+    # or precomputed swept arrays (roll-sweep case) is populated, never both.
+    _rust_result_ref: _RustConstraintResult | None = PrivateAttr(default=None)
+    _swept_timestamps: list[datetime] | None = PrivateAttr(default=None)
+    _swept_array: list[bool] | None = PrivateAttr(default=None)
+
     def __init__(self, **data: Any) -> None:
+        rust_result_ref = data.pop("_rust_result_ref", None)
+        swept_timestamps = data.pop("_swept_timestamps", None)
+        swept_array = data.pop("_swept_array", None)
         super().__init__(**data)
-        self._rust_result_ref = data.get("_rust_result_ref", None)
-        # Populated when evaluate() sweeps all roll angles instead of a single Rust result.
-        self._swept_timestamps: list[datetime] | None = data.get(
-            "_swept_timestamps", None
-        )
-        self._swept_array: list[bool] | None = data.get("_swept_array", None)
+        self._rust_result_ref = rust_result_ref
+        self._swept_timestamps = swept_timestamps
+        self._swept_array = swept_array
 
     @property
     def timestamps(self) -> npt.NDArray[np.datetime64] | list[datetime]:
         """Evaluation timestamps (lazily accessed from Rust result)."""
         if self._swept_timestamps is not None:
             return self._swept_timestamps
-        if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
-            return cast(
-                npt.NDArray[np.datetime64] | list[datetime],
-                self._rust_result_ref.timestamp,
-            )
+        if self._rust_result_ref is not None:
+            return self._rust_result_ref.timestamp
         return []
 
     @property
@@ -92,17 +103,15 @@ class ConstraintResult(BaseModel):
         """
         if self._swept_array is not None:
             return self._swept_array
-        if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
-            return cast(list[bool], self._rust_result_ref.constraint_array)
+        if self._rust_result_ref is not None:
+            return self._rust_result_ref.constraint_array
         return []
 
     @property
     def visibility(self) -> list["rust_ephem.VisibilityWindow"]:
         """Visibility windows when the constraint is satisfied (target visible)."""
-        if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
-            return cast(
-                list["rust_ephem.VisibilityWindow"], self._rust_result_ref.visibility
-            )
+        if self._rust_result_ref is not None:
+            return self._rust_result_ref.visibility
         return []
 
     def total_violation_duration(self) -> float:
@@ -134,8 +143,8 @@ class ConstraintResult(BaseModel):
                 return self._swept_array[idx]
             except ValueError:
                 raise ValueError(f"Time {time} not found in evaluated timestamps")
-        if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
-            return cast(bool, self._rust_result_ref.in_constraint(time))
+        if self._rust_result_ref is not None:
+            return self._rust_result_ref.in_constraint(time)
         raise ValueError(
             "ConstraintResult has no evaluated timestamps (was not created from evaluate())"
         )
