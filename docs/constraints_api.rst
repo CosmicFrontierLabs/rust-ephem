@@ -14,10 +14,10 @@ Overview
 
 The constraint system provides two complementary APIs:
 
-1. **Rust-backed Constraint class** — Low-level interface with factory methods
+1. **Rust-backed Constraint class**: Low-level interface with factory methods
    for creating constraints directly in Rust. Faster for simple use cases.
 
-2. **Pydantic configuration models** — Type-safe Python models that serialize
+2. **Pydantic configuration models**: Type-safe Python models that serialize
    to/from JSON and support operator-based composition. Recommended for most users.
 
 Both APIs can be used interchangeably and produce identical results.
@@ -128,7 +128,7 @@ Factory Methods
 
    Create a generic solar system body avoidance constraint.
 
-   :param str body: Body identifier — NAIF ID or name (e.g., "Jupiter", "499", "Mars")
+   :param str body: Body identifier - NAIF ID or name (e.g., "Jupiter", "499", "Mars")
    :param float min_angle: Minimum allowed angular separation in degrees (0-180)
    :param float max_angle: Maximum allowed angular separation in degrees (optional)
    :returns: A new Constraint instance
@@ -538,7 +538,8 @@ Evaluation Methods
       violated only when **every** roll is blocked (no valid spacecraft orientation exists).
       Pass an explicit float to evaluate at a fixed roll.
    :type target_roll: float or None
-   :returns: ConstraintResult containing violation windows
+   :returns: ConstraintResult containing violation windows and computed
+      :ref:`constraint_values <constraint-values>`
    :rtype: ConstraintResult
    :raises ValueError: If both times and indices are provided, or if times/indices not found
    :raises TypeError: If ephemeris type is not supported
@@ -627,7 +628,8 @@ Evaluation Methods
       Must be a list of the same length as ``target_ras``. Pass ``None`` to evaluate
       without any fixed spacecraft roll.
    :type target_rolls: list[float] or None
-   :returns: List of :class:`ConstraintResult` objects, one per input target
+   :returns: List of :class:`ConstraintResult` objects, one per input target, each with
+      its own computed :ref:`constraint_values <constraint-values>`
    :rtype: list[ConstraintResult]
 
 .. py:method:: Constraint.in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
@@ -793,9 +795,9 @@ Sun proximity constraint ensuring target maintains minimum angular separation fr
 
    **Attributes:**
 
-   - ``type`` — Always ``"sun"`` (Literal)
-   - ``min_angle`` — Minimum angle from Sun in degrees
-   - ``max_angle`` — Maximum angle from Sun in degrees (or None)
+   - ``type``: Always ``"sun"`` (Literal)
+   - ``min_angle``: Minimum angle from Sun in degrees
+   - ``max_angle``: Maximum angle from Sun in degrees (or None)
 
    **Example:**
 
@@ -821,9 +823,9 @@ Moon proximity constraint ensuring target maintains minimum angular separation f
 
    **Attributes:**
 
-   - ``type`` — Always ``"moon"`` (Literal)
-   - ``min_angle`` — Minimum angle from Moon in degrees
-   - ``max_angle`` — Maximum angle from Moon in degrees (or None)
+   - ``type``: Always ``"moon"`` (Literal)
+   - ``min_angle``: Minimum angle from Moon in degrees
+   - ``max_angle``: Maximum angle from Moon in degrees (or None)
 
    **Example:**
 
@@ -847,11 +849,11 @@ Earth limb avoidance constraint ensuring target is above Earth's horizon/limb.
 
    **Attributes:**
 
-   - ``type`` — Always ``"earth_limb"`` (Literal)
-   - ``min_angle`` — Minimum angle from Earth's limb in degrees
-   - ``max_angle`` — Maximum angle from Earth's limb in degrees (or None)
-   - ``include_refraction`` — Whether to include atmospheric refraction
-   - ``horizon_dip`` — Whether to include geometric horizon dip
+   - ``type``: Always ``"earth_limb"`` (Literal)
+   - ``min_angle``: Minimum angle from Earth's limb in degrees
+   - ``max_angle``: Maximum angle from Earth's limb in degrees (or None)
+   - ``include_refraction``: Whether to include atmospheric refraction
+   - ``horizon_dip``: Whether to include geometric horizon dip
 
    **Example:**
 
@@ -882,10 +884,10 @@ Generic solar system body proximity constraint.
 
    **Attributes:**
 
-   - ``type`` — Always ``"body"`` (Literal)
-   - ``body`` — Name of the solar system body
-   - ``min_angle`` — Minimum angle from body in degrees
-   - ``max_angle`` — Maximum angle from body in degrees (or None)
+   - ``type``: Always ``"body"`` (Literal)
+   - ``body``: Name of the solar system body
+   - ``min_angle``: Minimum angle from body in degrees
+   - ``max_angle``: Maximum angle from body in degrees (or None)
 
    **Example:**
 
@@ -912,8 +914,8 @@ Results are undefined for other centers.
 
    **Attributes:**
 
-   - ``type`` — Always ``"eclipse"`` (Literal)
-   - ``umbra_only`` — Whether only umbra counts as eclipse
+   - ``type``: Always ``"eclipse"`` (Literal)
+   - ``umbra_only``: Whether only umbra counts as eclipse
 
    **Example:**
 
@@ -939,9 +941,9 @@ Airmass constraint limiting observations based on atmospheric path length.
 
    **Attributes:**
 
-   - ``type`` — Always ``"airmass"`` (Literal)
-   - ``max_airmass`` — Maximum allowed airmass
-   - ``min_airmass`` — Minimum allowed airmass (or None)
+   - ``type``: Always ``"airmass"`` (Literal)
+   - ``max_airmass``: Maximum allowed airmass
+   - ``min_airmass``: Minimum allowed airmass (or None)
 
    Airmass represents the optical path length through Earth's atmosphere:
 
@@ -972,8 +974,8 @@ Daytime constraint preventing observations during daylight hours.
 
    **Attributes:**
 
-   - ``type`` — Always ``"daytime"`` (Literal)
-   - ``twilight`` — Twilight definition
+   - ``type``: Always ``"daytime"`` (Literal)
+   - ``twilight``: Twilight definition
 
    Twilight definitions:
 
@@ -1010,13 +1012,13 @@ Moon phase constraint with optional distance filtering.
 
    **Attributes:**
 
-   - ``type`` — Always ``"moon_phase"`` (Literal)
-   - ``max_illumination`` — Maximum allowed Moon illumination
-   - ``min_illumination`` — Minimum allowed Moon illumination (or None)
-   - ``min_distance`` — Minimum Moon distance from target (or None)
-   - ``max_distance`` — Maximum Moon distance from target (or None)
-   - ``enforce_when_below_horizon`` — Whether to enforce when Moon is below horizon
-   - ``moon_visibility`` — Moon visibility requirement
+   - ``type``: Always ``"moon_phase"`` (Literal)
+   - ``max_illumination``: Maximum allowed Moon illumination
+   - ``min_illumination``: Minimum allowed Moon illumination (or None)
+   - ``min_distance``: Minimum Moon distance from target (or None)
+   - ``max_distance``: Maximum Moon distance from target (or None)
+   - ``enforce_when_below_horizon``: Whether to enforce when Moon is below horizon
+   - ``moon_visibility``: Moon visibility requirement
 
    Moon illumination ranges from 0.0 (new moon) to 1.0 (full moon).
 
@@ -1047,8 +1049,8 @@ South Atlantic Anomaly constraint with polygon-defined region.
 
    **Attributes:**
 
-   - ``type`` — Always ``"saa"`` (Literal)
-   - ``polygon`` — List of (longitude, latitude) pairs defining the region boundary
+   - ``type``: Always ``"saa"`` (Literal)
+   - ``polygon``: List of (longitude, latitude) pairs defining the region boundary
 
    The polygon should be defined as a list of (longitude, latitude) coordinate pairs
    in degrees, defining the boundary of the region. The polygon is assumed to be
@@ -1090,12 +1092,12 @@ Altitude/Azimuth constraint restricting observations based on local horizon coor
 
    **Attributes:**
 
-   - ``type`` — Always ``"alt_az"`` (Literal)
-   - ``min_altitude`` — Minimum allowed altitude in degrees
-   - ``max_altitude`` — Maximum allowed altitude in degrees (optional)
-   - ``min_azimuth`` — Minimum allowed azimuth in degrees (optional)
-   - ``max_azimuth`` — Maximum allowed azimuth in degrees (optional)
-   - ``polygon`` — List of (altitude, azimuth) pairs defining allowed region (optional)
+   - ``type``: Always ``"alt_az"`` (Literal)
+   - ``min_altitude``: Minimum allowed altitude in degrees
+   - ``max_altitude``: Maximum allowed altitude in degrees (optional)
+   - ``min_azimuth``: Minimum allowed azimuth in degrees (optional)
+   - ``max_azimuth``: Maximum allowed azimuth in degrees (optional)
+   - ``polygon``: List of (altitude, azimuth) pairs defining allowed region (optional)
 
    **Coordinate System:**
 
@@ -1149,9 +1151,9 @@ Orbit RAM direction constraint ensuring target maintains minimum angular separat
 
    **Attributes:**
 
-   - ``type`` — Always ``"orbit_ram"`` (Literal)
-   - ``min_angle`` — Minimum angle from RAM direction in degrees
-   - ``max_angle`` — Maximum angle from RAM direction in degrees (or None)
+   - ``type``: Always ``"orbit_ram"`` (Literal)
+   - ``min_angle``: Minimum angle from RAM direction in degrees
+   - ``max_angle``: Maximum angle from RAM direction in degrees (or None)
 
    **Requirements:**
 
@@ -1181,9 +1183,9 @@ Orbit pole direction constraint ensuring target maintains minimum angular separa
 
    **Attributes:**
 
-   - ``type`` — Always ``"orbit_pole"`` (Literal)
-   - ``min_angle`` — Minimum angle from orbital pole in degrees
-   - ``max_angle`` — Maximum angle from orbital pole in degrees (or None)
+   - ``type``: Always ``"orbit_pole"`` (Literal)
+   - ``min_angle``: Minimum angle from orbital pole in degrees
+   - ``max_angle``: Maximum angle from orbital pole in degrees (or None)
 
    **Requirements:**
 
@@ -1204,7 +1206,7 @@ Orbit pole direction constraint ensuring target maintains minimum angular separa
 BrightStarConstraint
 ^^^^^^^^^^^^^^^^^^^^
 
-Bright star avoidance constraint — violated when any catalog star falls within
+Bright star avoidance constraint - violated when any catalog star falls within
 the telescope field of view.  Useful for preventing stray light or detector
 saturation from bright stars.
 
@@ -1214,9 +1216,9 @@ catalog.
 
 Two FoV shapes are supported:
 
-- **Circular** (``fov_radius``) — roll-independent; a star is inside whenever
+- **Circular** (``fov_radius``): roll-independent; a star is inside whenever
   its angular separation from the boresight is less than ``fov_radius``.
-- **Polygon** (``fov_polygon``) — the polygon is defined in instrument frame
+- **Polygon** (``fov_polygon``): the polygon is defined in instrument frame
   coordinates and rotates with spacecraft roll.  At roll = 0° the +v axis
   points north and the +u axis points east on the sky.  When ``roll_deg`` is
   ``None``, all roll angles are swept (72 samples, ≈5° resolution) and the
@@ -1230,22 +1232,22 @@ Two FoV shapes are supported:
        At roll = 0° the +u axis points east and the +v axis points north.
        Mutually exclusive with ``fov_radius``.  Minimum 3 vertices.
    :param float roll_deg: Position angle (degrees east of north) of the instrument +v axis.
-       ``None`` (default) sweeps all roll angles — the constraint is violated only
+       ``None`` (default) sweeps all roll angles - the constraint is violated only
        when no clear roll exists.  Only meaningful with ``fov_polygon``.
 
    **Attributes:**
 
-   - ``type`` — Always ``"bright_star"`` (Literal)
-   - ``stars`` — List of ``(ra_deg, dec_deg)`` catalog entries
-   - ``fov_radius`` — Circular FoV radius in degrees (or ``None``)
-   - ``fov_polygon`` — Polygon vertices in instrument frame (or ``None``)
-   - ``roll_deg`` — Fixed roll angle (or ``None`` for roll sweep)
+   - ``type``: Always ``"bright_star"`` (Literal)
+   - ``stars``: List of ``(ra_deg, dec_deg)`` catalog entries
+   - ``fov_radius``: Circular FoV radius in degrees (or ``None``)
+   - ``fov_polygon``: Polygon vertices in instrument frame (or ``None``)
+   - ``roll_deg``: Fixed roll angle (or ``None`` for roll sweep)
 
    **Coordinate frame for polygon vertices:**
 
    Vertices are in degrees relative to the boresight in the *instrument frame*:
 
-   - ``u = 0, v = 0`` — boresight
+   - ``u = 0, v = 0``: boresight
    - At roll = 0°: +u points east, +v points north
    - Roll is the position angle of +v from north, measured east of north
 
@@ -1258,7 +1260,7 @@ Two FoV shapes are supported:
 
       v = \Delta_\text{east} \sin\theta + \Delta_\text{north} \cos\theta
 
-   **Example — circular FoV:**
+   **Example - circular FoV:**
 
    .. code-block:: python
 
@@ -1274,7 +1276,7 @@ Two FoV shapes are supported:
       c = Constraint.bright_star(stars=stars, fov_radius=0.5)
       result = c.evaluate(ephem, target_ra, target_dec)
 
-   **Example — polygon FoV with roll sweep:**
+   **Example - polygon FoV with roll sweep:**
 
    .. code-block:: python
 
@@ -1349,7 +1351,7 @@ Catalog Utilities
 AndConstraint
 ^^^^^^^^^^^^^
 
-Logical AND combination — satisfied only if ALL sub-constraints are satisfied.
+Logical AND combination - satisfied only if ALL sub-constraints are satisfied.
 
 .. py:class:: AndConstraint(constraints)
 
@@ -1357,8 +1359,8 @@ Logical AND combination — satisfied only if ALL sub-constraints are satisfied.
 
    **Attributes:**
 
-   - ``type`` — Always ``"and"`` (Literal)
-   - ``constraints`` — List of constraints to AND together
+   - ``type``: Always ``"and"`` (Literal)
+   - ``constraints``: List of constraints to AND together
 
    **Example:**
 
@@ -1374,7 +1376,7 @@ Logical AND combination — satisfied only if ALL sub-constraints are satisfied.
 OrConstraint
 ^^^^^^^^^^^^
 
-Logical OR combination — satisfied if ANY sub-constraint is satisfied.
+Logical OR combination - satisfied if ANY sub-constraint is satisfied.
 
 .. py:class:: OrConstraint(constraints)
 
@@ -1382,8 +1384,8 @@ Logical OR combination — satisfied if ANY sub-constraint is satisfied.
 
    **Attributes:**
 
-   - ``type`` — Always ``"or"`` (Literal)
-   - ``constraints`` — List of constraints to OR together
+   - ``type``: Always ``"or"`` (Literal)
+   - ``constraints``: List of constraints to OR together
 
    **Example:**
 
@@ -1399,7 +1401,7 @@ Logical OR combination — satisfied if ANY sub-constraint is satisfied.
 XorConstraint
 ^^^^^^^^^^^^^
 
-Logical XOR combination — violated when EXACTLY ONE sub-constraint is violated.
+Logical XOR combination - violated when EXACTLY ONE sub-constraint is violated.
 
 .. py:class:: XorConstraint(constraints)
 
@@ -1412,8 +1414,8 @@ Logical XOR combination — violated when EXACTLY ONE sub-constraint is violated
 
    **Attributes:**
 
-   - ``type`` — Always ``"xor"`` (Literal)
-   - ``constraints`` — List of constraints (minimum 2) evaluated with XOR semantics
+   - ``type``: Always ``"xor"`` (Literal)
+   - ``constraints``: List of constraints (minimum 2) evaluated with XOR semantics
 
    **Example:**
 
@@ -1429,7 +1431,7 @@ Logical XOR combination — violated when EXACTLY ONE sub-constraint is violated
 NotConstraint
 ^^^^^^^^^^^^^
 
-Logical NOT — inverts a constraint (satisfied when inner constraint is violated).
+Logical NOT - inverts a constraint (satisfied when inner constraint is violated).
 
 .. py:class:: NotConstraint(constraint)
 
@@ -1437,8 +1439,8 @@ Logical NOT — inverts a constraint (satisfied when inner constraint is violate
 
    **Attributes:**
 
-   - ``type`` — Always ``"not"`` (Literal)
-   - ``constraint`` — Constraint to negate
+   - ``type``: Always ``"not"`` (Literal)
+   - ``constraint``: Constraint to negate
 
    **Example:**
 
@@ -1465,16 +1467,16 @@ composition:
      - Description
    * - ``a & b``
      - ``AndConstraint([a, b])``
-     - Logical AND — both must be satisfied
+     - Logical AND: both must be satisfied
    * - ``a | b``
      - ``OrConstraint([a, b])``
-     - Logical OR — at least one must be satisfied
+     - Logical OR: at least one must be satisfied
    * - ``a ^ b``
      - ``XorConstraint([a, b])``
-     - Logical XOR — violated when exactly one is violated
+     - Logical XOR: violated when exactly one is violated
    * - ``~a``
      - ``NotConstraint(a)``
-     - Logical NOT — inverts the constraint
+     - Logical NOT: inverts the constraint
 
 **Example:**
 
@@ -1531,7 +1533,8 @@ All Pydantic constraint models inherit these methods:
       and the constraint is roll-dependent.  Default
       :data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES` (360 ≈ 1° resolution).
       Ignored when ``target_roll`` is given or no pitch/yaw offset is present.
-   :returns: ConstraintResult containing violation windows
+   :returns: ConstraintResult containing violation windows and computed
+      :ref:`constraint_values <constraint-values>`
    :rtype: ConstraintResult
 
 .. py:method:: evaluate_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
@@ -1554,7 +1557,8 @@ All Pydantic constraint models inherit these methods:
    :param int n_roll_samples: Number of roll angles to sweep when a target has ``target_roll=None``
       and the constraint is roll-dependent. Default
       :data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES` (360 ≈ 1° resolution).
-   :returns: List of ``ConstraintResult`` objects, one per input target
+   :returns: List of ``ConstraintResult`` objects, one per input target, each with
+      its own computed :ref:`constraint_values <constraint-values>`
    :rtype: list[ConstraintResult]
 
 .. py:method:: in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
@@ -1729,12 +1733,15 @@ Result of constraint evaluation containing all violation information.
 
    **Attributes:**
 
-   - ``violations`` (list[ConstraintViolation]) — List of violation time windows
-   - ``all_satisfied`` (bool) — True if constraint was satisfied for entire time range
-   - ``constraint_name`` (str) — Name/description of the constraint
-   - ``timestamps`` (numpy.ndarray | list[datetime]) — Evaluation times (cached, lazy)
-   - ``constraint_array`` (list[bool]) — Boolean array where True = violated (cached, lazy)
-   - ``visibility`` (list[VisibilityWindow]) — Contiguous windows when target is visible
+   - ``violations`` (list[ConstraintViolation]): List of violation time windows
+   - ``all_satisfied`` (bool): True if constraint was satisfied for entire time range
+   - ``constraint_name`` (str): Name/description of the constraint
+   - ``timestamps`` (numpy.ndarray | list[datetime]): Evaluation times (cached, lazy)
+   - ``constraint_array`` (list[bool]): Boolean array where True = violated (cached, lazy)
+   - ``constraint_values`` (dict[str, list[float]]): Named continuous values computed
+     during evaluation (e.g. ``sun_angle_deg``), one array per key, aligned with
+     ``timestamps``. See :ref:`constraint-values` below.
+   - ``visibility`` (list[VisibilityWindow]): Contiguous windows when target is visible
 
    **Methods:**
 
@@ -1773,6 +1780,110 @@ Result of constraint evaluation containing all violation information.
            if not violated:
               print(f"Target visible at {time}")
 
+      # Inspect the underlying continuous value(s) the constraint thresholds
+      print(result.constraint_values["sun_angle_deg"][:5])
+
+.. _constraint-values:
+
+Constraint Values
+^^^^^^^^^^^^^^^^^
+
+Most constraints compute a continuous quantity (an angle, an airmass, an
+illumination fraction, ...) and then threshold it against a configured limit to
+decide violation. ``result.constraint_values`` exposes that underlying number
+under an obvious key name, so you can inspect *why* a constraint was violated
+(or how close it came to being violated) without re-deriving the geometry
+yourself.
+
+``constraint_values`` is a ``dict[str, list[float]]``: one array per named
+quantity, aligned index-for-index with ``result.timestamps``. It is populated
+by :py:meth:`evaluate`, :py:meth:`evaluate_batch`, and
+:py:meth:`evaluate_moving_body` - **not** by :py:meth:`in_constraint_batch` or
+:py:meth:`in_constraint`, which stay on the fast boolean-only path.
+
+**Key names by constraint type:**
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 35 35
+
+   * - Constraint
+     - Key(s)
+     - Notes
+   * - ``SunConstraint``
+     - ``sun_angle_deg``
+     -
+   * - ``MoonConstraint``
+     - ``moon_angle_deg``
+     -
+   * - ``BodyConstraint``
+     - ``body_angle_deg``
+     - Circle mode only (``min_angle``); omitted in ``fov_polygon`` mode
+   * - ``EclipseConstraint``
+     - ``eclipse_depth_frac``
+     - 0 = fully sunlit, 1 = shadow-axis center, smooth through the
+       umbra/penumbra boundary
+   * - ``AirmassConstraint``
+     - ``airmass``
+     -
+   * - ``AltAzConstraint``
+     - ``altitude_deg``, ``azimuth_deg``
+     -
+   * - ``DaytimeConstraint``
+     - ``sun_altitude_deg``
+     -
+   * - ``MoonPhaseConstraint``
+     - ``moon_illumination_frac``, ``moon_distance_deg``
+     -
+   * - ``OrbitPoleConstraint``
+     - ``orbit_pole_angle_deg``
+     - Angle to the nearer of the north/south orbital pole
+   * - ``OrbitRamConstraint``
+     - ``orbit_ram_angle_deg``
+     -
+   * - ``EarthLimbConstraint``
+     - ``earth_limb_angle_deg``
+     -
+   * - ``BrightStarConstraint``
+     - ``nearest_bright_star_angle_deg``
+     - Circle mode only (``fov_radius``); omitted in ``fov_polygon`` mode
+   * - ``SolarRollConstraint``
+     - ``solar_optimal_roll_deg``
+     - The computed optimal roll itself: meaningful whether ``roll_deg`` is
+       fixed or swept
+   * - ``SAAConstraint``
+     - *(none)*
+     - Pure polygon membership has no natural scalar to report
+
+**Combinators namespace child keys.** ``AndConstraint``, ``OrConstraint``,
+``XorConstraint``, and ``AtLeastConstraint`` merge every child's
+``constraint_values`` under a short prefix derived from the child's
+constraint type, so composite constraints don't lose per-child detail or
+silently collide on identical key names:
+
+.. code-block:: python
+
+   from rust_ephem.constraints import SunConstraint, MoonConstraint
+
+   combined = SunConstraint(min_angle=45.0) & MoonConstraint(min_angle=10.0)
+   result = combined.evaluate(ephem, target_ra=83.63, target_dec=22.01)
+
+   print(sorted(result.constraint_values.keys()))
+   # ['moon.moon_angle_deg', 'sun.sun_angle_deg']
+
+If two children share the same type (e.g. ``AND`` of two ``BodyConstraint``
+instances for different bodies), the second and later occurrences get a
+numeric suffix: ``body.body_angle_deg``, ``body_2.body_angle_deg``, ....
+``NotConstraint`` has a single child and passes its values straight through
+unprefixed; ``.boresight_offset(...)`` also has a single child and reports
+that child's values evaluated at the rotated direction, unprefixed.
+
+**Roll-swept evaluation.** When ``target_roll=None`` and the constraint is
+roll-dependent, ``evaluate()``/``evaluate_batch()`` sweep spacecraft roll
+internally to decide violation, but ``constraint_values`` is always sourced
+from the roll = 0° evaluation - the geometric value itself doesn't depend on
+which discrete roll was swept for violation determination.
+
 ConstraintViolation
 ^^^^^^^^^^^^^^^^^^^
 
@@ -1782,10 +1893,10 @@ Information about a specific constraint violation time window.
 
    **Attributes:**
 
-   - ``start_time`` (datetime) — Start time of violation window
-   - ``end_time`` (datetime) — End time of violation window
-   - ``max_severity`` (float) — Maximum severity of violation (0.0 = just violated, 1.0+ = severe)
-   - ``description`` (str) — Human-readable description of the violation
+   - ``start_time`` (datetime): Start time of violation window
+   - ``end_time`` (datetime): End time of violation window
+   - ``max_severity`` (float): Maximum severity of violation (0.0 = just violated, 1.0+ = severe)
+   - ``description`` (str): Human-readable description of the violation
 
    **Example:**
 
@@ -1805,9 +1916,9 @@ Time window when the observation target is not constrained (visible).
 
    **Attributes:**
 
-   - ``start_time`` (datetime) — Start time of visibility window
-   - ``end_time`` (datetime) — End time of visibility window
-   - ``duration_seconds`` (float) — Duration of the window in seconds (computed property)
+   - ``start_time`` (datetime): Start time of visibility window
+   - ``end_time`` (datetime): End time of visibility window
+   - ``duration_seconds`` (float): Duration of the window in seconds (computed property)
 
    **Example:**
 
@@ -1881,6 +1992,7 @@ Time window when the observation target is not constrained (visible).
       print(result.constraint_array[0:5])              # per-sample satisfied flags
       print(len(result.visibility))                # merged visibility windows
       print(result.visibility)
+      print(result.constraint_values["sun_angle_deg"][0:5])  # underlying angle per sample
 
 
    Example (explicit RA/Dec arrays)
@@ -1913,8 +2025,9 @@ Time window when the observation target is not constrained (visible).
      body lookup, call ``ephemeris.get_body(body, spice_kernel="path_or_url", use_horizons=True)`` (local file or URL). Downloads
      are cached under ``~/.cache/rust_ephem``; reuse the cached path to avoid re-fetching.
    * If you already have a planetary kernel on disk, point ``spice_kernel`` at that path; this does not affect
-     telescope/observer geometry — only body positions.
+     telescope/observer geometry - only body positions.
    * Use ``use_horizons=True`` for bodies not available in your SPICE kernels; JPL Horizons covers all major and many minor solar system bodies.
+   * The returned result also carries ``constraint_values``: see :ref:`constraint-values`.
 
 
 Type Aliases

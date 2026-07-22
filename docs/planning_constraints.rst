@@ -119,6 +119,57 @@ Working with Results
         if is_satisfied:
             print(f"Visible at {result.timestamp[i]}")
 
+Inspecting the Underlying Constraint Values
+--------------------------------------------
+
+Most constraints compute a continuous quantity - an angle, an airmass, an
+illumination fraction - and threshold it against a configured limit to decide
+violation. ``result.constraint_values`` exposes that number directly, under an
+obvious name such as ``sun_angle_deg``, so you can see *why* a constraint was
+violated (or how close it came to it) without recomputing the geometry
+yourself.
+
+.. code-block:: python
+
+    sun_constraint = SunConstraint(min_angle=45.0)
+    result = sun_constraint.evaluate(ephem, target_ra, target_dec)
+
+    # dict[str, list[float]], one array per key, aligned with result.timestamp
+    sun_angles = result.constraint_values["sun_angle_deg"]
+    print(f"Sun angle at t0: {sun_angles[0]:.1f}°")
+
+Each constraint type exposes different key(s) - e.g. ``AirmassConstraint``
+exposes ``airmass``, ``AltAzConstraint`` exposes ``altitude_deg`` and
+``azimuth_deg``, ``MoonPhaseConstraint`` exposes ``moon_illumination_frac``
+and ``moon_distance_deg``. See the full table in
+:ref:`Constraints API Reference <constraint-values>`. A few geometry-only
+constraints (``SAAConstraint``, and ``BodyConstraint``/``BrightStarConstraint``
+in polygon mode) have no single natural scalar and report an empty dict.
+
+When constraints are combined with ``&``, ``|``, ``^``, or
+:py:meth:`~rust_ephem.constraints.RustConstraintMixin.at_least`, each child's
+keys are namespaced by a short type tag so nothing gets lost or collides:
+
+.. code-block:: python
+
+    combined = SunConstraint(min_angle=45.0) & MoonConstraint(min_angle=10.0)
+    result = combined.evaluate(ephem, target_ra, target_dec)
+
+    print(sorted(result.constraint_values.keys()))
+    # ['moon.moon_angle_deg', 'sun.sun_angle_deg']
+
+    print(result.constraint_values["sun.sun_angle_deg"][0])
+    print(result.constraint_values["moon.moon_angle_deg"][0])
+
+This also works with :py:meth:`~rust_ephem.constraints.RustConstraintMixin.evaluate_batch`
+(one ``constraint_values`` dict per target result) and
+:py:meth:`~rust_ephem.constraints.RustConstraintMixin.evaluate_moving_body`
+(arrays aligned with the moving body's per-timestamp positions). It is **not**
+available from :py:meth:`~rust_ephem.constraints.RustConstraintMixin.in_constraint_batch`
+or :py:meth:`~rust_ephem.constraints.RustConstraintMixin.in_constraint`, which
+stay on the fast boolean-only path used internally for roll-sweeping and
+field-of-regard computation.
+
 Available Constraint Types
 --------------------------
 
@@ -132,9 +183,9 @@ Hipparcos catalog so you do not have to manage the catalog yourself.
 
 Two FoV shapes are supported:
 
-- **Circular** — any star within ``fov_radius`` degrees of the boresight violates
+- **Circular**: any star within ``fov_radius`` degrees of the boresight violates
   the constraint.  Roll is irrelevant.
-- **Polygon** — a convex or non-convex polygon defined in *instrument frame*
+- **Polygon**: a convex or non-convex polygon defined in *instrument frame*
   coordinates ``(u_deg, v_deg)``.  At roll = 0° the +v axis points north and the
   +u axis points east.  The polygon rotates rigidly with spacecraft roll.
 
@@ -162,7 +213,7 @@ Two FoV shapes are supported:
 
 When ``target_roll`` is omitted (or ``None``) for a polygon FoV, the evaluator
 sweeps 72 roll angles (5° resolution) across [0°, 360°).  The constraint is
-violated only when **every** roll has at least one star inside the polygon — i.e.
+violated only when **every** roll has at least one star inside the polygon - i.e.
 it returns ``False`` as soon as a clear roll exists.  This answers the scheduling
 question *"is there any valid roll for this pointing?"*.
 
@@ -340,7 +391,7 @@ When ``target_roll`` is omitted (or ``None``) and the constraint contains a
 boresight offset with non-zero pitch/yaw, all three evaluation methods
 (``evaluate``, ``in_constraint``, ``in_constraint_batch``) automatically sweep
 roll angles and report a target as blocked only when **every** possible roll is
-blocked — i.e., no valid spacecraft orientation exists.  The sweep resolution is
+blocked - i.e., no valid spacecraft orientation exists.  The sweep resolution is
 controlled by the ``n_roll_samples`` parameter (default
 :data:`~rust_ephem.constraints.DEFAULT_N_ROLL_SAMPLES` = 360 ≈ 1° resolution).
 This is the conservative "is there any viable roll?" check.  Pass an explicit
@@ -418,8 +469,8 @@ Constraints can be serialized to/from JSON for configuration files:
 Performance Tips
 ----------------
 
-1. **Use batch evaluation** for multiple targets — 3-50x faster than loops
-2. **Reuse constraint objects** — they cache internal Rust objects
+1. **Use batch evaluation** for multiple targets: 3-50x faster than loops
+2. **Reuse constraint objects**: they cache internal Rust objects
 3. **Access ``constraint_array``** property for efficient iteration over times
 4. **Use ``times`` or ``indices``** parameters to evaluate only specific times
 
@@ -464,10 +515,10 @@ asteroids, comets, and spacecraft without requiring additional configuration.
 
 **Key Features:**
 
-- **SPICE-first lookup** — Uses fast cached SPICE kernels when available
-- **Automatic fallback** — Queries JPL Horizons only when SPICE lacks the body
-- **Constraint integration** — Works with all constraint types and combinations
-- **Full accuracy** — Returns observer-relative positions with proper frame conversions
+- **SPICE-first lookup**: Uses fast cached SPICE kernels when available
+- **Automatic fallback**: Queries JPL Horizons only when SPICE lacks the body
+- **Constraint integration**: Works with all constraint types and combinations
+- **Full accuracy**: Returns observer-relative positions with proper frame conversions
 
 For detailed Horizons documentation including asteroid tracking examples,
 constraint combinations, and troubleshooting, see :doc:`ephemeris_horizons`.
