@@ -69,7 +69,7 @@ def _write_parquet(path: str, schema_overrides: dict[str, str] | None = None) ->
     }
     renamed = {overrides.get(k, k): v for k, v in cols.items()}
     table = pa.table(renamed)
-    pq.write_table(table, path)  # type: ignore[no-untyped-call]
+    pq.write_table(table, path)
 
 
 @pytest.fixture
@@ -113,5 +113,5 @@ def meters_parquet(tmp_path: Any) -> str:
         "vy": [r[5] * 1000.0 for r in rows],
         "vz": [r[6] * 1000.0 for r in rows],
     }
-    pq.write_table(pa.table(cols), str(p))  # type: ignore[no-untyped-call]
+    pq.write_table(pa.table(cols), str(p))
     return str(p)
