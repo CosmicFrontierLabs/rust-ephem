@@ -357,9 +357,8 @@ class TestConstraintValues:
             target_dec=target_dec,
         )
 
-        assert list(result.constraint_values.keys()) == ["sun_angle_deg"]
+        assert set(result.constraint_values) == {"sun_angle_deg"}
         assert len(result.constraint_values["sun_angle_deg"]) == 1
-
         expected_deg = sun.separation(SkyCoord(target_ra, target_dec, unit="deg")).deg
         # Loose tolerance: astropy's GCRS separation and the Rust geometric angle
         # differ slightly due to frame/light-time handling, not a real discrepancy.
