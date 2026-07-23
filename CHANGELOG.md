@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.11.1...v0.12.0) (2026-07-23)
+
+
+### Features
+
+* record constraint values in output ([#177](https://github.com/CosmicFrontierLabs/rust-ephem/issues/177)) ([22bf0a1](https://github.com/CosmicFrontierLabs/rust-ephem/commit/22bf0a1af051d72e82e1348857dd5dd3ff04dac7))
+* support for reading/writing constraints in a human readable TOML format ([#178](https://github.com/CosmicFrontierLabs/rust-ephem/issues/178)) ([d6db1b5](https://github.com/CosmicFrontierLabs/rust-ephem/commit/d6db1b5ce26cb364ac7cb0786b072427c35f6cd1))
+
 ## [0.11.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.11.0...v0.11.1) (2026-06-09)
 
 
