@@ -15,6 +15,7 @@ class DummyRustResult:
         self.constraint_name: str = "DummyConstraint"
         self._in_constraint_calls: list[datetime] = []
         self._in_constraint_return: bool = True
+        self.constraint_values: dict[str, list[float]] = {}
 
     def in_constraint(self, time: datetime) -> bool:
         self._in_constraint_calls.append(time)
@@ -47,8 +48,8 @@ def constraint_result_with_rust_ref(
         ],
         all_satisfied=False,
         constraint_name="test",
-        _rust_result_ref=dummy_rust_result,  # type: ignore
     )
+    result._rust_result_ref = dummy_rust_result  # type: ignore
     return result, dummy_rust_result
 
 

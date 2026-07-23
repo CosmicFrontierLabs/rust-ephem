@@ -7,6 +7,7 @@ use crate::ephemeris::ParquetEphemeris;
 use crate::ephemeris::SPICEEphemeris;
 use crate::ephemeris::TLEEphemeris;
 use pyo3::prelude::*;
+use std::collections::HashMap;
 
 use super::PyConstraint;
 use crate::constraints::constraint_wrapper::field_of_regard::DEFAULT_N_ROLL_SAMPLES;
@@ -144,6 +145,21 @@ impl PyConstraint {
             time_indices,
             n_roll_samples,
         )
+    }
+
+    /// Slice out a single target's row from each named-value matrix returned by
+    /// `compute_named_values` (shape M x N, targets x times).
+    pub(super) fn extract_target_values(
+        values_map: &HashMap<String, ndarray::Array2<f64>>,
+        target_index: usize,
+    ) -> HashMap<String, Vec<f64>> {
+        values_map
+            .iter()
+            .map(|(key, arr)| {
+                let row: Vec<f64> = (0..arr.ncols()).map(|i| arr[[target_index, i]]).collect();
+                (key.clone(), row)
+            })
+            .collect()
     }
 
     pub(super) fn with_effective_evaluator<T, F>(
@@ -286,12 +302,20 @@ impl PyConstraint {
         );
 
         let all_satisfied = violations.is_empty();
-        Ok(ConstraintResult::new(
-            violations,
-            all_satisfied,
-            evaluator.name(),
-            times,
-        ))
+
+        // Compute named continuous values once (not swept across roll angles).
+        let values_map = evaluator.compute_named_values(
+            ephemeris,
+            &[target_ra],
+            &[target_dec],
+            time_indices.as_deref(),
+        )?;
+        let values = Self::extract_target_values(&values_map, 0);
+
+        Ok(
+            ConstraintResult::new(violations, all_satisfied, evaluator.name(), times)
+                .with_constraint_values(values),
+        )
     }
 
     pub(super) fn eval_batch_with_ephemeris(
@@ -318,6 +342,14 @@ impl PyConstraint {
             all_times.to_vec()
         };
 
+        // Compute named continuous values once for all targets (not swept across roll angles).
+        let values_map = evaluator.compute_named_values(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices.as_deref(),
+        )?;
+
         let mut results = Vec::with_capacity(target_ras.len());
         for target_index in 0..target_ras.len() {
             let violated: Vec<bool> = (0..violation_array.ncols())
@@ -331,12 +363,11 @@ impl PyConstraint {
             );
 
             let all_satisfied = violations.is_empty();
-            results.push(ConstraintResult::new(
-                violations,
-                all_satisfied,
-                evaluator.name(),
-                times.clone(),
-            ));
+            let values = Self::extract_target_values(&values_map, target_index);
+            results.push(
+                ConstraintResult::new(violations, all_satisfied, evaluator.name(), times.clone())
+                    .with_constraint_values(values),
+            );
         }
 
         Ok(results)

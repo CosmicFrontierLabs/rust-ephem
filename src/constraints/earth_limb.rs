@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Configuration for Earth limb avoidance constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,6 +200,48 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    fn compute_named_values(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        let (times_filtered, obs_filtered) =
+            extract_observer_ephemeris_data!(ephemeris, time_indices);
+
+        let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
+        let n_targets = target_ras.len();
+        let n_times = times_filtered.len();
+
+        let mut center_units = vec![[0.0; 3]; n_times];
+        for t in 0..n_times {
+            let obs_pos = [
+                obs_filtered[[t, 0]],
+                obs_filtered[[t, 1]],
+                obs_filtered[[t, 2]],
+            ];
+            center_units[t] = normalize_vector(&[-obs_pos[0], -obs_pos[1], -obs_pos[2]]);
+        }
+
+        let mut earth_limb_angle_deg = Array2::<f64>::zeros((n_targets, n_times));
+        for i in 0..n_targets {
+            let target_vec = [
+                target_vectors[[i, 0]],
+                target_vectors[[i, 1]],
+                target_vectors[[i, 2]],
+            ];
+            for t in 0..n_times {
+                let cos_angle = dot_product(&target_vec, &center_units[t]);
+                earth_limb_angle_deg[[i, t]] = cos_angle.clamp(-1.0, 1.0).acos().to_degrees();
+            }
+        }
+
+        let mut values = HashMap::new();
+        values.insert("earth_limb_angle_deg".to_string(), earth_limb_angle_deg);
+        Ok(values)
     }
 
     /// Vectorized batch evaluation - MUCH faster than calling evaluate() in a loop

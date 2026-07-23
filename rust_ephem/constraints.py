@@ -15,10 +15,18 @@ from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
 import numpy as np
 import numpy.typing as npt
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    TypeAdapter,
+    model_validator,
+)
 
 import rust_ephem
 
+from ._rust_ephem import ConstraintResult as _RustConstraintResult
 from .ephemeris import Ephemeris
 
 #: Default number of roll-angle samples used when sweeping spacecraft roll in
@@ -57,26 +65,77 @@ class ConstraintResult(BaseModel):
     )
     constraint_name: str = Field(..., description="Name/description of the constraint")
 
-    # Store reference to Rust result for lazy access to timestamps/constraint_array
-    def __init__(self, **data: Any) -> None:
-        super().__init__(**data)
-        self._rust_result_ref = data.get("_rust_result_ref", None)
-        # Populated when evaluate() sweeps all roll angles instead of a single Rust result.
-        self._swept_timestamps: list[datetime] | None = data.get(
-            "_swept_timestamps", None
+    # Backing store for lazy access to timestamps/constraint_array/visibility.
+    # Either a live Rust ConstraintResult (single-evaluation case) or precomputed
+    # swept arrays (roll-sweep case) is populated, never both. Set via the
+    # _from_rust_result/_from_swept factories below, not through __init__: pydantic
+    # (via PEP 681 dataclass_transform) synthesizes ConstraintResult's __init__
+    # signature from declared fields only, so mypy will always reject private-attr
+    # names passed as constructor kwargs regardless of any validator that accepts
+    # them at runtime.
+    _rust_result_ref: _RustConstraintResult | None = PrivateAttr(default=None)
+    _swept_timestamps: list[datetime] | None = PrivateAttr(default=None)
+    _swept_array: list[bool] | None = PrivateAttr(default=None)
+    _swept_constraint_values: dict[str, list[float]] | None = PrivateAttr(default=None)
+
+    @classmethod
+    def _from_rust_result(
+        cls, rust_result: _RustConstraintResult
+    ) -> "ConstraintResult":
+        """Wrap a single-evaluation Rust ``ConstraintResult``.
+
+        Keeps a lazy reference to it for timestamps/constraint_array/visibility
+        instead of eagerly copying those (potentially large) arrays into Python.
+        """
+        result = cls(
+            violations=[
+                ConstraintViolation(
+                    start_time=v.start_time,
+                    end_time=v.end_time,
+                    max_severity=v.max_severity,
+                    description=v.description,
+                )
+                for v in rust_result.violations
+            ],
+            all_satisfied=rust_result.all_satisfied,
+            constraint_name=rust_result.constraint_name,
         )
-        self._swept_array: list[bool] | None = data.get("_swept_array", None)
+        result._rust_result_ref = rust_result
+        return result
+
+    @classmethod
+    def _from_swept(
+        cls,
+        *,
+        constraint_name: str,
+        violations: list[ConstraintViolation],
+        all_satisfied: bool,
+        timestamps: list[datetime],
+        constraint_array: list[bool],
+        constraint_values: dict[str, list[float]] | None = None,
+    ) -> "ConstraintResult":
+        """Build a result from arrays swept across multiple roll angles.
+
+        Used when no single Rust ``ConstraintResult`` backs the result (the
+        combined outcome was computed by ORing per-roll boolean masks in Python).
+        """
+        result = cls(
+            violations=violations,
+            all_satisfied=all_satisfied,
+            constraint_name=constraint_name,
+        )
+        result._swept_timestamps = timestamps
+        result._swept_array = constraint_array
+        result._swept_constraint_values = constraint_values
+        return result
 
     @property
     def timestamps(self) -> npt.NDArray[np.datetime64] | list[datetime]:
         """Evaluation timestamps (lazily accessed from Rust result)."""
         if self._swept_timestamps is not None:
             return self._swept_timestamps
-        if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
-            return cast(
-                npt.NDArray[np.datetime64] | list[datetime],
-                self._rust_result_ref.timestamp,
-            )
+        if self._rust_result_ref is not None:
+            return self._rust_result_ref.timestamp
         return []
 
     @property
@@ -92,17 +151,28 @@ class ConstraintResult(BaseModel):
         """
         if self._swept_array is not None:
             return self._swept_array
-        if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
-            return cast(list[bool], self._rust_result_ref.constraint_array)
+        if self._rust_result_ref is not None:
+            return self._rust_result_ref.constraint_array
         return []
+
+    @property
+    def constraint_values(self) -> dict[str, list[float]]:
+        """Named continuous values computed during evaluation (e.g. ``sun_angle_deg``).
+
+        One array per key, aligned with ``timestamps``. Empty for constraints that
+        don't expose a natural scalar (e.g. polygon-based constraints).
+        """
+        if self._swept_constraint_values is not None:
+            return self._swept_constraint_values
+        if self._rust_result_ref is not None:
+            return self._rust_result_ref.constraint_values
+        return {}
 
     @property
     def visibility(self) -> list["rust_ephem.VisibilityWindow"]:
         """Visibility windows when the constraint is satisfied (target visible)."""
-        if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
-            return cast(
-                list["rust_ephem.VisibilityWindow"], self._rust_result_ref.visibility
-            )
+        if self._rust_result_ref is not None:
+            return self._rust_result_ref.visibility
         return []
 
     def total_violation_duration(self) -> float:
@@ -134,8 +204,8 @@ class ConstraintResult(BaseModel):
                 return self._swept_array[idx]
             except ValueError:
                 raise ValueError(f"Time {time} not found in evaluated timestamps")
-        if hasattr(self, "_rust_result_ref") and self._rust_result_ref is not None:
-            return cast(bool, self._rust_result_ref.in_constraint(time))
+        if self._rust_result_ref is not None:
+            return self._rust_result_ref.in_constraint(time)
         raise ValueError(
             "ConstraintResult has no evaluated timestamps (was not created from evaluate())"
         )
@@ -182,6 +252,7 @@ class RustConstraintMixin(BaseModel):
         constraint_name: str,
         timestamps: list[datetime],
         violated: npt.NDArray[np.bool_] | list[bool],
+        constraint_values: dict[str, list[float]] | None = None,
     ) -> ConstraintResult:
         """Build a ConstraintResult from a boolean violation mask."""
         violation_flags = np.asarray(violated, dtype=bool)
@@ -214,12 +285,13 @@ class RustConstraintMixin(BaseModel):
                 )
             )
 
-        return ConstraintResult(
+        return ConstraintResult._from_swept(
+            constraint_name=constraint_name,
             violations=violations,
             all_satisfied=not bool(violation_flags.any()),
-            constraint_name=constraint_name,
-            _swept_timestamps=timestamps,
-            _swept_array=violation_flags.tolist(),
+            timestamps=timestamps,
+            constraint_array=violation_flags.tolist(),
+            constraint_values=constraint_values,
         )
 
     @staticmethod
@@ -277,21 +349,30 @@ class RustConstraintMixin(BaseModel):
                 target_roll=target_roll,
                 n_roll_samples=n_roll_samples,
             )
-            # Get timestamps/constraint_name from a single fixed roll (0°) to avoid
-            # redundant roll sweep. The metadata is the same regardless of roll.
-            first_result = self._resolve_rust_constraint(target_roll=0.0).evaluate(
+            # Get metadata and per-target values from a single fixed roll (0°) to
+            # avoid redundant roll sweep. The geometric values themselves don't
+            # depend on which discrete roll was swept for violation determination.
+            reference_results = self._resolve_rust_constraint(
+                target_roll=0.0
+            ).evaluate_batch(
                 ephemeris,
-                target_ras[0],
-                target_decs[0],
-                times=times,
-                indices=indices,
+                target_ras,
+                target_decs,
+                times,
+                indices,
             )
-            timestamps = self._coerce_timestamps(first_result.timestamp)
-            constraint_name = first_result.constraint_name
+            timestamps = self._coerce_timestamps(reference_results[0].timestamp)
 
             return [
-                self._build_constraint_result(constraint_name, timestamps, row)
-                for row in np.asarray(batch, dtype=bool)
+                self._build_constraint_result(
+                    reference_result.constraint_name,
+                    timestamps,
+                    row,
+                    constraint_values=reference_result.constraint_values,
+                )
+                for reference_result, row in zip(
+                    reference_results, np.asarray(batch, dtype=bool)
+                )
             ]
 
         rust_constraint = self._resolve_rust_constraint(
@@ -305,20 +386,7 @@ class RustConstraintMixin(BaseModel):
             indices,
         )
         return [
-            ConstraintResult(
-                violations=[
-                    ConstraintViolation(
-                        start_time=v.start_time,
-                        end_time=v.end_time,
-                        max_severity=v.max_severity,
-                        description=v.description,
-                    )
-                    for v in rust_result.violations
-                ],
-                all_satisfied=rust_result.all_satisfied,
-                constraint_name=rust_result.constraint_name,
-                _rust_result_ref=rust_result,
-            )
+            ConstraintResult._from_rust_result(rust_result)
             for rust_result in rust_results
         ]
 
@@ -539,6 +607,7 @@ class RustConstraintMixin(BaseModel):
                 rust_results[0].constraint_name,
                 swept_timestamps,
                 combined,
+                constraint_values=rust_results[0].constraint_values,
             )
 
         rust_constraint = self._resolve_rust_constraint(
@@ -555,20 +624,7 @@ class RustConstraintMixin(BaseModel):
         )
 
         # Convert to Pydantic model - Rust now returns datetime objects directly
-        return ConstraintResult(
-            violations=[
-                ConstraintViolation(
-                    start_time=v.start_time,
-                    end_time=v.end_time,
-                    max_severity=v.max_severity,
-                    description=v.description,
-                )
-                for v in rust_result.violations
-            ],
-            all_satisfied=rust_result.all_satisfied,
-            constraint_name=rust_result.constraint_name,
-            _rust_result_ref=rust_result,
-        )
+        return ConstraintResult._from_rust_result(rust_result)
 
     def evaluate_batch(
         self,
@@ -971,6 +1027,7 @@ class RustConstraintMixin(BaseModel):
             visibility=visibility_windows,
             all_satisfied=rust_result.all_satisfied,
             constraint_name=rust_result.constraint_name,
+            constraint_values=rust_result.constraint_values,
         )
 
     def and_(self, other: ConstraintConfig) -> AndConstraint:
@@ -1802,3 +1859,4 @@ class MovingVisibilityResult(BaseModel):
     visibility: list[VisibilityWindowResult]
     all_satisfied: bool
     constraint_name: str
+    constraint_values: dict[str, list[float]] = Field(default_factory=dict)

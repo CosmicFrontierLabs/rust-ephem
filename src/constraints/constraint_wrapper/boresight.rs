@@ -2,6 +2,7 @@ use crate::constraints::core::{track_violations, ConstraintEvaluator, Constraint
 use crate::utils::vector_math::unit_vectors_to_radec_batch;
 use ndarray::Array2;
 use pyo3::PyResult;
+use std::collections::HashMap;
 
 /// Threshold below which a vector norm or angle (in degrees) is treated as zero.
 const NEAR_ZERO: f64 = 1.0e-12;
@@ -749,6 +750,97 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         };
 
         Ok((0..n_targets).map(|i| violated_col[[i, 0]]).collect())
+    }
+
+    fn compute_named_values(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        let params = self.rotation_params();
+        let n_targets = target_ras.len();
+        let target_units: Vec<[f64; 3]> = target_ras
+            .iter()
+            .zip(target_decs.iter())
+            .map(|(&ra, &dec)| crate::utils::vector_math::radec_to_unit_vector(ra, dec))
+            .collect();
+
+        // Single child, evaluated at the rotated direction — pass through unprefixed.
+        if matches!(self.roll_reference, RollReference::North) {
+            // Rotation is time-invariant for the north reference: rotate once per
+            // target and delegate directly, letting the child broadcast over times.
+            let mut rotated_units = Array2::<f64>::zeros((n_targets, 3));
+            for (i, target_unit) in target_units.iter().enumerate() {
+                let rotated = self.rotated_target_for_time_with_params(
+                    target_unit,
+                    &[0.0, 0.0, 0.0],
+                    params,
+                )?;
+                rotated_units[[i, 0]] = rotated[0];
+                rotated_units[[i, 1]] = rotated[1];
+                rotated_units[[i, 2]] = rotated[2];
+            }
+            let (rotated_ras, rotated_decs) = unit_vectors_to_radec_batch(&rotated_units);
+            return self.constraint.compute_named_values(
+                ephemeris,
+                &rotated_ras,
+                &rotated_decs,
+                time_indices,
+            );
+        }
+
+        // Sun reference: the rotation depends on the Sun direction at each timestamp,
+        // so evaluate one time column at a time (same cost pattern already used by
+        // in_constraint_batch for this reference mode).
+        let all_times = ephemeris.get_times()?;
+        let indices: Vec<usize> = if let Some(subset) = time_indices {
+            subset.to_vec()
+        } else {
+            (0..all_times.len()).collect()
+        };
+
+        let sun_positions = ephemeris.get_sun_positions()?;
+        let observer_positions = ephemeris.get_gcrs_positions()?;
+
+        let mut merged: HashMap<String, Array2<f64>> = HashMap::new();
+        let mut rotated_units = Array2::<f64>::zeros((n_targets, 3));
+
+        for (col, &time_idx) in indices.iter().enumerate() {
+            let sun_rel = [
+                sun_positions[[time_idx, 0]] - observer_positions[[time_idx, 0]],
+                sun_positions[[time_idx, 1]] - observer_positions[[time_idx, 1]],
+                sun_positions[[time_idx, 2]] - observer_positions[[time_idx, 2]],
+            ];
+
+            for (i, target_unit) in target_units.iter().enumerate() {
+                let rotated =
+                    self.rotated_target_for_time_with_params(target_unit, &sun_rel, params)?;
+                rotated_units[[i, 0]] = rotated[0];
+                rotated_units[[i, 1]] = rotated[1];
+                rotated_units[[i, 2]] = rotated[2];
+            }
+
+            let (rotated_ras, rotated_decs) = unit_vectors_to_radec_batch(&rotated_units);
+            let column_values = self.constraint.compute_named_values(
+                ephemeris,
+                &rotated_ras,
+                &rotated_decs,
+                Some(&[time_idx]),
+            )?;
+
+            for (key, arr) in column_values {
+                let entry = merged
+                    .entry(key)
+                    .or_insert_with(|| Array2::<f64>::zeros((n_targets, indices.len())));
+                for row in 0..n_targets {
+                    entry[[row, col]] = arr[[row, 0]];
+                }
+            }
+        }
+
+        Ok(merged)
     }
 
     fn name(&self) -> String {

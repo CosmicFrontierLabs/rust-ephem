@@ -5,6 +5,82 @@ use crate::constraints::core::{
 use crate::utils::vector_math::unit_vectors_to_radec_batch;
 use ndarray::Array2;
 use pyo3::PyResult;
+use std::collections::HashMap;
+
+/// Short, stable tag for a leaf/combinator constraint's `values` key prefix, derived
+/// from the text before the first `(` in its `name()`. Falls back to a sanitized
+/// version of the head for anything unmapped, so new constraint types don't panic
+/// or silently collide — they just get a slightly uglier (but unique-ish) prefix.
+fn value_key_prefix(name: &str) -> String {
+    let head = name.split('(').next().unwrap_or(name).trim();
+    let tag = match head {
+        "SunProximity" => "sun",
+        "MoonProximity" => "moon",
+        "BodyProximity" => "body",
+        "Eclipse" => "eclipse",
+        "AirmassConstraint" => "airmass",
+        "AltAzConstraint" => "alt_az",
+        "SAAConstraint" => "saa",
+        "DaytimeConstraint" => "daytime",
+        "MoonPhaseConstraint" => "moon_phase",
+        "OrbitPoleConstraint" => "orbit_pole",
+        "OrbitRamConstraint" => "orbit_ram",
+        "EarthLimb" => "earth_limb",
+        "BrightStar" => "bright_star",
+        "SolarRollConstraint" => "solar_roll",
+        "AND" => "and",
+        "OR" => "or",
+        "NOT" => "not",
+        "XOR" => "xor",
+        "AT_LEAST" => "at_least",
+        "BoresightOffset" => "boresight_offset",
+        other => {
+            return other
+                .to_lowercase()
+                .replace(|c: char| !c.is_alphanumeric(), "_")
+        }
+    };
+    tag.to_string()
+}
+
+/// Merge named-value maps from a set of child evaluators, namespacing each child's
+/// keys under a short type tag (e.g. `sun.sun_angle_deg`) so composite constraints
+/// don't lose per-child detail or silently collide on identical key names. On tag
+/// collision (two children of the same type), the 2nd+ occurrence gets a numeric
+/// suffix (`sun_2`, `sun_3`, ...).
+fn merge_children_named_values(
+    children: &[Box<dyn ConstraintEvaluator>],
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    target_ras: &[f64],
+    target_decs: &[f64],
+    time_indices: Option<&[usize]>,
+) -> PyResult<HashMap<String, Array2<f64>>> {
+    let mut merged = HashMap::new();
+    let mut tag_counts: HashMap<String, usize> = HashMap::new();
+
+    for child in children {
+        let child_values =
+            child.compute_named_values(ephemeris, target_ras, target_decs, time_indices)?;
+        if child_values.is_empty() {
+            continue;
+        }
+
+        let base_tag = value_key_prefix(&child.name());
+        let count = tag_counts.entry(base_tag.clone()).or_insert(0);
+        *count += 1;
+        let prefix = if *count == 1 {
+            base_tag
+        } else {
+            format!("{base_tag}_{count}")
+        };
+
+        for (key, arr) in child_values {
+            merged.insert(format!("{prefix}.{key}"), arr);
+        }
+    }
+
+    Ok(merged)
+}
 
 fn validate_unit_vector_shape(target_unit_vectors: &Array2<f64>) -> PyResult<()> {
     if target_unit_vectors.ncols() != 3 {
@@ -488,6 +564,22 @@ impl ConstraintEvaluator for AndEvaluator {
         Ok(result)
     }
 
+    fn compute_named_values(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        merge_children_named_values(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+        )
+    }
+
     fn name(&self) -> String {
         format!(
             "AND({})",
@@ -957,6 +1049,22 @@ impl ConstraintEvaluator for OrEvaluator {
             .collect())
     }
 
+    fn compute_named_values(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        merge_children_named_values(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+        )
+    }
+
     fn name(&self) -> String {
         format!(
             "OR({})",
@@ -1177,6 +1285,18 @@ impl ConstraintEvaluator for NotEvaluator {
         )?;
         // NOTE: Do not negate here: inner result is already aggregated over roll freedom.
         Ok(sub)
+    }
+
+    fn compute_named_values(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        // Single child, no collision risk - pass its values straight through unprefixed.
+        self.constraint
+            .compute_named_values(ephemeris, target_ras, target_decs, time_indices)
     }
 
     fn name(&self) -> String {
@@ -1455,6 +1575,22 @@ impl ConstraintEvaluator for XorEvaluator {
             result.push(count == 1);
         }
         Ok(result)
+    }
+
+    fn compute_named_values(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        merge_children_named_values(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+        )
     }
 
     fn name(&self) -> String {
@@ -1744,6 +1880,22 @@ impl ConstraintEvaluator for AtLeastEvaluator {
             result.push(count >= self.min_violated);
         }
         Ok(result)
+    }
+
+    fn compute_named_values(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        merge_children_named_values(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+        )
     }
 
     fn name(&self) -> String {

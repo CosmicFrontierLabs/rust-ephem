@@ -54,6 +54,7 @@ class DummyRustResult:
                 },
             )()
         ]
+        self.constraint_values: dict[str, list[float]] = {}
 
     def in_constraint(self, time: datetime) -> bool:
         self._in_constraint_calls.append(time)
@@ -70,6 +71,7 @@ class DummyMovingBodyResult:
         self.visibility: List[str] = []
         self.all_satisfied: bool = False
         self.constraint_name: str = "DummyMovingBody"
+        self.constraint_values: dict[str, list[float]] = {}
 
 
 @pytest.fixture
@@ -345,8 +347,8 @@ def constraint_result_with_rust_ref(
         ],
         all_satisfied=False,
         constraint_name="test",
-        _rust_result_ref=dummy_rust_result,  # type: ignore
     )
+    result._rust_result_ref = dummy_rust_result  # type: ignore
     return result, dummy_rust_result
 
 

@@ -6,9 +6,11 @@
 /// body frame convention shared with `boresight_rotate` in roll_range.rs.
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
 use crate::ephemeris::ephemeris_common::EphemerisBase;
+use crate::utils::vector_math::radec_to_unit_vectors_batch;
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 pub fn default_panel_normal() -> [f64; 3] {
     [0.0, 1.0, 0.0]
@@ -558,6 +560,58 @@ impl ConstraintEvaluator for SolarRollEvaluator {
             }
         }
         Ok(result)
+    }
+
+    fn compute_named_values(
+        &self,
+        ephemeris: &dyn EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        let (times_filtered,) = extract_time_data!(ephemeris, time_indices);
+        let n_targets = target_ras.len();
+        let n_times = times_filtered.len();
+
+        let sun = ephemeris.get_sun_positions()?;
+        let obs = ephemeris.get_gcrs_positions()?;
+        let sun_units: Vec<[f64; 3]> = (0..n_times)
+            .map(|i| {
+                let idx = time_indices.map_or(i, |indices| indices[i]);
+                let v = [
+                    sun[[idx, 0]] - obs[[idx, 0]],
+                    sun[[idx, 1]] - obs[[idx, 1]],
+                    sun[[idx, 2]] - obs[[idx, 2]],
+                ];
+                let n = norm3(v);
+                if n < NEAR_ZERO {
+                    [1.0, 0.0, 0.0]
+                } else {
+                    [v[0] / n, v[1] / n, v[2] / n]
+                }
+            })
+            .collect();
+
+        let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
+        let mut solar_optimal_roll_deg_arr = Array2::<f64>::zeros((n_targets, n_times));
+        for j in 0..n_targets {
+            let target = [
+                target_vectors[[j, 0]],
+                target_vectors[[j, 1]],
+                target_vectors[[j, 2]],
+            ];
+            for i in 0..n_times {
+                solar_optimal_roll_deg_arr[[j, i]] =
+                    solar_optimal_roll_deg(&target, &sun_units[i], self.panel_normal);
+            }
+        }
+
+        let mut values = HashMap::new();
+        values.insert(
+            "solar_optimal_roll_deg".to_string(),
+            solar_optimal_roll_deg_arr,
+        );
+        Ok(values)
     }
 
     fn name(&self) -> String {

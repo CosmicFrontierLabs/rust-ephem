@@ -80,6 +80,72 @@ class ConstraintViolation:
         """Duration of the violation window in seconds."""
         ...
 
+class ConstraintResult:
+    """Result of constraint evaluation containing all violations."""
+
+    @property
+    def violations(self) -> list["ConstraintViolation"]:
+        """List of time windows when constraint was violated."""
+        ...
+
+    @property
+    def all_satisfied(self) -> bool:
+        """True if constraint was satisfied at all timestamps."""
+        ...
+
+    @property
+    def constraint_name(self) -> str:
+        """Name/description of the constraint."""
+        ...
+
+    @property
+    def timestamp(self) -> list[datetime]:
+        """List of timestamps that were evaluated."""
+        ...
+
+    @property
+    def constraint_array(self) -> list[bool]:
+        """Boolean array where True indicates constraint violation at that timestamp."""
+        ...
+
+    @property
+    def constraint_values(self) -> dict[str, list[float]]:
+        """Named continuous values computed during evaluation (e.g. ``sun_angle_deg``).
+
+        One array per key, aligned with ``timestamp``. Empty for constraints that
+        don't expose a natural scalar (e.g. polygon-based constraints).
+        """
+        ...
+
+    @property
+    def visibility(self) -> list[VisibilityWindow]:
+        """List of time windows when constraint was satisfied (target was visible)."""
+        ...
+
+    def in_constraint(self, time: datetime) -> bool:
+        """Check if constraint was violated at a specific time.
+
+        Args:
+            time: The time to check (must exist in timestamps).
+
+        Returns:
+            True if constraint was violated at the given time.
+
+        Raises:
+            ValueError: If time is not found in timestamps.
+        """
+        ...
+
+    def total_violation_duration(self) -> float:
+        """Get total duration of all constraint violations in seconds.
+
+        Returns:
+            Sum of all violation window durations in seconds.
+        """
+        ...
+
+    def __repr__(self) -> str: ...
+
 class MovingBodyResult:
     """Result from evaluating a constraint against a moving body.
 
@@ -120,6 +186,15 @@ class MovingBodyResult:
     @property
     def constraint_array(self) -> list[bool]:
         """Boolean array where True indicates constraint violation at that timestamp."""
+        ...
+
+    @property
+    def constraint_values(self) -> dict[str, list[float]]:
+        """Named continuous values computed during evaluation (e.g. ``sun_angle_deg``).
+
+        One array per key, aligned with ``timestamp``. Empty for constraints that
+        don't expose a natural scalar (e.g. polygon-based constraints).
+        """
         ...
 
     @property
@@ -578,7 +653,7 @@ class Constraint:
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
         target_roll: float | None = None,
-    ) -> Any:
+    ) -> ConstraintResult:
         """
         Evaluate constraint against ephemeris data.
 
@@ -616,7 +691,7 @@ class Constraint:
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
         target_rolls: list[float] | None = None,
-    ) -> list[Any]:
+    ) -> list[ConstraintResult]:
         """
         Evaluate constraint against multiple targets and return one result per target.
 

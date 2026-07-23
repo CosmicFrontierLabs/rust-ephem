@@ -50,13 +50,15 @@ dependencies = [
     "astroquery>=0.4.11",
     "numpy>=1.16",
     "pydantic>=2.12.4",
+    "tomlkit>=0.13",
+    "duckdb>=0.10.0",
+    "pyarrow>=14.0",
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0", "astropy>=5.0", "pytest-cov>=7.0.0", "duckdb>=0.10.0", "pyarrow>=14.0"]
+test = ["pytest>=7.0", "astropy>=5.0", "pytest-cov>=7.0.0"]
 docs = ["sphinx>=6.0", "sphinx-rtd-theme"]
-dev = ["mypy", "ruff", "prek", "maturin"]
-parquet = ["duckdb>=0.10.0"]
+dev = ["mypy", "ruff", "prek", "maturin", "pyarrow-stubs"]
 all = [
     "pytest>=7.0",
     "astropy>=5.0",
@@ -67,8 +69,7 @@ all = [
     "ruff",
     "prek",
     "maturin",
-    "duckdb>=0.10.0",
-    "pyarrow>=14.0",
+    "pyarrow-stubs",
 ]
 
 [project.urls]

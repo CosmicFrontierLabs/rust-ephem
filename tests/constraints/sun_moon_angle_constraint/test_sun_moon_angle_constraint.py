@@ -341,3 +341,56 @@ class TestAndConstraints:
         assert len(earth_cons.visibility) == len(earth_earth_cons.visibility), (
             "Both arrays should be equal"
         )
+
+
+class TestConstraintValues:
+    """Verify evaluate() records the underlying continuous value(s) it thresholds."""
+
+    def test_sun_angle_deg_matches_independent_computation(
+        self, sun_constraint: Any, tle_ephem: Any, timestamp: Any, sun: Any
+    ) -> None:
+        target_ra, target_dec = 10.0, 20.0
+        result = sun_constraint.evaluate(
+            ephemeris=tle_ephem,
+            times=[timestamp],
+            target_ra=target_ra,
+            target_dec=target_dec,
+        )
+
+        assert set(result.constraint_values) == {"sun_angle_deg"}
+        assert len(result.constraint_values["sun_angle_deg"]) == 1
+        expected_deg = sun.separation(SkyCoord(target_ra, target_dec, unit="deg")).deg
+        # Loose tolerance: astropy's GCRS separation and the Rust geometric angle
+        # differ slightly due to frame/light-time handling, not a real discrepancy.
+        assert result.constraint_values["sun_angle_deg"][0] == pytest.approx(
+            expected_deg, abs=0.01
+        )
+
+    def test_moon_angle_deg_matches_independent_computation(
+        self, moon_constraint: Any, tle_ephem: Any, timestamp: Any, moon: Any
+    ) -> None:
+        target_ra, target_dec = 250.0, -23.0
+        result = moon_constraint.evaluate(
+            ephemeris=tle_ephem,
+            times=[timestamp],
+            target_ra=target_ra,
+            target_dec=target_dec,
+        )
+
+        assert list(result.constraint_values.keys()) == ["moon_angle_deg"]
+        expected_deg = moon.separation(SkyCoord(target_ra, target_dec, unit="deg")).deg
+        assert result.constraint_values["moon_angle_deg"][0] == pytest.approx(
+            expected_deg, abs=0.01
+        )
+
+    def test_and_combinator_namespaces_child_values(
+        self, sun_constraint: Any, moon_constraint: Any, tle_ephem: Any
+    ) -> None:
+        combined = sun_constraint & moon_constraint
+        result = combined.evaluate(ephemeris=tle_ephem, target_ra=10, target_dec=20)
+
+        assert "sun.sun_angle_deg" in result.constraint_values
+        assert "moon.moon_angle_deg" in result.constraint_values
+        assert len(result.constraint_values["sun.sun_angle_deg"]) == len(
+            result.constraint_values["moon.moon_angle_deg"]
+        )

@@ -671,6 +671,41 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
         Ok(result)
     }
 
+    fn compute_named_values(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> pyo3::PyResult<std::collections::HashMap<String, Array2<f64>>> {
+        // Only circle mode has a single natural scalar; polygon mode is roll-swept
+        // and has no canonical angle to report.
+        if self.fov_polygon.is_some() {
+            return Ok(std::collections::HashMap::new());
+        }
+
+        let body_all = self.body_positions(ephemeris)?;
+        let obs_all = ephemeris.get_gcrs_positions()?;
+        let (body_positions_slice, observer_positions_slice) = if let Some(indices) = time_indices {
+            (
+                body_all.select(ndarray::Axis(0), indices),
+                obs_all.select(ndarray::Axis(0), indices),
+            )
+        } else {
+            (body_all, obs_all)
+        };
+
+        let angle_deg = super::core::compute_angle_deg_batch(
+            target_ras,
+            target_decs,
+            &body_positions_slice,
+            &observer_positions_slice,
+        );
+        let mut values = std::collections::HashMap::new();
+        values.insert("body_angle_deg".to_string(), angle_deg);
+        Ok(values)
+    }
+
     fn name(&self) -> String {
         self.format_name()
     }

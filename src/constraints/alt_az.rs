@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Configuration for Altitude/Azimuth constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -242,6 +243,37 @@ impl ConstraintEvaluator for AltAzEvaluator {
         }
 
         Ok(result)
+    }
+
+    fn compute_named_values(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        let n_targets = target_ras.len();
+        let altaz_list: Vec<_> = target_ras
+            .iter()
+            .zip(target_decs.iter())
+            .map(|(&ra, &dec)| ephemeris.radec_to_altaz(ra, dec, time_indices))
+            .collect();
+
+        let n_times = altaz_list.first().map(|a| a.nrows()).unwrap_or(0);
+
+        let mut altitude_deg = Array2::<f64>::zeros((n_targets, n_times));
+        let mut azimuth_deg = Array2::<f64>::zeros((n_targets, n_times));
+        for (j, altaz) in altaz_list.iter().enumerate() {
+            for i in 0..n_times {
+                altitude_deg[[j, i]] = altaz[[i, 0]];
+                azimuth_deg[[j, i]] = altaz[[i, 1]];
+            }
+        }
+
+        let mut values = HashMap::new();
+        values.insert("altitude_deg".to_string(), altitude_deg);
+        values.insert("azimuth_deg".to_string(), azimuth_deg);
+        Ok(values)
     }
 
     fn name(&self) -> String {

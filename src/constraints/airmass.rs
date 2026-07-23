@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Configuration for Airmass constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,6 +136,20 @@ impl ConstraintEvaluator for AirmassEvaluator {
         });
 
         Ok(result)
+    }
+
+    fn compute_named_values(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        let airmass_values =
+            calculate_airmass_batch_fast(target_ras, target_decs, ephemeris, time_indices);
+        let mut values = HashMap::new();
+        values.insert("airmass".to_string(), airmass_values);
+        Ok(values)
     }
 
     fn name(&self) -> String {
