@@ -70,6 +70,21 @@ from rust_ephem._rust_ephem import (
 from rust_ephem.bright_stars import (
     get_bright_stars as get_bright_stars,
 )
+from rust_ephem.constraint_toml import (
+    constraint_to_toml_document as constraint_to_toml_document,
+)
+from rust_ephem.constraint_toml import (
+    constraint_to_toml_string as constraint_to_toml_string,
+)
+from rust_ephem.constraint_toml import (
+    load_constraint_toml as load_constraint_toml,
+)
+from rust_ephem.constraint_toml import (
+    parse_constraint_toml as parse_constraint_toml,
+)
+from rust_ephem.constraint_toml import (
+    write_constraint_toml as write_constraint_toml,
+)
 from rust_ephem.constraints import (
     AirmassConstraint as AirmassConstraint,
 )
@@ -215,4 +230,9 @@ __all__ = [
     "get_cache_dir",
     "BrightStarConstraint",
     "get_bright_stars",
+    "constraint_to_toml_document",
+    "constraint_to_toml_string",
+    "write_constraint_toml",
+    "parse_constraint_toml",
+    "load_constraint_toml",
 ]

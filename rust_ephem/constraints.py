@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
 import numpy as np
@@ -227,6 +228,27 @@ class RollReference(str, Enum):
 
 class RustConstraintMixin(BaseModel):
     """Base class for Rust constraint configurations"""
+
+    def to_toml(self) -> str:
+        """Serialize this constraint config to an annotated TOML string.
+
+        Every field is preceded by a comment drawn from its Pydantic
+        ``description``/validation bounds, and unset optional fields are kept
+        as commented-out documentation rather than omitted, so the result is a
+        self-describing, hand-editable config file. See
+        :func:`rust_ephem.constraint_toml.parse_constraint_toml` /
+        :func:`~rust_ephem.constraint_toml.load_constraint_toml` for the
+        reverse direction.
+        """
+        from .constraint_toml import constraint_to_toml_string
+
+        return constraint_to_toml_string(self)
+
+    def to_toml_file(self, path: str | Path) -> None:
+        """Write this constraint config to *path* as annotated TOML."""
+        from .constraint_toml import write_constraint_toml
+
+        write_constraint_toml(self, path)
 
     @staticmethod
     def _coerce_datetime(value: Any) -> datetime:

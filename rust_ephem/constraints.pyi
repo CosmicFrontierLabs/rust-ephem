@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -73,6 +74,8 @@ class MovingVisibilityResult(BaseModel):
 class RustConstraintMixin(BaseModel):
     """Base class for Rust constraint configurations"""
 
+    def to_toml(self) -> str: ...
+    def to_toml_file(self, path: str | Path) -> None: ...
     def evaluate(
         self,
         ephemeris: Ephemeris,

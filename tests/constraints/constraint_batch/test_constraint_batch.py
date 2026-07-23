@@ -271,13 +271,13 @@ def test_earth_limb_batch_large_scale(
     # Generate a grid of RA/Dec positions
     n_ra = 36  # Every 10 degrees
     n_dec = 18  # Every 10 degrees from -90 to 90
-    target_ras = []
-    target_decs = []
+    target_ras: list[float] = []
+    target_decs: list[float] = []
 
     for ra in np.linspace(0, 350, n_ra):
         for dec in np.linspace(-90, 90, n_dec):
-            target_ras.append(ra)
-            target_decs.append(dec)
+            target_ras.append(float(ra))
+            target_decs.append(float(dec))
 
     # Should have 36 * 18 = 648 targets
     assert len(target_ras) == 648
