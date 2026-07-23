@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import re
 import textwrap
+import types
 import typing
 from enum import Enum
 from pathlib import Path
@@ -92,6 +93,23 @@ def _unwrap_optional(annotation: Any) -> Any:
         if len(args) == 1:
             return args[0]
     return annotation
+
+
+def _is_constraint_field(field_info: FieldInfo) -> bool:
+    """True for a field whose value is itself a nested constraint config
+    (e.g. ``BoresightOffsetConstraint.constraint``), which is serialized
+    separately as a ``constraint_expression``/``[definitions.*]`` pair
+    rather than written inline as a scalar."""
+    annotation = field_info.annotation
+    origin = typing.get_origin(annotation)
+    args = (
+        typing.get_args(annotation)
+        if origin in (typing.Union, types.UnionType)
+        else (annotation,)
+    )
+    return bool(args) and all(
+        isinstance(arg, type) and issubclass(arg, RustConstraintMixin) for arg in args
+    )
 
 
 def _bounds_note(field_info: FieldInfo) -> str | None:
@@ -182,8 +200,9 @@ def _write_field(tbl: Any, name: str, field_info: FieldInfo, value: Any) -> None
 
 def _write_leaf_fields(model: RustConstraintMixin, tbl: Any) -> None:
     """Write a concrete (non-combinator) constraint's docstring, ``type``, and
-    scalar fields. ``constraint`` (on ``BoresightOffsetConstraint``) is
-    skipped -- the caller writes it separately as ``constraint_expression``."""
+    scalar fields. A nested-constraint field (e.g. ``constraint`` on
+    ``BoresightOffsetConstraint``) is skipped -- the caller writes it
+    separately as ``constraint_expression``."""
     paragraphs = _class_summary(type(model))
     for paragraph in paragraphs:
         _add_comment_lines(tbl, paragraph)
@@ -194,7 +213,7 @@ def _write_leaf_fields(model: RustConstraintMixin, tbl: Any) -> None:
     tbl.add(tomlkit.nl())
 
     for name, field_info in type(model).model_fields.items():
-        if name in ("type", "constraint"):
+        if name == "type" or _is_constraint_field(field_info):
             continue
         _write_field(tbl, name, field_info, getattr(model, name))
 
@@ -303,7 +322,7 @@ def constraint_to_toml_document(
         doc.add("type", constraint.type)
         doc.add(tomlkit.nl())
         for name, field_info in type(constraint).model_fields.items():
-            if name in ("type", "constraint"):
+            if name == "type" or _is_constraint_field(field_info):
                 continue
             _write_field(doc, name, field_info, getattr(constraint, name))
         _add_comment_lines(
