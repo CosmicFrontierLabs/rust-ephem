@@ -2086,6 +2086,137 @@ All Pydantic constraint models can be serialized to/from JSON:
    rust_constraint = rust_ephem.Constraint.from_json(json_str)
 
 
+TOML Serialization
+-------------------
+
+Constraint configs can also be written out as annotated TOML. Every field's
+comment is drawn from its Pydantic ``description``/validation bounds, and
+unset optional fields are kept as commented-out documentation instead of
+being omitted, so the result is a self-describing, hand-editable config file
+rather than a bare data dump.
+
+Boolean combinators (``AndConstraint``, ``OrConstraint``, ``XorConstraint``,
+``NotConstraint``, ``AtLeastConstraint``) are **never** written as nested TOML
+tables -- folding a boolean tree into TOML's dotted-path table headers
+produces an unreadable wall of same-looking headers with no visible structure.
+Instead, every concrete (non-combinator) constraint becomes its own flat,
+unnested ``[definitions.<name>]`` table, and the boolean tree that combines
+them collapses into a single ``expression`` string such as
+``"sun | moon | ~eclipse"``. The operators are exactly the ``&``/``|``/``^``/``~``
+overloads already defined on :class:`~rust_ephem.constraints.RustConstraintMixin`,
+with the same precedence Python itself uses for those operators: ``~`` (NOT)
+binds tightest, then ``&`` (AND), then ``^`` (XOR), then ``|`` (OR); use
+parentheses to override. ``at_least(k, a, b, ...)`` spells out the k-of-n
+threshold combinator. A tree with no combinators at all (a single leaf, or a
+single ``BoresightOffsetConstraint``) is written with no
+``definitions``/``expression`` indirection at all -- exactly the plain,
+single-table format shown at the top of this section.
+
+.. code-block:: python
+
+   from rust_ephem.constraints import SunConstraint, MoonConstraint, EclipseConstraint, AndConstraint, NotConstraint, OrConstraint
+
+   constraint = (SunConstraint(min_angle=45.0) & MoonConstraint(min_angle=10.0)) | NotConstraint(
+       constraint=EclipseConstraint(umbra_only=False)
+   )
+
+   # Serialize to an annotated TOML string
+   toml_str = constraint.to_toml()
+
+   # Or write directly to a file
+   constraint.to_toml_file("constraint.toml")
+
+The example above produces:
+
+.. code-block:: toml
+
+   # Boolean expression combining the [definitions.*] below by name. Operators follow
+   # Python's own precedence: ~ (NOT) binds tightest, then & (AND), then ^ (XOR), then |
+   # (OR); use parentheses to override. at_least(k, a, b, ...) spells out a k-of-n threshold
+   # combinator.
+   expression = "sun & moon | ~eclipse"
+
+   [definitions.sun]
+   # Sun proximity constraint
+   # Ensures target maintains minimum angular separation from Sun.
+
+   type = "sun"
+
+   # min_angle -- Minimum angle from Sun in degrees (>= 0.0, <= 180.0)
+   min_angle = 45.0
+
+   # max_angle (not set) -- Maximum angle from Sun in degrees (>= 0.0, <= 180.0)
+
+   [definitions.moon]
+   # Moon proximity constraint
+   # Ensures target maintains minimum angular separation from Moon.
+
+   type = "moon"
+
+   # min_angle -- Minimum angle from Moon in degrees (>= 0.0, <= 180.0)
+   min_angle = 10.0
+
+   # max_angle (not set) -- Maximum angle from Moon in degrees (>= 0.0, <= 180.0)
+
+   [definitions.eclipse]
+   # Eclipse constraint
+   # Checks if observer is in Earth's shadow (umbra and/or penumbra). Assumes Earth-centered
+   # ephemerides (Earth at the origin); results are undefined for other centers.
+
+   type = "eclipse"
+
+   # umbra_only -- Count only umbra (True) or include penumbra (False) [default: True]
+   umbra_only = false
+
+Note that ``sun & moon | ~eclipse`` needs no parentheses at all: ``&`` binds
+tighter than ``|`` and ``~`` binds tighter still, so it reads exactly as
+``(sun & moon) | (~eclipse)`` -- the same tree that was constructed above.
+
+``BoresightOffsetConstraint`` keeps its own scalar fields (``roll_deg``,
+``pitch_deg``, ...) flat at the same level as ``type``, and represents its
+wrapped constraint the same way, via a ``constraint_expression`` string plus
+``[definitions.*]`` entries, rather than a nested ``[constraint]`` table.
+
+Parse it back with :func:`rust_ephem.constraint_toml.parse_constraint_toml` /
+:func:`~rust_ephem.constraint_toml.load_constraint_toml`:
+
+.. code-block:: python
+
+   from rust_ephem.constraint_toml import load_constraint_toml, parse_constraint_toml
+
+   restored = parse_constraint_toml(toml_str)
+   restored = load_constraint_toml("constraint.toml")
+
+.. py:method:: RustConstraintMixin.to_toml()
+
+   Serialize this constraint config to an annotated TOML string.
+
+.. py:method:: RustConstraintMixin.to_toml_file(path)
+
+   Write this constraint config to *path* as annotated TOML.
+
+.. py:function:: rust_ephem.constraint_toml.constraint_to_toml_string(constraint)
+
+   Render a constraint config as an annotated TOML string. Equivalent to
+   ``constraint.to_toml()``.
+
+.. py:function:: rust_ephem.constraint_toml.write_constraint_toml(constraint, path)
+
+   Write a constraint config to *path* as annotated TOML. Equivalent to
+   ``constraint.to_toml_file(path)``.
+
+.. py:function:: rust_ephem.constraint_toml.parse_constraint_toml(text)
+
+   Parse a TOML string (as produced by ``constraint_to_toml_string``) back
+   into the matching :data:`ConstraintConfig` model. Raises :class:`ValueError`
+   on a malformed ``expression``/``constraint_expression`` string (unknown
+   name, unbalanced parentheses, circular reference, etc).
+
+.. py:function:: rust_ephem.constraint_toml.load_constraint_toml(path)
+
+   Read a constraint config TOML file from *path*.
+
+
 Performance Guide
 -----------------
 

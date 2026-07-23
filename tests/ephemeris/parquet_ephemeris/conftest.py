@@ -4,14 +4,9 @@ import math
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
-
-# Skip everything in this directory if pyarrow / duckdb are unavailable.
-pytest.importorskip("pyarrow")
-pytest.importorskip("duckdb")
-
-import pyarrow as pa  # noqa: E402
-import pyarrow.parquet as pq  # noqa: E402
 
 EPOCH = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 
