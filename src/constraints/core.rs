@@ -994,10 +994,9 @@ pub(crate) fn compute_angle_deg_batch(
             body_pos[1] - obs_pos[1],
             body_pos[2] - obs_pos[2],
         ];
-        let body_dist = (body_rel[0] * body_rel[0]
-            + body_rel[1] * body_rel[1]
-            + body_rel[2] * body_rel[2])
-            .sqrt();
+        let body_dist =
+            (body_rel[0] * body_rel[0] + body_rel[1] * body_rel[1] + body_rel[2] * body_rel[2])
+                .sqrt();
         let body_unit = if body_dist > 0.0 {
             [
                 body_rel[0] / body_dist,
