@@ -190,14 +190,13 @@ def parse_constraint_toml(text: str) -> ConstraintConfig:
     """Parse a TOML string (as produced by :func:`constraint_to_toml_string`) back
     into the matching :data:`~rust_ephem.constraints.ConstraintConfig` model."""
     parsed = tomlkit.parse(text)
+    definitions = parsed.get("definitions", {})
 
     if "expression" in parsed:
-        definitions = parsed.get("definitions", {})
         ast = _ExpressionParser(parsed["expression"]).parse()
         return CombinedConstraintConfig.validate_python(_resolve_ast(ast, definitions))
 
     if "constraint_expression" in parsed:
-        definitions = parsed.get("definitions", {})
         root = {
             k: v
             for k, v in parsed.items()

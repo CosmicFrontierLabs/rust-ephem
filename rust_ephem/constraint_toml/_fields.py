@@ -48,21 +48,24 @@ def _is_constraint_field(field_info: FieldInfo) -> bool:
     )
 
 
+# (annotated_types class, attribute holding the bound value, note format)
+_BOUND_FORMATS: tuple[tuple[type, str, str], ...] = (
+    (annotated_types.Ge, "ge", ">= {}"),
+    (annotated_types.Gt, "gt", "> {}"),
+    (annotated_types.Le, "le", "<= {}"),
+    (annotated_types.Lt, "lt", "< {}"),
+    (annotated_types.MinLen, "min_length", "min length {}"),
+    (annotated_types.MaxLen, "max_length", "max length {}"),
+)
+
+
 def _bounds_note(field_info: FieldInfo) -> str | None:
-    notes: list[str] = []
-    for constraint in field_info.metadata:
-        if isinstance(constraint, annotated_types.Ge):
-            notes.append(f">= {constraint.ge}")
-        elif isinstance(constraint, annotated_types.Gt):
-            notes.append(f"> {constraint.gt}")
-        elif isinstance(constraint, annotated_types.Le):
-            notes.append(f"<= {constraint.le}")
-        elif isinstance(constraint, annotated_types.Lt):
-            notes.append(f"< {constraint.lt}")
-        elif isinstance(constraint, annotated_types.MinLen):
-            notes.append(f"min length {constraint.min_length}")
-        elif isinstance(constraint, annotated_types.MaxLen):
-            notes.append(f"max length {constraint.max_length}")
+    notes = [
+        fmt.format(getattr(constraint, attr))
+        for constraint in field_info.metadata
+        for cls, attr, fmt in _BOUND_FORMATS
+        if isinstance(constraint, cls)
+    ]
     return ", ".join(notes) if notes else None
 
 
