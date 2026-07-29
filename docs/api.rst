@@ -654,10 +654,11 @@ Functions
 
 * ``osculating_elements_from_state(position_km, velocity_km_s, mu_km3_s2=WGS72_EARTH_MU_KM3_S2)`` — Derive instantaneous classical osculating elements from one inertial Cartesian state.
 
-  The position and velocity must describe the same epoch in the same inertial
-  frame. Position is in kilometers, velocity is in kilometers per second, and
-  ``mu_km3_s2`` is in km^3/s^2. The returned ``OsculatingElements`` dictionary
-  contains:
+  The position and velocity must describe the same epoch in the same
+  central-body-centered inertial frame. Position is in kilometers, velocity is
+  in kilometers per second, and ``mu_km3_s2`` is in km^3/s^2. Returned angles
+  are normalized to the range [0, 360) degrees. The returned
+  ``OsculatingElements`` dictionary contains:
 
   * ``semimajor_axis_km``
   * ``eccentricity``

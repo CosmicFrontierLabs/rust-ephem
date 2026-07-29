@@ -64,8 +64,9 @@ def osculating_elements_from_state(
     """Derive instantaneous classical osculating elements from one state vector.
 
     ``position_km`` and ``velocity_km_s`` must describe the same epoch in the
-    same inertial Cartesian frame. The returned orientation angles are relative
-    to that frame. The epoch and frame are intentionally not inferred or
+    same central-body-centered inertial Cartesian frame. The returned
+    orientation angles are relative to that frame and normalized to the range
+    [0, 360) degrees. The epoch and frame are intentionally not inferred or
     included in the result; callers serializing the elements should store both
     alongside them.
 

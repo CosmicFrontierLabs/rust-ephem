@@ -38,7 +38,8 @@ class TestOsculatingElementsFromState:
 
     def test_circular_equatorial_uses_true_longitude(self) -> None:
         radius_km = 7000.0
-        longitude_deg = 75.0
+        longitude_deg = -20.0
+        expected_true_longitude_deg = 340.0
         longitude_rad = math.radians(longitude_deg)
         circular_speed = math.sqrt(WGS72_EARTH_MU_KM3_S2 / radius_km)
         position = radius_km * np.array(
@@ -55,7 +56,9 @@ class TestOsculatingElementsFromState:
         assert elements["inclination_deg"] == pytest.approx(0.0)
         assert elements["right_ascension_of_ascending_node_deg"] == 0.0
         assert elements["argument_of_periapsis_deg"] == 0.0
-        assert elements["true_anomaly_deg"] == pytest.approx(longitude_deg)
+        assert elements["true_anomaly_deg"] == pytest.approx(
+            expected_true_longitude_deg
+        )
 
     def test_circular_inclined_uses_argument_of_latitude(self) -> None:
         radius_km = 7000.0
