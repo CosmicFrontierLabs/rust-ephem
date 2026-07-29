@@ -58,6 +58,11 @@ from .constraints import (
     XorConstraint,
 )
 from .ephemeris import Ephemeris, EphemerisType
+from .orbital_elements import (
+    WGS72_EARTH_MU_KM3_S2,
+    OsculatingElements,
+    osculating_elements_from_state,
+)
 from .tle import (
     WGS72_EARTH_MU_M3_S2,
     TLERecord,
@@ -117,6 +122,9 @@ __all__ = [
     "get_cache_dir",
     "TLERecord",
     "WGS72_EARTH_MU_M3_S2",
+    "WGS72_EARTH_MU_KM3_S2",
+    "OsculatingElements",
+    "osculating_elements_from_state",
     "fetch_tle",
     "true_anomaly_from_mean_anomaly",
     "get_bright_stars",
