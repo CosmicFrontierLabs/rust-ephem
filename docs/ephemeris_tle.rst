@@ -4,6 +4,10 @@ Using TLEEphemeris
 This example shows how to propagate a satellite from a Two-Line Element (TLE)
 set and obtain positions in different frames.
 
+TLE propagation follows the reference AFSPC SGP4 convention and uses the
+WGS-72 geopotential constants. This is independent of the WGS-84 ellipsoid
+used for geodetic latitude, longitude, and height.
+
 .. code-block:: python
 
     import datetime as dt

@@ -49,6 +49,24 @@ class TestLegacyTLEMethod:
         assert tle_record.epoch == legacy_ephem.tle_epoch
         assert tle_record.source == "direct"
 
+    def test_teme_state_matches_afspc_wgs72_reference(self, legacy_ephem) -> None:
+        """TLE propagation uses the reference AFSPC/WGS-72 convention."""
+        import numpy as np
+
+        assert legacy_ephem.teme_pv is not None
+        np.testing.assert_allclose(
+            legacy_ephem.teme_pv.position[0],
+            [5334.444330496902, -3532.8016179466867, 2318.3789513323654],
+            rtol=0.0,
+            atol=1.0e-7,
+        )
+        np.testing.assert_allclose(
+            legacy_ephem.teme_pv.velocity[0],
+            [4.013365806388614, 6.490615877545802, 0.6420202312262405],
+            rtol=0.0,
+            atol=1.0e-10,
+        )
+
 
 class TestFileReading:
     """Test reading TLEs from files."""
