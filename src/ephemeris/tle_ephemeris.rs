@@ -230,6 +230,24 @@ impl TLEEphemeris {
         &self.tle2
     }
 
+    /// Get the propagation model used for TLE states
+    #[getter]
+    fn propagator(&self) -> &'static str {
+        "SGP4"
+    }
+
+    /// Get the geopotential model used by SGP4
+    #[getter]
+    fn gravity_model(&self) -> &'static str {
+        "WGS-72"
+    }
+
+    /// Get the SGP4 operation mode
+    #[getter]
+    fn sgp4_operation_mode(&self) -> &'static str {
+        "improved"
+    }
+
     /// Get the TLERecord used to generate this ephemeris
     #[getter]
     fn tle_record(&self, py: Python) -> PyResult<Py<PyAny>> {
@@ -662,11 +680,9 @@ impl TLEEphemeris {
             let minutes_since_epoch = elements.datetime_to_minutes_since_epoch(&naive_dt).unwrap();
 
             // Propagate to get position and velocity in TEME
-            let pred = constants
-                .propagate_afspc_compatibility_mode(minutes_since_epoch)
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("Propagation error: {e:?}"))
-                })?;
+            let pred = constants.propagate(minutes_since_epoch).map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("Propagation error: {e:?}"))
+            })?;
 
             // Store results - use direct assignment for better performance
             let mut row = out.row_mut(i);

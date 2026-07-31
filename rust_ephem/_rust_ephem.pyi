@@ -988,6 +988,21 @@ class TLEEphemeris(Ephemeris):
         ...
 
     @property
+    def propagator(self) -> Literal["SGP4"]:
+        """Propagation model used for TLE states"""
+        ...
+
+    @property
+    def gravity_model(self) -> Literal["WGS-72"]:
+        """Geopotential model used by SGP4"""
+        ...
+
+    @property
+    def sgp4_operation_mode(self) -> Literal["improved"]:
+        """SGP4 operation mode"""
+        ...
+
+    @property
     def begin(self) -> datetime:
         """Start time of the ephemeris"""
         ...
