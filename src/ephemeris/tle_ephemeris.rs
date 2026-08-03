@@ -94,7 +94,7 @@ impl TLEEphemeris {
                 };
                 let epoch = if tle_obj.hasattr("epoch")? {
                     let epoch_obj = tle_obj.getattr("epoch")?;
-                    if let Ok(epoch_dt) = epoch_obj.downcast::<PyDateTime>() {
+                    if let Ok(epoch_dt) = epoch_obj.cast::<PyDateTime>() {
                         Some(crate::utils::time_utils::python_datetime_to_utc(epoch_dt)?)
                     } else {
                         None

@@ -1756,7 +1756,7 @@ impl PyConstraint {
     /// Helper to parse indices parameter
     fn parse_indices(&self, indices_arg: &Bound<PyAny>) -> PyResult<Vec<usize>> {
         if indices_arg.is_instance_of::<pyo3::types::PyList>() {
-            let list = indices_arg.downcast::<pyo3::types::PyList>()?;
+            let list = indices_arg.cast::<pyo3::types::PyList>()?;
             list.iter()
                 .map(|item| item.extract::<usize>())
                 .collect::<PyResult<_>>()
@@ -1828,7 +1828,7 @@ impl PyConstraint {
         )?;
 
         // Extract the results for the single target (first row)
-        let array = result_array.downcast_bound::<PyArray2<bool>>(py)?;
+        let array = result_array.cast_bound::<PyArray2<bool>>(py)?;
         let readonly_array = array.readonly();
         let array_data = readonly_array.as_array();
         let mut results: Vec<bool> = Vec::with_capacity(num_times);

@@ -613,10 +613,16 @@ pub fn calculate_airmass_batch_fast(
         Array2::from_shape_fn((n_targets, n_times), |(j, i)| obs_lons[i] - ras_rad[j]);
 
     // Reshape 1D arrays into column/row vectors for broadcasting
-    let sin_dec_col = sin_decs.view().into_shape((n_targets, 1)).unwrap();
-    let sin_lat_row = sin_lats.view().into_shape((1, n_times)).unwrap();
-    let cos_dec_col = cos_decs.view().into_shape((n_targets, 1)).unwrap();
-    let cos_lat_row = cos_lats.view().into_shape((1, n_times)).unwrap();
+    let sin_dec_col = sin_decs
+        .view()
+        .into_shape_with_order((n_targets, 1))
+        .unwrap();
+    let sin_lat_row = sin_lats.view().into_shape_with_order((1, n_times)).unwrap();
+    let cos_dec_col = cos_decs
+        .view()
+        .into_shape_with_order((n_targets, 1))
+        .unwrap();
+    let cos_lat_row = cos_lats.view().into_shape_with_order((1, n_times)).unwrap();
 
     // First term: sin(dec)[j] * sin(lat)[i]
     let first_term = &sin_dec_col * &sin_lat_row;
