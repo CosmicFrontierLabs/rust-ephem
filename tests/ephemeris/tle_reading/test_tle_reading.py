@@ -622,7 +622,8 @@ class TestFetchTLECorruptCacheRecovery:
     """
 
     @pytest.fixture(scope="class")
-    def corrupt_cache_result(self):
+    @classmethod
+    def corrupt_cache_result(cls):
         from pathlib import Path
 
         # Use a fake NORAD ID that will never have real cached TLEs.
