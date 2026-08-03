@@ -4,6 +4,16 @@ Using TLEEphemeris
 This example shows how to propagate a satellite from a Two-Line Element (TLE)
 set and obtain positions in different frames.
 
+TLE propagation uses the WGS-72 geopotential constants and improved SGP4
+operation mode, matching the defaults used by Python SGP4 and Skyfield. The
+AFSPC TLE epoch and sidereal-time expressions are used when initializing the
+propagator. These choices are independent of the WGS-84 ellipsoid used for
+geodetic latitude, longitude, and height.
+
+``TLEEphemeris`` exposes these choices through the read-only ``propagator``,
+``gravity_model``, and ``sgp4_operation_mode`` properties so serialized
+products can record the actual implementation rather than duplicating labels.
+
 .. code-block:: python
 
     import datetime as dt

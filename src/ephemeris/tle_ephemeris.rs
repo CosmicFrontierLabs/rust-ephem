@@ -230,6 +230,24 @@ impl TLEEphemeris {
         &self.tle2
     }
 
+    /// Get the propagation model used for TLE states
+    #[getter]
+    fn propagator(&self) -> &'static str {
+        "SGP4"
+    }
+
+    /// Get the geopotential model used by SGP4
+    #[getter]
+    fn gravity_model(&self) -> &'static str {
+        "WGS-72"
+    }
+
+    /// Get the SGP4 operation mode
+    #[getter]
+    fn sgp4_operation_mode(&self) -> &'static str {
+        "improved"
+    }
+
     /// Get the TLERecord used to generate this ephemeris
     #[getter]
     fn tle_record(&self, py: Python) -> PyResult<Py<PyAny>> {
@@ -643,10 +661,11 @@ impl TLEEphemeris {
         }
         let elements = elements_vec.into_iter().next().unwrap();
 
-        // Create SGP4 constants
-        let constants = Constants::from_elements(&elements).map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("SGP4 constants error: {e:?}"))
-        })?;
+        // TLEs use the reference AFSPC SGP4 convention, including WGS-72.
+        let constants =
+            Constants::from_elements_afspc_compatibility_mode(&elements).map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("SGP4 constants error: {e:?}"))
+            })?;
 
         // Prepare output array
         let n = times.len();

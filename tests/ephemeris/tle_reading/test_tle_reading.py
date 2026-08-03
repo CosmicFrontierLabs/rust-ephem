@@ -49,6 +49,67 @@ class TestLegacyTLEMethod:
         assert tle_record.epoch == legacy_ephem.tle_epoch
         assert tle_record.source == "direct"
 
+    def test_teme_state_matches_afspc_wgs72_reference(self, legacy_ephem) -> None:
+        """TLE propagation uses reference WGS-72 constants."""
+        import numpy as np
+
+        assert legacy_ephem.teme_pv is not None
+        np.testing.assert_allclose(
+            legacy_ephem.teme_pv.position[0],
+            [5334.444330496902, -3532.8016179466867, 2318.3789513323654],
+            rtol=0.0,
+            atol=1.0e-7,
+        )
+        np.testing.assert_allclose(
+            legacy_ephem.teme_pv.velocity[0],
+            [4.013365806388614, 6.490615877545802, 0.6420202312262405],
+            rtol=0.0,
+            atol=1.0e-10,
+        )
+
+    def test_exposes_authoritative_propagation_metadata(self, legacy_ephem) -> None:
+        assert legacy_ephem.propagator == "SGP4"
+        assert legacy_ephem.gravity_model == "WGS-72"
+        assert legacy_ephem.sgp4_operation_mode == "improved"
+
+    def test_deep_space_teme_state_matches_improved_mode_reference(self) -> None:
+        """Low-inclination deep-space propagation matches Python SGP4 mode i."""
+        import numpy as np
+
+        line1 = "1 23599U 95029B   06171.76535463  .00085586  12891-6  12956-2 0  2905"
+        line2 = "2 23599   6.9327   0.2849 5782022 274.4436  25.2425  4.47796565123555"
+        epoch = datetime(
+            2006,
+            6,
+            21,
+            2,
+            3,
+            6,
+            640031,
+            tzinfo=timezone.utc,
+        )
+        ephemeris = rust_ephem.TLEEphemeris(
+            line1,
+            line2,
+            epoch,
+            epoch,
+            60,
+        )
+
+        assert ephemeris.teme_pv is not None
+        np.testing.assert_allclose(
+            ephemeris.teme_pv.position[0],
+            [-2341.197623553257, 24245.804332004496, 2948.1857961154833],
+            rtol=0.0,
+            atol=1.0e-5,
+        )
+        np.testing.assert_allclose(
+            ephemeris.teme_pv.velocity[0],
+            [-2.603407349049543, -0.2761757405958612, -0.03390750870872316],
+            rtol=0.0,
+            atol=1.0e-9,
+        )
+
 
 class TestFileReading:
     """Test reading TLEs from files."""
