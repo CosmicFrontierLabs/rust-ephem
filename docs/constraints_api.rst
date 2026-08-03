@@ -1884,6 +1884,48 @@ internally to decide violation, but ``constraint_values`` is always sourced
 from the roll = 0° evaluation - the geometric value itself doesn't depend on
 which discrete roll was swept for violation determination.
 
+.. _visibility-window-cause:
+
+Visibility Window Causes
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+Every ``VisibilityWindow`` in ``result.visibility`` carries ``start_cause`` and
+``end_cause``: the tag(s) of the leaf constraint(s) whose own pass/fail state
+flipped at that exact boundary sample. This answers "which constraint ended
+to let the window start" and "which constraint started to end the window" for
+composite constraints, without having to re-evaluate every child separately
+and diff timestamps by hand.
+
+.. code-block:: python
+
+   from rust_ephem.constraints import SunConstraint, MoonConstraint
+
+   combined = SunConstraint(min_angle=45.0) & MoonConstraint(min_angle=10.0)
+   result = combined.evaluate(ephem, target_ra=83.63, target_dec=22.01)
+
+   for window in result.visibility:
+       print(window.start_time, window.start_cause, "->", window.end_time, window.end_cause)
+       # e.g. 2024-01-01T03:12:00 ['moon'] -> 2024-01-01T05:47:00 ['sun']
+       # means the moon constraint cleared to open this window, and the sun
+       # constraint tripped to close it.
+
+Both fields use the same short tags as ``constraint_values`` keys (``sun``,
+``moon``, ``body``, ...; see the table above), so you can cross-reference a
+cause directly against the underlying scalar: ``result.constraint_values["moon.moon_angle_deg"]``.
+Unlike ``constraint_values``, cause tags are available even for constraints
+with no natural continuous scalar (``SAAConstraint``, polygon-mode
+``BodyConstraint``/``BrightStarConstraint``), since attribution only needs
+each leaf's own boolean pass/fail state, not the geometry behind it.
+
+A field is ``None`` when there is no adjacent sample to compare against
+(``start_cause`` is ``None`` for a window starting at the very first evaluated
+time; ``end_cause`` is ``None`` for a window ending at the very last). If
+multiple leaf constraints flip state on the exact same sample, both tags are
+listed, sorted alphabetically. For ``NotConstraint``, the underlying leaf's
+own tag is reported unprefixed and un-negated - a cause reflects whether the
+wrapped condition itself (e.g. "too close to sun") changed, not the
+NOT-negated combined value.
+
 ConstraintViolation
 ^^^^^^^^^^^^^^^^^^^
 

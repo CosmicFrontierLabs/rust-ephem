@@ -33,6 +33,8 @@ class DummyRustResult:
                     "start_time": base,
                     "end_time": base + timedelta(seconds=1),
                     "duration_seconds": 1.0,
+                    "start_cause": None,
+                    "end_cause": None,
                 },
             )()
         ]

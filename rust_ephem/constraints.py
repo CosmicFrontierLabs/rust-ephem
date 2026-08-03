@@ -1033,6 +1033,8 @@ class RustConstraintMixin(BaseModel):
                 start_time=w.start_time,
                 end_time=w.end_time,
                 duration_seconds=w.duration_seconds,
+                start_cause=w.start_cause,
+                end_cause=w.end_cause,
             )
             for w in rust_result.visibility
         ]
@@ -1868,6 +1870,8 @@ class VisibilityWindowResult(BaseModel):
     start_time: datetime
     end_time: datetime
     duration_seconds: float
+    start_cause: list[str] | None = None
+    end_cause: list[str] | None = None
 
 
 class MovingVisibilityResult(BaseModel):

@@ -2154,6 +2154,13 @@ impl PyConstraint {
                 .compute_named_values_diagonal(ephem_ref, &ras, &decs)
         })?;
 
+        // Compute per-leaf-constraint violation masks (diagonal), used to attribute
+        // VisibilityWindow.start_cause/end_cause.
+        let component_violated = self.with_ephemeris(bound, |ephem_ref| {
+            self.evaluator
+                .compute_named_booleans_diagonal(ephem_ref, &ras, &decs)
+        })?;
+
         Ok(MovingBodyResult::new(
             violations,
             all_satisfied,
@@ -2163,7 +2170,8 @@ impl PyConstraint {
             decs,
             constraint_vec,
         )
-        .with_constraint_values(values))
+        .with_constraint_values(values)
+        .with_component_violated(component_violated))
     }
 
     /// Get constraint configuration as JSON string

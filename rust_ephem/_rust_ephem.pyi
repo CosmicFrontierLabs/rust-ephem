@@ -59,6 +59,15 @@ class VisibilityWindow:
 
     start_time: datetime
     end_time: datetime
+    start_cause: list[str] | None
+    """Tag(s) of the leaf constraint(s) (namespaced like ``ConstraintResult.constraint_values``
+    keys, e.g. "sun", "moon") whose own pass/fail state flipped from violated to satisfied at
+    the sample immediately before this window started. ``None`` if the window starts at the
+    first evaluated sample (no prior sample to compare against)."""
+    end_cause: list[str] | None
+    """Tag(s) of the leaf constraint(s) whose own pass/fail state flipped from satisfied to
+    violated at the sample immediately after this window ended. ``None`` if the window ends
+    at the last evaluated sample."""
 
     def __repr__(self) -> str: ...
     @property

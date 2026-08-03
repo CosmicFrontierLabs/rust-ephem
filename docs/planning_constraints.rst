@@ -170,6 +170,35 @@ or :py:meth:`~rust_ephem.constraints.RustConstraintMixin.in_constraint`, which
 stay on the fast boolean-only path used internally for roll-sweeping and
 field-of-regard computation.
 
+Which Constraint Caused a Window to Start/End
+----------------------------------------------
+
+Every ``VisibilityWindow`` also carries ``start_cause`` and ``end_cause``: the
+short tag(s) (same tags as ``constraint_values`` keys) of the leaf
+constraint(s) whose own pass/fail state changed at that exact boundary
+sample. This tells you which part of a composite constraint actually opened
+or closed a window, without evaluating each child separately and diffing
+timestamps by hand:
+
+.. code-block:: python
+
+    combined = SunConstraint(min_angle=45.0) & MoonConstraint(min_angle=10.0)
+    result = combined.evaluate(ephem, target_ra, target_dec)
+
+    for window in result.visibility:
+        print(window.start_time, window.start_cause, "->", window.end_time, window.end_cause)
+        # e.g. 2024-01-01T03:12:00 ['moon'] -> 2024-01-01T05:47:00 ['sun']
+
+Both fields are ``None`` at the edges of the evaluated time range (no
+adjacent sample to compare against), and list multiple tags if more than one
+leaf flips on the same sample. Unlike ``constraint_values``, cause tags are
+available even for constraints with no natural continuous scalar
+(``SAAConstraint``, polygon-mode ``BodyConstraint``/``BrightStarConstraint``),
+since attribution only needs each leaf's own boolean state. See
+:ref:`Visibility Window Causes <visibility-window-cause>` in the API
+reference for the full semantics (including ``NotConstraint``'s pass-through
+behavior).
+
 Available Constraint Types
 --------------------------
 

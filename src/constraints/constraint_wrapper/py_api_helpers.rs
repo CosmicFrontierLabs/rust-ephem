@@ -162,6 +162,21 @@ impl PyConstraint {
             .collect()
     }
 
+    /// Slice out a single target's row from each named-boolean matrix returned by
+    /// `compute_named_booleans` (shape M x N, targets x times).
+    pub(super) fn extract_target_booleans(
+        booleans_map: &HashMap<String, ndarray::Array2<bool>>,
+        target_index: usize,
+    ) -> HashMap<String, Vec<bool>> {
+        booleans_map
+            .iter()
+            .map(|(key, arr)| {
+                let row: Vec<bool> = (0..arr.ncols()).map(|i| arr[[target_index, i]]).collect();
+                (key.clone(), row)
+            })
+            .collect()
+    }
+
     pub(super) fn with_effective_evaluator<T, F>(
         &self,
         target_roll: Option<f64>,
@@ -312,9 +327,20 @@ impl PyConstraint {
         )?;
         let values = Self::extract_target_values(&values_map, 0);
 
+        // Compute per-leaf-constraint violation masks once, used to attribute
+        // VisibilityWindow.start_cause/end_cause.
+        let booleans_map = evaluator.compute_named_booleans(
+            ephemeris,
+            &[target_ra],
+            &[target_dec],
+            time_indices.as_deref(),
+        )?;
+        let component_violated = Self::extract_target_booleans(&booleans_map, 0);
+
         Ok(
             ConstraintResult::new(violations, all_satisfied, evaluator.name(), times)
-                .with_constraint_values(values),
+                .with_constraint_values(values)
+                .with_component_violated(component_violated),
         )
     }
 
@@ -350,6 +376,15 @@ impl PyConstraint {
             time_indices.as_deref(),
         )?;
 
+        // Compute per-leaf-constraint violation masks once for all targets, used to
+        // attribute VisibilityWindow.start_cause/end_cause.
+        let booleans_map = evaluator.compute_named_booleans(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices.as_deref(),
+        )?;
+
         let mut results = Vec::with_capacity(target_ras.len());
         for target_index in 0..target_ras.len() {
             let violated: Vec<bool> = (0..violation_array.ncols())
@@ -364,9 +399,11 @@ impl PyConstraint {
 
             let all_satisfied = violations.is_empty();
             let values = Self::extract_target_values(&values_map, target_index);
+            let component_violated = Self::extract_target_booleans(&booleans_map, target_index);
             results.push(
                 ConstraintResult::new(violations, all_satisfied, evaluator.name(), times.clone())
-                    .with_constraint_values(values),
+                    .with_constraint_values(values)
+                    .with_component_violated(component_violated),
             );
         }
 

@@ -17,6 +17,65 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::OnceLock;
 
+/// Short, stable tag for a leaf/combinator constraint's `values`/`component_violated`
+/// key prefix, derived from the text before the first `(` in its `name()`. Falls back
+/// to a sanitized version of the head for anything unmapped, so new constraint types
+/// don't panic or silently collide — they just get a slightly uglier (but unique-ish)
+/// prefix.
+pub(crate) fn value_key_prefix(name: &str) -> String {
+    let head = name.split('(').next().unwrap_or(name).trim();
+    let tag = match head {
+        "SunProximity" => "sun",
+        "MoonProximity" => "moon",
+        "BodyProximity" => "body",
+        "Eclipse" => "eclipse",
+        "AirmassConstraint" => "airmass",
+        "AltAzConstraint" => "alt_az",
+        "SAAConstraint" => "saa",
+        "DaytimeConstraint" => "daytime",
+        "MoonPhaseConstraint" => "moon_phase",
+        "OrbitPoleConstraint" => "orbit_pole",
+        "OrbitRamConstraint" => "orbit_ram",
+        "EarthLimb" => "earth_limb",
+        "BrightStar" => "bright_star",
+        "SolarRollConstraint" => "solar_roll",
+        "AND" => "and",
+        "OR" => "or",
+        "NOT" => "not",
+        "XOR" => "xor",
+        "AT_LEAST" => "at_least",
+        "BoresightOffset" => "boresight_offset",
+        other => {
+            return other
+                .to_lowercase()
+                .replace(|c: char| !c.is_alphanumeric(), "_")
+        }
+    };
+    tag.to_string()
+}
+
+/// Names of leaf constraints (keyed the same way as `constraint_values`) whose own
+/// violation state differs between `idx_before` and `idx_after`, sorted for
+/// determinism. Used to attribute a `VisibilityWindow`'s `start_cause`/`end_cause`.
+/// Returns `None` if no leaf's state actually changed between the two samples.
+fn flipped_causes(
+    component_violated: &HashMap<String, Vec<bool>>,
+    idx_before: usize,
+    idx_after: usize,
+) -> Option<Vec<String>> {
+    let mut causes: Vec<String> = component_violated
+        .iter()
+        .filter(|(_, arr)| arr.get(idx_before) != arr.get(idx_after))
+        .map(|(key, _)| key.clone())
+        .collect();
+    causes.sort();
+    if causes.is_empty() {
+        None
+    } else {
+        Some(causes)
+    }
+}
+
 /// Result of constraint evaluation
 ///
 /// Contains information about when and where a constraint is violated.
@@ -67,6 +126,18 @@ pub struct VisibilityWindow {
     /// End time of the visibility window
     #[pyo3(get)]
     pub end_time: Py<PyAny>, // Python datetime object
+    /// Namespaced tag(s) of the leaf constraint(s) whose own pass/fail state flipped
+    /// from violated to satisfied at the sample immediately before this window started
+    /// (same tags as `ConstraintResult.constraint_values` keys' prefixes, e.g. "sun",
+    /// "moon"). `None` if the window starts at the first evaluated sample (no prior
+    /// sample to compare against).
+    #[pyo3(get)]
+    pub start_cause: Option<Vec<String>>,
+    /// Namespaced tag(s) of the leaf constraint(s) whose own pass/fail state flipped
+    /// from satisfied to violated at the sample immediately after this window ended.
+    /// `None` if the window ends at the last evaluated sample.
+    #[pyo3(get)]
+    pub end_cause: Option<Vec<String>>,
 }
 
 #[pymethods]
@@ -76,8 +147,8 @@ impl VisibilityWindow {
         let end_str = self.end_time.bind(py).str()?.to_string();
         let duration = self.duration_seconds(py)?;
         Ok(format!(
-            "VisibilityWindow(start_time={}, end_time={}, duration_seconds={})",
-            start_str, end_str, duration
+            "VisibilityWindow(start_time={}, end_time={}, duration_seconds={}, start_cause={:?}, end_cause={:?})",
+            start_str, end_str, duration, self.start_cause, self.end_cause
         ))
     }
     #[getter]
@@ -105,6 +176,10 @@ pub struct ConstraintResult {
     /// one array per key, aligned with `times`/`timestamp`.
     #[pyo3(get)]
     pub constraint_values: HashMap<String, Vec<f64>>,
+    /// Per-leaf-constraint violation mask (namespaced the same way as
+    /// `constraint_values`' keys), aligned with `times`. Used to attribute
+    /// `VisibilityWindow.start_cause`/`end_cause`; not directly exposed to Python.
+    component_violated: HashMap<String, Vec<bool>>,
     /// Evaluation times as Rust DateTime<Utc>, not directly exposed to Python
     pub times: Vec<DateTime<Utc>>,
     /// Step size in seconds between timestamps (for O(1) index lookup)
@@ -136,6 +211,7 @@ impl ConstraintResult {
             all_satisfied,
             constraint_name,
             constraint_values: HashMap::new(),
+            component_violated: HashMap::new(),
             times,
             step_seconds,
             timestamp_cache: OnceLock::new(),
@@ -147,6 +223,15 @@ impl ConstraintResult {
     /// Attach named continuous values computed during evaluation.
     pub fn with_constraint_values(mut self, constraint_values: HashMap<String, Vec<f64>>) -> Self {
         self.constraint_values = constraint_values;
+        self
+    }
+
+    /// Attach per-leaf-constraint violation masks computed during evaluation.
+    pub fn with_component_violated(
+        mut self,
+        component_violated: HashMap<String, Vec<bool>>,
+    ) -> Self {
+        self.component_violated = component_violated;
         self
     }
 }
@@ -337,9 +422,17 @@ impl ConstraintResult {
                 if let Some(start_idx) = current_window_start {
                     // Only add window if it's non-zero length
                     if i - 1 != start_idx {
+                        let start_cause = if start_idx == 0 {
+                            None
+                        } else {
+                            flipped_causes(&self.component_violated, start_idx - 1, start_idx)
+                        };
+                        let end_cause = flipped_causes(&self.component_violated, i - 1, i);
                         windows.push(VisibilityWindow {
                             start_time: utc_to_python_datetime(py, &self.times[start_idx])?,
                             end_time: utc_to_python_datetime(py, &self.times[i - 1])?,
+                            start_cause,
+                            end_cause,
                         });
                     }
                     current_window_start = None;
@@ -349,9 +442,16 @@ impl ConstraintResult {
 
         // Close any open visibility window at the end
         if let Some(start_idx) = current_window_start {
+            let start_cause = if start_idx == 0 {
+                None
+            } else {
+                flipped_causes(&self.component_violated, start_idx - 1, start_idx)
+            };
             windows.push(VisibilityWindow {
                 start_time: utc_to_python_datetime(py, &self.times[start_idx])?,
                 end_time: utc_to_python_datetime(py, &self.times[self.times.len() - 1])?,
+                start_cause,
+                end_cause: None,
             });
         }
 
@@ -384,6 +484,10 @@ pub struct MovingBodyResult {
     /// one array per key, aligned with `times`/`timestamp`.
     #[pyo3(get)]
     pub constraint_values: HashMap<String, Vec<f64>>,
+    /// Per-leaf-constraint violation mask (namespaced the same way as
+    /// `constraint_values`' keys), aligned with `times`. Used to attribute
+    /// `VisibilityWindow.start_cause`/`end_cause`; not directly exposed to Python.
+    component_violated: HashMap<String, Vec<bool>>,
     /// Evaluation times as Rust DateTime<Utc>, not directly exposed to Python
     pub times: Vec<DateTime<Utc>>,
     /// Step size in seconds between timestamps (for O(1) index lookup)
@@ -416,6 +520,7 @@ impl MovingBodyResult {
             ras,
             decs,
             constraint_values: HashMap::new(),
+            component_violated: HashMap::new(),
             times,
             step_seconds,
             constraint_vec,
@@ -425,6 +530,15 @@ impl MovingBodyResult {
     /// Attach named continuous values computed during evaluation.
     pub fn with_constraint_values(mut self, constraint_values: HashMap<String, Vec<f64>>) -> Self {
         self.constraint_values = constraint_values;
+        self
+    }
+
+    /// Attach per-leaf-constraint violation masks computed during evaluation.
+    pub fn with_component_violated(
+        mut self,
+        component_violated: HashMap<String, Vec<bool>>,
+    ) -> Self {
+        self.component_violated = component_violated;
         self
     }
 }
@@ -534,9 +648,17 @@ impl MovingBodyResult {
                 }
             } else if let Some(start_idx) = current_window_start {
                 if i - 1 != start_idx {
+                    let start_cause = if start_idx == 0 {
+                        None
+                    } else {
+                        flipped_causes(&self.component_violated, start_idx - 1, start_idx)
+                    };
+                    let end_cause = flipped_causes(&self.component_violated, i - 1, i);
                     windows.push(VisibilityWindow {
                         start_time: utc_to_python_datetime(py, &self.times[start_idx])?,
                         end_time: utc_to_python_datetime(py, &self.times[i - 1])?,
+                        start_cause,
+                        end_cause,
                     });
                 }
                 current_window_start = None;
@@ -544,9 +666,16 @@ impl MovingBodyResult {
         }
 
         if let Some(start_idx) = current_window_start {
+            let start_cause = if start_idx == 0 {
+                None
+            } else {
+                flipped_causes(&self.component_violated, start_idx - 1, start_idx)
+            };
             windows.push(VisibilityWindow {
                 start_time: utc_to_python_datetime(py, &self.times[start_idx])?,
                 end_time: utc_to_python_datetime(py, &self.times[self.times.len() - 1])?,
+                start_cause,
+                end_cause: None,
             });
         }
 
@@ -617,6 +746,48 @@ pub trait ConstraintEvaluator: Send + Sync {
         let time_indices: Vec<usize> = (0..n).collect();
         let full =
             self.compute_named_values(ephemeris, target_ras, target_decs, Some(&time_indices))?;
+        Ok(full
+            .into_iter()
+            .map(|(key, arr)| (key, (0..n).map(|i| arr[[i, i]]).collect()))
+            .collect())
+    }
+
+    /// Compute a per-leaf-constraint violation mask (namespaced under a short tag, e.g.
+    /// `sun`), used to attribute `VisibilityWindow.start_cause`/`end_cause` when this
+    /// constraint is combined with others via `&`, `|`, `~`, `^`, `.at_least()`. Called
+    /// once per `evaluate()`/`evaluate_batch()` call, never inside a roll-sweep loop.
+    ///
+    /// Default (leaf constraints): a single-entry map from this constraint's own tag to
+    /// its own `in_constraint_batch` result. Combinators override this to merge their
+    /// children's maps instead (see `combinators.rs`).
+    ///
+    /// # Returns
+    /// Map from tag to an (M x N) boolean array (targets x times), matching the shape of
+    /// `in_constraint_batch`.
+    fn compute_named_booleans(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Array2<bool>>> {
+        let arr = self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices)?;
+        Ok(HashMap::from([(value_key_prefix(&self.name()), arr)]))
+    }
+
+    /// Diagonal variant of `compute_named_booleans` for moving-body evaluation: target_i
+    /// paired with time_i only. Default falls back to the full batch and extracts the
+    /// diagonal, mirroring `compute_named_values_diagonal`'s default.
+    fn compute_named_booleans_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<HashMap<String, Vec<bool>>> {
+        let n = target_ras.len();
+        let time_indices: Vec<usize> = (0..n).collect();
+        let full =
+            self.compute_named_booleans(ephemeris, target_ras, target_decs, Some(&time_indices))?;
         Ok(full
             .into_iter()
             .map(|(key, arr)| (key, (0..n).map(|i| arr[[i, i]]).collect()))
@@ -1180,4 +1351,53 @@ macro_rules! extract_latlon_data {
 
         (times_slice, lats_slice, lons_slice)
     }};
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{flipped_causes, value_key_prefix};
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_flipped_causes_detects_single_flip() {
+        let mut component_violated = HashMap::new();
+        component_violated.insert("sun".to_string(), vec![true, true, false]);
+        component_violated.insert("moon".to_string(), vec![false, false, false]);
+
+        assert_eq!(
+            flipped_causes(&component_violated, 1, 2),
+            Some(vec!["sun".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_flipped_causes_lists_multiple_flips_sorted() {
+        let mut component_violated = HashMap::new();
+        component_violated.insert("sun".to_string(), vec![true, false]);
+        component_violated.insert("moon".to_string(), vec![false, true]);
+
+        assert_eq!(
+            flipped_causes(&component_violated, 0, 1),
+            Some(vec!["moon".to_string(), "sun".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_flipped_causes_none_when_nothing_changed() {
+        let mut component_violated = HashMap::new();
+        component_violated.insert("sun".to_string(), vec![true, true]);
+        component_violated.insert("moon".to_string(), vec![false, false]);
+
+        assert_eq!(flipped_causes(&component_violated, 0, 1), None);
+    }
+
+    #[test]
+    fn test_value_key_prefix_known_and_unknown_tags() {
+        assert_eq!(value_key_prefix("SunProximity(min=45°)"), "sun");
+        assert_eq!(value_key_prefix("AND(SunProximity(min=45°))"), "and");
+        assert_eq!(
+            value_key_prefix("SomeNewConstraint(foo=1)"),
+            "somenewconstraint"
+        );
+    }
 }
