@@ -20,8 +20,10 @@ ndarray = "0.17"
 sgp4 = "2.3"                 # pure-Rust SGP4 propagation & TLE parsing. See docs.rs.
 chrono = { version = "0.4", features = ["serde"] }  # used by sgp4
 # Optionally for TEME->GCRS transforms in Rust:
-sofars = "0.6.1"              # pure-Rust SOFA routines (time & transforms); 0.6.1 required for eph/pnp/vm coverage that replaced the erfa crate
+erfa = "0.2"                 # pure-Rust ERFA (SOFA) routines (time & transforms)
+sofars = "0.2"               # pure-Rust SOFA routines
 numpy = "0.29.0"
+pyo3-ffi = "0.29.0"
 pyo3 = { version = "0.29.0" }
 # SPICE/ANISE for SPICE kernel ephemeris
 anise = { version = "0.10", default-features = false }
