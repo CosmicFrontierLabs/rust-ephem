@@ -165,6 +165,15 @@ from .ephemeris import (
 from .ephemeris import (
     EphemerisType as EphemerisType,
 )
+from .orbital_elements import (
+    WGS72_EARTH_MU_KM3_S2 as WGS72_EARTH_MU_KM3_S2,
+)
+from .orbital_elements import (
+    OsculatingElements as OsculatingElements,
+)
+from .orbital_elements import (
+    osculating_elements_from_state as osculating_elements_from_state,
+)
 from .tle import (
     WGS72_EARTH_MU_M3_S2 as WGS72_EARTH_MU_M3_S2,
 )
@@ -230,6 +239,9 @@ __all__ = [
     "get_cache_dir",
     "BrightStarConstraint",
     "get_bright_stars",
+    "WGS72_EARTH_MU_KM3_S2",
+    "OsculatingElements",
+    "osculating_elements_from_state",
     "constraint_to_toml_document",
     "constraint_to_toml_string",
     "write_constraint_toml",
