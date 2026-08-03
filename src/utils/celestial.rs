@@ -1,9 +1,9 @@
 use chrono::{DateTime, Datelike, Timelike, Utc};
-use erfa::earth::position_velocity_00;
-use erfa::prenut::precession_matrix_06;
-use erfa::vectors_and_matrices::mat_mul_pvec;
 use ndarray::{s, Array1, Array2};
 use sofars::astro::atco13;
+use sofars::eph::epv00;
+use sofars::pnp::pmat06;
+use sofars::vm::rxp;
 use std::sync::Arc;
 
 use crate::ephemeris::ephemeris_common::EphemerisBase;
@@ -16,7 +16,7 @@ use crate::{is_planetary_ephemeris_initialized, utils::config::*};
 
 /// Calculate Sun positions for multiple timestamps
 /// Returns Array2 with shape (N, 6) containing [x, y, z, vx, vy, vz] for each timestamp
-pub fn calculate_sun_positions_erfa(times: &[DateTime<Utc>]) -> Array2<f64> {
+pub fn calculate_sun_positions_sofa(times: &[DateTime<Utc>]) -> Array2<f64> {
     let n = times.len();
     let mut out = Array2::<f64>::zeros((n, 6));
 
@@ -25,7 +25,7 @@ pub fn calculate_sun_positions_erfa(times: &[DateTime<Utc>]) -> Array2<f64> {
     for (i, dt) in times.iter().enumerate() {
         let (jd_tt1, jd_tt2) = datetime_to_jd_tt(dt);
 
-        let (_warning, pvh, _pvb) = position_velocity_00(jd_tt1, jd_tt2);
+        let (pvh, _pvb) = epv00(jd_tt1, jd_tt2).expect("sofars epv00 failed");
 
         // Sun position is negative of Earth's heliocentric position
         let mut row = out.row_mut(i);
@@ -226,7 +226,7 @@ pub fn calculate_moon_positions_meeus(times: &[DateTime<Utc>]) -> Array2<f64> {
         let (jd_tt1, jd_tt2) = datetime_to_jd_tt(dt);
 
         // Get the precession matrix from J2000 to date
-        let prec_matrix = precession_matrix_06(jd_tt1, jd_tt2);
+        let prec_matrix = pmat06(jd_tt1, jd_tt2);
 
         // Transpose to get date to J2000 (for orthogonal matrices, transpose = inverse)
         let prec_matrix_t = transpose_matrix(prec_matrix);
@@ -235,8 +235,10 @@ pub fn calculate_moon_positions_meeus(times: &[DateTime<Utc>]) -> Array2<f64> {
         let pos_date = [x_eq_date, y_eq_date, z_eq_date];
         let vel_date = [vx_eq_date, vy_eq_date, vz_eq_date];
 
-        let gcrs_pos = mat_mul_pvec(prec_matrix_t, pos_date);
-        let gcrs_vel = mat_mul_pvec(prec_matrix_t, vel_date);
+        let mut gcrs_pos = [0.0; 3];
+        rxp(&prec_matrix_t, &pos_date, &mut gcrs_pos);
+        let mut gcrs_vel = [0.0; 3];
+        rxp(&prec_matrix_t, &vel_date, &mut gcrs_vel);
 
         // Store results
         let mut row = out.row_mut(i);
@@ -782,7 +784,7 @@ pub fn calculate_sun_positions(times: &[DateTime<Utc>]) -> Array2<f64> {
     if is_planetary_ephemeris_initialized() {
         calculate_body_positions_spice(times, SUN_NAIF_ID, EARTH_NAIF_ID)
     } else {
-        calculate_sun_positions_erfa(times)
+        calculate_sun_positions_sofa(times)
     }
 }
 
