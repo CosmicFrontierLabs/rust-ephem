@@ -196,8 +196,8 @@ available even for constraints with no natural continuous scalar
 (``SAAConstraint``, polygon-mode ``BodyConstraint``/``BrightStarConstraint``),
 since attribution only needs each leaf's own boolean state. See
 :ref:`Visibility Window Causes <visibility-window-cause>` in the API
-reference for the full semantics (including ``NotConstraint``'s pass-through
-behavior).
+reference for the full semantics (including how ``NotConstraint`` tags its
+wrapped leaf's cause with a ``not.`` prefix).
 
 Available Constraint Types
 --------------------------

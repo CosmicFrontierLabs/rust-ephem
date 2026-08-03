@@ -1335,12 +1335,22 @@ impl ConstraintEvaluator for NotEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<HashMap<String, Array2<bool>>> {
-        // Pass the child's own violation mask(s) straight through, unprefixed and
-        // uninverted: cause attribution reports whether the underlying leaf
-        // condition (e.g. "too close to sun") itself changed, not the NOT-negated
-        // combined value.
-        self.constraint
-            .compute_named_booleans(ephemeris, target_ras, target_decs, time_indices)
+        // Values are uninverted (the child's own violation mask, unchanged: cause
+        // attribution reports whether the underlying leaf condition, e.g. "too close
+        // to sun", itself changed, not the NOT-negated combined value), but keys are
+        // prefixed with "not." so a wrapped leaf's cause tag is never mistaken for its
+        // non-negated counterpart - matching how `merge_children_named_values` already
+        // tags a NOT child when nested under AND/OR/XOR/AT_LEAST.
+        let child_booleans = self.constraint.compute_named_booleans(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+        )?;
+        Ok(child_booleans
+            .into_iter()
+            .map(|(key, arr)| (format!("not.{key}"), arr))
+            .collect())
     }
 
     fn name(&self) -> String {

@@ -1922,9 +1922,12 @@ A field is ``None`` when there is no adjacent sample to compare against
 time; ``end_cause`` is ``None`` for a window ending at the very last). If
 multiple leaf constraints flip state on the exact same sample, both tags are
 listed, sorted alphabetically. For ``NotConstraint``, the underlying leaf's
-own tag is reported unprefixed and un-negated - a cause reflects whether the
-wrapped condition itself (e.g. "too close to sun") changed, not the
-NOT-negated combined value.
+tag is prefixed with ``not.`` (e.g. ``not.earth_limb``) and left un-negated -
+a cause reflects whether the wrapped condition itself (e.g. "too close to
+sun") changed, not the NOT-negated combined value. The prefix exists so a
+negated leaf's cause is never mistaken for its non-negated counterpart; it
+applies whether ``NotConstraint`` is evaluated standalone or nested inside
+another combinator.
 
 ConstraintViolation
 ^^^^^^^^^^^^^^^^^^^

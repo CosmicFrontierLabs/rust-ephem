@@ -500,3 +500,39 @@ class TestVisibilityWindowCause:
         ]
         assert non_none_causes, "expected at least one non-boundary transition"
         assert all(cause == ["sun"] for cause in non_none_causes)
+
+    def test_not_wrapped_leaf_tags_cause_with_not_prefix(
+        self, cause_ephem: Any
+    ) -> None:
+        """A NOT-wrapped leaf's cause is tagged "not.<leaf>" (not the bare leaf
+        tag), so it's never confused with its non-negated counterpart - both
+        standalone and nested inside a combinator."""
+        target_ra, target_dec = 200.0, -10.0
+        sun_thresh = 20.926807055841483
+
+        standalone = (~SunConstraint(min_angle=sun_thresh)).evaluate(
+            ephemeris=cause_ephem, target_ra=target_ra, target_dec=target_dec
+        )
+        standalone_causes = [
+            cause
+            for window in standalone.visibility
+            for cause in (window.start_cause, window.end_cause)
+            if cause is not None
+        ]
+        assert standalone_causes, "expected at least one non-boundary transition"
+        assert all(cause == ["not.sun"] for cause in standalone_causes)
+
+        nested = (
+            ~SunConstraint(min_angle=sun_thresh)
+            & MoonConstraint(min_angle=14.284681218891802)
+        ).evaluate(ephemeris=cause_ephem, target_ra=target_ra, target_dec=target_dec)
+        nested_causes = {
+            tag
+            for window in nested.visibility
+            for cause in (window.start_cause, window.end_cause)
+            if cause is not None
+            for tag in cause
+        }
+        assert nested_causes
+        assert nested_causes <= {"not.sun", "moon"}
+        assert "sun" not in nested_causes
