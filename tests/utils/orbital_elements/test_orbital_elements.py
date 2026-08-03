@@ -5,6 +5,7 @@ import pytest
 
 from rust_ephem import (
     WGS72_EARTH_MU_KM3_S2,
+    OsculatingElements,
     osculating_elements_from_state,
 )
 
@@ -17,24 +18,34 @@ class TestOsculatingElementsFromState:
             mu_km3_s2=398600.0,
         )
 
-        assert elements["semimajor_axis_km"] == pytest.approx(
+        assert isinstance(elements, OsculatingElements)
+        assert elements.semimajor_axis_km == pytest.approx(
             8788.095,
             abs=0.001,
         )
-        assert elements["eccentricity"] == pytest.approx(0.171212, abs=1.0e-6)
-        assert elements["inclination_deg"] == pytest.approx(153.249, abs=0.001)
-        assert elements["right_ascension_of_ascending_node_deg"] == pytest.approx(
+        assert elements.eccentricity == pytest.approx(0.171212, abs=1.0e-6)
+        assert elements.inclination_deg == pytest.approx(153.249, abs=0.001)
+        assert elements.right_ascension_of_ascending_node_deg == pytest.approx(
             255.279, abs=0.001
         )
-        assert elements["argument_of_periapsis_deg"] == pytest.approx(
+        assert elements.argument_of_periapsis_deg == pytest.approx(
             20.068,
             abs=0.001,
         )
-        assert elements["true_anomaly_deg"] == pytest.approx(
+        assert elements.true_anomaly_deg == pytest.approx(
             28.446,
             abs=0.001,
         )
-        assert elements["gravitational_parameter_km3_s2"] == 398600.0
+        assert elements.gravitational_parameter_km3_s2 == 398600.0
+        assert elements.model_dump() == {
+            "semimajor_axis_km": pytest.approx(8788.095, abs=0.001),
+            "eccentricity": pytest.approx(0.171212, abs=1.0e-6),
+            "inclination_deg": pytest.approx(153.249, abs=0.001),
+            "right_ascension_of_ascending_node_deg": pytest.approx(255.279, abs=0.001),
+            "argument_of_periapsis_deg": pytest.approx(20.068, abs=0.001),
+            "true_anomaly_deg": pytest.approx(28.446, abs=0.001),
+            "gravitational_parameter_km3_s2": 398600.0,
+        }
 
     def test_circular_equatorial_uses_true_longitude(self) -> None:
         radius_km = 7000.0
@@ -51,14 +62,12 @@ class TestOsculatingElementsFromState:
 
         elements = osculating_elements_from_state(position, velocity)
 
-        assert elements["semimajor_axis_km"] == pytest.approx(radius_km)
-        assert elements["eccentricity"] == pytest.approx(0.0, abs=1.0e-14)
-        assert elements["inclination_deg"] == pytest.approx(0.0)
-        assert elements["right_ascension_of_ascending_node_deg"] == 0.0
-        assert elements["argument_of_periapsis_deg"] == 0.0
-        assert elements["true_anomaly_deg"] == pytest.approx(
-            expected_true_longitude_deg
-        )
+        assert elements.semimajor_axis_km == pytest.approx(radius_km)
+        assert elements.eccentricity == pytest.approx(0.0, abs=1.0e-14)
+        assert elements.inclination_deg == pytest.approx(0.0)
+        assert elements.right_ascension_of_ascending_node_deg == 0.0
+        assert elements.argument_of_periapsis_deg == 0.0
+        assert elements.true_anomaly_deg == pytest.approx(expected_true_longitude_deg)
 
     def test_circular_inclined_uses_argument_of_latitude(self) -> None:
         radius_km = 7000.0
@@ -71,11 +80,11 @@ class TestOsculatingElementsFromState:
 
         elements = osculating_elements_from_state(position, velocity)
 
-        assert elements["eccentricity"] == pytest.approx(0.0, abs=1.0e-14)
-        assert elements["inclination_deg"] == pytest.approx(30.0)
-        assert elements["right_ascension_of_ascending_node_deg"] == pytest.approx(0.0)
-        assert elements["argument_of_periapsis_deg"] == 0.0
-        assert elements["true_anomaly_deg"] == pytest.approx(0.0)
+        assert elements.eccentricity == pytest.approx(0.0, abs=1.0e-14)
+        assert elements.inclination_deg == pytest.approx(30.0)
+        assert elements.right_ascension_of_ascending_node_deg == pytest.approx(0.0)
+        assert elements.argument_of_periapsis_deg == 0.0
+        assert elements.true_anomaly_deg == pytest.approx(0.0)
 
     def test_eccentric_equatorial_uses_longitude_of_periapsis(self) -> None:
         semimajor_axis_km = 10_000.0
@@ -94,11 +103,11 @@ class TestOsculatingElementsFromState:
 
         elements = osculating_elements_from_state(position, velocity)
 
-        assert elements["semimajor_axis_km"] == pytest.approx(semimajor_axis_km)
-        assert elements["eccentricity"] == pytest.approx(eccentricity)
-        assert elements["right_ascension_of_ascending_node_deg"] == 0.0
-        assert elements["argument_of_periapsis_deg"] == pytest.approx(40.0)
-        assert elements["true_anomaly_deg"] == pytest.approx(0.0)
+        assert elements.semimajor_axis_km == pytest.approx(semimajor_axis_km)
+        assert elements.eccentricity == pytest.approx(eccentricity)
+        assert elements.right_ascension_of_ascending_node_deg == 0.0
+        assert elements.argument_of_periapsis_deg == pytest.approx(40.0)
+        assert elements.true_anomaly_deg == pytest.approx(0.0)
 
     @pytest.mark.parametrize(
         ("position", "velocity", "message"),

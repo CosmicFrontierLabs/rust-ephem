@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import math
-from typing import TypedDict
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
+from pydantic import BaseModel
 
 from .tle import WGS72_EARTH_MU_M3_S2
 
@@ -22,7 +22,7 @@ _SINGULARITY_TOLERANCE = 1.0e-10
 _PARABOLIC_TOLERANCE = 1.0e-12
 
 
-class OsculatingElements(TypedDict):
+class OsculatingElements(BaseModel):
     """Instantaneous classical orbital elements derived from a Cartesian state."""
 
     semimajor_axis_km: float

@@ -1,10 +1,9 @@
-from typing import TypedDict
-
 from numpy.typing import ArrayLike
+from pydantic import BaseModel
 
 WGS72_EARTH_MU_KM3_S2: float
 
-class OsculatingElements(TypedDict):
+class OsculatingElements(BaseModel):
     semimajor_axis_km: float
     eccentricity: float
     inclination_deg: float

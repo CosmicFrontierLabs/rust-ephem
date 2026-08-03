@@ -657,8 +657,8 @@ Functions
   The position and velocity must describe the same epoch in the same
   central-body-centered inertial frame. Position is in kilometers, velocity is
   in kilometers per second, and ``mu_km3_s2`` is in km^3/s^2. Returned angles
-  are normalized to the range [0, 360) degrees. The returned
-  ``OsculatingElements`` dictionary contains:
+  are normalized to the range [0, 360) degrees. The returned Pydantic
+  ``OsculatingElements`` model contains:
 
   * ``semimajor_axis_km``
   * ``eccentricity``
@@ -667,6 +667,9 @@ Functions
   * ``argument_of_periapsis_deg``
   * ``true_anomaly_deg``
   * ``gravitational_parameter_km3_s2``
+
+  Access fields as attributes and use ``model_dump()`` or
+  ``model_dump_json()`` when serializing the result.
 
   The epoch and frame are properties of the supplied state and are not inferred
   by this function. Store them alongside serialized elements. For a GCRS state,
