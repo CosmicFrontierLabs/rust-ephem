@@ -62,6 +62,18 @@ fn insert_no_collision<V>(merged: &mut HashMap<String, V>, key: String, value: V
     merged.insert(final_key, value);
 }
 
+/// Drain a child's own returned key/value pairs in key-sorted order. `HashMap`
+/// iteration order is otherwise unspecified (randomized per-instance), which would
+/// make `insert_no_collision`'s renaming choice for same-named entries within a
+/// single child's map nondeterministic across calls. Sorting first makes the
+/// resulting key strings reproducible, which `compute_cause_value_keys` relies on
+/// to stay in lockstep with this merge's actual output.
+fn sorted_entries<V>(map: HashMap<String, V>) -> Vec<(String, V)> {
+    let mut entries: Vec<(String, V)> = map.into_iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    entries
+}
+
 /// Merge per-leaf violation masks from a set of child evaluators, flattening each
 /// child's own tag(s) (already namespaced by `compute_named_booleans` — e.g. `sun`
 /// for a leaf, or `moon`/`sun_2` for an already-merged nested combinator) into one
@@ -79,7 +91,7 @@ fn merge_children_named_booleans(
     for child in children {
         let child_booleans =
             child.compute_named_booleans(ephemeris, target_ras, target_decs, time_indices)?;
-        for (key, arr) in child_booleans {
+        for (key, arr) in sorted_entries(child_booleans) {
             insert_no_collision(&mut merged, key, arr);
         }
     }
@@ -101,8 +113,64 @@ fn merge_children_named_booleans_diagonal(
     for child in children {
         let child_booleans =
             child.compute_named_booleans_diagonal(ephemeris, target_ras, target_decs)?;
-        for (key, arr) in child_booleans {
+        for (key, arr) in sorted_entries(child_booleans) {
             insert_no_collision(&mut merged, key, arr);
+        }
+    }
+
+    Ok(merged)
+}
+
+/// Merge per-leaf cause-tag → `constraint_values`-key mapping from a set of child
+/// evaluators, mirroring `merge_children_named_booleans`' cause-tag identity/
+/// collision-renaming and `merge_children_named_values`' per-child value-key
+/// prefixing *in lockstep*, so a caller can look up which `constraint_values`
+/// key(s) a given cause tag corresponds to without guessing from string prefixes
+/// (which don't match — cause tags are flat/nesting-stable, value keys are
+/// hierarchical/path-based; see `ConstraintResult.cause_value_keys`).
+fn merge_children_cause_value_keys(
+    children: &[Box<dyn ConstraintEvaluator>],
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    target_ras: &[f64],
+    target_decs: &[f64],
+    time_indices: Option<&[usize]>,
+) -> PyResult<HashMap<String, Vec<String>>> {
+    let mut merged: HashMap<String, Vec<String>> = HashMap::new();
+    let mut value_tag_counts: HashMap<String, usize> = HashMap::new();
+
+    for child in children {
+        let child_map =
+            child.compute_cause_value_keys(ephemeris, target_ras, target_decs, time_indices)?;
+
+        // A child with no named values anywhere in its subtree (e.g. a bare SAA
+        // leaf) doesn't consume a numbering slot here, matching
+        // merge_children_named_values' `if child_values.is_empty() { continue; }`
+        // skip — but its cause tag(s) must still surface, just with an empty
+        // value-key list, so `cause_value_keys` never silently drops a tag.
+        let has_any_values = child_map.values().any(|v| !v.is_empty());
+        let value_prefix = if has_any_values {
+            let base_tag = value_key_prefix(&child.name());
+            let count = value_tag_counts.entry(base_tag.clone()).or_insert(0);
+            *count += 1;
+            Some(if *count == 1 {
+                base_tag
+            } else {
+                format!("{base_tag}_{count}")
+            })
+        } else {
+            None
+        };
+
+        for (cause_tag, value_key_names) in sorted_entries(child_map) {
+            let prefixed_value_keys: Vec<String> = match &value_prefix {
+                Some(prefix) => value_key_names
+                    .into_iter()
+                    .map(|k| format!("{prefix}.{k}"))
+                    .collect(),
+                None => value_key_names,
+            };
+            // Mirrors merge_children_named_booleans' cause-tag collision renaming.
+            insert_no_collision(&mut merged, cause_tag, prefixed_value_keys);
         }
     }
 
@@ -637,6 +705,22 @@ impl ConstraintEvaluator for AndEvaluator {
         )
     }
 
+    fn compute_cause_value_keys(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Vec<String>>> {
+        merge_children_cause_value_keys(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+        )
+    }
+
     fn name(&self) -> String {
         format!(
             "AND({})",
@@ -1152,6 +1236,22 @@ impl ConstraintEvaluator for OrEvaluator {
         )
     }
 
+    fn compute_cause_value_keys(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Vec<String>>> {
+        merge_children_cause_value_keys(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+        )
+    }
+
     fn name(&self) -> String {
         format!(
             "OR({})",
@@ -1424,6 +1524,28 @@ impl ConstraintEvaluator for NotEvaluator {
         Ok(child_booleans
             .into_iter()
             .map(|(key, arr)| (format!("not.{key}"), arr))
+            .collect())
+    }
+
+    fn compute_cause_value_keys(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Vec<String>>> {
+        // Cause tags get "not." (matching compute_named_booleans); value keys pass
+        // through unprefixed (matching compute_named_values' passthrough — "single
+        // child, no collision risk").
+        let child_map = self.constraint.compute_cause_value_keys(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+        )?;
+        Ok(child_map
+            .into_iter()
+            .map(|(cause_tag, value_keys)| (format!("not.{cause_tag}"), value_keys))
             .collect())
     }
 
@@ -1748,6 +1870,22 @@ impl ConstraintEvaluator for XorEvaluator {
             ephemeris,
             target_ras,
             target_decs,
+        )
+    }
+
+    fn compute_cause_value_keys(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Vec<String>>> {
+        merge_children_cause_value_keys(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
         )
     }
 
@@ -2083,6 +2221,22 @@ impl ConstraintEvaluator for AtLeastEvaluator {
             ephemeris,
             target_ras,
             target_decs,
+        )
+    }
+
+    fn compute_cause_value_keys(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Vec<String>>> {
+        merge_children_cause_value_keys(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
         )
     }
 

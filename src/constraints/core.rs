@@ -185,6 +185,13 @@ pub struct ConstraintResult {
     /// `constraint_values`' keys), aligned with `times`. Used to attribute
     /// `VisibilityWindow.start_cause`/`end_cause`; not directly exposed to Python.
     component_violated: HashMap<String, Vec<bool>>,
+    /// Map from a `start_cause`/`end_cause` tag to the `constraint_values` key(s)
+    /// it corresponds to. The two namespaces use different prefixing conventions
+    /// (cause tags are flat and nesting-stable; value keys are hierarchical and
+    /// path-based) so are not derivable from one another by string matching — use
+    /// this instead of guessing.
+    #[pyo3(get)]
+    pub cause_value_keys: HashMap<String, Vec<String>>,
     /// Evaluation times as Rust DateTime<Utc>, not directly exposed to Python
     pub times: Vec<DateTime<Utc>>,
     /// Step size in seconds between timestamps (for O(1) index lookup)
@@ -217,6 +224,7 @@ impl ConstraintResult {
             constraint_name,
             constraint_values: HashMap::new(),
             component_violated: HashMap::new(),
+            cause_value_keys: HashMap::new(),
             times,
             step_seconds,
             timestamp_cache: OnceLock::new(),
@@ -237,6 +245,12 @@ impl ConstraintResult {
         component_violated: HashMap<String, Vec<bool>>,
     ) -> Self {
         self.component_violated = component_violated;
+        self
+    }
+
+    /// Attach the cause-tag → constraint_values-key mapping computed during evaluation.
+    pub fn with_cause_value_keys(mut self, cause_value_keys: HashMap<String, Vec<String>>) -> Self {
+        self.cause_value_keys = cause_value_keys;
         self
     }
 }
@@ -493,6 +507,10 @@ pub struct MovingBodyResult {
     /// `constraint_values`' keys), aligned with `times`. Used to attribute
     /// `VisibilityWindow.start_cause`/`end_cause`; not directly exposed to Python.
     component_violated: HashMap<String, Vec<bool>>,
+    /// Map from a `start_cause`/`end_cause` tag to the `constraint_values` key(s)
+    /// it corresponds to. See `ConstraintResult.cause_value_keys`.
+    #[pyo3(get)]
+    pub cause_value_keys: HashMap<String, Vec<String>>,
     /// Evaluation times as Rust DateTime<Utc>, not directly exposed to Python
     pub times: Vec<DateTime<Utc>>,
     /// Step size in seconds between timestamps (for O(1) index lookup)
@@ -526,6 +544,7 @@ impl MovingBodyResult {
             decs,
             constraint_values: HashMap::new(),
             component_violated: HashMap::new(),
+            cause_value_keys: HashMap::new(),
             times,
             step_seconds,
             constraint_vec,
@@ -544,6 +563,12 @@ impl MovingBodyResult {
         component_violated: HashMap<String, Vec<bool>>,
     ) -> Self {
         self.component_violated = component_violated;
+        self
+    }
+
+    /// Attach the cause-tag → constraint_values-key mapping computed during evaluation.
+    pub fn with_cause_value_keys(mut self, cause_value_keys: HashMap<String, Vec<String>>) -> Self {
+        self.cause_value_keys = cause_value_keys;
         self
     }
 }
@@ -795,6 +820,40 @@ pub trait ConstraintEvaluator: Send + Sync {
     ) -> PyResult<HashMap<String, Vec<bool>>> {
         let arr = self.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs)?;
         Ok(HashMap::from([(value_key_prefix(&self.name()), arr)]))
+    }
+
+    /// Map this constraint's own `compute_named_booleans` cause tag(s) to the
+    /// `compute_named_values` key(s) they correspond to, so a caller can look up
+    /// "which `constraint_values` key(s) does this cause tag describe" without
+    /// guessing from string prefixes — the two namespaces use different prefixing
+    /// conventions (cause tags are flat and stable regardless of nesting depth;
+    /// value keys are hierarchical and encode the full nesting path) and are not
+    /// generally derivable from one another by string matching. Called once per
+    /// `evaluate()`/`evaluate_batch()` call, alongside `compute_named_values`/
+    /// `compute_named_booleans`, never inside a roll-sweep loop.
+    ///
+    /// Default (leaf constraints): a single-entry map from this constraint's own
+    /// cause tag to the key name(s) `compute_named_values` returns (empty if this
+    /// constraint exposes no named values, e.g. SAA). Combinators override this to
+    /// merge their children's maps in lockstep with `compute_named_booleans`' cause-
+    /// tag renaming and `compute_named_values`' per-child key prefixing (see
+    /// `combinators.rs`).
+    ///
+    /// # Returns
+    /// Map from cause tag to the list of `constraint_values` key(s) it corresponds to.
+    fn compute_cause_value_keys(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Vec<String>>> {
+        let own_tag = value_key_prefix(&self.name());
+        let value_keys: Vec<String> = self
+            .compute_named_values(ephemeris, target_ras, target_decs, time_indices)?
+            .into_keys()
+            .collect();
+        Ok(HashMap::from([(own_tag, value_keys)]))
     }
 
     /// Check if targets are in-constraint for multiple RA/Dec positions (vectorized)

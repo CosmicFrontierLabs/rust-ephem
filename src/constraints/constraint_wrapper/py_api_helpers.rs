@@ -337,10 +337,17 @@ impl PyConstraint {
         )?;
         let component_violated = Self::extract_target_booleans(&booleans_map, 0);
 
+        // Map cause tags to their constraint_values key(s). Only key *names* matter
+        // here (not the actual data), so this evaluates at a single dummy target/time
+        // rather than paying for a full recompute just to introspect key structure.
+        let cause_value_keys =
+            evaluator.compute_cause_value_keys(ephemeris, &[0.0], &[0.0], Some(&[0]))?;
+
         Ok(
             ConstraintResult::new(violations, all_satisfied, evaluator.name(), times)
                 .with_constraint_values(values)
-                .with_component_violated(component_violated),
+                .with_component_violated(component_violated)
+                .with_cause_value_keys(cause_value_keys),
         )
     }
 
@@ -385,6 +392,13 @@ impl PyConstraint {
             time_indices.as_deref(),
         )?;
 
+        // Map cause tags to their constraint_values key(s), shared across all targets
+        // (the mapping only depends on the evaluator's structure, not the target
+        // positions). Only key *names* matter, so this uses a dummy target/time
+        // rather than paying for a full recompute just to introspect key structure.
+        let cause_value_keys =
+            evaluator.compute_cause_value_keys(ephemeris, &[0.0], &[0.0], Some(&[0]))?;
+
         let mut results = Vec::with_capacity(target_ras.len());
         for target_index in 0..target_ras.len() {
             let violated: Vec<bool> = (0..violation_array.ncols())
@@ -403,7 +417,8 @@ impl PyConstraint {
             results.push(
                 ConstraintResult::new(violations, all_satisfied, evaluator.name(), times.clone())
                     .with_constraint_values(values)
-                    .with_component_violated(component_violated),
+                    .with_component_violated(component_violated)
+                    .with_cause_value_keys(cause_value_keys.clone()),
             );
         }
 

@@ -1741,6 +1741,9 @@ Result of constraint evaluation containing all violation information.
    - ``constraint_values`` (dict[str, list[float]]): Named continuous values computed
      during evaluation (e.g. ``sun_angle_deg``), one array per key, aligned with
      ``timestamps``. See :ref:`constraint-values` below.
+   - ``cause_value_keys`` (dict[str, list[str]]): Map from a ``start_cause``/
+     ``end_cause`` tag to the ``constraint_values`` key(s) it corresponds to. See
+     :ref:`visibility-window-cause` below.
    - ``visibility`` (list[VisibilityWindow]): Contiguous windows when target is visible
 
    **Methods:**
@@ -1909,13 +1912,35 @@ and diff timestamps by hand.
        # means the moon constraint cleared to open this window, and the sun
        # constraint tripped to close it.
 
-Both fields use the same short tags as ``constraint_values`` keys (``sun``,
-``moon``, ``body``, ...; see the table above), so you can cross-reference a
-cause directly against the underlying scalar: ``result.constraint_values["moon.moon_angle_deg"]``.
-Unlike ``constraint_values``, cause tags are available even for constraints
-with no natural continuous scalar (``SAAConstraint``, polygon-mode
-``BodyConstraint``/``BrightStarConstraint``), since attribution only needs
-each leaf's own boolean pass/fail state, not the geometry behind it.
+Cause tags look similar to ``constraint_values`` keys (``sun``, ``moon``,
+``body``, ...) but use a **different namespacing convention** and are *not*
+generally derivable from one another by string matching: cause tags are flat
+and stable regardless of nesting depth (e.g. ``"not.sun"`` means the same
+thing whether ``NotConstraint`` is evaluated standalone or nested three levels
+deep inside an ``AND``), while ``constraint_values`` keys are hierarchical and
+encode the full nesting path (e.g. ``"or.sun_2.sun_angle_deg"``). For a simple
+combinator with no duplicate constraint types (like the ``sun & moon`` example
+above) the two happen to share a readable prefix, but as soon as a constraint
+type appears more than once in the tree - e.g. ``AND(sun(90), OR(sun(93),
+sun(96)))`` - the flat, collision-numbered cause tag (``sun_2``) and the
+hierarchical value key it actually corresponds to (``or.sun.sun_angle_deg``,
+*not* ``or.sun_2.sun_angle_deg``) diverge.
+
+Use ``result.cause_value_keys`` instead of guessing: it maps each cause tag
+to the ``constraint_values`` key(s) it corresponds to, built by walking the
+same child structure both namespaces are derived from, so the mapping stays
+correct in exactly the ambiguous cases above:
+
+.. code-block:: python
+
+   print(result.cause_value_keys)
+   # {'sun': ['sun.sun_angle_deg'], 'sun_2': ['or.sun.sun_angle_deg'],
+   #  'sun_2_2': ['or.sun_2.sun_angle_deg']}
+
+Unlike ``constraint_values``, cause tags (and ``cause_value_keys``) are
+available even for constraints with no natural continuous scalar
+(``SAAConstraint``, polygon-mode ``BodyConstraint``/``BrightStarConstraint``);
+such a leaf's entry in ``cause_value_keys`` just maps to an empty list.
 
 A field is ``None`` when there is no adjacent sample to compare against
 (``start_cause`` is ``None`` for a window starting at the very first evaluated

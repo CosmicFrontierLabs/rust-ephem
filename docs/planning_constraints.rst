@@ -174,11 +174,10 @@ Which Constraint Caused a Window to Start/End
 ----------------------------------------------
 
 Every ``VisibilityWindow`` also carries ``start_cause`` and ``end_cause``: the
-short tag(s) (same tags as ``constraint_values`` keys) of the leaf
-constraint(s) whose own pass/fail state changed at that exact boundary
-sample. This tells you which part of a composite constraint actually opened
-or closed a window, without evaluating each child separately and diffing
-timestamps by hand:
+short tag(s) of the leaf constraint(s) whose own pass/fail state changed at
+that exact boundary sample. This tells you which part of a composite
+constraint actually opened or closed a window, without evaluating each child
+separately and diffing timestamps by hand:
 
 .. code-block:: python
 
@@ -194,10 +193,14 @@ adjacent sample to compare against), and list multiple tags if more than one
 leaf flips on the same sample. Unlike ``constraint_values``, cause tags are
 available even for constraints with no natural continuous scalar
 (``SAAConstraint``, polygon-mode ``BodyConstraint``/``BrightStarConstraint``),
-since attribution only needs each leaf's own boolean state. See
-:ref:`Visibility Window Causes <visibility-window-cause>` in the API
-reference for the full semantics (including how ``NotConstraint`` tags its
-wrapped leaf's cause with a ``not.`` prefix).
+since attribution only needs each leaf's own boolean state.
+
+Cause tags are *not* the same namespace as ``constraint_values`` keys - they
+look similar for a simple, non-duplicated tree, but diverge as soon as a
+constraint type is nested and repeated (see ``result.cause_value_keys`` in
+:ref:`Visibility Window Causes <visibility-window-cause>` for the mapping
+between the two, and the full semantics including how ``NotConstraint`` tags
+its wrapped leaf's cause with a ``not.`` prefix).
 
 Available Constraint Types
 --------------------------

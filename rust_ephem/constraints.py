@@ -78,6 +78,7 @@ class ConstraintResult(BaseModel):
     _swept_timestamps: list[datetime] | None = PrivateAttr(default=None)
     _swept_array: list[bool] | None = PrivateAttr(default=None)
     _swept_constraint_values: dict[str, list[float]] | None = PrivateAttr(default=None)
+    _swept_cause_value_keys: dict[str, list[str]] | None = PrivateAttr(default=None)
 
     @classmethod
     def _from_rust_result(
@@ -114,6 +115,7 @@ class ConstraintResult(BaseModel):
         timestamps: list[datetime],
         constraint_array: list[bool],
         constraint_values: dict[str, list[float]] | None = None,
+        cause_value_keys: dict[str, list[str]] | None = None,
     ) -> "ConstraintResult":
         """Build a result from arrays swept across multiple roll angles.
 
@@ -128,6 +130,7 @@ class ConstraintResult(BaseModel):
         result._swept_timestamps = timestamps
         result._swept_array = constraint_array
         result._swept_constraint_values = constraint_values
+        result._swept_cause_value_keys = cause_value_keys
         return result
 
     @property
@@ -167,6 +170,24 @@ class ConstraintResult(BaseModel):
             return self._swept_constraint_values
         if self._rust_result_ref is not None:
             return self._rust_result_ref.constraint_values
+        return {}
+
+    @property
+    def cause_value_keys(self) -> dict[str, list[str]]:
+        """Map from a ``VisibilityWindow.start_cause``/``end_cause`` tag to the
+        ``constraint_values`` key(s) it corresponds to.
+
+        The two namespaces use different prefixing conventions - cause tags are
+        flat and stable regardless of nesting depth (e.g. ``"sun"``, ``"not.sun"``),
+        while ``constraint_values`` keys are hierarchical and encode the full
+        nesting path (e.g. ``"or.sun_2.sun_angle_deg"``) - so a cause tag's
+        corresponding value key(s) cannot be found by string-matching a prefix.
+        Use this mapping instead of guessing.
+        """
+        if self._swept_cause_value_keys is not None:
+            return self._swept_cause_value_keys
+        if self._rust_result_ref is not None:
+            return self._rust_result_ref.cause_value_keys
         return {}
 
     @property
@@ -275,6 +296,7 @@ class RustConstraintMixin(BaseModel):
         timestamps: list[datetime],
         violated: npt.NDArray[np.bool_] | list[bool],
         constraint_values: dict[str, list[float]] | None = None,
+        cause_value_keys: dict[str, list[str]] | None = None,
     ) -> ConstraintResult:
         """Build a ConstraintResult from a boolean violation mask."""
         violation_flags = np.asarray(violated, dtype=bool)
@@ -314,6 +336,7 @@ class RustConstraintMixin(BaseModel):
             timestamps=timestamps,
             constraint_array=violation_flags.tolist(),
             constraint_values=constraint_values,
+            cause_value_keys=cause_value_keys,
         )
 
     @staticmethod
@@ -391,6 +414,7 @@ class RustConstraintMixin(BaseModel):
                     timestamps,
                     row,
                     constraint_values=reference_result.constraint_values,
+                    cause_value_keys=reference_result.cause_value_keys,
                 )
                 for reference_result, row in zip(
                     reference_results, np.asarray(batch, dtype=bool)
@@ -630,6 +654,7 @@ class RustConstraintMixin(BaseModel):
                 swept_timestamps,
                 combined,
                 constraint_values=rust_results[0].constraint_values,
+                cause_value_keys=rust_results[0].cause_value_keys,
             )
 
         rust_constraint = self._resolve_rust_constraint(
@@ -1052,6 +1077,7 @@ class RustConstraintMixin(BaseModel):
             all_satisfied=rust_result.all_satisfied,
             constraint_name=rust_result.constraint_name,
             constraint_values=rust_result.constraint_values,
+            cause_value_keys=rust_result.cause_value_keys,
         )
 
     def and_(self, other: ConstraintConfig) -> AndConstraint:
@@ -1886,3 +1912,10 @@ class MovingVisibilityResult(BaseModel):
     all_satisfied: bool
     constraint_name: str
     constraint_values: dict[str, list[float]] = Field(default_factory=dict)
+    cause_value_keys: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Map from a VisibilityWindowResult start_cause/end_cause tag "
+        "to the constraint_values key(s) it corresponds to. See "
+        "ConstraintResult.cause_value_keys for why this can't be derived by "
+        "string-matching a prefix.",
+    )

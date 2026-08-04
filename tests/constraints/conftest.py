@@ -57,6 +57,7 @@ class DummyRustResult:
             )()
         ]
         self.constraint_values: dict[str, list[float]] = {}
+        self.cause_value_keys: dict[str, list[str]] = {}
 
     def in_constraint(self, time: datetime) -> bool:
         self._in_constraint_calls.append(time)
@@ -74,6 +75,7 @@ class DummyMovingBodyResult:
         self.all_satisfied: bool = False
         self.constraint_name: str = "DummyMovingBody"
         self.constraint_values: dict[str, list[float]] = {}
+        self.cause_value_keys: dict[str, list[str]] = {}
 
 
 @pytest.fixture

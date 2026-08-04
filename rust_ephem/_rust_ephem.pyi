@@ -131,6 +131,20 @@ class ConstraintResult:
         ...
 
     @property
+    def cause_value_keys(self) -> dict[str, list[str]]:
+        """Map from a ``VisibilityWindow.start_cause``/``end_cause`` tag to the
+        ``constraint_values`` key(s) it corresponds to.
+
+        The two namespaces use different prefixing conventions - cause tags are
+        flat and stable regardless of nesting depth (e.g. ``"sun"``, ``"not.sun"``),
+        while ``constraint_values`` keys are hierarchical and encode the full
+        nesting path (e.g. ``"or.sun_2.sun_angle_deg"``) - so a cause tag's
+        corresponding value key(s) cannot be found by string-matching a prefix.
+        Use this mapping instead of guessing.
+        """
+        ...
+
+    @property
     def visibility(self) -> list[VisibilityWindow]:
         """List of time windows when constraint was satisfied (target was visible)."""
         ...
@@ -207,6 +221,20 @@ class MovingBodyResult:
 
         One array per key, aligned with ``timestamp``. Empty for constraints that
         don't expose a natural scalar (e.g. polygon-based constraints).
+        """
+        ...
+
+    @property
+    def cause_value_keys(self) -> dict[str, list[str]]:
+        """Map from a ``VisibilityWindow.start_cause``/``end_cause`` tag to the
+        ``constraint_values`` key(s) it corresponds to.
+
+        The two namespaces use different prefixing conventions - cause tags are
+        flat and stable regardless of nesting depth (e.g. ``"sun"``, ``"not.sun"``),
+        while ``constraint_values`` keys are hierarchical and encode the full
+        nesting path (e.g. ``"or.sun_2.sun_angle_deg"``) - so a cause tag's
+        corresponding value key(s) cannot be found by string-matching a prefix.
+        Use this mapping instead of guessing.
         """
         ...
 
