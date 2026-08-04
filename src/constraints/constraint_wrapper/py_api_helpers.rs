@@ -328,12 +328,16 @@ impl PyConstraint {
         let values = Self::extract_target_values(&values_map, 0);
 
         // Compute per-leaf-constraint violation masks once, used to attribute
-        // VisibilityWindow.start_cause/end_cause.
-        let booleans_map = evaluator.compute_named_booleans(
+        // VisibilityWindow.start_cause/end_cause. Uses the same roll-swept
+        // semantics as `violation_array` above (a no-op fast path when the
+        // evaluator isn't roll-dependent) so cause never disagrees with what
+        // actually made the target visible/invisible for a free-roll evaluation.
+        let booleans_map = evaluator.compute_named_booleans_constrained_at_every_roll(
             ephemeris,
             &[target_ra],
             &[target_dec],
             time_indices.as_deref(),
+            DEFAULT_N_ROLL_SAMPLES,
         )?;
         let component_violated = Self::extract_target_booleans(&booleans_map, 0);
 
@@ -384,12 +388,16 @@ impl PyConstraint {
         )?;
 
         // Compute per-leaf-constraint violation masks once for all targets, used to
-        // attribute VisibilityWindow.start_cause/end_cause.
-        let booleans_map = evaluator.compute_named_booleans(
+        // attribute VisibilityWindow.start_cause/end_cause. Uses the same roll-swept
+        // semantics as `violation_array` above (a no-op fast path when the evaluator
+        // isn't roll-dependent) so cause never disagrees with what actually made the
+        // target visible/invisible for a free-roll evaluation.
+        let booleans_map = evaluator.compute_named_booleans_constrained_at_every_roll(
             ephemeris,
             target_ras,
             target_decs,
             time_indices.as_deref(),
+            DEFAULT_N_ROLL_SAMPLES,
         )?;
 
         // Map cause tags to their constraint_values key(s), shared across all targets

@@ -1954,6 +1954,30 @@ negated leaf's cause is never mistaken for its non-negated counterpart; it
 applies whether ``NotConstraint`` is evaluated standalone or nested inside
 another combinator.
 
+**Free-roll (``target_roll=None``) evaluation.** When a constraint is
+roll-dependent (a ``.boresight_offset(...)`` with non-zero pitch/yaw,
+``SolarRollConstraint``, ...) and evaluated with ``target_roll=None``,
+``evaluate()``/``evaluate_batch()`` sweep spacecraft roll to decide the
+*result*: violated only if blocked at every tested roll (no valid orientation
+exists). Cause attribution sweeps roll the same way, so it never disagrees
+with what actually made the target visible/invisible - a roll-dependent
+leaf's cause tag reports whether *that leaf alone* is violated at every
+swept roll, not its state at some single fixed roll.
+
+When more than one roll-dependent leaf is combined together (e.g.
+``AND(boresight_offset(sun, pitch=15), solar_roll(...))``), each leaf's cause
+tag is still computed *independently* - it does not attempt to reconstruct
+the coordinated search the combined result performs for a single roll angle
+that satisfies every roll-dependent leaf simultaneously. That coordinated
+search is not decomposable per leaf in general (two leaves can each have
+*some* clear roll without ever sharing the *same* one), so an independent
+per-leaf "violated at every roll" is used instead - still a sound diagnostic
+(a leaf violated at every roll on its own is always sufficient to rule out a
+shared clear roll through it), just not a perfect decomposition of the
+combined result when multiple roll-dependent leaves are combined together.
+A single roll-dependent leaf (alone, or combined only with roll-independent
+siblings) has no such ambiguity.
+
 ConstraintViolation
 ^^^^^^^^^^^^^^^^^^^
 

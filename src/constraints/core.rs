@@ -1097,6 +1097,59 @@ pub trait ConstraintEvaluator: Send + Sync {
         Ok(acc.unwrap_or_else(|| Array2::from_elem((target_ras.len(), 0), false)))
     }
 
+    /// Roll-swept variant of `compute_named_booleans`, mirroring
+    /// `in_constraint_batch_constrained_at_every_roll`'s "violated at every swept
+    /// roll ⇒ no valid orientation exists" semantics. Used for cause attribution
+    /// when `target_roll=None` and this constraint is roll-dependent — cause
+    /// attribution must use the same roll semantics as the visibility result it
+    /// explains, or the reported cause can disagree with (or be entirely absent
+    /// from) what actually made the target visible/invisible.
+    ///
+    /// Default (leaf constraints, and the roll-independent fast path): loops
+    /// `in_constraint_batch_at_roll` across `n_roll_samples` and AND-accumulates
+    /// under this constraint's own tag — identical to
+    /// `in_constraint_batch_constrained_at_every_roll`'s default, just wrapped in
+    /// a single-entry map. Combinators override this to recurse into each child
+    /// *independently* rather than reconstruct the combined multi-child
+    /// coordinated search (see `combinators.rs` for why that search isn't
+    /// generally decomposable per leaf, and why independent-per-leaf remains a
+    /// sound diagnostic anyway).
+    fn compute_named_booleans_constrained_at_every_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        n_roll_samples: usize,
+    ) -> PyResult<HashMap<String, Array2<bool>>> {
+        if !self.is_roll_dependent() {
+            return self.compute_named_booleans(ephemeris, target_ras, target_decs, time_indices);
+        }
+        let roll_step = 360.0 / n_roll_samples as f64;
+        let mut acc: Option<Array2<bool>> = None;
+        for step in 0..n_roll_samples {
+            if let Some(ref a) = acc {
+                if a.iter().all(|&b| !b) {
+                    break;
+                }
+            }
+            let roll_deg = step as f64 * roll_step;
+            let step_result = self.in_constraint_batch_at_roll(
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices,
+                roll_deg,
+            )?;
+            match acc {
+                None => acc = Some(step_result),
+                Some(ref mut a) => a.zip_mut_with(&step_result, |x, &y| *x &= y),
+            }
+        }
+        let arr = acc.unwrap_or_else(|| Array2::from_elem((target_ras.len(), 0), false));
+        Ok(HashMap::from([(value_key_prefix(&self.name()), arr)]))
+    }
+
     /// Get constraint name
     fn name(&self) -> String;
 
