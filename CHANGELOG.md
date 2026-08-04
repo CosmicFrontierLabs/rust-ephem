@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.13.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.12.0...v0.13.0) (2026-08-03)
+
+
+### Features
+
+* derive osculating elements from state vectors ([#180](https://github.com/CosmicFrontierLabs/rust-ephem/issues/180)) ([3f735ed](https://github.com/CosmicFrontierLabs/rust-ephem/commit/3f735ed57e454c38ed2080434e514d2d6fa4e9cc))
+
+
+### Bug Fixes
+
+* use WGS-72 for reference TLE propagation ([#181](https://github.com/CosmicFrontierLabs/rust-ephem/issues/181)) ([586eeff](https://github.com/CosmicFrontierLabs/rust-ephem/commit/586eeff98bdc343f09cdc7f9fd3814fce5373c78))
+
 ## [0.12.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.11.1...v0.12.0) (2026-07-23)
 
 
