@@ -46,11 +46,27 @@ fn merge_children_named_values(
     Ok(merged)
 }
 
+/// Insert `(key, value)` into `merged`, renaming on collision by appending `_2`,
+/// `_3`, ... until a free slot is found. Checking against `merged` itself (rather
+/// than a separate per-original-key counter) guarantees no entry is ever silently
+/// discarded via `HashMap::insert`, even when a nested child's own merge already
+/// produced a suffixed key (e.g. `sun_2`) that a sibling's rename would otherwise
+/// collide with.
+fn insert_no_collision<V>(merged: &mut HashMap<String, V>, key: String, value: V) {
+    let mut final_key = key.clone();
+    let mut suffix = 2;
+    while merged.contains_key(&final_key) {
+        final_key = format!("{key}_{suffix}");
+        suffix += 1;
+    }
+    merged.insert(final_key, value);
+}
+
 /// Merge per-leaf violation masks from a set of child evaluators, flattening each
 /// child's own tag(s) (already namespaced by `compute_named_booleans` — e.g. `sun`
 /// for a leaf, or `moon`/`sun_2` for an already-merged nested combinator) into one
 /// map. On tag collision between sibling children, the 2nd+ occurrence gets a
-/// numeric suffix (`sun_2`, `sun_3`, ...), mirroring `merge_children_named_values`.
+/// numeric suffix (`sun_2`, `sun_3`, ...); see `insert_no_collision`.
 fn merge_children_named_booleans(
     children: &[Box<dyn ConstraintEvaluator>],
     ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -59,20 +75,34 @@ fn merge_children_named_booleans(
     time_indices: Option<&[usize]>,
 ) -> PyResult<HashMap<String, Array2<bool>>> {
     let mut merged = HashMap::new();
-    let mut tag_counts: HashMap<String, usize> = HashMap::new();
 
     for child in children {
         let child_booleans =
             child.compute_named_booleans(ephemeris, target_ras, target_decs, time_indices)?;
         for (key, arr) in child_booleans {
-            let count = tag_counts.entry(key.clone()).or_insert(0);
-            *count += 1;
-            let final_key = if *count == 1 {
-                key
-            } else {
-                format!("{key}_{count}")
-            };
-            merged.insert(final_key, arr);
+            insert_no_collision(&mut merged, key, arr);
+        }
+    }
+
+    Ok(merged)
+}
+
+/// Diagonal variant of `merge_children_named_booleans` for moving-body evaluation,
+/// merging each child's `compute_named_booleans_diagonal` (target_i paired with
+/// time_i) instead of the full M×N batch.
+fn merge_children_named_booleans_diagonal(
+    children: &[Box<dyn ConstraintEvaluator>],
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    target_ras: &[f64],
+    target_decs: &[f64],
+) -> PyResult<HashMap<String, Vec<bool>>> {
+    let mut merged = HashMap::new();
+
+    for child in children {
+        let child_booleans =
+            child.compute_named_booleans_diagonal(ephemeris, target_ras, target_decs)?;
+        for (key, arr) in child_booleans {
+            insert_no_collision(&mut merged, key, arr);
         }
     }
 
@@ -593,6 +623,20 @@ impl ConstraintEvaluator for AndEvaluator {
         )
     }
 
+    fn compute_named_booleans_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<HashMap<String, Vec<bool>>> {
+        merge_children_named_booleans_diagonal(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+        )
+    }
+
     fn name(&self) -> String {
         format!(
             "AND({})",
@@ -1094,6 +1138,20 @@ impl ConstraintEvaluator for OrEvaluator {
         )
     }
 
+    fn compute_named_booleans_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<HashMap<String, Vec<bool>>> {
+        merge_children_named_booleans_diagonal(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+        )
+    }
+
     fn name(&self) -> String {
         format!(
             "OR({})",
@@ -1347,6 +1405,22 @@ impl ConstraintEvaluator for NotEvaluator {
             target_decs,
             time_indices,
         )?;
+        Ok(child_booleans
+            .into_iter()
+            .map(|(key, arr)| (format!("not.{key}"), arr))
+            .collect())
+    }
+
+    fn compute_named_booleans_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<HashMap<String, Vec<bool>>> {
+        // See `compute_named_booleans`: values are uninverted, keys prefixed with "not.".
+        let child_booleans =
+            self.constraint
+                .compute_named_booleans_diagonal(ephemeris, target_ras, target_decs)?;
         Ok(child_booleans
             .into_iter()
             .map(|(key, arr)| (format!("not.{key}"), arr))
@@ -1660,6 +1734,20 @@ impl ConstraintEvaluator for XorEvaluator {
             target_ras,
             target_decs,
             time_indices,
+        )
+    }
+
+    fn compute_named_booleans_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<HashMap<String, Vec<bool>>> {
+        merge_children_named_booleans_diagonal(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
         )
     }
 
@@ -1981,6 +2069,20 @@ impl ConstraintEvaluator for AtLeastEvaluator {
             target_ras,
             target_decs,
             time_indices,
+        )
+    }
+
+    fn compute_named_booleans_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<HashMap<String, Vec<bool>>> {
+        merge_children_named_booleans_diagonal(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
         )
     }
 

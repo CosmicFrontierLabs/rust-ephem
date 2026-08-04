@@ -61,13 +61,17 @@ class VisibilityWindow:
     end_time: datetime
     start_cause: list[str] | None
     """Tag(s) of the leaf constraint(s) (namespaced like ``ConstraintResult.constraint_values``
-    keys, e.g. "sun", "moon") whose own pass/fail state flipped from violated to satisfied at
-    the sample immediately before this window started. ``None`` if the window starts at the
-    first evaluated sample (no prior sample to compare against)."""
+    keys, e.g. "sun", "moon") whose own pass/fail state changed between the sample immediately
+    before this window started and the window's first sample. This reports *that* a leaf's own
+    state flipped, not the direction of the flip relative to the overall (possibly negated)
+    result — e.g. under a ``NOT`` wrapper, a ``"not.sun"`` entry means the underlying ``sun``
+    leaf's own state changed, which is the opposite transition to the ``NOT`` result's own
+    violated/satisfied transition. ``None`` if the window starts at the first evaluated sample
+    (no prior sample to compare against)."""
     end_cause: list[str] | None
-    """Tag(s) of the leaf constraint(s) whose own pass/fail state flipped from satisfied to
-    violated at the sample immediately after this window ended. ``None`` if the window ends
-    at the last evaluated sample."""
+    """Tag(s) of the leaf constraint(s) whose own pass/fail state changed between this window's
+    last sample and the sample immediately after this window ended. See ``start_cause`` for why
+    no flip direction is implied. ``None`` if the window ends at the last evaluated sample."""
 
     def __repr__(self) -> str: ...
     @property

@@ -126,16 +126,21 @@ pub struct VisibilityWindow {
     /// End time of the visibility window
     #[pyo3(get)]
     pub end_time: Py<PyAny>, // Python datetime object
-    /// Namespaced tag(s) of the leaf constraint(s) whose own pass/fail state flipped
-    /// from violated to satisfied at the sample immediately before this window started
-    /// (same tags as `ConstraintResult.constraint_values` keys' prefixes, e.g. "sun",
-    /// "moon"). `None` if the window starts at the first evaluated sample (no prior
-    /// sample to compare against).
+    /// Namespaced tag(s) of the leaf constraint(s) whose own pass/fail state changed
+    /// between the sample immediately before this window started and this window's
+    /// first sample (same tags as `ConstraintResult.constraint_values` keys' prefixes,
+    /// e.g. "sun", "moon"). This reports *that* a leaf's own state flipped, not the
+    /// direction of the flip relative to the overall (possibly negated) result — e.g.
+    /// under a `NOT` wrapper, a `"not.sun"` entry means the underlying `sun` leaf's own
+    /// state changed, which is the opposite transition to the `NOT` result's own
+    /// violated/satisfied transition. `None` if the window starts at the first
+    /// evaluated sample (no prior sample to compare against).
     #[pyo3(get)]
     pub start_cause: Option<Vec<String>>,
-    /// Namespaced tag(s) of the leaf constraint(s) whose own pass/fail state flipped
-    /// from satisfied to violated at the sample immediately after this window ended.
-    /// `None` if the window ends at the last evaluated sample.
+    /// Namespaced tag(s) of the leaf constraint(s) whose own pass/fail state changed
+    /// between this window's last sample and the sample immediately after this window
+    /// ended. See `start_cause` for why no flip direction is implied. `None` if the
+    /// window ends at the last evaluated sample.
     #[pyo3(get)]
     pub end_cause: Option<Vec<String>>,
 }
@@ -776,22 +781,20 @@ pub trait ConstraintEvaluator: Send + Sync {
     }
 
     /// Diagonal variant of `compute_named_booleans` for moving-body evaluation: target_i
-    /// paired with time_i only. Default falls back to the full batch and extracts the
-    /// diagonal, mirroring `compute_named_values_diagonal`'s default.
+    /// paired with time_i only. Default (leaf constraints): a single-entry map from this
+    /// constraint's own tag to its own `in_constraint_batch_diagonal` result, mirroring
+    /// `compute_named_booleans`'s default — this reuses whatever O(N) diagonal
+    /// implementation the leaf already has (e.g. SAA) instead of building the full M×N
+    /// matrix and slicing it, which would silently regress to O(N²). Combinators override
+    /// this to merge their children's diagonal maps instead (see `combinators.rs`).
     fn compute_named_booleans_diagonal(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
     ) -> PyResult<HashMap<String, Vec<bool>>> {
-        let n = target_ras.len();
-        let time_indices: Vec<usize> = (0..n).collect();
-        let full =
-            self.compute_named_booleans(ephemeris, target_ras, target_decs, Some(&time_indices))?;
-        Ok(full
-            .into_iter()
-            .map(|(key, arr)| (key, (0..n).map(|i| arr[[i, i]]).collect()))
-            .collect())
+        let arr = self.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs)?;
+        Ok(HashMap::from([(value_key_prefix(&self.name()), arr)]))
     }
 
     /// Check if targets are in-constraint for multiple RA/Dec positions (vectorized)
