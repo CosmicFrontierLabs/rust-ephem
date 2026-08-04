@@ -1032,7 +1032,6 @@ dependencies = [
  "numpy",
  "once_cell",
  "pyo3",
- "pyo3-ffi",
  "rayon",
  "serde",
  "serde_json",
