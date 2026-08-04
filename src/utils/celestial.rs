@@ -1,9 +1,10 @@
 use chrono::{DateTime, Datelike, Timelike, Utc};
-use erfa::earth::position_velocity_00;
-use erfa::prenut::precession_matrix_06;
-use erfa::vectors_and_matrices::mat_mul_pvec;
 use ndarray::{s, Array1, Array2};
 use sofars::astro::atco13;
+use sofars::consts::{DJ00, DJY};
+use sofars::eph::epv00;
+use sofars::pnp::pmat06;
+use sofars::vm::rxp;
 use std::sync::Arc;
 
 use crate::ephemeris::ephemeris_common::EphemerisBase;
@@ -14,9 +15,28 @@ use crate::utils::time_utils::{datetime_to_jd_tt, datetime_to_jd_utc};
 use crate::utils::{eop_provider, ut1_provider};
 use crate::{is_planetary_ephemeris_initialized, utils::config::*};
 
+/// Sun/Earth ephemeris (SOFA `epv00`) is only valid within +/-100 Julian years
+/// of J2000 (i.e. 1900-2100); outside that range it returns `None` even though
+/// the underlying series is fully evaluated and the status flag is the only
+/// thing that changes. Rather than aborting the process on out-of-range
+/// dates, clamp the epoch used for the series evaluation to the nearest
+/// boundary of the valid range so callers still get a (less accurate, but
+/// finite) position instead of a panic.
+fn epv00_clamped(jd_tt1: f64, jd_tt2: f64) -> ([[f64; 3]; 2], [[f64; 3]; 2]) {
+    if let Some(result) = epv00(jd_tt1, jd_tt2) {
+        return result;
+    }
+
+    let t = ((jd_tt1 - DJ00) + jd_tt2) / DJY;
+    let t_clamped = t.clamp(-100.0, 100.0);
+    let jd_tt2_clamped = t_clamped * DJY - (jd_tt1 - DJ00);
+
+    epv00(jd_tt1, jd_tt2_clamped).expect("epv00 must succeed once clamped to +/-100 years")
+}
+
 /// Calculate Sun positions for multiple timestamps
 /// Returns Array2 with shape (N, 6) containing [x, y, z, vx, vy, vz] for each timestamp
-pub fn calculate_sun_positions_erfa(times: &[DateTime<Utc>]) -> Array2<f64> {
+pub fn calculate_sun_positions_sofa(times: &[DateTime<Utc>]) -> Array2<f64> {
     let n = times.len();
     let mut out = Array2::<f64>::zeros((n, 6));
 
@@ -25,7 +45,7 @@ pub fn calculate_sun_positions_erfa(times: &[DateTime<Utc>]) -> Array2<f64> {
     for (i, dt) in times.iter().enumerate() {
         let (jd_tt1, jd_tt2) = datetime_to_jd_tt(dt);
 
-        let (_warning, pvh, _pvb) = position_velocity_00(jd_tt1, jd_tt2);
+        let (pvh, _pvb) = epv00_clamped(jd_tt1, jd_tt2);
 
         // Sun position is negative of Earth's heliocentric position
         let mut row = out.row_mut(i);
@@ -226,7 +246,7 @@ pub fn calculate_moon_positions_meeus(times: &[DateTime<Utc>]) -> Array2<f64> {
         let (jd_tt1, jd_tt2) = datetime_to_jd_tt(dt);
 
         // Get the precession matrix from J2000 to date
-        let prec_matrix = precession_matrix_06(jd_tt1, jd_tt2);
+        let prec_matrix = pmat06(jd_tt1, jd_tt2);
 
         // Transpose to get date to J2000 (for orthogonal matrices, transpose = inverse)
         let prec_matrix_t = transpose_matrix(prec_matrix);
@@ -235,8 +255,10 @@ pub fn calculate_moon_positions_meeus(times: &[DateTime<Utc>]) -> Array2<f64> {
         let pos_date = [x_eq_date, y_eq_date, z_eq_date];
         let vel_date = [vx_eq_date, vy_eq_date, vz_eq_date];
 
-        let gcrs_pos = mat_mul_pvec(prec_matrix_t, pos_date);
-        let gcrs_vel = mat_mul_pvec(prec_matrix_t, vel_date);
+        let mut gcrs_pos = [0.0; 3];
+        rxp(&prec_matrix_t, &pos_date, &mut gcrs_pos);
+        let mut gcrs_vel = [0.0; 3];
+        rxp(&prec_matrix_t, &vel_date, &mut gcrs_vel);
 
         // Store results
         let mut row = out.row_mut(i);
@@ -613,10 +635,16 @@ pub fn calculate_airmass_batch_fast(
         Array2::from_shape_fn((n_targets, n_times), |(j, i)| obs_lons[i] - ras_rad[j]);
 
     // Reshape 1D arrays into column/row vectors for broadcasting
-    let sin_dec_col = sin_decs.view().into_shape((n_targets, 1)).unwrap();
-    let sin_lat_row = sin_lats.view().into_shape((1, n_times)).unwrap();
-    let cos_dec_col = cos_decs.view().into_shape((n_targets, 1)).unwrap();
-    let cos_lat_row = cos_lats.view().into_shape((1, n_times)).unwrap();
+    let sin_dec_col = sin_decs
+        .view()
+        .into_shape_with_order((n_targets, 1))
+        .unwrap();
+    let sin_lat_row = sin_lats.view().into_shape_with_order((1, n_times)).unwrap();
+    let cos_dec_col = cos_decs
+        .view()
+        .into_shape_with_order((n_targets, 1))
+        .unwrap();
+    let cos_lat_row = cos_lats.view().into_shape_with_order((1, n_times)).unwrap();
 
     // First term: sin(dec)[j] * sin(lat)[i]
     let first_term = &sin_dec_col * &sin_lat_row;
@@ -776,7 +804,7 @@ pub fn calculate_sun_positions(times: &[DateTime<Utc>]) -> Array2<f64> {
     if is_planetary_ephemeris_initialized() {
         calculate_body_positions_spice(times, SUN_NAIF_ID, EARTH_NAIF_ID)
     } else {
-        calculate_sun_positions_erfa(times)
+        calculate_sun_positions_sofa(times)
     }
 }
 
@@ -910,4 +938,35 @@ pub(crate) fn compute_angular_radii_rad(
             ratio.asin()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod sun_position_range_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    /// SOFA's `epv00` returns `None` (not an approximate result) for dates
+    /// more than 100 Julian years from J2000. Previously this was unwrapped
+    /// with `.expect()`, which aborts the process in release builds
+    /// (`panic = "abort"`). Dates well outside 1900-2100 must not panic.
+    #[test]
+    fn sun_position_does_not_panic_far_outside_valid_range() {
+        let far_past = Utc.with_ymd_and_hms(1500, 1, 1, 0, 0, 0).unwrap();
+        let far_future = Utc.with_ymd_and_hms(2600, 1, 1, 0, 0, 0).unwrap();
+
+        let out = calculate_sun_positions_sofa(&[far_past, far_future]);
+
+        assert_eq!(out.shape(), &[2, 6]);
+        for value in out.iter() {
+            assert!(value.is_finite());
+        }
+    }
+
+    #[test]
+    fn sun_position_matches_direct_epv00_within_valid_range() {
+        let dt = Utc.with_ymd_and_hms(2020, 6, 15, 0, 0, 0).unwrap();
+        let out = calculate_sun_positions_sofa(&[dt]);
+        assert_eq!(out.shape(), &[1, 6]);
+        assert!(out.iter().all(|v| v.is_finite()));
+    }
 }

@@ -888,7 +888,7 @@ fn load_via_duckdb(
 
     // fetchnumpy() returns a dict[str, np.ndarray] keyed by column alias.
     let np_dict_obj = result.call_method0("fetchnumpy")?;
-    let np_dict = np_dict_obj.downcast::<PyDict>()?;
+    let np_dict = np_dict_obj.cast::<PyDict>()?;
 
     let times = extract_int64_column(np_dict, "__t_us")?;
     let xs = extract_f64_column(np_dict, "__x")?;
@@ -942,7 +942,7 @@ fn extract_f64_column(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<Vec<f64>>
     let item = dict.get_item(key)?.ok_or_else(|| {
         pyo3::exceptions::PyKeyError::new_err(format!("DuckDB result missing column '{key}'"))
     })?;
-    let arr = item.downcast::<PyArray1<f64>>().map_err(|_| {
+    let arr = item.cast::<PyArray1<f64>>().map_err(|_| {
         pyo3::exceptions::PyTypeError::new_err(format!(
             "Column '{key}' is not a float64 array (DuckDB CAST may have failed)"
         ))
@@ -954,7 +954,7 @@ fn extract_int64_column(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<Vec<i64
     let item = dict.get_item(key)?.ok_or_else(|| {
         pyo3::exceptions::PyKeyError::new_err(format!("DuckDB result missing column '{key}'"))
     })?;
-    let arr = item.downcast::<PyArray1<i64>>().map_err(|_| {
+    let arr = item.cast::<PyArray1<i64>>().map_err(|_| {
         pyo3::exceptions::PyTypeError::new_err(format!("Column '{key}' is not an int64 array"))
     })?;
     Ok(arr.readonly().as_slice()?.to_vec())

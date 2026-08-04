@@ -152,6 +152,48 @@ Two methods with different accuracy levels:
     ephem = rust_ephem.TLEEphemeris(tle1, tle2, begin, end, step_size)
     moon = ephem.moon  # Now uses SPICE if initialized
 
+Sun Position Accuracy
+----------------------
+
+Two methods with different accuracy levels, selected the same way as Moon
+positions:
+
+**SOFA epv00 (Built-in)**
+  - Accuracy: full precision only within 1900-2100 (±100 Julian years of J2000)
+  - No external data required
+  - Automatically used when SPICE not initialized
+  - Sufficient for: spacecraft applications and general astronomy within 1900-2100
+
+**SPICE/ANISE (High Precision)**
+  - Accuracy: JPL-quality, valid over the full span of the loaded kernel
+  - Requires: DE440 or DE441 kernel file
+  - Required for: scientific research, high-precision work, and any date
+    outside 1900-2100
+
+.. code-block:: python
+
+    # Use high-precision SPICE-based Sun positions
+    rust_ephem.ensure_planetary_ephemeris()  # Downloads DE440S if needed
+
+    ephem = rust_ephem.TLEEphemeris(tle1, tle2, begin, end, step_size)
+    sun = ephem.sun  # Now uses SPICE if initialized
+
+**Behavior outside 1900-2100 (SOFA fallback only)**
+
+SOFA's ``epv00`` series is only certified accurate within ±100 Julian years
+of J2000. Outside that window, ``rust-ephem`` does not error or extrapolate
+the raw series — it freezes the Sun position at whichever boundary (1900 or
+2100) is nearest, so the result stays finite but its error grows with
+distance from that boundary rather than staying bounded. Measured against
+SOFA's own unclamped series, this reaches on the order of a few degrees of
+apparent Sun-direction error by ~500 years outside the valid range (e.g.
+dates around 1500 or 2600).
+
+This is too coarse for eclipse or sun-avoidance-angle constraint checks at
+that distance from 1900-2100. For any far-past or far-future epoch, load a
+SPICE kernel via ``ensure_planetary_ephemeris()`` rather than relying on the
+SOFA fallback.
+
 Coordinate Frame Transformations
 ---------------------------------
 

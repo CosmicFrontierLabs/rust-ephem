@@ -59,7 +59,7 @@ jobs:
           uv pip install target/wheels/*.whl --force-reinstall --no-deps
 
       - name: Run cargo test
-        run: cargo test --verbose
+        run: cargo test --verbose --no-default-features --features ut1
 
       - name: Run mypy
         run: mypy rust_ephem tests

@@ -4,15 +4,13 @@
 /// different coordinate frames (TEME, ITRS, GCRS). These functions are used by
 /// both TLEEphemeris and SPICEEphemeris to avoid code duplication.
 use chrono::{DateTime, Utc};
-use erfa::{
-    constants::ERFA_D2PI,
-    earth::earth_rotation_angle_00,
-    misc::norm_angle,
-    prenut::pn_matrix_06a,
-    time::{gmst06, gst06},
-    vectors_and_matrices::{mat_mul_pvec, multiply_matrices},
-};
 use ndarray::Array2;
+use sofars::{
+    consts::D2PI,
+    erst::{era00, gmst06, gst06},
+    pnp::pnm06a,
+    vm::{anp, rxp, rxr},
+};
 use std::f64::consts::PI;
 
 use crate::utils::config::*;
@@ -22,18 +20,18 @@ use crate::utils::time_utils::{datetime_to_jd_tt, datetime_to_jd_ut1};
 
 fn norm_angle_pm(angle: f64) -> f64 {
     // Normalize to [-pi, pi) to preserve small signed offsets across 2pi wrap.
-    let mut w = norm_angle(angle);
+    let mut w = anp(angle);
     if w >= PI {
-        w -= ERFA_D2PI;
+        w -= D2PI;
     }
     w
 }
 
 fn teme_gcrs_matrix(dt: &DateTime<Utc>) -> [[f64; 3]; 3] {
     let (jd_tt1, jd_tt2) = datetime_to_jd_tt(dt);
-    let bpn = pn_matrix_06a(jd_tt1, jd_tt2);
+    let bpn = pnm06a(jd_tt1, jd_tt2);
     let (jd_ut1_1, jd_ut1_2) = datetime_to_jd_ut1(dt);
-    let gast = gst06(jd_ut1_1, jd_ut1_2, jd_tt1, jd_tt2, bpn);
+    let gast = gst06(jd_ut1_1, jd_ut1_2, jd_tt1, jd_tt2, &bpn);
     let gmst = gmst06(jd_ut1_1, jd_ut1_2, jd_tt1, jd_tt2);
     let eqeq = norm_angle_pm(gast - gmst);
     // TEME uses the mean equinox; rotate from true equinox via equation of equinoxes.
@@ -43,7 +41,9 @@ fn teme_gcrs_matrix(dt: &DateTime<Utc>) -> [[f64; 3]; 3] {
         [-sin_eq, cos_eq, 0.0],
         [0.0, 0.0, 1.0],
     ];
-    multiply_matrices(eqeq_rot, bpn)
+    let mut result = [[0.0; 3]; 3];
+    rxr(&eqeq_rot, &bpn, &mut result);
+    result
 }
 
 /// Supported coordinate frames for conversion.
@@ -85,8 +85,10 @@ impl Rotation {
                 } else {
                     *matrix
                 };
-                let new_pos = mat_mul_pvec(mat, pos);
-                let new_vel = mat_mul_pvec(mat, vel);
+                let mut new_pos = [0.0; 3];
+                rxp(&mat, &pos, &mut new_pos);
+                let mut new_vel = [0.0; 3];
+                rxp(&mat, &vel, &mut new_vel);
                 (new_pos, new_vel)
             }
             Rotation::RotationZ {
@@ -143,8 +145,10 @@ impl Rotation {
                     // ITRS -> GCRS: W^T * R_z(-ERA)
                     // Step 1: Apply inverse polar motion (transpose)
                     let pm_t = transpose_matrix(*polar_motion);
-                    let pos1 = mat_mul_pvec(pm_t, pos);
-                    let vel1 = mat_mul_pvec(pm_t, vel);
+                    let mut pos1 = [0.0; 3];
+                    rxp(&pm_t, &pos, &mut pos1);
+                    let mut vel1 = [0.0; 3];
+                    rxp(&pm_t, &vel, &mut vel1);
 
                     // Step 2: Apply inverse ERA (with Earth rotation velocity)
                     let (c, s) = (*cos_era, *sin_era);
@@ -172,8 +176,10 @@ impl Rotation {
                     // Step 2: Apply polar motion
                     let pos1 = [x1, y1, z];
                     let vel1 = [vx1, vy1, vz];
-                    let new_pos = mat_mul_pvec(*polar_motion, pos1);
-                    let new_vel = mat_mul_pvec(*polar_motion, vel1);
+                    let mut new_pos = [0.0; 3];
+                    rxp(polar_motion, &pos1, &mut new_pos);
+                    let mut new_vel = [0.0; 3];
+                    rxp(polar_motion, &vel1, &mut new_vel);
 
                     (new_pos, new_vel)
                 }
@@ -227,7 +233,7 @@ fn get_rotation(from: Frame, to: Frame, dt: &DateTime<Utc>, polar_motion: bool) 
         (Frame::GCRS, Frame::ITRS) | (Frame::ITRS, Frame::GCRS) => {
             // Use UT1 time scale for Earth rotation angle
             let (jd_ut1_1, jd_ut1_2) = datetime_to_jd_ut1(dt);
-            let era = earth_rotation_angle_00(jd_ut1_1, jd_ut1_2);
+            let era = era00(jd_ut1_1, jd_ut1_2);
 
             if polar_motion {
                 // Get polar motion parameters (xp, yp in radians)
@@ -323,7 +329,7 @@ mod tests {
         let dt = Utc.with_ymd_and_hms(2025, 10, 14, 0, 0, 0).unwrap();
         let matrix = teme_gcrs_matrix(&dt);
         let (jd_tt1, jd_tt2) = datetime_to_jd_tt(&dt);
-        let bpn = pn_matrix_06a(jd_tt1, jd_tt2);
+        let bpn = pnm06a(jd_tt1, jd_tt2);
 
         let mut max_diff = 0.0_f64;
         for i in 0..3 {
@@ -339,8 +345,14 @@ mod tests {
             .expect("input array");
         let output = convert_frames(&input, &[dt], Frame::TEME, Frame::GCRS, false);
 
-        let expected_pos = mat_mul_pvec(expected_matrix, [7000.0, 1000.0, -2000.0]);
-        let expected_vel = mat_mul_pvec(expected_matrix, [1.0, -2.0, 0.5]);
+        let mut expected_pos = [0.0; 3];
+        rxp(
+            &expected_matrix,
+            &[7000.0, 1000.0, -2000.0],
+            &mut expected_pos,
+        );
+        let mut expected_vel = [0.0; 3];
+        rxp(&expected_matrix, &[1.0, -2.0, 0.5], &mut expected_vel);
 
         for i in 0..3 {
             assert!((output[[0, i]] - expected_pos[i]).abs() < 1e-9);

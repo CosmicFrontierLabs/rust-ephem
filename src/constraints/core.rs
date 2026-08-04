@@ -20,7 +20,7 @@ use std::sync::OnceLock;
 /// Result of constraint evaluation
 ///
 /// Contains information about when and where a constraint is violated.
-#[pyclass(name = "ConstraintViolation")]
+#[pyclass(name = "ConstraintViolation", skip_from_py_object)]
 #[derive(Clone, Debug)]
 pub struct ConstraintViolation {
     /// Start time of the violation window (internal storage)
@@ -1158,8 +1158,8 @@ macro_rules! extract_latlon_data {
                     pyo3::exceptions::PyRuntimeError::new_err("Longitude data not available")
                 })?;
 
-                let lat_bound = lat_array.downcast_bound::<PyArray1<f64>>(py)?;
-                let lon_bound = lon_array.downcast_bound::<PyArray1<f64>>(py)?;
+                let lat_bound = lat_array.cast_bound::<PyArray1<f64>>(py)?;
+                let lon_bound = lon_array.cast_bound::<PyArray1<f64>>(py)?;
 
                 let lats = lat_bound.readonly().as_slice()?.to_vec();
                 let lons = lon_bound.readonly().as_slice()?.to_vec();
