@@ -1,6 +1,7 @@
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use ndarray::{s, Array1, Array2};
 use sofars::astro::atco13;
+use sofars::consts::{DJ00, DJY};
 use sofars::eph::epv00;
 use sofars::pnp::pmat06;
 use sofars::vm::rxp;
@@ -44,7 +45,7 @@ pub fn calculate_sun_positions_sofa(times: &[DateTime<Utc>]) -> Array2<f64> {
     for (i, dt) in times.iter().enumerate() {
         let (jd_tt1, jd_tt2) = datetime_to_jd_tt(dt);
 
-        let (pvh, _pvb) = epv00(jd_tt1, jd_tt2).expect("sofars epv00 failed");
+        let (pvh, _pvb) = epv00_clamped(jd_tt1, jd_tt2);
 
         // Sun position is negative of Earth's heliocentric position
         let mut row = out.row_mut(i);
