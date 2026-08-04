@@ -1,6 +1,7 @@
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use ndarray::{s, Array1, Array2};
 use sofars::astro::atco13;
+use sofars::consts::{DJ00, DJY};
 use sofars::eph::epv00;
 use sofars::pnp::pmat06;
 use sofars::vm::rxp;
@@ -14,6 +15,25 @@ use crate::utils::time_utils::{datetime_to_jd_tt, datetime_to_jd_utc};
 use crate::utils::{eop_provider, ut1_provider};
 use crate::{is_planetary_ephemeris_initialized, utils::config::*};
 
+/// Sun/Earth ephemeris (SOFA `epv00`) is only valid within +/-100 Julian years
+/// of J2000 (i.e. 1900-2100); outside that range it returns `None` even though
+/// the underlying series is fully evaluated and the status flag is the only
+/// thing that changes. Rather than aborting the process on out-of-range
+/// dates, clamp the epoch used for the series evaluation to the nearest
+/// boundary of the valid range so callers still get a (less accurate, but
+/// finite) position instead of a panic.
+fn epv00_clamped(jd_tt1: f64, jd_tt2: f64) -> ([[f64; 3]; 2], [[f64; 3]; 2]) {
+    if let Some(result) = epv00(jd_tt1, jd_tt2) {
+        return result;
+    }
+
+    let t = ((jd_tt1 - DJ00) + jd_tt2) / DJY;
+    let t_clamped = t.clamp(-100.0, 100.0);
+    let jd_tt2_clamped = t_clamped * DJY - (jd_tt1 - DJ00);
+
+    epv00(jd_tt1, jd_tt2_clamped).expect("epv00 must succeed once clamped to +/-100 years")
+}
+
 /// Calculate Sun positions for multiple timestamps
 /// Returns Array2 with shape (N, 6) containing [x, y, z, vx, vy, vz] for each timestamp
 pub fn calculate_sun_positions_sofa(times: &[DateTime<Utc>]) -> Array2<f64> {
@@ -25,7 +45,7 @@ pub fn calculate_sun_positions_sofa(times: &[DateTime<Utc>]) -> Array2<f64> {
     for (i, dt) in times.iter().enumerate() {
         let (jd_tt1, jd_tt2) = datetime_to_jd_tt(dt);
 
-        let (pvh, _pvb) = epv00(jd_tt1, jd_tt2).expect("sofars epv00 failed");
+        let (pvh, _pvb) = epv00_clamped(jd_tt1, jd_tt2);
 
         // Sun position is negative of Earth's heliocentric position
         let mut row = out.row_mut(i);
@@ -918,4 +938,35 @@ pub(crate) fn compute_angular_radii_rad(
             ratio.asin()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod sun_position_range_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    /// SOFA's `epv00` returns `None` (not an approximate result) for dates
+    /// more than 100 Julian years from J2000. Previously this was unwrapped
+    /// with `.expect()`, which aborts the process in release builds
+    /// (`panic = "abort"`). Dates well outside 1900-2100 must not panic.
+    #[test]
+    fn sun_position_does_not_panic_far_outside_valid_range() {
+        let far_past = Utc.with_ymd_and_hms(1500, 1, 1, 0, 0, 0).unwrap();
+        let far_future = Utc.with_ymd_and_hms(2600, 1, 1, 0, 0, 0).unwrap();
+
+        let out = calculate_sun_positions_sofa(&[far_past, far_future]);
+
+        assert_eq!(out.shape(), &[2, 6]);
+        for value in out.iter() {
+            assert!(value.is_finite());
+        }
+    }
+
+    #[test]
+    fn sun_position_matches_direct_epv00_within_valid_range() {
+        let dt = Utc.with_ymd_and_hms(2020, 6, 15, 0, 0, 0).unwrap();
+        let out = calculate_sun_positions_sofa(&[dt]);
+        assert_eq!(out.shape(), &[1, 6]);
+        assert!(out.iter().all(|v| v.is_finite()));
+    }
 }
