@@ -576,6 +576,11 @@ Classes
       - Requirement: exactly one of ``time`` or ``index`` must be provided
       - Semantics: constraints are violated when ``True``; this method integrates visible sky where constraint is ``False``
 
+    * ``evaluate_moving_body(ephemeris, target_ras=None, target_decs=None, times=None, body=None, use_horizons=False, spice_kernel=None)`` — Evaluate against a body whose RA/Dec varies over time (comet, asteroid, planet), instead of a single fixed sky position
+
+      - Provide either explicit ``target_ras``/``target_decs`` (optionally with ``times``), or a ``body`` name/NAIF ID to look up via SPICE (or JPL Horizons if ``use_horizons=True``)
+      - Returns: ``MovingBodyResult`` object
+
     * ``to_json()`` — Get constraint configuration as JSON string
     * ``to_dict()`` — Get constraint configuration as Python dictionary
 
@@ -588,6 +593,22 @@ Classes
     * ``constraint_name`` — String name/description of the constraint
     * ``timestamp`` — NumPy array of Python datetime objects (optimized with caching)
     * ``constraint_array`` — NumPy boolean array where True means constraint violated / target blocked (optimized with caching)
+    * ``constraint_values`` — ``dict[str, list[float]]`` of named continuous values computed
+      during evaluation (e.g. ``sun_angle_deg``, the angle a ``SunConstraint`` thresholds), one
+      array per key, aligned with ``timestamp``. Empty for constraints with no natural scalar
+      (e.g. ``SAAConstraint``, polygon-mode ``BodyConstraint``/``BrightStarConstraint``).
+      Combinators (``AND``/``OR``/``XOR``/``AT_LEAST``) namespace each child's keys under a
+      short type-tag prefix (e.g. ``sun.sun_angle_deg``, ``moon.moon_angle_deg``); a repeated
+      type gets a numeric suffix (``body_2.body_angle_deg``, ...). See
+      :ref:`Constraint Values <constraint-values>` in the Constraints API reference for the
+      full key-name table.
+    * ``cause_value_keys`` — ``dict[str, list[str]]`` mapping a ``VisibilityWindow.start_cause``/
+      ``end_cause`` tag to the ``constraint_values`` key(s) it corresponds to. Needed because the
+      two namespaces use different conventions — cause tags are flat and stay stable regardless
+      of nesting depth, while ``constraint_values`` keys are hierarchical and encode the full
+      nesting path — so a cause tag's value key(s) can't be found by string-matching a prefix
+      once a constraint type is nested and repeated. See
+      :ref:`Visibility Window Causes <visibility-window-cause>` for details.
     * ``visibility`` — List of ``VisibilityWindow`` objects for contiguous satisfied periods
 
   **Methods:**
@@ -596,6 +617,17 @@ Classes
 
       - ``time`` — Python datetime object (must exist in result timestamps)
       - Returns: ``bool`` (True if violated / target blocked, False if satisfied)
+
+**MovingBodyResult**
+  Result of ``evaluate_moving_body()``: the same evaluation information as ``ConstraintResult``,
+  plus the moving body's per-timestamp sky position.
+
+  **Attributes (read-only):**
+    * ``violations``, ``all_satisfied``, ``constraint_name``, ``timestamp``, ``constraint_array``,
+      ``constraint_values``, ``cause_value_keys``, ``visibility`` — same meaning as on
+      ``ConstraintResult`` (see above)
+    * ``ras`` — NumPy array of the body's right ascension in degrees at each timestamp
+    * ``decs`` — NumPy array of the body's declination in degrees at each timestamp
 
 **ConstraintViolation**
   Information about a specific constraint violation time window.
@@ -613,6 +645,19 @@ Classes
     * ``start_time`` — Start time of visibility window (Python datetime)
     * ``end_time`` — End time of visibility window (Python datetime)
     * ``duration_seconds`` — Duration of the window in seconds (computed property)
+    * ``start_cause`` — ``list[str] | None``: tag(s) of the leaf constraint(s) whose own
+      pass/fail state changed between the sample before this window and its first sample.
+      ``None`` at the start of the evaluated range (no prior sample to compare against).
+    * ``end_cause`` — ``list[str] | None``: tag(s) of the leaf constraint(s) whose own
+      pass/fail state changed between this window's last sample and the one after it.
+      ``None`` at the end of the evaluated range. Under ``NOT``, the tag reports the wrapped
+      leaf's own (un-negated) transition, prefixed ``not.`` (e.g. ``not.sun``) so it is never
+      mistaken for its non-negated counterpart.
+
+  See :ref:`Visibility Window Causes <visibility-window-cause>` in the Constraints API
+  reference for the full semantics, including why ``start_cause``/``end_cause`` tags cannot be
+  cross-referenced against ``ConstraintResult.constraint_values`` keys by string prefix — use
+  ``ConstraintResult.cause_value_keys`` instead.
 
 **PositionVelocityData**
   Container for position and velocity data returned by ephemeris calculations.
