@@ -181,18 +181,23 @@ positions:
 **Behavior outside 1900-2100 (SOFA fallback only)**
 
 SOFA's ``epv00`` series is only certified accurate within ±100 Julian years
-of J2000. Outside that window, ``rust-ephem`` does not error or extrapolate
-the raw series — it freezes the Sun position at whichever boundary (1900 or
-2100) is nearest, so the result stays finite but its error grows with
-distance from that boundary rather than staying bounded. Measured against
-SOFA's own unclamped series, this reaches on the order of a few degrees of
-apparent Sun-direction error by ~500 years outside the valid range (e.g.
-dates around 1500 or 2600).
+of J2000. Outside that window, ``rust-ephem`` raises an error rather than
+silently returning a Sun position for the wrong epoch:
 
-This is too coarse for eclipse or sun-avoidance-angle constraint checks at
-that distance from 1900-2100. For any far-past or far-future epoch, load a
-SPICE kernel via ``ensure_planetary_ephemeris()`` rather than relying on the
-SOFA fallback.
+.. code-block:: python
+
+    # Raises ValueError: outside the SOFA epv00 valid range of 1900-2100
+    ephem = rust_ephem.TLEEphemeris(
+        tle1, tle2,
+        begin=datetime(2600, 1, 1, tzinfo=timezone.utc),
+        end=datetime(2600, 1, 2, tzinfo=timezone.utc),
+        step_size=60,
+    )
+
+For any far-past or far-future epoch, load a SPICE kernel via
+``ensure_planetary_ephemeris()`` before creating the ephemeris — this
+computes JPL-quality Sun positions over the full span of the loaded kernel
+instead of relying on the SOFA fallback.
 
 Coordinate Frame Transformations
 ---------------------------------

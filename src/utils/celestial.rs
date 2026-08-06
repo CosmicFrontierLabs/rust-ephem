@@ -15,28 +15,42 @@ use crate::utils::time_utils::{datetime_to_jd_tt, datetime_to_jd_utc};
 use crate::utils::{eop_provider, ut1_provider};
 use crate::{is_planetary_ephemeris_initialized, utils::config::*};
 
+/// Heliocentric and barycentric (position, velocity) pairs as returned by `epv00`.
+type Epv00Result = ([[f64; 3]; 2], [[f64; 3]; 2]);
+
 /// Sun/Earth ephemeris (SOFA `epv00`) is only valid within +/-100 Julian years
 /// of J2000 (i.e. 1900-2100); outside that range it returns `None` even though
 /// the underlying series is fully evaluated and the status flag is the only
-/// thing that changes. Rather than aborting the process on out-of-range
-/// dates, clamp the epoch used for the series evaluation to the nearest
-/// boundary of the valid range so callers still get a (less accurate, but
-/// finite) position instead of a panic.
-fn epv00_clamped(jd_tt1: f64, jd_tt2: f64) -> ([[f64; 3]; 2], [[f64; 3]; 2]) {
-    if let Some(result) = epv00(jd_tt1, jd_tt2) {
-        return result;
-    }
-
-    let t = ((jd_tt1 - DJ00) + jd_tt2) / DJY;
-    let t_clamped = t.clamp(-100.0, 100.0);
-    let jd_tt2_clamped = t_clamped * DJY - (jd_tt1 - DJ00);
-
-    epv00(jd_tt1, jd_tt2_clamped).expect("epv00 must succeed once clamped to +/-100 years")
+/// thing that changes. `sofars` does not expose that raw computation (its
+/// coefficient tables are private), so there is no way to recover the actual
+/// extrapolated value through its public API — only reject or approximate.
+/// Silently approximating (e.g. clamping to the nearest boundary) produces a
+/// Sun position with no indication it no longer reflects the requested
+/// epoch, growing to a few degrees of apparent Sun-direction error by ~500
+/// years outside the valid range — unsafe for eclipse/sun-avoidance-angle
+/// constraint checks. Out-of-range epochs are therefore a hard error:
+/// callers must load a SPICE kernel via `ensure_planetary_ephemeris()` for
+/// dates outside 1900-2100.
+fn epv00_or_err(jd_tt1: f64, jd_tt2: f64) -> Result<Epv00Result, String> {
+    epv00(jd_tt1, jd_tt2).ok_or_else(|| {
+        let t = ((jd_tt1 - DJ00) + jd_tt2) / DJY;
+        let approx_year = 2000.0 + t;
+        format!(
+            "Sun position requested for an epoch ~{approx_year:.0} ({t:+.1} Julian years from \
+             J2000) is outside the SOFA epv00 valid range of 1900-2100 (+/-100 years from J2000). \
+             Load a SPICE kernel via ensure_planetary_ephemeris() to compute Sun positions outside \
+             this range."
+        )
+    })
 }
 
 /// Calculate Sun positions for multiple timestamps
 /// Returns Array2 with shape (N, 6) containing [x, y, z, vx, vy, vz] for each timestamp
-pub fn calculate_sun_positions_sofa(times: &[DateTime<Utc>]) -> Array2<f64> {
+///
+/// # Errors
+/// Returns `Err` if any timestamp falls outside the SOFA `epv00` valid range
+/// of 1900-2100 (+/-100 Julian years of J2000) — see [`epv00_or_err`].
+pub fn calculate_sun_positions_sofa(times: &[DateTime<Utc>]) -> Result<Array2<f64>, String> {
     let n = times.len();
     let mut out = Array2::<f64>::zeros((n, 6));
 
@@ -45,7 +59,7 @@ pub fn calculate_sun_positions_sofa(times: &[DateTime<Utc>]) -> Array2<f64> {
     for (i, dt) in times.iter().enumerate() {
         let (jd_tt1, jd_tt2) = datetime_to_jd_tt(dt);
 
-        let (pvh, _pvb) = epv00_clamped(jd_tt1, jd_tt2);
+        let (pvh, _pvb) = epv00_or_err(jd_tt1, jd_tt2)?;
 
         // Sun position is negative of Earth's heliocentric position
         let mut row = out.row_mut(i);
@@ -57,7 +71,7 @@ pub fn calculate_sun_positions_sofa(times: &[DateTime<Utc>]) -> Array2<f64> {
         row[5] = -pvh[1][2] * AU_PER_DAY_TO_KM_PER_SEC;
     }
 
-    out
+    Ok(out)
 }
 
 /// Calculate Moon positions for multiple timestamps
@@ -799,10 +813,21 @@ pub fn calculate_moon_positions(times: &[DateTime<Utc>]) -> Array2<f64> {
     }
 }
 
-pub fn calculate_sun_positions(times: &[DateTime<Utc>]) -> Array2<f64> {
+/// Calculate Sun positions for multiple timestamps, using SPICE if a
+/// planetary ephemeris is loaded and falling back to the SOFA `epv00`
+/// analytic model otherwise.
+///
+/// # Errors
+/// Returns `Err` if the SOFA fallback is used and any timestamp falls
+/// outside its valid range of 1900-2100 — see [`calculate_sun_positions_sofa`].
+pub fn calculate_sun_positions(times: &[DateTime<Utc>]) -> Result<Array2<f64>, String> {
     // Sun NAIF ID: 10, Earth NAIF ID: 399
     if is_planetary_ephemeris_initialized() {
-        calculate_body_positions_spice(times, SUN_NAIF_ID, EARTH_NAIF_ID)
+        Ok(calculate_body_positions_spice(
+            times,
+            SUN_NAIF_ID,
+            EARTH_NAIF_ID,
+        ))
     } else {
         calculate_sun_positions_sofa(times)
     }
@@ -948,25 +973,54 @@ mod sun_position_range_tests {
     /// SOFA's `epv00` returns `None` (not an approximate result) for dates
     /// more than 100 Julian years from J2000. Previously this was unwrapped
     /// with `.expect()`, which aborts the process in release builds
-    /// (`panic = "abort"`). Dates well outside 1900-2100 must not panic.
+    /// (`panic = "abort"`). Dates well outside 1900-2100 must not panic —
+    /// they must return a catchable `Err` describing the unsupported range,
+    /// not silently approximate a value for the wrong epoch.
     #[test]
-    fn sun_position_does_not_panic_far_outside_valid_range() {
+    fn sun_position_errs_far_outside_valid_range() {
         let far_past = Utc.with_ymd_and_hms(1500, 1, 1, 0, 0, 0).unwrap();
         let far_future = Utc.with_ymd_and_hms(2600, 1, 1, 0, 0, 0).unwrap();
 
-        let out = calculate_sun_positions_sofa(&[far_past, far_future]);
+        let past_err = calculate_sun_positions_sofa(&[far_past]).unwrap_err();
+        assert!(past_err.contains("1900-2100"));
 
-        assert_eq!(out.shape(), &[2, 6]);
-        for value in out.iter() {
-            assert!(value.is_finite());
-        }
+        let future_err = calculate_sun_positions_sofa(&[far_future]).unwrap_err();
+        assert!(future_err.contains("1900-2100"));
     }
 
     #[test]
     fn sun_position_matches_direct_epv00_within_valid_range() {
         let dt = Utc.with_ymd_and_hms(2020, 6, 15, 0, 0, 0).unwrap();
-        let out = calculate_sun_positions_sofa(&[dt]);
+        let out = calculate_sun_positions_sofa(&[dt]).unwrap();
         assert_eq!(out.shape(), &[1, 6]);
         assert!(out.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn sun_position_succeeds_at_valid_range_boundary() {
+        // 2100-01-01 is just inside the +/-100 Julian year boundary from J2000.
+        let dt = Utc.with_ymd_and_hms(2099, 6, 15, 0, 0, 0).unwrap();
+        let out = calculate_sun_positions_sofa(&[dt]).unwrap();
+        assert_eq!(out.shape(), &[1, 6]);
+        assert!(out.iter().all(|v| v.is_finite()));
+    }
+
+    /// Confirms the +/-100 Julian year threshold itself is enforced, not just
+    /// that dates hundreds of years out error — a date barely past the
+    /// boundary must still be rejected rather than silently accepted.
+    #[test]
+    fn sun_position_errs_just_past_valid_range_boundary() {
+        let dt = Utc.with_ymd_and_hms(2105, 1, 1, 0, 0, 0).unwrap();
+        let err = calculate_sun_positions_sofa(&[dt]).unwrap_err();
+        assert!(err.contains("1900-2100"));
+    }
+
+    /// The public dispatcher must surface the same error as the SOFA
+    /// fallback it delegates to when no SPICE ephemeris is loaded.
+    #[test]
+    fn calculate_sun_positions_propagates_out_of_range_error() {
+        let far_future = Utc.with_ymd_and_hms(2600, 1, 1, 0, 0, 0).unwrap();
+        let err = calculate_sun_positions(&[far_future]).unwrap_err();
+        assert!(err.contains("1900-2100"));
     }
 }
