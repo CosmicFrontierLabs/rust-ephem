@@ -910,7 +910,8 @@ pub trait EphemerisBase {
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available."))?;
 
         // Use batch calculations for better performance
-        let sun_out = calculate_sun_positions(times);
+        let sun_out =
+            calculate_sun_positions(times).map_err(pyo3::exceptions::PyValueError::new_err)?;
         let moon_out = calculate_moon_positions(times);
 
         let data_mut = self.data_mut();
