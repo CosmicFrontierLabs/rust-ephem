@@ -820,14 +820,12 @@ pub fn calculate_moon_positions(times: &[DateTime<Utc>]) -> Array2<f64> {
 /// # Errors
 /// Returns `Err` if the SOFA fallback is used and any timestamp falls
 /// outside its valid range of 1900-2100 — see [`calculate_sun_positions_sofa`].
+/// Also returns `Err` (rather than panicking) if SPICE is used and any
+/// timestamp falls outside the coverage of the loaded kernel.
 pub fn calculate_sun_positions(times: &[DateTime<Utc>]) -> Result<Array2<f64>, String> {
     // Sun NAIF ID: 10, Earth NAIF ID: 399
     if is_planetary_ephemeris_initialized() {
-        Ok(calculate_body_positions_spice(
-            times,
-            SUN_NAIF_ID,
-            EARTH_NAIF_ID,
-        ))
+        calculate_body_positions_spice_result(times, SUN_NAIF_ID, EARTH_NAIF_ID, None)
     } else {
         calculate_sun_positions_sofa(times)
     }

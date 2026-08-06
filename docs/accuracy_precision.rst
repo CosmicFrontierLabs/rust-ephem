@@ -199,6 +199,23 @@ For any far-past or far-future epoch, load a SPICE kernel via
 computes JPL-quality Sun positions over the full span of the loaded kernel
 instead of relying on the SOFA fallback.
 
+.. note::
+
+    ``ensure_planetary_ephemeris()`` downloads the slim **DE440S** kernel by
+    default, which only covers 1849-2150. For epochs outside that window —
+    such as the year 2600 example above — request the full **DE440** kernel
+    instead, which covers 1550-2650:
+
+    .. code-block:: python
+
+        rust_ephem.ensure_planetary_ephemeris(prefer_full=True)  # Downloads DE440
+
+    For epochs outside even DE440's range, supply the path or URL of an
+    appropriate kernel (e.g. DE441) via ``ensure_planetary_ephemeris(py_path=...)``
+    or ``spk_url=...``. Using SPICE with a kernel that does not cover the
+    requested epoch raises a ``ValueError`` rather than silently
+    extrapolating.
+
 Coordinate Frame Transformations
 ---------------------------------
 
