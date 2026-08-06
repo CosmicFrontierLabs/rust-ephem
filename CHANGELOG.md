@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.13.0...v0.13.1) (2026-08-06)
+
+
+### Bug Fixes
+
+* error on Sun out of ERFA valid time range ([#188](https://github.com/CosmicFrontierLabs/rust-ephem/issues/188)) ([c13761c](https://github.com/CosmicFrontierLabs/rust-ephem/commit/c13761cc3e6f96384e9e6162e8849db815c22903))
+* update rust dependencies for security issue ([#186](https://github.com/CosmicFrontierLabs/rust-ephem/issues/186)) ([1269a9b](https://github.com/CosmicFrontierLabs/rust-ephem/commit/1269a9bf700190ed87527901dd79c37335e4563b))
+
 ## [0.13.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.12.0...v0.13.0) (2026-08-03)
 
 
