@@ -190,7 +190,19 @@ separately and diffing timestamps by hand:
 
 Both fields are ``None`` at the edges of the evaluated time range (no
 adjacent sample to compare against), and list multiple tags if more than one
-leaf flips on the same sample. Unlike ``constraint_values``, cause tags are
+leaf flips on the same sample.
+
+When the constraint tree depends on spacecraft roll and no ``target_roll`` is
+given, each sample is evaluated by sweeping roll angles and asking whether
+*any* orientation clears the tree. Cause tags then report each leaf's state at
+that sample's **witness roll** - the orientation the sweep settled on: the
+first swept roll that clears the whole tree, or, when the sample is blocked at
+every roll, the roll leaving the fewest leaves violated. Each side of a
+boundary therefore describes an orientation the spacecraft could really hold,
+but the two sides need not share one: a window can open because the required
+attitude moved, not because any leaf changed at a fixed attitude.
+
+Unlike ``constraint_values``, cause tags are
 available even for constraints with no natural continuous scalar
 (``SAAConstraint``, polygon-mode ``BodyConstraint``/``BrightStarConstraint``),
 since attribution only needs each leaf's own boolean state.

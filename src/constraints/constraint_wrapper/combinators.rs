@@ -121,53 +121,41 @@ fn merge_children_named_booleans_diagonal(
     Ok(merged)
 }
 
-/// Roll-swept variant of `merge_children_named_booleans`, mirroring
-/// `in_constraint_batch_constrained_at_every_roll`'s "hoist roll-independent
-/// children" optimization: an independent child is evaluated once
-/// (`compute_named_booleans`); a roll-dependent child recurses into its own
-/// `compute_named_booleans_constrained_at_every_roll` — *independently* of any
-/// roll-dependent siblings.
+/// Fixed-roll variant of `merge_children_named_booleans`: every child is evaluated
+/// at the *same* candidate roll, so the merged map describes one single, physically
+/// realisable spacecraft orientation rather than a per-child mixture of different
+/// ones.
 ///
-/// That independence is a deliberate simplification, not an oversight: when
-/// *multiple* roll-dependent children are combined, the combined boolean result
-/// requires a coordinated search for a single roll angle that satisfies every
-/// dep child *simultaneously* (see `in_constraint_batch_constrained_at_every_roll`'s
-/// "with multiple dep children we must loop step-by-step" comment) — two
-/// children can each have *some* clear roll without ever sharing the *same* one,
-/// so that combined search is not decomposable into independent per-child
-/// results. Each leaf's cause tag instead reports whether *it alone* is
-/// violated at every roll, mirroring the existing (non-swept) cause semantics
-/// ("this leaf's own state, independent of siblings") — a leaf violated at every
-/// roll on its own is always sufficient to rule out a shared clear roll through
-/// it, so this remains a sound (if slightly weaker) diagnostic.
+/// That shared roll is the whole point. A free-roll sweep asks whether *some*
+/// orientation clears the tree, and two children can each have some clear roll
+/// without ever sharing the same one — so per-child "is this child violated at
+/// every roll" answers cannot be recombined into the combined result for OR, XOR
+/// or AT_LEAST. `sweep_rolls_with_attribution` therefore drives this function once
+/// per roll step alongside `in_constraint_batch_at_roll`, and keeps the leaf masks
+/// from the roll it selects as that cell's witness.
 ///
-/// Children are processed in their original list order (not indep-then-dep) so
-/// tag-collision numbering matches `merge_children_named_booleans` and
-/// `merge_children_cause_value_keys` exactly — `ConstraintResult.cause_value_keys`
-/// (always built from the non-swept path, since key *names* don't depend on
-/// roll) stays valid for the tags this produces.
-fn merge_children_named_booleans_constrained_at_every_roll(
+/// Children are processed in their original list order so tag-collision numbering
+/// matches `merge_children_named_booleans` and `merge_children_cause_value_keys`
+/// exactly — `ConstraintResult.cause_value_keys` (built from the non-swept path,
+/// since key *names* don't depend on roll) stays valid for the tags this produces.
+fn merge_children_named_booleans_at_roll(
     children: &[Box<dyn ConstraintEvaluator>],
     ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
     target_ras: &[f64],
     target_decs: &[f64],
     time_indices: Option<&[usize]>,
-    n_roll_samples: usize,
+    roll_deg: f64,
 ) -> PyResult<HashMap<String, Array2<bool>>> {
     let mut merged = HashMap::new();
 
     for child in children {
-        let child_booleans = if child.is_roll_dependent() {
-            child.compute_named_booleans_constrained_at_every_roll(
-                ephemeris,
-                target_ras,
-                target_decs,
-                time_indices,
-                n_roll_samples,
-            )?
-        } else {
-            child.compute_named_booleans(ephemeris, target_ras, target_decs, time_indices)?
-        };
+        let child_booleans = child.compute_named_booleans_at_roll(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            roll_deg,
+        )?;
         for (key, arr) in sorted_entries(child_booleans) {
             insert_no_collision(&mut merged, key, arr);
         }
@@ -776,24 +764,21 @@ impl ConstraintEvaluator for AndEvaluator {
         )
     }
 
-    fn compute_named_booleans_constrained_at_every_roll(
+    fn compute_named_booleans_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        n_roll_samples: usize,
+        roll_deg: f64,
     ) -> PyResult<HashMap<String, Array2<bool>>> {
-        if !self.is_roll_dependent() {
-            return self.compute_named_booleans(ephemeris, target_ras, target_decs, time_indices);
-        }
-        merge_children_named_booleans_constrained_at_every_roll(
+        merge_children_named_booleans_at_roll(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
-            n_roll_samples,
+            roll_deg,
         )
     }
 
@@ -1328,24 +1313,21 @@ impl ConstraintEvaluator for OrEvaluator {
         )
     }
 
-    fn compute_named_booleans_constrained_at_every_roll(
+    fn compute_named_booleans_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        n_roll_samples: usize,
+        roll_deg: f64,
     ) -> PyResult<HashMap<String, Array2<bool>>> {
-        if !self.is_roll_dependent() {
-            return self.compute_named_booleans(ephemeris, target_ras, target_decs, time_indices);
-        }
-        merge_children_named_booleans_constrained_at_every_roll(
+        merge_children_named_booleans_at_roll(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
-            n_roll_samples,
+            roll_deg,
         )
     }
 
@@ -1646,32 +1628,22 @@ impl ConstraintEvaluator for NotEvaluator {
             .collect())
     }
 
-    fn compute_named_booleans_constrained_at_every_roll(
+    fn compute_named_booleans_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        n_roll_samples: usize,
+        roll_deg: f64,
     ) -> PyResult<HashMap<String, Array2<bool>>> {
         // See `compute_named_booleans`: values are uninverted, keys prefixed with "not.".
-        let child_booleans = if self.constraint.is_roll_dependent() {
-            self.constraint
-                .compute_named_booleans_constrained_at_every_roll(
-                    ephemeris,
-                    target_ras,
-                    target_decs,
-                    time_indices,
-                    n_roll_samples,
-                )?
-        } else {
-            self.constraint.compute_named_booleans(
-                ephemeris,
-                target_ras,
-                target_decs,
-                time_indices,
-            )?
-        };
+        let child_booleans = self.constraint.compute_named_booleans_at_roll(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            roll_deg,
+        )?;
         Ok(child_booleans
             .into_iter()
             .map(|(key, arr)| (format!("not.{key}"), arr))
@@ -2018,24 +1990,21 @@ impl ConstraintEvaluator for XorEvaluator {
         )
     }
 
-    fn compute_named_booleans_constrained_at_every_roll(
+    fn compute_named_booleans_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        n_roll_samples: usize,
+        roll_deg: f64,
     ) -> PyResult<HashMap<String, Array2<bool>>> {
-        if !self.is_roll_dependent() {
-            return self.compute_named_booleans(ephemeris, target_ras, target_decs, time_indices);
-        }
-        merge_children_named_booleans_constrained_at_every_roll(
+        merge_children_named_booleans_at_roll(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
-            n_roll_samples,
+            roll_deg,
         )
     }
 
@@ -2390,24 +2359,21 @@ impl ConstraintEvaluator for AtLeastEvaluator {
         )
     }
 
-    fn compute_named_booleans_constrained_at_every_roll(
+    fn compute_named_booleans_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        n_roll_samples: usize,
+        roll_deg: f64,
     ) -> PyResult<HashMap<String, Array2<bool>>> {
-        if !self.is_roll_dependent() {
-            return self.compute_named_booleans(ephemeris, target_ras, target_decs, time_indices);
-        }
-        merge_children_named_booleans_constrained_at_every_roll(
+        merge_children_named_booleans_at_roll(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
-            n_roll_samples,
+            roll_deg,
         )
     }
 

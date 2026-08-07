@@ -135,6 +135,14 @@ pub struct VisibilityWindow {
     /// state changed, which is the opposite transition to the `NOT` result's own
     /// violated/satisfied transition. `None` if the window starts at the first
     /// evaluated sample (no prior sample to compare against).
+    ///
+    /// Under a free-roll evaluation (`target_roll=None` on a roll-dependent tree)
+    /// each leaf's state is taken at that sample's *witness roll* — the orientation
+    /// the sweep selected, see `sweep_rolls_with_attribution`. Both samples either
+    /// side of a boundary therefore describe orientations the spacecraft could
+    /// actually hold, but they need not be the *same* orientation: a window can
+    /// open because the spacecraft would have to roll elsewhere, not because any
+    /// leaf changed at a fixed attitude.
     #[pyo3(get)]
     pub start_cause: Option<Vec<String>>,
     /// Namespaced tag(s) of the leaf constraint(s) whose own pass/fail state changed
@@ -805,6 +813,38 @@ pub trait ConstraintEvaluator: Send + Sync {
         Ok(HashMap::from([(value_key_prefix(&self.name()), arr)]))
     }
 
+    /// Per-leaf violation masks at one fixed candidate spacecraft roll, with exactly
+    /// the same tag identity and collision renaming as `compute_named_booleans`.
+    ///
+    /// This is the per-step primitive of the coordinated free-roll cause attribution
+    /// in `sweep_rolls_with_attribution`: that sweep needs, at each roll angle, both
+    /// the combined outcome (`in_constraint_batch_at_roll`) and every leaf's own
+    /// state *at that same angle*, so it can record which leaves were violated at
+    /// the roll it eventually selects as the witness. Tags must stay in lockstep
+    /// with `compute_named_booleans` / `compute_cause_value_keys` — a caller maps a
+    /// cause tag to its `constraint_values` key(s) through the latter.
+    ///
+    /// Default (leaf constraints): a single-entry map from this constraint's own tag
+    /// to its own `in_constraint_batch_at_roll` result, mirroring
+    /// `compute_named_booleans`' default.
+    fn compute_named_booleans_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        roll_deg: f64,
+    ) -> PyResult<HashMap<String, Array2<bool>>> {
+        let arr = self.in_constraint_batch_at_roll(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            roll_deg,
+        )?;
+        Ok(HashMap::from([(value_key_prefix(&self.name()), arr)]))
+    }
+
     /// Diagonal variant of `compute_named_booleans` for moving-body evaluation: target_i
     /// paired with time_i only. Default (leaf constraints): a single-entry map from this
     /// constraint's own tag to its own `in_constraint_batch_diagonal` result, mirroring
@@ -1097,53 +1137,150 @@ pub trait ConstraintEvaluator: Send + Sync {
         Ok(acc.unwrap_or_else(|| Array2::from_elem((target_ras.len(), 0), false)))
     }
 
-    /// Roll-swept variant of `compute_named_booleans`, mirroring
-    /// `in_constraint_batch_constrained_at_every_roll`'s "violated at every swept
-    /// roll ⇒ no valid orientation exists" semantics. Used for cause attribution
-    /// when `target_roll=None` and this constraint is roll-dependent — cause
-    /// attribution must use the same roll semantics as the visibility result it
-    /// explains, or the reported cause can disagree with (or be entirely absent
-    /// from) what actually made the target visible/invisible.
-    ///
-    /// Default (leaf constraints): delegates straight to this constraint's own
-    /// `in_constraint_batch_constrained_at_every_roll` and wraps the result under
-    /// this constraint's own tag — mirroring `compute_named_booleans_diagonal`'s
-    /// default reuse of `in_constraint_batch_diagonal`. This is not just a
-    /// convenience: leaves with an optimised sweep override (e.g. `BrightStar`'s
-    /// cached gnomonic projections, reused across all `n_roll_samples` steps
-    /// instead of recomputed per step) automatically get that optimisation here
-    /// too. A hand-rolled loop over `in_constraint_batch_at_roll` in this default
-    /// would silently bypass any such override and re-run the *unoptimised*
-    /// sweep a second time (once for the real result, once for cause) — a severe
-    /// regression for expensive leaves. Combinators override this to recurse into
-    /// each child *independently* rather than reconstruct the combined
-    /// multi-child coordinated search (see `combinators.rs` for why that search
-    /// isn't generally decomposable per leaf, and why independent-per-leaf
-    /// remains a sound diagnostic anyway).
-    fn compute_named_booleans_constrained_at_every_roll(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-        time_indices: Option<&[usize]>,
-        n_roll_samples: usize,
-    ) -> PyResult<HashMap<String, Array2<bool>>> {
-        let arr = self.in_constraint_batch_constrained_at_every_roll(
-            ephemeris,
-            target_ras,
-            target_decs,
-            time_indices,
-            n_roll_samples,
-        )?;
-        Ok(HashMap::from([(value_key_prefix(&self.name()), arr)]))
-    }
-
     /// Get constraint name
     fn name(&self) -> String;
 
     /// Downcast support for special handling
     #[allow(dead_code)]
     fn as_any(&self) -> &dyn std::any::Any;
+}
+
+/// Combined result and per-leaf cause attribution from one free-roll sweep.
+pub struct RollSweepAttribution {
+    /// (M x N) targets x times, `true` where the constraint is violated at *every*
+    /// swept roll — identical semantics to
+    /// `ConstraintEvaluator::in_constraint_batch_constrained_at_every_roll`.
+    pub violated: Array2<bool>,
+    /// Per-leaf violation masks taken at each cell's witness roll (see
+    /// `sweep_rolls_with_attribution`), keyed by the same cause tags as
+    /// `ConstraintEvaluator::compute_named_booleans`.
+    pub named: HashMap<String, Array2<bool>>,
+}
+
+/// Sweep `n_roll_samples` spacecraft rolls, returning both the combined free-roll
+/// violation mask and per-leaf cause masks that are consistent with it.
+///
+/// Cause attribution has to answer "which leaf changed?" about a result that was
+/// itself produced by a search over rolls, and the naive decomposition — ask each
+/// leaf separately whether *it alone* is violated at every roll — is not equivalent
+/// for `OR`, `XOR` or `AT_LEAST`. Two leaves can block complementary roll ranges so
+/// that together they leave no clear roll while neither blocks every roll on its
+/// own; the combined window then opens or closes with both per-leaf answers
+/// unchanged, and the boundary gets no cause at all.
+///
+/// So instead of decomposing, this picks a **witness roll** per (target, time) cell
+/// and reports every leaf's state at that one shared, physically realisable
+/// orientation:
+///
+/// * the first swept roll at which the whole tree is satisfied, if any exists — the
+///   leaf states then describe an orientation the spacecraft could actually fly; or
+/// * failing that (the cell is violated at every roll), the roll that leaves the
+///   fewest leaf tags violated, i.e. the closest the tree came to opening up. Ties
+///   go to the lowest roll angle, so the choice is deterministic.
+///
+/// Both outputs come from the same pass: `violated` is the AND of the per-roll
+/// combined masks, exactly as `in_constraint_batch_constrained_at_every_roll`
+/// computes it, so callers needing both do not sweep twice.
+///
+/// For a roll-independent tree this degenerates to a single non-swept evaluation.
+pub fn sweep_rolls_with_attribution(
+    evaluator: &dyn ConstraintEvaluator,
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    target_ras: &[f64],
+    target_decs: &[f64],
+    time_indices: Option<&[usize]>,
+    n_roll_samples: usize,
+) -> PyResult<RollSweepAttribution> {
+    if !evaluator.is_roll_dependent() {
+        return Ok(RollSweepAttribution {
+            violated: evaluator.in_constraint_batch(
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices,
+            )?,
+            named: evaluator.compute_named_booleans(
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices,
+            )?,
+        });
+    }
+
+    let roll_step = 360.0 / n_roll_samples as f64;
+    let mut violated: Option<Array2<bool>> = None;
+    let mut named: HashMap<String, Array2<bool>> = HashMap::new();
+    // Per cell: how many leaf tags were violated at the best roll seen so far, and
+    // whether that best roll actually cleared the whole tree (in which case no later
+    // roll can improve on it and the cell is settled).
+    let mut best_violated_tags: Array2<usize> = Array2::from_elem((0, 0), 0);
+    let mut settled: Array2<bool> = Array2::from_elem((0, 0), false);
+
+    for step in 0..n_roll_samples {
+        if settled.iter().all(|&s| s) && step > 0 {
+            break;
+        }
+
+        let roll_deg = step as f64 * roll_step;
+        let combined_step = evaluator.in_constraint_batch_at_roll(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            roll_deg,
+        )?;
+        let named_step = evaluator.compute_named_booleans_at_roll(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            roll_deg,
+        )?;
+
+        let (n_targets, n_times) = combined_step.dim();
+        if step == 0 {
+            best_violated_tags = Array2::from_elem((n_targets, n_times), usize::MAX);
+            settled = Array2::from_elem((n_targets, n_times), false);
+            named = named_step
+                .keys()
+                .map(|key| (key.clone(), Array2::from_elem((n_targets, n_times), false)))
+                .collect();
+        }
+
+        match violated {
+            None => violated = Some(combined_step.clone()),
+            Some(ref mut acc) => acc.zip_mut_with(&combined_step, |x, &y| *x &= y),
+        }
+
+        for row in 0..n_targets {
+            for col in 0..n_times {
+                if settled[[row, col]] {
+                    continue;
+                }
+                let satisfied = !combined_step[[row, col]];
+                let violated_tags = named_step.values().filter(|arr| arr[[row, col]]).count();
+                if !satisfied && violated_tags >= best_violated_tags[[row, col]] {
+                    continue;
+                }
+                for (key, arr) in named.iter_mut() {
+                    // `named_step` is produced by the same evaluator tree as the map
+                    // `named` was seeded from, so its key set is identical every step;
+                    // the lookup is defensive rather than load-bearing.
+                    if let Some(step_arr) = named_step.get(key) {
+                        arr[[row, col]] = step_arr[[row, col]];
+                    }
+                }
+                best_violated_tags[[row, col]] = violated_tags;
+                settled[[row, col]] = satisfied;
+            }
+        }
+    }
+
+    Ok(RollSweepAttribution {
+        violated: violated.unwrap_or_else(|| Array2::from_elem((target_ras.len(), 0), false)),
+        named,
+    })
 }
 
 /// Macro to generate common methods for proximity evaluators

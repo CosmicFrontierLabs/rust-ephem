@@ -1959,24 +1959,36 @@ roll-dependent (a ``.boresight_offset(...)`` with non-zero pitch/yaw,
 ``SolarRollConstraint``, ...) and evaluated with ``target_roll=None``,
 ``evaluate()``/``evaluate_batch()`` sweep spacecraft roll to decide the
 *result*: violated only if blocked at every tested roll (no valid orientation
-exists). Cause attribution sweeps roll the same way, so it never disagrees
-with what actually made the target visible/invisible - a roll-dependent
-leaf's cause tag reports whether *that leaf alone* is violated at every
-swept roll, not its state at some single fixed roll.
+exists). The sweep is *coordinated* - one candidate roll is applied to the
+whole tree at once, with each boresight offset keeping its own ``roll_deg``
+mounting angle, so several instruments stay in their fixed relative geometry
+as the spacecraft rolls.
 
-When more than one roll-dependent leaf is combined together (e.g.
-``AND(boresight_offset(sun, pitch=15), solar_roll(...))``), each leaf's cause
-tag is still computed *independently* - it does not attempt to reconstruct
-the coordinated search the combined result performs for a single roll angle
-that satisfies every roll-dependent leaf simultaneously. That coordinated
-search is not decomposable per leaf in general (two leaves can each have
-*some* clear roll without ever sharing the *same* one), so an independent
-per-leaf "violated at every roll" is used instead - still a sound diagnostic
-(a leaf violated at every roll on its own is always sufficient to rule out a
-shared clear roll through it), just not a perfect decomposition of the
-combined result when multiple roll-dependent leaves are combined together.
-A single roll-dependent leaf (alone, or combined only with roll-independent
-siblings) has no such ambiguity.
+Cause attribution comes out of that same sweep. Each sample gets a **witness
+roll**, and every leaf's cause state is read at that one shared orientation:
+
+* the first swept roll at which the whole tree is satisfied, if one exists -
+  so the leaf states describe an orientation the spacecraft could really fly;
+  or
+* when the sample is blocked at every roll, the roll leaving the fewest leaves
+  violated - the closest the tree came to opening up. Ties go to the lowest
+  roll angle, so the choice is deterministic.
+
+This matters whenever more than one roll-dependent leaf is combined, because
+the combined result is not decomposable into per-leaf answers: two leaves can
+each have *some* clear roll without ever sharing the *same* one, so the
+combined window can open or close while each leaf's own "am I blocked at every
+roll?" answer is unchanged. Reading both leaves at a shared witness roll keeps
+attribution in step with the coordinated result, so such a boundary is still
+attributed rather than silently reported as ``None``.
+
+The trade-off to be aware of: consecutive samples may have *different* witness
+rolls. Each side of a boundary is a physically realisable orientation, but they
+need not be the same one, so a window can open because the required attitude
+moved rather than because a leaf changed at a fixed attitude. A single
+roll-dependent leaf (alone, or combined only with roll-independent siblings)
+has no such ambiguity - its witness-roll state coincides with "blocked at every
+roll".
 
 ConstraintViolation
 ^^^^^^^^^^^^^^^^^^^

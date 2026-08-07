@@ -67,7 +67,13 @@ class VisibilityWindow:
     result — e.g. under a ``NOT`` wrapper, a ``"not.sun"`` entry means the underlying ``sun``
     leaf's own state changed, which is the opposite transition to the ``NOT`` result's own
     violated/satisfied transition. ``None`` if the window starts at the first evaluated sample
-    (no prior sample to compare against)."""
+    (no prior sample to compare against).
+
+    Under a free-roll evaluation (``target_roll=None`` on a roll-dependent tree) each leaf's
+    state is taken at that sample's *witness roll* - the orientation the sweep selected. Both
+    samples either side of a boundary then describe orientations the spacecraft could actually
+    hold, but not necessarily the *same* orientation: a window can open because the spacecraft
+    would have to roll elsewhere, not because a leaf changed at a fixed attitude."""
     end_cause: list[str] | None
     """Tag(s) of the leaf constraint(s) whose own pass/fail state changed between this window's
     last sample and the sample immediately after this window ended. See ``start_cause`` for why
@@ -694,6 +700,7 @@ class Constraint:
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
         target_roll: float | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> ConstraintResult:
         """
         Evaluate constraint against ephemeris data.
@@ -707,8 +714,13 @@ class Constraint:
                    evaluated (must exist in the ephemeris).
             indices: Optional specific time index/indices to evaluate. Can be a
                      single index or list of indices into the ephemeris timestamp array.
-                 target_roll: Optional spacecraft roll angle about +X in degrees,
-                       applied at evaluation time.
+            target_roll: Optional fixed spacecraft roll angle about +X in degrees,
+                applied at evaluation time.  When omitted and the constraint is
+                roll-dependent, every roll is swept and a timestamp counts as
+                violated only if no orientation clears it.
+            n_roll_samples: Number of roll angles swept uniformly over [0°, 360°) in
+                that free-roll case.  Ignored when ``target_roll`` is given or the
+                constraint does not depend on roll.
 
         Returns:
             ConstraintResult containing violation windows
@@ -732,6 +744,7 @@ class Constraint:
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
         target_rolls: list[float] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> list[ConstraintResult]:
         """
         Evaluate constraint against multiple targets and return one result per target.
@@ -746,7 +759,11 @@ class Constraint:
             indices: Optional specific time index/indices to evaluate. Can be a
                      single index or list of indices into the ephemeris timestamp array.
             target_rolls: Optional per-target spacecraft roll angles in degrees.
-                         List of length equal to target_ras.
+                         List of length equal to target_ras.  Targets left without a
+                         fixed roll sweep every roll and count as violated only where
+                         no orientation clears the constraint.
+            n_roll_samples: Number of roll angles swept uniformly over [0°, 360°) for
+                those targets.
 
         Returns:
             List of ConstraintResult objects, one per input target.
@@ -761,7 +778,7 @@ class Constraint:
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
         target_rolls: list[float] | None = None,
-        n_roll_samples: int = 72,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> npt.NDArray[np.bool_]:
         """
         Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
@@ -804,6 +821,7 @@ class Constraint:
         target_ra: float,
         target_dec: float,
         target_roll: float | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> bool | list[bool]:
         """
         Check if the target is in-constraint at given time(s).

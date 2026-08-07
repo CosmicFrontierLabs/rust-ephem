@@ -15,7 +15,12 @@ pub(super) enum RollReference {
 
 pub(super) struct BoresightOffsetEvaluator {
     pub(super) constraint: Box<dyn ConstraintEvaluator>,
+    /// Fixed instrument mounting roll about the boresight +X axis, or `None` for a
+    /// free roll mounted at 0°. See `roll_free`.
     pub(super) roll_deg: Option<f64>,
+    /// Spacecraft roll is free (to be swept), with `roll_deg` retained as the
+    /// instrument's mounting angle that every swept candidate is added to.
+    pub(super) roll_free: bool,
     pub(super) pitch_deg: f64,
     pub(super) yaw_deg: f64,
     pub(super) roll_clockwise: bool,
@@ -58,6 +63,175 @@ impl BoresightOffsetEvaluator {
             local_y: cp * sy,
             local_z: -sp,
         }
+    }
+
+    /// True when this node's own boresight offset leaves the spacecraft roll free,
+    /// i.e. there is a pitch/yaw offset for a roll to act on and the roll is not
+    /// pinned. Does not consider the inner constraint; see `is_roll_dependent` for
+    /// the whole-subtree question.
+    fn own_roll_is_free(&self) -> bool {
+        (self.roll_free || self.roll_deg.is_none())
+            && !(self.pitch_deg.abs() <= NEAR_ZERO && self.yaw_deg.abs() <= NEAR_ZERO)
+    }
+
+    /// Rotation params for a swept candidate spacecraft roll.
+    ///
+    /// The candidate is *added* to this instrument's fixed mounting angle, so a
+    /// tree holding several offsets keeps their relative mounting angles fixed as
+    /// the spacecraft rolls — sweeping the spacecraft, not each instrument
+    /// independently. `rotation_params_with_roll` then applies this node's
+    /// clockwise convention to the sum, which distributes over the addition and so
+    /// matches composing the two angles separately.
+    fn rotation_params_at_candidate_roll(&self, candidate_roll_deg: f64) -> RotationParams {
+        self.rotation_params_with_roll(self.roll_deg.unwrap_or(0.0) + candidate_roll_deg)
+    }
+
+    /// Shared body of `in_constraint_batch` / `in_constraint_batch_at_roll`.
+    ///
+    /// `params` fixes the boresight rotation to apply to every target; `inner_roll`
+    /// is the candidate roll to forward to a roll-dependent inner constraint, or
+    /// `None` to evaluate the inner constraint at its own configured roll. When it
+    /// is `Some`, the `in_constraint_batch_unit_vectors` fast path is bypassed:
+    /// that entry point has no roll-carrying variant, so taking it would drop the
+    /// candidate roll on the floor.
+    fn in_constraint_batch_with(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        params: RotationParams,
+        inner_roll: Option<f64>,
+    ) -> PyResult<Array2<bool>> {
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+
+        if matches!(self.roll_reference, RollReference::North) {
+            let n_targets = target_ras.len();
+            let target_units: Vec<[f64; 3]> = target_ras
+                .iter()
+                .zip(target_decs.iter())
+                .map(|(&ra, &dec)| crate::utils::vector_math::radec_to_unit_vector(ra, dec))
+                .collect();
+
+            let mut rotated_units = Array2::<f64>::zeros((n_targets, 3));
+            for (i, target_unit) in target_units.iter().enumerate() {
+                let rotated = self.rotated_target_for_time_with_params(
+                    target_unit,
+                    &[0.0, 0.0, 0.0],
+                    params,
+                )?;
+                rotated_units[[i, 0]] = rotated[0];
+                rotated_units[[i, 1]] = rotated[1];
+                rotated_units[[i, 2]] = rotated[2];
+            }
+
+            if inner_roll.is_none() {
+                if let Some(result) = self.constraint.in_constraint_batch_unit_vectors(
+                    ephemeris,
+                    &rotated_units,
+                    time_indices,
+                )? {
+                    return Ok(result);
+                }
+            }
+
+            let (rotated_ras, rotated_decs) = unit_vectors_to_radec_batch(&rotated_units);
+
+            return match inner_roll {
+                Some(roll) => self.constraint.in_constraint_batch_at_roll(
+                    ephemeris,
+                    &rotated_ras,
+                    &rotated_decs,
+                    time_indices,
+                    roll,
+                ),
+                None => self.constraint.in_constraint_batch(
+                    ephemeris,
+                    &rotated_ras,
+                    &rotated_decs,
+                    time_indices,
+                ),
+            };
+        }
+
+        let all_times = ephemeris.get_times()?;
+        let indices: Vec<usize> = if let Some(subset) = time_indices {
+            subset.to_vec()
+        } else {
+            (0..all_times.len()).collect()
+        };
+
+        let sun_positions = ephemeris.get_sun_positions()?;
+        let observer_positions = ephemeris.get_gcrs_positions()?;
+
+        let n_targets = target_ras.len();
+        let n_times = indices.len();
+        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
+
+        let target_units: Vec<[f64; 3]> = target_ras
+            .iter()
+            .zip(target_decs.iter())
+            .map(|(&ra, &dec)| crate::utils::vector_math::radec_to_unit_vector(ra, dec))
+            .collect();
+        let mut rotated_units = Array2::<f64>::zeros((n_targets, 3));
+
+        for (col, &time_idx) in indices.iter().enumerate() {
+            let sun_rel = [
+                sun_positions[[time_idx, 0]] - observer_positions[[time_idx, 0]],
+                sun_positions[[time_idx, 1]] - observer_positions[[time_idx, 1]],
+                sun_positions[[time_idx, 2]] - observer_positions[[time_idx, 2]],
+            ];
+
+            for (i, target_unit) in target_units.iter().enumerate() {
+                let rotated =
+                    self.rotated_target_for_time_with_params(target_unit, &sun_rel, params)?;
+                rotated_units[[i, 0]] = rotated[0];
+                rotated_units[[i, 1]] = rotated[1];
+                rotated_units[[i, 2]] = rotated[2];
+            }
+
+            let unit_vector_result = if inner_roll.is_none() {
+                self.constraint.in_constraint_batch_unit_vectors(
+                    ephemeris,
+                    &rotated_units,
+                    Some(&[time_idx]),
+                )?
+            } else {
+                None
+            };
+
+            let one_col = match unit_vector_result {
+                Some(r) => r,
+                None => {
+                    let (rotated_ras, rotated_decs) = unit_vectors_to_radec_batch(&rotated_units);
+                    match inner_roll {
+                        Some(roll) => self.constraint.in_constraint_batch_at_roll(
+                            ephemeris,
+                            &rotated_ras,
+                            &rotated_decs,
+                            Some(&[time_idx]),
+                            roll,
+                        )?,
+                        None => self.constraint.in_constraint_batch(
+                            ephemeris,
+                            &rotated_ras,
+                            &rotated_decs,
+                            Some(&[time_idx]),
+                        )?,
+                    }
+                }
+            };
+
+            for row in 0..n_targets {
+                result[[row, col]] = one_col[[row, 0]];
+            }
+        }
+
+        Ok(result)
     }
 
     fn cross(a: &[f64; 3], b: &[f64; 3]) -> [f64; 3] {
@@ -270,110 +444,55 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
-        let params = self.rotation_params();
+        self.in_constraint_batch_with(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            self.rotation_params(),
+            None,
+        )
+    }
 
-        if target_ras.len() != target_decs.len() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_ras and target_decs must have the same length",
-            ));
-        }
-
-        if matches!(self.roll_reference, RollReference::North) {
-            let n_targets = target_ras.len();
-            let target_units: Vec<[f64; 3]> = target_ras
-                .iter()
-                .zip(target_decs.iter())
-                .map(|(&ra, &dec)| crate::utils::vector_math::radec_to_unit_vector(ra, dec))
-                .collect();
-
-            let mut rotated_units = Array2::<f64>::zeros((n_targets, 3));
-            for (i, target_unit) in target_units.iter().enumerate() {
-                let rotated = self.rotated_target_for_time_with_params(
-                    target_unit,
-                    &[0.0, 0.0, 0.0],
-                    params,
-                )?;
-                rotated_units[[i, 0]] = rotated[0];
-                rotated_units[[i, 1]] = rotated[1];
-                rotated_units[[i, 2]] = rotated[2];
-            }
-
-            if let Some(result) = self.constraint.in_constraint_batch_unit_vectors(
-                ephemeris,
-                &rotated_units,
-                time_indices,
-            )? {
-                return Ok(result);
-            }
-
-            let (rotated_ras, rotated_decs) = unit_vectors_to_radec_batch(&rotated_units);
-
-            return self.constraint.in_constraint_batch(
-                ephemeris,
-                &rotated_ras,
-                &rotated_decs,
-                time_indices,
-            );
-        }
-
-        let all_times = ephemeris.get_times()?;
-        let indices: Vec<usize> = if let Some(subset) = time_indices {
-            subset.to_vec()
+    /// Evaluate at a single candidate spacecraft roll from the free-roll sweep.
+    ///
+    /// Without this override the default trait implementation would fall through to
+    /// `in_constraint_batch`, which ignores `roll_deg` — so a whole
+    /// `in_constraint_batch_constrained_at_every_roll` sweep would AND together
+    /// `n_roll_samples` copies of the *same* roll-0 answer and silently report the
+    /// fixed-roll result as if it were the free-roll one.
+    ///
+    /// Two independent sources of roll dependence are handled separately: this
+    /// node's own pitch/yaw offset (swept only when its `roll_deg` is `None`, i.e.
+    /// the roll was left free rather than pinned to a fixed instrument mounting),
+    /// and a roll-dependent inner constraint, which receives the same candidate
+    /// roll so a coordinated sweep stays coordinated through the offset wrapper.
+    fn in_constraint_batch_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        roll_deg: f64,
+    ) -> PyResult<Array2<bool>> {
+        let params = if self.own_roll_is_free() {
+            self.rotation_params_at_candidate_roll(roll_deg)
         } else {
-            (0..all_times.len()).collect()
+            self.rotation_params()
         };
-
-        let sun_positions = ephemeris.get_sun_positions()?;
-        let observer_positions = ephemeris.get_gcrs_positions()?;
-
-        let n_targets = target_ras.len();
-        let n_times = indices.len();
-        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
-
-        let target_units: Vec<[f64; 3]> = target_ras
-            .iter()
-            .zip(target_decs.iter())
-            .map(|(&ra, &dec)| crate::utils::vector_math::radec_to_unit_vector(ra, dec))
-            .collect();
-        let mut rotated_units = Array2::<f64>::zeros((n_targets, 3));
-
-        for (col, &time_idx) in indices.iter().enumerate() {
-            let sun_rel = [
-                sun_positions[[time_idx, 0]] - observer_positions[[time_idx, 0]],
-                sun_positions[[time_idx, 1]] - observer_positions[[time_idx, 1]],
-                sun_positions[[time_idx, 2]] - observer_positions[[time_idx, 2]],
-            ];
-
-            for (i, target_unit) in target_units.iter().enumerate() {
-                let rotated =
-                    self.rotated_target_for_time_with_params(target_unit, &sun_rel, params)?;
-                rotated_units[[i, 0]] = rotated[0];
-                rotated_units[[i, 1]] = rotated[1];
-                rotated_units[[i, 2]] = rotated[2];
-            }
-
-            let one_col = if let Some(r) = self.constraint.in_constraint_batch_unit_vectors(
-                ephemeris,
-                &rotated_units,
-                Some(&[time_idx]),
-            )? {
-                r
-            } else {
-                let (rotated_ras, rotated_decs) = unit_vectors_to_radec_batch(&rotated_units);
-                self.constraint.in_constraint_batch(
-                    ephemeris,
-                    &rotated_ras,
-                    &rotated_decs,
-                    Some(&[time_idx]),
-                )?
-            };
-
-            for row in 0..n_targets {
-                result[[row, col]] = one_col[[row, 0]];
-            }
-        }
-
-        Ok(result)
+        let inner_roll = if self.constraint.is_roll_dependent() {
+            Some(roll_deg)
+        } else {
+            None
+        };
+        self.in_constraint_batch_with(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            params,
+            inner_roll,
+        )
     }
 
     fn in_constraint_batch_diagonal(
@@ -592,9 +711,14 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         Ok(Some(result))
     }
 
+    /// Roll-dependent if this node's own offset leaves roll free, or if the inner
+    /// constraint is itself roll-dependent (e.g. a `SolarRoll` or a polygon FoV
+    /// nested under a zero-offset wrapper). Mirrors the Python-side
+    /// `RustConstraintMixin._is_roll_dependent`, which likewise recurses through a
+    /// boresight node into its child; without the recursion a sweep would stop at
+    /// this wrapper and the inner constraint would never see a candidate roll.
     fn is_roll_dependent(&self) -> bool {
-        self.roll_deg.is_none()
-            && !(self.pitch_deg.abs() <= NEAR_ZERO && self.yaw_deg.abs() <= NEAR_ZERO)
+        self.own_roll_is_free() || self.constraint.is_roll_dependent()
     }
 
     /// Efficient standalone sweep for free-roll FoR: reuses a single allocation across
@@ -607,8 +731,14 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         time_index: usize,
         n_roll_samples: usize,
     ) -> pyo3::PyResult<Vec<bool>> {
-        if !self.is_roll_dependent() {
-            // Fixed roll or no offset – single evaluation suffices.
+        if !self.own_roll_is_free() {
+            // Fixed roll or no offset – rolling this node's frame changes nothing,
+            // so a single evaluation suffices. Deliberately `own_roll_is_free`
+            // rather than `is_roll_dependent`: the latter also reports true for a
+            // roll-dependent *inner* constraint, which this loop cannot sweep
+            // anyway (`field_of_regard_violated_at_roll` evaluates the inner
+            // constraint at its own configured roll), so looping on it would burn
+            // `n_roll_samples` identical evaluations for the same answer.
             return self.field_of_regard_violated_at_roll(
                 ephemeris,
                 target_unit_vectors,
@@ -643,7 +773,7 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
                 break;
             }
 
-            let params = self.rotation_params_with_roll(step as f64 * roll_step_deg);
+            let params = self.rotation_params_at_candidate_roll(step as f64 * roll_step_deg);
 
             for i in 0..n_targets {
                 let target_unit = [
@@ -689,12 +819,10 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
     ) -> pyo3::PyResult<Vec<bool>> {
         let n_targets = target_unit_vectors.nrows();
 
-        // When roll is fixed (Some) or there is no pitch/yaw offset, roll either does
-        // not affect the result or is already pinned – ignore the candidate roll_deg and
+        // When roll is pinned or there is no pitch/yaw offset, roll either does not
+        // affect the result or is already fixed – ignore the candidate roll_deg and
         // evaluate with the configured state (which already encodes the fixed roll).
-        if self.roll_deg.is_some()
-            || (self.pitch_deg.abs() <= NEAR_ZERO && self.yaw_deg.abs() <= NEAR_ZERO)
-        {
+        if !self.own_roll_is_free() {
             if let Some(result) = self.in_constraint_batch_unit_vectors(
                 ephemeris,
                 target_unit_vectors,
@@ -721,7 +849,7 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
             RollReference::North => [0.0, 0.0, 0.0],
         };
 
-        let params = self.rotation_params_with_roll(roll_deg);
+        let params = self.rotation_params_at_candidate_roll(roll_deg);
         let mut rotated_units = Array2::<f64>::zeros((n_targets, 3));
 
         for i in 0..n_targets {

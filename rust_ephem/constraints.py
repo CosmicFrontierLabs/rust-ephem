@@ -67,18 +67,12 @@ class ConstraintResult(BaseModel):
     constraint_name: str = Field(..., description="Name/description of the constraint")
 
     # Backing store for lazy access to timestamps/constraint_array/visibility.
-    # Either a live Rust ConstraintResult (single-evaluation case) or precomputed
-    # swept arrays (roll-sweep case) is populated, never both. Set via the
-    # _from_rust_result/_from_swept factories below, not through __init__: pydantic
+    # Set via the _from_rust_result factory below, not through __init__: pydantic
     # (via PEP 681 dataclass_transform) synthesizes ConstraintResult's __init__
     # signature from declared fields only, so mypy will always reject private-attr
     # names passed as constructor kwargs regardless of any validator that accepts
     # them at runtime.
     _rust_result_ref: _RustConstraintResult | None = PrivateAttr(default=None)
-    _swept_timestamps: list[datetime] | None = PrivateAttr(default=None)
-    _swept_array: list[bool] | None = PrivateAttr(default=None)
-    _swept_constraint_values: dict[str, list[float]] | None = PrivateAttr(default=None)
-    _swept_cause_value_keys: dict[str, list[str]] | None = PrivateAttr(default=None)
 
     @classmethod
     def _from_rust_result(
@@ -105,39 +99,9 @@ class ConstraintResult(BaseModel):
         result._rust_result_ref = rust_result
         return result
 
-    @classmethod
-    def _from_swept(
-        cls,
-        *,
-        constraint_name: str,
-        violations: list[ConstraintViolation],
-        all_satisfied: bool,
-        timestamps: list[datetime],
-        constraint_array: list[bool],
-        constraint_values: dict[str, list[float]] | None = None,
-        cause_value_keys: dict[str, list[str]] | None = None,
-    ) -> "ConstraintResult":
-        """Build a result from arrays swept across multiple roll angles.
-
-        Used when no single Rust ``ConstraintResult`` backs the result (the
-        combined outcome was computed by ORing per-roll boolean masks in Python).
-        """
-        result = cls(
-            violations=violations,
-            all_satisfied=all_satisfied,
-            constraint_name=constraint_name,
-        )
-        result._swept_timestamps = timestamps
-        result._swept_array = constraint_array
-        result._swept_constraint_values = constraint_values
-        result._swept_cause_value_keys = cause_value_keys
-        return result
-
     @property
     def timestamps(self) -> npt.NDArray[np.datetime64] | list[datetime]:
         """Evaluation timestamps (lazily accessed from Rust result)."""
-        if self._swept_timestamps is not None:
-            return self._swept_timestamps
         if self._rust_result_ref is not None:
             return self._rust_result_ref.timestamp
         return []
@@ -153,8 +117,6 @@ class ConstraintResult(BaseModel):
             Boolean array where True indicates the constraint is violated at that time,
             and False indicates the constraint is satisfied.
         """
-        if self._swept_array is not None:
-            return self._swept_array
         if self._rust_result_ref is not None:
             return self._rust_result_ref.constraint_array
         return []
@@ -166,8 +128,6 @@ class ConstraintResult(BaseModel):
         One array per key, aligned with ``timestamps``. Empty for constraints that
         don't expose a natural scalar (e.g. polygon-based constraints).
         """
-        if self._swept_constraint_values is not None:
-            return self._swept_constraint_values
         if self._rust_result_ref is not None:
             return self._rust_result_ref.constraint_values
         return {}
@@ -184,8 +144,6 @@ class ConstraintResult(BaseModel):
         corresponding value key(s) cannot be found by string-matching a prefix.
         Use this mapping instead of guessing.
         """
-        if self._swept_cause_value_keys is not None:
-            return self._swept_cause_value_keys
         if self._rust_result_ref is not None:
             return self._rust_result_ref.cause_value_keys
         return {}
@@ -220,12 +178,6 @@ class ConstraintResult(BaseModel):
         Raises:
             ValueError: If the time is not found in evaluated timestamps
         """
-        if self._swept_timestamps is not None and self._swept_array is not None:
-            try:
-                idx = self._swept_timestamps.index(time)
-                return self._swept_array[idx]
-            except ValueError:
-                raise ValueError(f"Time {time} not found in evaluated timestamps")
         if self._rust_result_ref is not None:
             return self._rust_result_ref.in_constraint(time)
         raise ValueError(
@@ -272,74 +224,6 @@ class RustConstraintMixin(BaseModel):
         write_constraint_toml(self, path)
 
     @staticmethod
-    def _coerce_datetime(value: Any) -> datetime:
-        """Convert supported timestamp values to Python datetime."""
-        if isinstance(value, datetime):
-            return value
-        if isinstance(value, np.datetime64):
-            coerced = value.astype("datetime64[us]").tolist()
-            if isinstance(coerced, datetime):
-                return coerced
-        raise TypeError(f"Unsupported timestamp type: {type(value)!r}")
-
-    @classmethod
-    def _coerce_timestamps(
-        cls,
-        values: npt.NDArray[np.datetime64] | list[datetime],
-    ) -> list[datetime]:
-        """Convert timestamp arrays/sequences to Python datetimes."""
-        return [cls._coerce_datetime(value) for value in values]
-
-    @staticmethod
-    def _build_constraint_result(
-        constraint_name: str,
-        timestamps: list[datetime],
-        violated: npt.NDArray[np.bool_] | list[bool],
-        constraint_values: dict[str, list[float]] | None = None,
-        cause_value_keys: dict[str, list[str]] | None = None,
-    ) -> ConstraintResult:
-        """Build a ConstraintResult from a boolean violation mask."""
-        violation_flags = np.asarray(violated, dtype=bool)
-        violations: list[ConstraintViolation] = []
-        in_viol = False
-        viol_start: datetime | None = None
-
-        for dt, flag in zip(timestamps, violation_flags):
-            if flag and not in_viol:
-                in_viol = True
-                viol_start = dt
-            elif not flag and in_viol:
-                in_viol = False
-                violations.append(
-                    ConstraintViolation(
-                        start_time=cast(datetime, viol_start),
-                        end_time=dt,
-                        max_severity=1.0,
-                        description=constraint_name,
-                    )
-                )
-
-        if in_viol and viol_start is not None and timestamps:
-            violations.append(
-                ConstraintViolation(
-                    start_time=viol_start,
-                    end_time=timestamps[-1],
-                    max_severity=1.0,
-                    description=constraint_name,
-                )
-            )
-
-        return ConstraintResult._from_swept(
-            constraint_name=constraint_name,
-            violations=violations,
-            all_satisfied=not bool(violation_flags.any()),
-            timestamps=timestamps,
-            constraint_array=violation_flags.tolist(),
-            constraint_values=constraint_values,
-            cause_value_keys=cause_value_keys,
-        )
-
-    @staticmethod
     def _normalize_target_rolls(
         target_ras: list[float],
         target_decs: list[float],
@@ -381,55 +265,14 @@ class RustConstraintMixin(BaseModel):
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> list[ConstraintResult]:
         """Evaluate a batch where all targets share the same roll semantics."""
-        if target_roll is None and self._is_roll_dependent():
-            if not target_ras:
-                return []
-
-            batch = self._in_constraint_batch_uniform(
-                ephemeris,
-                target_ras,
-                target_decs,
-                times=times,
-                indices=indices,
-                target_roll=target_roll,
-                n_roll_samples=n_roll_samples,
-            )
-            # Get metadata and per-target values from a single fixed roll (0°) to
-            # avoid redundant roll sweep. The geometric values themselves don't
-            # depend on which discrete roll was swept for violation determination.
-            reference_results = self._resolve_rust_constraint(
-                target_roll=0.0
-            ).evaluate_batch(
-                ephemeris,
-                target_ras,
-                target_decs,
-                times,
-                indices,
-            )
-            timestamps = self._coerce_timestamps(reference_results[0].timestamp)
-
-            return [
-                self._build_constraint_result(
-                    reference_result.constraint_name,
-                    timestamps,
-                    row,
-                    constraint_values=reference_result.constraint_values,
-                    cause_value_keys=reference_result.cause_value_keys,
-                )
-                for reference_result, row in zip(
-                    reference_results, np.asarray(batch, dtype=bool)
-                )
-            ]
-
-        rust_constraint = self._resolve_rust_constraint(
-            target_roll=target_roll,
-        )
+        rust_constraint = self._resolve_evaluation_constraint(target_roll)
         rust_results = rust_constraint.evaluate_batch(
             ephemeris,
             target_ras,
             target_decs,
             times,
             indices,
+            n_roll_samples=n_roll_samples,
         )
         return [
             ConstraintResult._from_rust_result(rust_result)
@@ -453,9 +296,7 @@ class RustConstraintMixin(BaseModel):
         # projections, SolarRoll computes the optimal roll once per cell).  Delegate
         # to it directly instead of looping in Python and rebuilding a fresh Rust
         # constraint per roll step.
-        rust_constraint = self._resolve_rust_constraint(
-            target_roll=target_roll,
-        )
+        rust_constraint = self._resolve_evaluation_constraint(target_roll)
         return cast(
             npt.NDArray[np.bool_],
             rust_constraint.in_constraint_batch(
@@ -476,6 +317,24 @@ class RustConstraintMixin(BaseModel):
             self._rust_constraint = Constraint.from_json(self.model_dump_json())
         return self._rust_constraint
 
+    def _get_cached_sweep_constraint(self) -> Any:
+        """Return the lazily cached Rust backend constraint for free-roll evaluation.
+
+        Differs from :meth:`_get_cached_rust_constraint` only in that boresight
+        offsets with non-zero pitch/yaw are flagged ``roll_free``, which is how
+        the Rust layer is told the spacecraft roll is free and must be swept.
+        Without the flag every node carries a concrete ``roll_deg`` (the Pydantic
+        field defaults to ``0.0``), so the Rust sweep would see a roll-independent
+        tree and quietly return the fixed roll-0 answer.
+
+        ``roll_deg`` is preserved as each instrument's mounting angle and the
+        swept candidate is added to it, so several instruments hold their relative
+        geometry as the spacecraft rolls.
+        """
+        if getattr(self, "_rust_sweep_constraint", None) is None:
+            self._rust_sweep_constraint = self._to_rust_constraint(sweep_roll=True)
+        return self._rust_sweep_constraint
+
     def _resolve_rust_constraint(
         self,
         target_roll: float | None,
@@ -486,6 +345,18 @@ class RustConstraintMixin(BaseModel):
         return self._to_rust_constraint(
             target_roll=target_roll,
         )
+
+    def _resolve_evaluation_constraint(self, target_roll: float | None) -> Any:
+        """Pick the Rust backend constraint matching this call's roll semantics.
+
+        ``target_roll=None`` on a roll-dependent tree means "any spacecraft
+        orientation is allowed", which the Rust layer evaluates as a coordinated
+        sweep over the free-roll constraint; anything else is a fixed orientation
+        and uses the ordinary resolved constraint.
+        """
+        if target_roll is None and self._is_roll_dependent():
+            return self._get_cached_sweep_constraint()
+        return self._resolve_rust_constraint(target_roll=target_roll)
 
     def _to_rust_constraint(
         self,
@@ -528,8 +399,13 @@ class RustConstraintMixin(BaseModel):
                 base_ccw = -base_roll if base_clockwise else base_roll
 
                 if sweep_roll and has_offset:
-                    # Signal the Rust layer to sweep all spacecraft rolls for FoR.
-                    node["roll_deg"] = None
+                    # Signal the Rust layer to sweep all spacecraft rolls.  The
+                    # instrument's own mounting angle stays in ``roll_deg`` and each
+                    # swept candidate is added to it, so a tree with several
+                    # instruments keeps their relative mounting angles as the
+                    # spacecraft rolls.
+                    node["roll_free"] = True
+                    node["roll_deg"] = base_roll
                     node["roll_clockwise"] = base_clockwise
                     node["roll_reference"] = base_reference
                 elif target_roll is not None:
@@ -634,40 +510,19 @@ class RustConstraintMixin(BaseModel):
         if n_roll_samples <= 0:
             raise ValueError("n_roll_samples must be a positive integer")
 
-        if target_roll is None and self._is_roll_dependent():
-            # Sweep all spacecraft roll angles; a timestamp is violated only if
-            # blocked at every possible roll (no valid orientation exists).
-            roll_step = 360.0 / n_roll_samples
-            rust_results = [
-                self._resolve_rust_constraint(target_roll=i * roll_step).evaluate(
-                    ephemeris, target_ra, target_dec, times, indices
-                )
-                for i in range(n_roll_samples)
-            ]
-            arrays = [np.asarray(r.constraint_array, dtype=bool) for r in rust_results]
-            combined: npt.NDArray[np.bool_] = arrays[0].copy()
-            for arr in arrays[1:]:
-                combined &= arr
-            swept_timestamps = list(rust_results[0].timestamp)
-            return self._build_constraint_result(
-                rust_results[0].constraint_name,
-                swept_timestamps,
-                combined,
-                constraint_values=rust_results[0].constraint_values,
-                cause_value_keys=rust_results[0].cause_value_keys,
-            )
+        # A free-roll evaluation is a single Rust call, not a Python loop over
+        # roll angles: the sweep has to stay inside Rust for the result to carry
+        # visibility windows and their start_cause/end_cause, which are derived
+        # from per-leaf state at the roll the sweep actually selected.
+        rust_constraint = self._resolve_evaluation_constraint(target_roll)
 
-        rust_constraint = self._resolve_rust_constraint(
-            target_roll=target_roll,
-        )
-
-        # Get the Rust result
         rust_result = rust_constraint.evaluate(
             ephemeris,
             target_ra,
             target_dec,
             times,
             indices,
+            n_roll_samples=n_roll_samples,
         )
 
         # Convert to Pydantic model - Rust now returns datetime objects directly
@@ -862,23 +717,10 @@ class RustConstraintMixin(BaseModel):
         if n_roll_samples <= 0:
             raise ValueError("n_roll_samples must be a positive integer")
 
-        if target_roll is None and self._is_roll_dependent():
-            # Sweep all spacecraft roll angles; violated only if blocked at every roll.
-            roll_step = 360.0 / n_roll_samples
-            parts: list[Any] = [
-                self._resolve_rust_constraint(target_roll=i * roll_step).in_constraint(
-                    time, ephemeris, target_ra, target_dec
-                )
-                for i in range(n_roll_samples)
-            ]
-            if isinstance(parts[0], bool):
-                return all(parts)
-            arr = np.array(parts, dtype=bool)  # (n_rolls, n_times)
-            return cast(list[bool], arr.all(axis=0).tolist())
-
-        rust_constraint = self._resolve_rust_constraint(
-            target_roll=target_roll,
-        )
+        # As in evaluate(): the roll sweep runs inside Rust, which searches for a
+        # single orientation clearing the whole tree rather than combining
+        # per-roll answers after the fact.
+        rust_constraint = self._resolve_evaluation_constraint(target_roll)
         return cast(
             bool | list[bool],
             rust_constraint.in_constraint(
@@ -886,6 +728,8 @@ class RustConstraintMixin(BaseModel):
                 ephemeris,
                 target_ra,
                 target_dec,
+                None,
+                n_roll_samples,
             ),
         )
 

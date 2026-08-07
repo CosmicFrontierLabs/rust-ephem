@@ -148,8 +148,11 @@ class DummyConstraintBackend:
         target_dec: object,
         times: object,
         indices: object,
+        n_roll_samples: object = None,
     ) -> DummyRustResult:
-        self.evaluate_calls.append((ephemeris, target_ra, target_dec, times, indices))
+        self.evaluate_calls.append(
+            (ephemeris, target_ra, target_dec, times, indices, n_roll_samples)
+        )
         return DummyRustResult()
 
     def evaluate_batch(
@@ -159,9 +162,10 @@ class DummyConstraintBackend:
         target_decs: list[object],
         times: object,
         indices: object,
+        n_roll_samples: object = None,
     ) -> list[DummyRustResult]:
         self.evaluate_batch_calls.append(
-            (ephemeris, target_ras, target_decs, times, indices)
+            (ephemeris, target_ras, target_decs, times, indices, n_roll_samples)
         )
         return [DummyRustResult() for _ in target_ras]
 
@@ -180,9 +184,17 @@ class DummyConstraintBackend:
         return np.array([[True], [False]])
 
     def in_constraint(
-        self, time: datetime, ephemeris: object, target_ra: object, target_dec: object
+        self,
+        time: datetime,
+        ephemeris: object,
+        target_ra: object,
+        target_dec: object,
+        target_roll: object = None,
+        n_roll_samples: object = None,
     ) -> str:
-        self.single_calls.append((time, ephemeris, target_ra, target_dec))
+        self.single_calls.append(
+            (time, ephemeris, target_ra, target_dec, target_roll, n_roll_samples)
+        )
         return "single-result"
 
     def evaluate_moving_body(
