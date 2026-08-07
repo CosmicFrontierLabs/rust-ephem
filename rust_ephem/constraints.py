@@ -409,12 +409,17 @@ class RustConstraintMixin(BaseModel):
                     node["roll_clockwise"] = base_clockwise
                     node["roll_reference"] = base_reference
                 elif target_roll is not None:
-                    # Combine instrument offset with spacecraft roll, both interpreted
-                    # in the instrument's configured roll direction.
-                    eval_ccw = (
-                        -float(target_roll) if base_clockwise else float(target_roll)
-                    )
-                    total_ccw = base_ccw + eval_ccw
+                    # target_roll is a coordinated *spacecraft*-frame roll, shared
+                    # unchanged by every boresight node in the tree, expressed in
+                    # one fixed physical convention (the same one
+                    # ``roll_clockwise=False`` uses) — NOT reinterpreted through
+                    # each node's own ``base_clockwise``. Only the instrument's own
+                    # mounting angle (``base_roll``) goes through its own
+                    # convention (via ``base_ccw``). Re-signing target_roll per
+                    # node here would shift the relative orientation between a CW-
+                    # and a CCW-convention node by twice target_roll as it varies,
+                    # defeating the "coordinated spacecraft roll" this path models.
+                    total_ccw = base_ccw + float(target_roll)
                     node["roll_deg"] = total_ccw
                     node["roll_clockwise"] = False
                     node["roll_reference"] = base_reference
