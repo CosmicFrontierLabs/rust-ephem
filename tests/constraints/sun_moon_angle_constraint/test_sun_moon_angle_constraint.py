@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
@@ -7,6 +8,8 @@ from astropy.coordinates import SkyCoord  # type:ignore[import-untyped]
 import rust_ephem
 from rust_ephem.constraints import (
     EclipseConstraint,
+    MoonConstraint,
+    SunConstraint,
 )
 
 from .conftest import EARTH_CONSTRAINT, MOON_CONSTRAINT, SUN_CONSTRAINT, eclipse_flags
@@ -394,3 +397,142 @@ class TestConstraintValues:
         assert len(result.constraint_values["sun.sun_angle_deg"]) == len(
             result.constraint_values["moon.moon_angle_deg"]
         )
+
+
+class TestVisibilityWindowCause:
+    """Verify VisibilityWindow.start_cause/end_cause attribute each window boundary
+    to the leaf constraint(s) whose own pass/fail state flipped at that sample."""
+
+    @pytest.fixture
+    def cause_ephem(self, tle: tuple[str, str]) -> Any:
+        # 3 days at 1-minute steps: long enough for both the sun and moon angle to
+        # each cross a threshold at least once, at different times.
+        begin = datetime(2025, 9, 23, 0, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2025, 9, 26, 0, 0, 0, tzinfo=timezone.utc)
+        return rust_ephem.TLEEphemeris(tle[0], tle[1], begin, end, 60)
+
+    def test_and_combinator_attributes_each_window_boundary(
+        self, cause_ephem: Any
+    ) -> None:
+        target_ra, target_dec = 200.0, -10.0
+        # Thresholds chosen (from the midpoint of each angle's real range over this
+        # ephemeris/target) so both the sun and moon constraint independently cross
+        # their threshold at different times, producing multiple windows.
+        sun_thresh = 20.926807055841483
+        moon_thresh = 14.284681218891802
+
+        sun_c = SunConstraint(min_angle=sun_thresh)
+        moon_c = MoonConstraint(min_angle=moon_thresh)
+        sun_violated = np.array(
+            sun_c.evaluate(
+                ephemeris=cause_ephem, target_ra=target_ra, target_dec=target_dec
+            ).constraint_array
+        )
+        moon_violated = np.array(
+            moon_c.evaluate(
+                ephemeris=cause_ephem, target_ra=target_ra, target_dec=target_dec
+            ).constraint_array
+        )
+
+        result = (sun_c & moon_c).evaluate(
+            ephemeris=cause_ephem, target_ra=target_ra, target_dec=target_dec
+        )
+
+        # Sanity check on the scenario itself: multiple windows, not a degenerate
+        # all-visible/all-violated case.
+        assert len(result.visibility) > 1
+
+        timestamps = list(result.timestamps)
+        idx_of = {t: i for i, t in enumerate(timestamps)}
+
+        causes_seen: set[str] = set()
+        for window in result.visibility:
+            start_idx = idx_of[window.start_time]
+            end_idx = idx_of[window.end_time]
+
+            expected_start_cause = None
+            if start_idx > 0:
+                flipped = [
+                    tag
+                    for tag, arr in (("sun", sun_violated), ("moon", moon_violated))
+                    if arr[start_idx - 1] != arr[start_idx]
+                ]
+                expected_start_cause = sorted(flipped) or None
+            assert window.start_cause == expected_start_cause
+
+            expected_end_cause = None
+            if end_idx < len(timestamps) - 1:
+                flipped = [
+                    tag
+                    for tag, arr in (("sun", sun_violated), ("moon", moon_violated))
+                    if arr[end_idx] != arr[end_idx + 1]
+                ]
+                expected_end_cause = sorted(flipped) or None
+            assert window.end_cause == expected_end_cause
+
+            if window.start_cause:
+                causes_seen.update(window.start_cause)
+            if window.end_cause:
+                causes_seen.update(window.end_cause)
+
+        # Both leaf tags actually got exercised by this scenario.
+        assert causes_seen == {"sun", "moon"}
+        # The first/last window run to the edges of the evaluated range.
+        assert result.visibility[0].start_cause is None
+        assert result.visibility[-1].end_cause is None
+
+    def test_leaf_constraint_uses_its_own_tag(self, cause_ephem: Any) -> None:
+        """A standalone (non-combined) leaf constraint's windows still get
+        start_cause/end_cause, using its own tag wherever a boundary isn't at the
+        edge of the evaluated time range."""
+        target_ra, target_dec = 200.0, -10.0
+        sun_c = SunConstraint(min_angle=20.926807055841483)
+        result = sun_c.evaluate(
+            ephemeris=cause_ephem, target_ra=target_ra, target_dec=target_dec
+        )
+
+        assert result.visibility
+        non_none_causes = [
+            cause
+            for window in result.visibility
+            for cause in (window.start_cause, window.end_cause)
+            if cause is not None
+        ]
+        assert non_none_causes, "expected at least one non-boundary transition"
+        assert all(cause == ["sun"] for cause in non_none_causes)
+
+    def test_not_wrapped_leaf_tags_cause_with_not_prefix(
+        self, cause_ephem: Any
+    ) -> None:
+        """A NOT-wrapped leaf's cause is tagged "not.<leaf>" (not the bare leaf
+        tag), so it's never confused with its non-negated counterpart - both
+        standalone and nested inside a combinator."""
+        target_ra, target_dec = 200.0, -10.0
+        sun_thresh = 20.926807055841483
+
+        standalone = (~SunConstraint(min_angle=sun_thresh)).evaluate(
+            ephemeris=cause_ephem, target_ra=target_ra, target_dec=target_dec
+        )
+        standalone_causes = [
+            cause
+            for window in standalone.visibility
+            for cause in (window.start_cause, window.end_cause)
+            if cause is not None
+        ]
+        assert standalone_causes, "expected at least one non-boundary transition"
+        assert all(cause == ["not.sun"] for cause in standalone_causes)
+
+        nested = (
+            ~SunConstraint(min_angle=sun_thresh)
+            & MoonConstraint(min_angle=14.284681218891802)
+        ).evaluate(ephemeris=cause_ephem, target_ra=target_ra, target_dec=target_dec)
+        nested_causes = {
+            tag
+            for window in nested.visibility
+            for cause in (window.start_cause, window.end_cause)
+            if cause is not None
+            for tag in cause
+        }
+        assert nested_causes
+        assert nested_causes <= {"not.sun", "moon"}
+        assert "sun" not in nested_causes

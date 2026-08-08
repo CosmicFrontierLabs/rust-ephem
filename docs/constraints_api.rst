@@ -1741,6 +1741,9 @@ Result of constraint evaluation containing all violation information.
    - ``constraint_values`` (dict[str, list[float]]): Named continuous values computed
      during evaluation (e.g. ``sun_angle_deg``), one array per key, aligned with
      ``timestamps``. See :ref:`constraint-values` below.
+   - ``cause_value_keys`` (dict[str, list[str]]): Map from a ``start_cause``/
+     ``end_cause`` tag to the ``constraint_values`` key(s) it corresponds to. See
+     :ref:`visibility-window-cause` below.
    - ``visibility`` (list[VisibilityWindow]): Contiguous windows when target is visible
 
    **Methods:**
@@ -1883,6 +1886,109 @@ roll-dependent, ``evaluate()``/``evaluate_batch()`` sweep spacecraft roll
 internally to decide violation, but ``constraint_values`` is always sourced
 from the roll = 0° evaluation - the geometric value itself doesn't depend on
 which discrete roll was swept for violation determination.
+
+.. _visibility-window-cause:
+
+Visibility Window Causes
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+Every ``VisibilityWindow`` in ``result.visibility`` carries ``start_cause`` and
+``end_cause``: the tag(s) of the leaf constraint(s) whose own pass/fail state
+flipped at that exact boundary sample. This answers "which constraint ended
+to let the window start" and "which constraint started to end the window" for
+composite constraints, without having to re-evaluate every child separately
+and diff timestamps by hand.
+
+.. code-block:: python
+
+   from rust_ephem.constraints import SunConstraint, MoonConstraint
+
+   combined = SunConstraint(min_angle=45.0) & MoonConstraint(min_angle=10.0)
+   result = combined.evaluate(ephem, target_ra=83.63, target_dec=22.01)
+
+   for window in result.visibility:
+       print(window.start_time, window.start_cause, "->", window.end_time, window.end_cause)
+       # e.g. 2024-01-01T03:12:00 ['moon'] -> 2024-01-01T05:47:00 ['sun']
+       # means the moon constraint cleared to open this window, and the sun
+       # constraint tripped to close it.
+
+Cause tags look similar to ``constraint_values`` keys (``sun``, ``moon``,
+``body``, ...) but use a **different namespacing convention** and are *not*
+generally derivable from one another by string matching: cause tags are flat
+and stable regardless of nesting depth (e.g. ``"not.sun"`` means the same
+thing whether ``NotConstraint`` is evaluated standalone or nested three levels
+deep inside an ``AND``), while ``constraint_values`` keys are hierarchical and
+encode the full nesting path (e.g. ``"or.sun_2.sun_angle_deg"``). For a simple
+combinator with no duplicate constraint types (like the ``sun & moon`` example
+above) the two happen to share a readable prefix, but as soon as a constraint
+type appears more than once in the tree - e.g. ``AND(sun(90), OR(sun(93),
+sun(96)))`` - the flat, collision-numbered cause tag (``sun_2``) and the
+hierarchical value key it actually corresponds to (``or.sun.sun_angle_deg``,
+*not* ``or.sun_2.sun_angle_deg``) diverge.
+
+Use ``result.cause_value_keys`` instead of guessing: it maps each cause tag
+to the ``constraint_values`` key(s) it corresponds to, built by walking the
+same child structure both namespaces are derived from, so the mapping stays
+correct in exactly the ambiguous cases above:
+
+.. code-block:: python
+
+   print(result.cause_value_keys)
+   # {'sun': ['sun.sun_angle_deg'], 'sun_2': ['or.sun.sun_angle_deg'],
+   #  'sun_2_2': ['or.sun_2.sun_angle_deg']}
+
+Unlike ``constraint_values``, cause tags (and ``cause_value_keys``) are
+available even for constraints with no natural continuous scalar
+(``SAAConstraint``, polygon-mode ``BodyConstraint``/``BrightStarConstraint``);
+such a leaf's entry in ``cause_value_keys`` just maps to an empty list.
+
+A field is ``None`` when there is no adjacent sample to compare against
+(``start_cause`` is ``None`` for a window starting at the very first evaluated
+time; ``end_cause`` is ``None`` for a window ending at the very last). If
+multiple leaf constraints flip state on the exact same sample, both tags are
+listed, sorted alphabetically. For ``NotConstraint``, the underlying leaf's
+tag is prefixed with ``not.`` (e.g. ``not.earth_limb``) and left un-negated -
+a cause reflects whether the wrapped condition itself (e.g. "too close to
+sun") changed, not the NOT-negated combined value. The prefix exists so a
+negated leaf's cause is never mistaken for its non-negated counterpart; it
+applies whether ``NotConstraint`` is evaluated standalone or nested inside
+another combinator.
+
+**Free-roll (``target_roll=None``) evaluation.** When a constraint is
+roll-dependent (a ``.boresight_offset(...)`` with non-zero pitch/yaw,
+``SolarRollConstraint``, ...) and evaluated with ``target_roll=None``,
+``evaluate()``/``evaluate_batch()`` sweep spacecraft roll to decide the
+*result*: violated only if blocked at every tested roll (no valid orientation
+exists). The sweep is *coordinated* - one candidate roll is applied to the
+whole tree at once, with each boresight offset keeping its own ``roll_deg``
+mounting angle, so several instruments stay in their fixed relative geometry
+as the spacecraft rolls.
+
+Cause attribution comes out of that same sweep. Each sample gets a **witness
+roll**, and every leaf's cause state is read at that one shared orientation:
+
+* the first swept roll at which the whole tree is satisfied, if one exists -
+  so the leaf states describe an orientation the spacecraft could really fly;
+  or
+* when the sample is blocked at every roll, the roll leaving the fewest leaves
+  violated - the closest the tree came to opening up. Ties go to the lowest
+  roll angle, so the choice is deterministic.
+
+This matters whenever more than one roll-dependent leaf is combined, because
+the combined result is not decomposable into per-leaf answers: two leaves can
+each have *some* clear roll without ever sharing the *same* one, so the
+combined window can open or close while each leaf's own "am I blocked at every
+roll?" answer is unchanged. Reading both leaves at a shared witness roll keeps
+attribution in step with the coordinated result, so such a boundary is still
+attributed rather than silently reported as ``None``.
+
+The trade-off to be aware of: consecutive samples may have *different* witness
+rolls. Each side of a boundary is a physically realisable orientation, but they
+need not be the same one, so a window can open because the required attitude
+moved rather than because a leaf changed at a fixed attitude. A single
+roll-dependent leaf (alone, or combined only with roll-independent siblings)
+has no such ambiguity - its witness-roll state coincides with "blocked at every
+roll".
 
 ConstraintViolation
 ^^^^^^^^^^^^^^^^^^^

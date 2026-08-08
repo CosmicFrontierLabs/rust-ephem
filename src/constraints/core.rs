@@ -17,6 +17,79 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::OnceLock;
 
+/// Short, stable tag for a leaf/combinator constraint's `values`/`component_violated`
+/// key prefix, derived from the text before the first `(` in its `name()`. Falls back
+/// to a sanitized version of the head for anything unmapped, so new constraint types
+/// don't panic or silently collide — they just get a slightly uglier (but unique-ish)
+/// prefix.
+pub(crate) fn value_key_prefix(name: &str) -> String {
+    let head = name.split('(').next().unwrap_or(name).trim();
+    let tag = match head {
+        "SunProximity" => "sun",
+        "MoonProximity" => "moon",
+        "BodyProximity" => "body",
+        "Eclipse" => "eclipse",
+        "AirmassConstraint" => "airmass",
+        "AltAzConstraint" => "alt_az",
+        "SAAConstraint" => "saa",
+        "DaytimeConstraint" => "daytime",
+        "MoonPhaseConstraint" => "moon_phase",
+        "OrbitPoleConstraint" => "orbit_pole",
+        "OrbitRamConstraint" => "orbit_ram",
+        "EarthLimb" => "earth_limb",
+        "BrightStar" => "bright_star",
+        "SolarRollConstraint" => "solar_roll",
+        "AND" => "and",
+        "OR" => "or",
+        "NOT" => "not",
+        "XOR" => "xor",
+        "AT_LEAST" => "at_least",
+        "BoresightOffset" => "boresight_offset",
+        other => {
+            return other
+                .to_lowercase()
+                .replace(|c: char| !c.is_alphanumeric(), "_")
+        }
+    };
+    tag.to_string()
+}
+
+/// Names of leaf constraints (keyed the same way as `constraint_values`) whose own
+/// violation state differs between `idx_before` and `idx_after`, sorted for
+/// determinism. Used to attribute a `VisibilityWindow`'s `start_cause`/`end_cause`.
+/// Returns `None` if no leaf's state actually changed between the two samples.
+fn flipped_causes(
+    component_violated: &HashMap<String, Vec<bool>>,
+    idx_before: usize,
+    idx_after: usize,
+) -> Option<Vec<String>> {
+    let mut causes: Vec<String> = component_violated
+        .iter()
+        .filter(|(_, arr)| arr.get(idx_before) != arr.get(idx_after))
+        .map(|(key, _)| key.clone())
+        .collect();
+    causes.sort();
+    if causes.is_empty() {
+        None
+    } else {
+        Some(causes)
+    }
+}
+
+/// `start_cause` for a window beginning at `start_idx`: the leaves that flipped
+/// between the preceding sample and the window's first sample, or `None` at the
+/// very start of the evaluated range where there is no preceding sample.
+fn start_cause_at(
+    component_violated: &HashMap<String, Vec<bool>>,
+    start_idx: usize,
+) -> Option<Vec<String>> {
+    if start_idx == 0 {
+        None
+    } else {
+        flipped_causes(component_violated, start_idx - 1, start_idx)
+    }
+}
+
 /// Result of constraint evaluation
 ///
 /// Contains information about when and where a constraint is violated.
@@ -67,6 +140,31 @@ pub struct VisibilityWindow {
     /// End time of the visibility window
     #[pyo3(get)]
     pub end_time: Py<PyAny>, // Python datetime object
+    /// Namespaced tag(s) of the leaf constraint(s) whose own pass/fail state changed
+    /// between the sample immediately before this window started and this window's
+    /// first sample (same tags as `ConstraintResult.constraint_values` keys' prefixes,
+    /// e.g. "sun", "moon"). This reports *that* a leaf's own state flipped, not the
+    /// direction of the flip relative to the overall (possibly negated) result — e.g.
+    /// under a `NOT` wrapper, a `"not.sun"` entry means the underlying `sun` leaf's own
+    /// state changed, which is the opposite transition to the `NOT` result's own
+    /// violated/satisfied transition. `None` if the window starts at the first
+    /// evaluated sample (no prior sample to compare against).
+    ///
+    /// Under a free-roll evaluation (`target_roll=None` on a roll-dependent tree)
+    /// each leaf's state is taken at that sample's *witness roll* — the orientation
+    /// the sweep selected, see `sweep_rolls_with_attribution`. Both samples either
+    /// side of a boundary therefore describe orientations the spacecraft could
+    /// actually hold, but they need not be the *same* orientation: a window can
+    /// open because the spacecraft would have to roll elsewhere, not because any
+    /// leaf changed at a fixed attitude.
+    #[pyo3(get)]
+    pub start_cause: Option<Vec<String>>,
+    /// Namespaced tag(s) of the leaf constraint(s) whose own pass/fail state changed
+    /// between this window's last sample and the sample immediately after this window
+    /// ended. See `start_cause` for why no flip direction is implied. `None` if the
+    /// window ends at the last evaluated sample.
+    #[pyo3(get)]
+    pub end_cause: Option<Vec<String>>,
 }
 
 #[pymethods]
@@ -76,8 +174,8 @@ impl VisibilityWindow {
         let end_str = self.end_time.bind(py).str()?.to_string();
         let duration = self.duration_seconds(py)?;
         Ok(format!(
-            "VisibilityWindow(start_time={}, end_time={}, duration_seconds={})",
-            start_str, end_str, duration
+            "VisibilityWindow(start_time={}, end_time={}, duration_seconds={}, start_cause={:?}, end_cause={:?})",
+            start_str, end_str, duration, self.start_cause, self.end_cause
         ))
     }
     #[getter]
@@ -105,6 +203,17 @@ pub struct ConstraintResult {
     /// one array per key, aligned with `times`/`timestamp`.
     #[pyo3(get)]
     pub constraint_values: HashMap<String, Vec<f64>>,
+    /// Per-leaf-constraint violation mask (namespaced the same way as
+    /// `constraint_values`' keys), aligned with `times`. Used to attribute
+    /// `VisibilityWindow.start_cause`/`end_cause`; not directly exposed to Python.
+    component_violated: HashMap<String, Vec<bool>>,
+    /// Map from a `start_cause`/`end_cause` tag to the `constraint_values` key(s)
+    /// it corresponds to. The two namespaces use different prefixing conventions
+    /// (cause tags are flat and nesting-stable; value keys are hierarchical and
+    /// path-based) so are not derivable from one another by string matching — use
+    /// this instead of guessing.
+    #[pyo3(get)]
+    pub cause_value_keys: HashMap<String, Vec<String>>,
     /// Evaluation times as Rust DateTime<Utc>, not directly exposed to Python
     pub times: Vec<DateTime<Utc>>,
     /// Step size in seconds between timestamps (for O(1) index lookup)
@@ -136,6 +245,8 @@ impl ConstraintResult {
             all_satisfied,
             constraint_name,
             constraint_values: HashMap::new(),
+            component_violated: HashMap::new(),
+            cause_value_keys: HashMap::new(),
             times,
             step_seconds,
             timestamp_cache: OnceLock::new(),
@@ -147,6 +258,21 @@ impl ConstraintResult {
     /// Attach named continuous values computed during evaluation.
     pub fn with_constraint_values(mut self, constraint_values: HashMap<String, Vec<f64>>) -> Self {
         self.constraint_values = constraint_values;
+        self
+    }
+
+    /// Attach per-leaf-constraint violation masks computed during evaluation.
+    pub fn with_component_violated(
+        mut self,
+        component_violated: HashMap<String, Vec<bool>>,
+    ) -> Self {
+        self.component_violated = component_violated;
+        self
+    }
+
+    /// Attach the cause-tag → constraint_values-key mapping computed during evaluation.
+    pub fn with_cause_value_keys(mut self, cause_value_keys: HashMap<String, Vec<String>>) -> Self {
+        self.cause_value_keys = cause_value_keys;
         self
     }
 }
@@ -337,9 +463,13 @@ impl ConstraintResult {
                 if let Some(start_idx) = current_window_start {
                     // Only add window if it's non-zero length
                     if i - 1 != start_idx {
+                        let start_cause = start_cause_at(&self.component_violated, start_idx);
+                        let end_cause = flipped_causes(&self.component_violated, i - 1, i);
                         windows.push(VisibilityWindow {
                             start_time: utc_to_python_datetime(py, &self.times[start_idx])?,
                             end_time: utc_to_python_datetime(py, &self.times[i - 1])?,
+                            start_cause,
+                            end_cause,
                         });
                     }
                     current_window_start = None;
@@ -349,9 +479,12 @@ impl ConstraintResult {
 
         // Close any open visibility window at the end
         if let Some(start_idx) = current_window_start {
+            let start_cause = start_cause_at(&self.component_violated, start_idx);
             windows.push(VisibilityWindow {
                 start_time: utc_to_python_datetime(py, &self.times[start_idx])?,
                 end_time: utc_to_python_datetime(py, &self.times[self.times.len() - 1])?,
+                start_cause,
+                end_cause: None,
             });
         }
 
@@ -384,6 +517,14 @@ pub struct MovingBodyResult {
     /// one array per key, aligned with `times`/`timestamp`.
     #[pyo3(get)]
     pub constraint_values: HashMap<String, Vec<f64>>,
+    /// Per-leaf-constraint violation mask (namespaced the same way as
+    /// `constraint_values`' keys), aligned with `times`. Used to attribute
+    /// `VisibilityWindow.start_cause`/`end_cause`; not directly exposed to Python.
+    component_violated: HashMap<String, Vec<bool>>,
+    /// Map from a `start_cause`/`end_cause` tag to the `constraint_values` key(s)
+    /// it corresponds to. See `ConstraintResult.cause_value_keys`.
+    #[pyo3(get)]
+    pub cause_value_keys: HashMap<String, Vec<String>>,
     /// Evaluation times as Rust DateTime<Utc>, not directly exposed to Python
     pub times: Vec<DateTime<Utc>>,
     /// Step size in seconds between timestamps (for O(1) index lookup)
@@ -416,6 +557,8 @@ impl MovingBodyResult {
             ras,
             decs,
             constraint_values: HashMap::new(),
+            component_violated: HashMap::new(),
+            cause_value_keys: HashMap::new(),
             times,
             step_seconds,
             constraint_vec,
@@ -425,6 +568,21 @@ impl MovingBodyResult {
     /// Attach named continuous values computed during evaluation.
     pub fn with_constraint_values(mut self, constraint_values: HashMap<String, Vec<f64>>) -> Self {
         self.constraint_values = constraint_values;
+        self
+    }
+
+    /// Attach per-leaf-constraint violation masks computed during evaluation.
+    pub fn with_component_violated(
+        mut self,
+        component_violated: HashMap<String, Vec<bool>>,
+    ) -> Self {
+        self.component_violated = component_violated;
+        self
+    }
+
+    /// Attach the cause-tag → constraint_values-key mapping computed during evaluation.
+    pub fn with_cause_value_keys(mut self, cause_value_keys: HashMap<String, Vec<String>>) -> Self {
+        self.cause_value_keys = cause_value_keys;
         self
     }
 }
@@ -534,9 +692,13 @@ impl MovingBodyResult {
                 }
             } else if let Some(start_idx) = current_window_start {
                 if i - 1 != start_idx {
+                    let start_cause = start_cause_at(&self.component_violated, start_idx);
+                    let end_cause = flipped_causes(&self.component_violated, i - 1, i);
                     windows.push(VisibilityWindow {
                         start_time: utc_to_python_datetime(py, &self.times[start_idx])?,
                         end_time: utc_to_python_datetime(py, &self.times[i - 1])?,
+                        start_cause,
+                        end_cause,
                     });
                 }
                 current_window_start = None;
@@ -544,9 +706,12 @@ impl MovingBodyResult {
         }
 
         if let Some(start_idx) = current_window_start {
+            let start_cause = start_cause_at(&self.component_violated, start_idx);
             windows.push(VisibilityWindow {
                 start_time: utc_to_python_datetime(py, &self.times[start_idx])?,
                 end_time: utc_to_python_datetime(py, &self.times[self.times.len() - 1])?,
+                start_cause,
+                end_cause: None,
             });
         }
 
@@ -621,6 +786,107 @@ pub trait ConstraintEvaluator: Send + Sync {
             .into_iter()
             .map(|(key, arr)| (key, (0..n).map(|i| arr[[i, i]]).collect()))
             .collect())
+    }
+
+    /// Compute the combined violation mask *and* a per-leaf-constraint violation mask
+    /// (namespaced under a short tag, e.g. `sun`) in a single traversal of the tree.
+    ///
+    /// The per-leaf masks attribute `VisibilityWindow.start_cause`/`end_cause` when this
+    /// constraint is combined with others via `&`, `|`, `~`, `^`, `.at_least()`. They are
+    /// needed *alongside* the combined result at every swept roll, so returning both from
+    /// one traversal is what keeps the expensive constraint geometry from being computed
+    /// twice per roll sample — see `sweep_rolls_with_attribution`, the only caller.
+    ///
+    /// `roll_deg` selects the fixed-roll semantics: `None` matches `in_constraint_batch`,
+    /// `Some(θ)` matches `in_constraint_batch_at_roll` at θ. The returned `violated` is
+    /// required to equal whichever of those two the argument selects; cause tags must stay
+    /// in lockstep with `compute_cause_value_keys` — a caller maps a cause tag to its
+    /// `constraint_values` key(s) through that.
+    ///
+    /// Default (leaf constraints): evaluate once and report that single mask as both the
+    /// combined result and this leaf's own cause mask. Combinators override this to fuse
+    /// their children's traversals, and `BoresightOffsetEvaluator` to rotate targets once
+    /// rather than once per output.
+    ///
+    /// # Returns
+    /// The combined (M x N) mask plus a map from tag to an (M x N) boolean array
+    /// (targets x times), both matching the shape of `in_constraint_batch`.
+    fn in_constraint_batch_with_causes(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        roll_deg: Option<f64>,
+    ) -> PyResult<BatchWithCauses> {
+        let violated = match roll_deg {
+            Some(roll) => self.in_constraint_batch_at_roll(
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices,
+                roll,
+            )?,
+            None => self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices)?,
+        };
+        Ok(BatchWithCauses {
+            named: HashMap::from([(value_key_prefix(&self.name()), violated.clone())]),
+            violated,
+        })
+    }
+
+    /// Diagonal variant of the cause masks from `in_constraint_batch_with_causes`, for
+    /// moving-body evaluation: target_i paired with time_i only. There is no combined
+    /// mask to fuse with here — the diagonal path has no roll sweep, so nothing asks for
+    /// both outputs at once. Default (leaf constraints): a single-entry map from this
+    /// constraint's own tag to its own `in_constraint_batch_diagonal` result, mirroring
+    /// that method's default — this reuses whatever O(N) diagonal
+    /// implementation the leaf already has (e.g. SAA) instead of building the full M×N
+    /// matrix and slicing it, which would silently regress to O(N²). Combinators override
+    /// this to merge their children's diagonal maps instead (see `combinators.rs`).
+    fn compute_named_booleans_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<HashMap<String, Vec<bool>>> {
+        let arr = self.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs)?;
+        Ok(HashMap::from([(value_key_prefix(&self.name()), arr)]))
+    }
+
+    /// Map this constraint's own `in_constraint_batch_with_causes` cause tag(s) to the
+    /// `compute_named_values` key(s) they correspond to, so a caller can look up
+    /// "which `constraint_values` key(s) does this cause tag describe" without
+    /// guessing from string prefixes — the two namespaces use different prefixing
+    /// conventions (cause tags are flat and stable regardless of nesting depth;
+    /// value keys are hierarchical and encode the full nesting path) and are not
+    /// generally derivable from one another by string matching. Only key *names* matter,
+    /// and those don't depend on roll, so this is called once per `evaluate()`/
+    /// `evaluate_batch()` call alongside `compute_named_values` — never inside a
+    /// roll-sweep loop.
+    ///
+    /// Default (leaf constraints): a single-entry map from this constraint's own
+    /// cause tag to the key name(s) `compute_named_values` returns (empty if this
+    /// constraint exposes no named values, e.g. SAA). Combinators override this to
+    /// merge their children's maps in lockstep with `in_constraint_batch_with_causes`'
+    /// cause-tag renaming and `compute_named_values`' per-child key prefixing (see
+    /// `combinators.rs`).
+    ///
+    /// # Returns
+    /// Map from cause tag to the list of `constraint_values` key(s) it corresponds to.
+    fn compute_cause_value_keys(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Vec<String>>> {
+        let own_tag = value_key_prefix(&self.name());
+        let value_keys: Vec<String> = self
+            .compute_named_values(ephemeris, target_ras, target_decs, time_indices)?
+            .into_keys()
+            .collect();
+        Ok(HashMap::from([(own_tag, value_keys)]))
     }
 
     /// Check if targets are in-constraint for multiple RA/Dec positions (vectorized)
@@ -870,6 +1136,143 @@ pub trait ConstraintEvaluator: Send + Sync {
     /// Downcast support for special handling
     #[allow(dead_code)]
     fn as_any(&self) -> &dyn std::any::Any;
+}
+
+/// Combined violation mask plus per-leaf cause masks, produced by a single traversal
+/// of the constraint tree — see `ConstraintEvaluator::in_constraint_batch_with_causes`.
+pub struct BatchWithCauses {
+    /// (M x N) targets x times, `true` where the whole tree is violated. Identical
+    /// semantics to `in_constraint_batch` (or `in_constraint_batch_at_roll`, when the
+    /// traversal was given a candidate roll).
+    pub violated: Array2<bool>,
+    /// Per-leaf violation masks, keyed by cause tag, taken at the same evaluation as
+    /// `violated`.
+    pub named: HashMap<String, Array2<bool>>,
+}
+
+/// Sweep `n_roll_samples` spacecraft rolls, returning both the combined free-roll
+/// violation mask and per-leaf cause masks that are consistent with it.
+///
+/// The returned `violated` has the same semantics as
+/// `ConstraintEvaluator::in_constraint_batch_constrained_at_every_roll` (violated only
+/// where blocked at *every* swept roll), and `named` holds each leaf's state at that
+/// cell's witness roll rather than at any single fixed one.
+///
+/// Cause attribution has to answer "which leaf changed?" about a result that was
+/// itself produced by a search over rolls, and the naive decomposition — ask each
+/// leaf separately whether *it alone* is violated at every roll — is not equivalent
+/// for `OR`, `XOR` or `AT_LEAST`. Two leaves can block complementary roll ranges so
+/// that together they leave no clear roll while neither blocks every roll on its
+/// own; the combined window then opens or closes with both per-leaf answers
+/// unchanged, and the boundary gets no cause at all.
+///
+/// So instead of decomposing, this picks a **witness roll** per (target, time) cell
+/// and reports every leaf's state at that one shared, physically realisable
+/// orientation:
+///
+/// * the first swept roll at which the whole tree is satisfied, if any exists — the
+///   leaf states then describe an orientation the spacecraft could actually fly; or
+/// * failing that (the cell is violated at every roll), the roll that leaves the
+///   fewest leaf tags violated, i.e. the closest the tree came to opening up. Ties
+///   go to the lowest roll angle, so the choice is deterministic.
+///
+/// Both outputs come from the same pass: `violated` is the AND of the per-roll
+/// combined masks, exactly as `in_constraint_batch_constrained_at_every_roll`
+/// computes it, so callers needing both do not sweep twice. Within a single roll
+/// step they also come from the same *traversal* — `in_constraint_batch_with_causes`
+/// returns the combined mask and the leaf masks together, so a leaf's geometry is
+/// computed once per roll rather than once for each of the two outputs.
+///
+/// For a roll-independent tree this degenerates to a single non-swept evaluation.
+pub fn sweep_rolls_with_attribution(
+    evaluator: &dyn ConstraintEvaluator,
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    target_ras: &[f64],
+    target_decs: &[f64],
+    time_indices: Option<&[usize]>,
+    n_roll_samples: usize,
+) -> PyResult<BatchWithCauses> {
+    if !evaluator.is_roll_dependent() {
+        return evaluator.in_constraint_batch_with_causes(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            None,
+        );
+    }
+
+    let roll_step = 360.0 / n_roll_samples as f64;
+    let mut violated: Option<Array2<bool>> = None;
+    let mut named: HashMap<String, Array2<bool>> = HashMap::new();
+    // Per cell: how many leaf tags were violated at the best roll seen so far, and
+    // whether that best roll actually cleared the whole tree (in which case no later
+    // roll can improve on it and the cell is settled).
+    let mut best_violated_tags: Array2<usize> = Array2::from_elem((0, 0), 0);
+    let mut settled: Array2<bool> = Array2::from_elem((0, 0), false);
+
+    for step in 0..n_roll_samples {
+        if settled.iter().all(|&s| s) && step > 0 {
+            break;
+        }
+
+        let roll_deg = step as f64 * roll_step;
+        // One traversal per roll yields both the combined mask and the leaf masks at
+        // that same roll; evaluating them separately would recompute every leaf twice.
+        let BatchWithCauses {
+            violated: combined_step,
+            named: named_step,
+        } = evaluator.in_constraint_batch_with_causes(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            Some(roll_deg),
+        )?;
+
+        let (n_targets, n_times) = combined_step.dim();
+        if step == 0 {
+            best_violated_tags = Array2::from_elem((n_targets, n_times), usize::MAX);
+            settled = Array2::from_elem((n_targets, n_times), false);
+            named = named_step
+                .keys()
+                .map(|key| (key.clone(), Array2::from_elem((n_targets, n_times), false)))
+                .collect();
+        }
+
+        match violated {
+            None => violated = Some(combined_step.clone()),
+            Some(ref mut acc) => acc.zip_mut_with(&combined_step, |x, &y| *x &= y),
+        }
+
+        for row in 0..n_targets {
+            for col in 0..n_times {
+                if settled[[row, col]] {
+                    continue;
+                }
+                let satisfied = !combined_step[[row, col]];
+                let violated_tags = named_step.values().filter(|arr| arr[[row, col]]).count();
+                if !satisfied && violated_tags >= best_violated_tags[[row, col]] {
+                    continue;
+                }
+                for (key, arr) in named.iter_mut() {
+                    // `named_step` is produced by the same evaluator tree as the map
+                    // `named` was seeded from, so its key set is identical every step;
+                    // the lookup is defensive rather than load-bearing.
+                    if let Some(step_arr) = named_step.get(key) {
+                        arr[[row, col]] = step_arr[[row, col]];
+                    }
+                }
+                best_violated_tags[[row, col]] = violated_tags;
+                settled[[row, col]] = satisfied;
+            }
+        }
+    }
+
+    Ok(BatchWithCauses {
+        violated: violated.unwrap_or_else(|| Array2::from_elem((target_ras.len(), 0), false)),
+        named,
+    })
 }
 
 /// Macro to generate common methods for proximity evaluators
@@ -1180,4 +1583,53 @@ macro_rules! extract_latlon_data {
 
         (times_slice, lats_slice, lons_slice)
     }};
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{flipped_causes, value_key_prefix};
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_flipped_causes_detects_single_flip() {
+        let mut component_violated = HashMap::new();
+        component_violated.insert("sun".to_string(), vec![true, true, false]);
+        component_violated.insert("moon".to_string(), vec![false, false, false]);
+
+        assert_eq!(
+            flipped_causes(&component_violated, 1, 2),
+            Some(vec!["sun".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_flipped_causes_lists_multiple_flips_sorted() {
+        let mut component_violated = HashMap::new();
+        component_violated.insert("sun".to_string(), vec![true, false]);
+        component_violated.insert("moon".to_string(), vec![false, true]);
+
+        assert_eq!(
+            flipped_causes(&component_violated, 0, 1),
+            Some(vec!["moon".to_string(), "sun".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_flipped_causes_none_when_nothing_changed() {
+        let mut component_violated = HashMap::new();
+        component_violated.insert("sun".to_string(), vec![true, true]);
+        component_violated.insert("moon".to_string(), vec![false, false]);
+
+        assert_eq!(flipped_causes(&component_violated, 0, 1), None);
+    }
+
+    #[test]
+    fn test_value_key_prefix_known_and_unknown_tags() {
+        assert_eq!(value_key_prefix("SunProximity(min=45°)"), "sun");
+        assert_eq!(value_key_prefix("AND(SunProximity(min=45°))"), "and");
+        assert_eq!(
+            value_key_prefix("SomeNewConstraint(foo=1)"),
+            "somenewconstraint"
+        );
+    }
 }

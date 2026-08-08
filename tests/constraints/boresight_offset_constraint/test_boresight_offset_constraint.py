@@ -5,6 +5,7 @@ import rust_ephem
 from rust_ephem import Constraint
 from rust_ephem.constraints import (
     BoresightOffsetConstraint,
+    MoonConstraint,
     RollReference,
     SunConstraint,
 )
@@ -299,3 +300,87 @@ def test_instantaneous_for_zero_n_roll_samples_raises(
 
     with pytest.raises(ValueError, match="n_roll_samples must be greater than 0"):
         c.instantaneous_field_of_regard(ephem, index=0, n_points=100, n_roll_samples=0)
+
+
+def test_boresight_wrapped_leaf_reports_own_cause_tag(
+    cause_ephem: rust_ephem.TLEEphemeris,
+) -> None:
+    """A boresight-wrapped leaf's VisibilityWindow.start_cause/end_cause must name
+    the wrapped leaf's own tag (e.g. "sun"), not the wrapper's "boresight_offset" -
+    otherwise cause attribution collapses the whole wrapped subtree into one leaf.
+    """
+    target_ra, target_dec = 200.0, -10.0
+
+    # Permissive probe (never violated) purely to sample the rotated sun-angle
+    # series so a real crossing threshold can be picked below.
+    probe = SunConstraint(min_angle=1.0).boresight_offset(
+        pitch_deg=2.0, yaw_deg=1.0, roll_reference=RollReference.NORTH
+    )
+    probe_result = probe.evaluate(
+        ephemeris=cause_ephem, target_ra=target_ra, target_dec=target_dec
+    )
+    angle_series = np.array(probe_result.constraint_values["sun_angle_deg"])
+    threshold = float(np.median(angle_series))
+
+    wrapped = SunConstraint(min_angle=threshold).boresight_offset(
+        pitch_deg=2.0, yaw_deg=1.0, roll_reference=RollReference.NORTH
+    )
+    result = wrapped.evaluate(
+        ephemeris=cause_ephem, target_ra=target_ra, target_dec=target_dec
+    )
+
+    assert result.visibility, "expected the chosen threshold to be crossed"
+
+    non_edge_causes = [
+        cause
+        for window in result.visibility
+        for cause in (window.start_cause, window.end_cause)
+        if cause is not None
+    ]
+    assert non_edge_causes, "expected at least one non-boundary transition"
+    assert all(cause == ["sun"] for cause in non_edge_causes)
+    assert all("boresight_offset" not in cause for cause in non_edge_causes)
+
+
+def test_fixed_target_roll_preserves_relative_geometry_across_conventions(
+    cause_ephem: rust_ephem.TLEEphemeris,
+) -> None:
+    """`ConstraintConfig.evaluate(target_roll=...)` injects a coordinated
+    spacecraft roll into every boresight node in the tree. `roll_deg=90,
+    roll_clockwise=False` and `roll_deg=-90, roll_clockwise=True` describe the
+    *same* physical instrument mounting, so a tree built with either
+    representation must evaluate identically at any fixed ``target_roll``.
+    """
+    target_ra, target_dec = 200.0, -10.0
+
+    sun_leg = SunConstraint(min_angle=45.0).boresight_offset(
+        roll_deg=0.0, roll_clockwise=False, pitch_deg=3.0, yaw_deg=0.0
+    )
+    moon_leg_ccw = MoonConstraint(min_angle=15.0).boresight_offset(
+        roll_deg=90.0, roll_clockwise=False, pitch_deg=3.0, yaw_deg=0.0
+    )
+    moon_leg_cw = MoonConstraint(min_angle=15.0).boresight_offset(
+        roll_deg=-90.0, roll_clockwise=True, pitch_deg=3.0, yaw_deg=0.0
+    )
+
+    reference = sun_leg & moon_leg_ccw
+    mixed = sun_leg & moon_leg_cw
+
+    for target_roll in (0.0, 37.0, -110.0):
+        reference_result = reference.evaluate(
+            ephemeris=cause_ephem,
+            target_ra=target_ra,
+            target_dec=target_dec,
+            target_roll=target_roll,
+        )
+        mixed_result = mixed.evaluate(
+            ephemeris=cause_ephem,
+            target_ra=target_ra,
+            target_dec=target_dec,
+            target_roll=target_roll,
+        )
+        np.testing.assert_array_equal(
+            reference_result.constraint_array,
+            mixed_result.constraint_array,
+            err_msg=f"mismatch at target_roll={target_roll}",
+        )

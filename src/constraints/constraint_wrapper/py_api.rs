@@ -1306,6 +1306,12 @@ impl PyConstraint {
     ///         times will be evaluated (must exist in the ephemeris).
     ///     indices (int or list[int], optional): Specific time index/indices to evaluate.
     ///         Can be a single index or list of indices into the ephemeris timestamp array.
+    ///     target_roll (float, optional): Fixed spacecraft roll in degrees.  When
+    ///         omitted and the constraint is roll-dependent, every roll is swept and a
+    ///         timestamp counts as violated only if no orientation clears it.
+    ///     n_roll_samples (int, optional): Number of roll angles swept uniformly over
+    ///         [0°, 360°) in that free-roll case.  Ignored when `target_roll` is given
+    ///         or the constraint does not depend on roll.
     ///
     /// Returns:
     ///     ConstraintResult: Result containing violation windows
@@ -1314,7 +1320,7 @@ impl PyConstraint {
     ///     Only one of `times` or `indices` should be provided. If neither is provided,
     ///     all ephemeris times are evaluated.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (ephemeris, target_ra, target_dec, times=None, indices=None, target_roll=None))]
+    #[pyo3(signature = (ephemeris, target_ra, target_dec, times=None, indices=None, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES))]
     fn evaluate(
         &self,
         py: Python,
@@ -1324,7 +1330,9 @@ impl PyConstraint {
         times: Option<&Bound<PyAny>>,
         indices: Option<&Bound<PyAny>>,
         target_roll: Option<f64>,
+        n_roll_samples: usize,
     ) -> PyResult<ConstraintResult> {
+        Self::validate_n_roll_samples(n_roll_samples)?;
         // Parse time filtering options
         let bound = ephemeris.bind(py);
         let time_indices = self.resolve_time_indices(bound, times, indices)?;
@@ -1337,14 +1345,19 @@ impl PyConstraint {
                     target_ra,
                     target_dec,
                     time_indices.clone(),
+                    n_roll_samples,
                 )
             })
         })
     }
 
     /// Evaluate constraint for multiple targets and return one result per target.
+    ///
+    /// `target_rolls` gives a fixed spacecraft roll per target; entries left unset
+    /// sweep `n_roll_samples` roll angles uniformly over [0°, 360°) and count a
+    /// timestamp as violated only where no orientation clears the constraint.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None))]
+    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES))]
     fn evaluate_batch(
         &self,
         py: Python,
@@ -1354,7 +1367,9 @@ impl PyConstraint {
         times: Option<&Bound<PyAny>>,
         indices: Option<&Bound<PyAny>>,
         target_rolls: Option<Vec<f64>>,
+        n_roll_samples: usize,
     ) -> PyResult<Vec<ConstraintResult>> {
+        Self::validate_n_roll_samples(n_roll_samples)?;
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "target_ras and target_decs must have the same length",
@@ -1383,6 +1398,7 @@ impl PyConstraint {
                         &target_ras,
                         &target_decs,
                         time_indices.clone(),
+                        n_roll_samples,
                     )
                 })
             });
@@ -1415,6 +1431,7 @@ impl PyConstraint {
                         &group_ras,
                         &group_decs,
                         time_indices.clone(),
+                        n_roll_samples,
                     )
                 })
             })?;
@@ -1488,11 +1505,7 @@ impl PyConstraint {
         target_rolls: Option<Vec<f64>>,
         n_roll_samples: usize,
     ) -> PyResult<Py<PyAny>> {
-        if n_roll_samples == 0 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "n_roll_samples must be greater than 0",
-            ));
-        }
+        Self::validate_n_roll_samples(n_roll_samples)?;
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "target_ras and target_decs must have the same length",
@@ -1788,10 +1801,15 @@ impl PyConstraint {
     /// * `ephemeris` - The ephemeris to use for evaluation
     /// * `target_ra` - Right ascension of the target in degrees
     /// * `target_dec` - Declination of the target in degrees
+    /// * `target_roll` - Fixed spacecraft roll in degrees, or `None` to sweep every
+    ///   roll and report violated only where no orientation clears the constraint
+    /// * `n_roll_samples` - Roll angles swept uniformly over [0°, 360°) in that
+    ///   free-roll case; ignored for a fixed or roll-independent evaluation
     ///
     /// # Returns
     /// A boolean if a single time is provided, or a list of booleans if multiple times are provided
-    #[pyo3(signature = (time, ephemeris, target_ra, target_dec, target_roll=None))]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES))]
     fn in_constraint(
         &self,
         py: Python,
@@ -1800,7 +1818,9 @@ impl PyConstraint {
         target_ra: f64,
         target_dec: f64,
         target_roll: Option<f64>,
+        n_roll_samples: usize,
     ) -> PyResult<Py<PyAny>> {
+        Self::validate_n_roll_samples(n_roll_samples)?;
         // Check if time is a single value or a sequence
         let bound_time = time.bind(py);
 
@@ -1824,7 +1844,7 @@ impl PyConstraint {
             Some(bound_time),
             None,
             target_rolls,
-            DEFAULT_N_ROLL_SAMPLES,
+            n_roll_samples,
         )?;
 
         // Extract the results for the single target (first row)
@@ -2154,6 +2174,17 @@ impl PyConstraint {
                 .compute_named_values_diagonal(ephem_ref, &ras, &decs)
         })?;
 
+        // Compute per-leaf-constraint violation masks (diagonal), used to attribute
+        // VisibilityWindow.start_cause/end_cause.
+        let component_violated = self.with_ephemeris(bound, |ephem_ref| {
+            self.evaluator
+                .compute_named_booleans_diagonal(ephem_ref, &ras, &decs)
+        })?;
+
+        let cause_value_keys = self.with_ephemeris(bound, |ephem_ref| {
+            Self::cause_value_keys_for(self.evaluator.as_ref(), ephem_ref)
+        })?;
+
         Ok(MovingBodyResult::new(
             violations,
             all_satisfied,
@@ -2163,7 +2194,9 @@ impl PyConstraint {
             decs,
             constraint_vec,
         )
-        .with_constraint_values(values))
+        .with_constraint_values(values)
+        .with_component_violated(component_violated)
+        .with_cause_value_keys(cause_value_keys))
     }
 
     /// Get constraint configuration as JSON string

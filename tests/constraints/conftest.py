@@ -33,6 +33,8 @@ class DummyRustResult:
                     "start_time": base,
                     "end_time": base + timedelta(seconds=1),
                     "duration_seconds": 1.0,
+                    "start_cause": None,
+                    "end_cause": None,
                 },
             )()
         ]
@@ -55,6 +57,7 @@ class DummyRustResult:
             )()
         ]
         self.constraint_values: dict[str, list[float]] = {}
+        self.cause_value_keys: dict[str, list[str]] = {}
 
     def in_constraint(self, time: datetime) -> bool:
         self._in_constraint_calls.append(time)
@@ -72,6 +75,7 @@ class DummyMovingBodyResult:
         self.all_satisfied: bool = False
         self.constraint_name: str = "DummyMovingBody"
         self.constraint_values: dict[str, list[float]] = {}
+        self.cause_value_keys: dict[str, list[str]] = {}
 
 
 @pytest.fixture
@@ -144,8 +148,11 @@ class DummyConstraintBackend:
         target_dec: object,
         times: object,
         indices: object,
+        n_roll_samples: object = None,
     ) -> DummyRustResult:
-        self.evaluate_calls.append((ephemeris, target_ra, target_dec, times, indices))
+        self.evaluate_calls.append(
+            (ephemeris, target_ra, target_dec, times, indices, n_roll_samples)
+        )
         return DummyRustResult()
 
     def evaluate_batch(
@@ -155,9 +162,10 @@ class DummyConstraintBackend:
         target_decs: list[object],
         times: object,
         indices: object,
+        n_roll_samples: object = None,
     ) -> list[DummyRustResult]:
         self.evaluate_batch_calls.append(
-            (ephemeris, target_ras, target_decs, times, indices)
+            (ephemeris, target_ras, target_decs, times, indices, n_roll_samples)
         )
         return [DummyRustResult() for _ in target_ras]
 
@@ -176,9 +184,17 @@ class DummyConstraintBackend:
         return np.array([[True], [False]])
 
     def in_constraint(
-        self, time: datetime, ephemeris: object, target_ra: object, target_dec: object
+        self,
+        time: datetime,
+        ephemeris: object,
+        target_ra: object,
+        target_dec: object,
+        target_roll: object = None,
+        n_roll_samples: object = None,
     ) -> str:
-        self.single_calls.append((time, ephemeris, target_ra, target_dec))
+        self.single_calls.append(
+            (time, ephemeris, target_ra, target_dec, target_roll, n_roll_samples)
+        )
         return "single-result"
 
     def evaluate_moving_body(

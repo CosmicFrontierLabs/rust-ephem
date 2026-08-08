@@ -1,4 +1,6 @@
-use crate::constraints::core::{track_violations, ConstraintEvaluator, ConstraintResult};
+use crate::constraints::core::{
+    sweep_rolls_with_attribution, track_violations, ConstraintEvaluator, ConstraintResult,
+};
 use crate::ephemeris::ephemeris_common::EphemerisBase;
 use crate::ephemeris::FileEphemeris;
 use crate::ephemeris::GroundEphemeris;
@@ -10,7 +12,6 @@ use pyo3::prelude::*;
 use std::collections::HashMap;
 
 use super::PyConstraint;
-use crate::constraints::constraint_wrapper::field_of_regard::DEFAULT_N_ROLL_SAMPLES;
 use crate::constraints::constraint_wrapper::json_parser::parse_constraint_json;
 
 impl PyConstraint {
@@ -129,37 +130,45 @@ impl PyConstraint {
         }
     }
 
-    pub(super) fn in_constraint_batch_with_roll_sweep(
-        &self,
-        evaluator: &dyn ConstraintEvaluator,
-        ephemeris: &dyn EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-        time_indices: Option<&[usize]>,
-        n_roll_samples: usize,
-    ) -> PyResult<ndarray::Array2<bool>> {
-        evaluator.in_constraint_batch_constrained_at_every_roll(
-            ephemeris,
-            target_ras,
-            target_decs,
-            time_indices,
-            n_roll_samples,
-        )
+    /// Reject a zero roll-sample count before it reaches a sweep loop, where it
+    /// would divide by zero computing the roll step and silently produce a
+    /// zero-iteration sweep.
+    pub(super) fn validate_n_roll_samples(n_roll_samples: usize) -> PyResult<()> {
+        if n_roll_samples == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "n_roll_samples must be greater than 0",
+            ));
+        }
+        Ok(())
     }
 
-    /// Slice out a single target's row from each named-value matrix returned by
-    /// `compute_named_values` (shape M x N, targets x times).
-    pub(super) fn extract_target_values(
-        values_map: &HashMap<String, ndarray::Array2<f64>>,
+    /// Slice out a single target's row from each named matrix keyed by name (shape
+    /// M x N, targets x times) — the per-target values from `compute_named_values`
+    /// and the per-leaf cause masks from the sweep are both shaped this way.
+    pub(super) fn extract_target_row<T: Copy>(
+        matrices: &HashMap<String, ndarray::Array2<T>>,
         target_index: usize,
-    ) -> HashMap<String, Vec<f64>> {
-        values_map
+    ) -> HashMap<String, Vec<T>> {
+        matrices
             .iter()
             .map(|(key, arr)| {
-                let row: Vec<f64> = (0..arr.ncols()).map(|i| arr[[target_index, i]]).collect();
+                let row: Vec<T> = (0..arr.ncols()).map(|i| arr[[target_index, i]]).collect();
                 (key.clone(), row)
             })
             .collect()
+    }
+
+    /// Cause tag → `constraint_values` key(s) for this evaluator's tree.
+    ///
+    /// Only key *names* are wanted, and those depend on the evaluator's structure
+    /// rather than on the target position or time, so this probes a single dummy
+    /// target/time instead of paying for a full recompute just to introspect key
+    /// structure.
+    pub(super) fn cause_value_keys_for(
+        evaluator: &dyn ConstraintEvaluator,
+        ephemeris: &dyn EphemerisBase,
+    ) -> PyResult<HashMap<String, Vec<String>>> {
+        evaluator.compute_cause_value_keys(ephemeris, &[0.0], &[0.0], Some(&[0]))
     }
 
     pub(super) fn with_effective_evaluator<T, F>(
@@ -265,20 +274,26 @@ impl PyConstraint {
         target_ra: f64,
         target_dec: f64,
         time_indices: Option<Vec<usize>>,
+        n_roll_samples: usize,
     ) -> PyResult<ConstraintResult> {
         // PERFORMANCE OPTIMIZATION: Use fast batch path internally
         // Instead of the slow evaluate() that tracks violations step-by-step,
         // use in_constraint_batch() which is 1700x faster, then construct violations from the result
 
-        // Call the fast batch evaluation for single target
-        let violation_array = self.in_constraint_batch_with_roll_sweep(
+        // One coordinated free-roll sweep yields both the violation array and the
+        // per-leaf cause masks, taken at the same witness roll per timestamp, so the
+        // reported cause always describes an orientation consistent with the
+        // visibility it explains.  A no-op single evaluation when the tree isn't
+        // roll-dependent.
+        let swept = sweep_rolls_with_attribution(
             evaluator,
             ephemeris,
             &[target_ra],
             &[target_dec],
             time_indices.as_deref(),
-            DEFAULT_N_ROLL_SAMPLES,
+            n_roll_samples,
         )?;
+        let violation_array = swept.violated;
 
         // Get the times we evaluated
         let all_times = ephemeris.get_times()?;
@@ -310,11 +325,19 @@ impl PyConstraint {
             &[target_dec],
             time_indices.as_deref(),
         )?;
-        let values = Self::extract_target_values(&values_map, 0);
+        let values = Self::extract_target_row(&values_map, 0);
+
+        // Per-leaf violation masks used to attribute
+        // VisibilityWindow.start_cause/end_cause, from the same sweep that produced
+        // `violation_array` above.
+        let component_violated = Self::extract_target_row(&swept.named, 0);
+        let cause_value_keys = Self::cause_value_keys_for(evaluator, ephemeris)?;
 
         Ok(
             ConstraintResult::new(violations, all_satisfied, evaluator.name(), times)
-                .with_constraint_values(values),
+                .with_constraint_values(values)
+                .with_component_violated(component_violated)
+                .with_cause_value_keys(cause_value_keys),
         )
     }
 
@@ -325,15 +348,19 @@ impl PyConstraint {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<Vec<usize>>,
+        n_roll_samples: usize,
     ) -> PyResult<Vec<ConstraintResult>> {
-        let violation_array = self.in_constraint_batch_with_roll_sweep(
+        // See `eval_with_ephemeris`: one coordinated sweep produces both the
+        // violation array and the cause masks consistent with it.
+        let swept = sweep_rolls_with_attribution(
             evaluator,
             ephemeris,
             target_ras,
             target_decs,
             time_indices.as_deref(),
-            DEFAULT_N_ROLL_SAMPLES,
+            n_roll_samples,
         )?;
+        let violation_array = swept.violated;
 
         let all_times = ephemeris.get_times()?;
         let times: Vec<_> = if let Some(ref indices) = time_indices {
@@ -350,6 +377,10 @@ impl PyConstraint {
             time_indices.as_deref(),
         )?;
 
+        // Shared across all targets: the mapping depends only on the evaluator's
+        // structure, not on the target positions.
+        let cause_value_keys = Self::cause_value_keys_for(evaluator, ephemeris)?;
+
         let mut results = Vec::with_capacity(target_ras.len());
         for target_index in 0..target_ras.len() {
             let violated: Vec<bool> = (0..violation_array.ncols())
@@ -363,10 +394,13 @@ impl PyConstraint {
             );
 
             let all_satisfied = violations.is_empty();
-            let values = Self::extract_target_values(&values_map, target_index);
+            let values = Self::extract_target_row(&values_map, target_index);
+            let component_violated = Self::extract_target_row(&swept.named, target_index);
             results.push(
                 ConstraintResult::new(violations, all_satisfied, evaluator.name(), times.clone())
-                    .with_constraint_values(values),
+                    .with_constraint_values(values)
+                    .with_component_violated(component_violated)
+                    .with_cause_value_keys(cause_value_keys.clone()),
             );
         }
 

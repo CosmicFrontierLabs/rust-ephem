@@ -1,47 +1,12 @@
 // Logical combinator evaluators
 use crate::constraints::core::{
-    track_violations, ConstraintEvaluator, ConstraintResult, ConstraintViolation,
+    track_violations, value_key_prefix, BatchWithCauses, ConstraintEvaluator, ConstraintResult,
+    ConstraintViolation,
 };
 use crate::utils::vector_math::unit_vectors_to_radec_batch;
 use ndarray::Array2;
 use pyo3::PyResult;
 use std::collections::HashMap;
-
-/// Short, stable tag for a leaf/combinator constraint's `values` key prefix, derived
-/// from the text before the first `(` in its `name()`. Falls back to a sanitized
-/// version of the head for anything unmapped, so new constraint types don't panic
-/// or silently collide — they just get a slightly uglier (but unique-ish) prefix.
-fn value_key_prefix(name: &str) -> String {
-    let head = name.split('(').next().unwrap_or(name).trim();
-    let tag = match head {
-        "SunProximity" => "sun",
-        "MoonProximity" => "moon",
-        "BodyProximity" => "body",
-        "Eclipse" => "eclipse",
-        "AirmassConstraint" => "airmass",
-        "AltAzConstraint" => "alt_az",
-        "SAAConstraint" => "saa",
-        "DaytimeConstraint" => "daytime",
-        "MoonPhaseConstraint" => "moon_phase",
-        "OrbitPoleConstraint" => "orbit_pole",
-        "OrbitRamConstraint" => "orbit_ram",
-        "EarthLimb" => "earth_limb",
-        "BrightStar" => "bright_star",
-        "SolarRollConstraint" => "solar_roll",
-        "AND" => "and",
-        "OR" => "or",
-        "NOT" => "not",
-        "XOR" => "xor",
-        "AT_LEAST" => "at_least",
-        "BoresightOffset" => "boresight_offset",
-        other => {
-            return other
-                .to_lowercase()
-                .replace(|c: char| !c.is_alphanumeric(), "_")
-        }
-    };
-    tag.to_string()
-}
 
 /// Merge named-value maps from a set of child evaluators, namespacing each child's
 /// keys under a short type tag (e.g. `sun.sun_angle_deg`) so composite constraints
@@ -76,6 +41,238 @@ fn merge_children_named_values(
 
         for (key, arr) in child_values {
             merged.insert(format!("{prefix}.{key}"), arr);
+        }
+    }
+
+    Ok(merged)
+}
+
+/// Insert `(key, value)` into `merged`, renaming on collision by appending `_2`,
+/// `_3`, ... until a free slot is found. Checking against `merged` itself (rather
+/// than a separate per-original-key counter) guarantees no entry is ever silently
+/// discarded via `HashMap::insert`, even when a nested child's own merge already
+/// produced a suffixed key (e.g. `sun_2`) that a sibling's rename would otherwise
+/// collide with.
+fn insert_no_collision<V>(merged: &mut HashMap<String, V>, key: String, value: V) {
+    let mut final_key = key.clone();
+    let mut suffix = 2;
+    while merged.contains_key(&final_key) {
+        final_key = format!("{key}_{suffix}");
+        suffix += 1;
+    }
+    merged.insert(final_key, value);
+}
+
+/// Drain a child's own returned key/value pairs in key-sorted order. `HashMap`
+/// iteration order is otherwise unspecified (randomized per-instance), which would
+/// make `insert_no_collision`'s renaming choice for same-named entries within a
+/// single child's map nondeterministic across calls. Sorting first makes the
+/// resulting key strings reproducible, which `compute_cause_value_keys` relies on
+/// to stay in lockstep with this merge's actual output.
+fn sorted_entries<V>(map: HashMap<String, V>) -> Vec<(String, V)> {
+    let mut entries: Vec<(String, V)> = map.into_iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    entries
+}
+
+/// What `eval_children_with_causes` hands back: each child's own combined violation
+/// mask in child list order, plus the merged per-leaf cause masks for the whole subtree.
+type ChildrenWithCauses = (Vec<Array2<bool>>, HashMap<String, Array2<bool>>);
+
+/// Evaluate every child once via `in_constraint_batch_with_causes`, returning each
+/// child's own combined mask (in child list order, for the parent's operator to fold)
+/// alongside the merged per-leaf violation masks.
+///
+/// The merge flattens each child's own tag(s) — e.g. `sun` for a leaf, or `moon`/`sun_2`
+/// for an already-merged nested combinator — into one map. On tag collision between
+/// sibling children, the 2nd+ occurrence gets a numeric suffix (`sun_2`, `sun_3`, ...);
+/// see `insert_no_collision`. Children are visited in list order and each child's own
+/// map drained in key-sorted order, so the tags produced here match
+/// `merge_children_cause_value_keys` exactly and `ConstraintResult.cause_value_keys`
+/// stays valid for them.
+///
+/// `roll_deg` is forwarded unchanged: `Some(θ)` evaluates *every* child at that same
+/// candidate roll, so the merged map describes one single, physically realisable
+/// spacecraft orientation rather than a per-child mixture of different ones. That
+/// shared roll is the whole point of the free-roll attribution — a sweep asks whether
+/// *some* orientation clears the tree, and two children can each have some clear roll
+/// without ever sharing the same one, so per-child "is this child violated at every
+/// roll" answers cannot be recombined into the combined result for OR, XOR or AT_LEAST.
+/// `sweep_rolls_with_attribution` therefore drives this once per roll step and keeps the
+/// leaf masks from the roll it selects as that cell's witness.
+fn eval_children_with_causes(
+    children: &[Box<dyn ConstraintEvaluator>],
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    target_ras: &[f64],
+    target_decs: &[f64],
+    time_indices: Option<&[usize]>,
+    roll_deg: Option<f64>,
+) -> PyResult<ChildrenWithCauses> {
+    let mut combined = Vec::with_capacity(children.len());
+    let mut merged = HashMap::new();
+
+    for child in children {
+        let child_eval = child.in_constraint_batch_with_causes(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            roll_deg,
+        )?;
+        combined.push(child_eval.violated);
+        for (key, arr) in sorted_entries(child_eval.named) {
+            insert_no_collision(&mut merged, key, arr);
+        }
+    }
+
+    Ok((combined, merged))
+}
+
+/// Number of time columns a batch evaluation will produce, matching how every
+/// `in_constraint_batch*` implementation sizes its output.
+fn batch_n_times(
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    time_indices: Option<&[usize]>,
+) -> PyResult<usize> {
+    match time_indices {
+        Some(idx) => Ok(idx.len()),
+        None => Ok(ephemeris.get_times()?.len()),
+    }
+}
+
+/// Fold children's combined masks with a per-cell count predicate: XOR accepts a count
+/// of exactly one, AT_LEAST a count of at least `k`. An empty child list yields
+/// `accept(0)` everywhere, preserving each combinator's own vacuous case.
+fn fold_children_by_count(
+    children_violated: &[Array2<bool>],
+    n_targets: usize,
+    n_times: usize,
+    accept: impl Fn(usize) -> bool,
+) -> Array2<bool> {
+    let mut result = Array2::from_elem((n_targets, n_times), false);
+    for i in 0..n_targets {
+        for j in 0..n_times {
+            let count = children_violated.iter().filter(|r| r[[i, j]]).count();
+            result[[i, j]] = accept(count);
+        }
+    }
+    result
+}
+
+/// Shared body of every combinator's `in_constraint_batch_with_causes`: validate the
+/// inputs, evaluate each child exactly once (collecting the merged per-leaf cause masks
+/// for the whole subtree), then combine the children's own masks with `fold`.
+///
+/// `fold` receives the per-child masks in child list order plus the output shape, so
+/// each combinator keeps its own operator *and* its own vacuous case for an empty child
+/// list without repeating the surrounding traversal.
+fn combinator_batch_with_causes(
+    children: &[Box<dyn ConstraintEvaluator>],
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    target_ras: &[f64],
+    target_decs: &[f64],
+    time_indices: Option<&[usize]>,
+    roll_deg: Option<f64>,
+    fold: impl FnOnce(Vec<Array2<bool>>, usize, usize) -> Array2<bool>,
+) -> PyResult<BatchWithCauses> {
+    if target_ras.len() != target_decs.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "target_ras and target_decs must have the same length",
+        ));
+    }
+    let n_targets = target_ras.len();
+    let n_times = batch_n_times(ephemeris, time_indices)?;
+    let (children_violated, named) = eval_children_with_causes(
+        children,
+        ephemeris,
+        target_ras,
+        target_decs,
+        time_indices,
+        roll_deg,
+    )?;
+
+    Ok(BatchWithCauses {
+        violated: fold(children_violated, n_targets, n_times),
+        named,
+    })
+}
+
+/// Diagonal variant of `eval_children_with_causes`' merge for moving-body evaluation,
+/// merging each child's `compute_named_booleans_diagonal` (target_i paired with
+/// time_i) instead of the full M×N batch.
+fn merge_children_named_booleans_diagonal(
+    children: &[Box<dyn ConstraintEvaluator>],
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    target_ras: &[f64],
+    target_decs: &[f64],
+) -> PyResult<HashMap<String, Vec<bool>>> {
+    let mut merged = HashMap::new();
+
+    for child in children {
+        let child_booleans =
+            child.compute_named_booleans_diagonal(ephemeris, target_ras, target_decs)?;
+        for (key, arr) in sorted_entries(child_booleans) {
+            insert_no_collision(&mut merged, key, arr);
+        }
+    }
+
+    Ok(merged)
+}
+
+/// Merge per-leaf cause-tag → `constraint_values`-key mapping from a set of child
+/// evaluators, mirroring `eval_children_with_causes`' cause-tag identity/
+/// collision-renaming and `merge_children_named_values`' per-child value-key
+/// prefixing *in lockstep*, so a caller can look up which `constraint_values`
+/// key(s) a given cause tag corresponds to without guessing from string prefixes
+/// (which don't match — cause tags are flat/nesting-stable, value keys are
+/// hierarchical/path-based; see `ConstraintResult.cause_value_keys`).
+///
+/// The cause-tag side mirrors `eval_children_with_causes`; note that key *names* don't
+/// depend on roll, so this non-swept mapping stays valid for the tags a swept
+/// attribution produces.
+fn merge_children_cause_value_keys(
+    children: &[Box<dyn ConstraintEvaluator>],
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    target_ras: &[f64],
+    target_decs: &[f64],
+    time_indices: Option<&[usize]>,
+) -> PyResult<HashMap<String, Vec<String>>> {
+    let mut merged: HashMap<String, Vec<String>> = HashMap::new();
+    let mut value_tag_counts: HashMap<String, usize> = HashMap::new();
+
+    for child in children {
+        let child_map =
+            child.compute_cause_value_keys(ephemeris, target_ras, target_decs, time_indices)?;
+
+        // A child with no named values anywhere in its subtree (e.g. a bare SAA
+        // leaf) doesn't consume a numbering slot here, matching
+        // merge_children_named_values' `if child_values.is_empty() { continue; }`
+        // skip — but its cause tag(s) must still surface, just with an empty
+        // value-key list, so `cause_value_keys` never silently drops a tag.
+        let has_any_values = child_map.values().any(|v| !v.is_empty());
+        let value_prefix = if has_any_values {
+            let base_tag = value_key_prefix(&child.name());
+            let count = value_tag_counts.entry(base_tag.clone()).or_insert(0);
+            *count += 1;
+            Some(if *count == 1 {
+                base_tag
+            } else {
+                format!("{base_tag}_{count}")
+            })
+        } else {
+            None
+        };
+
+        for (cause_tag, value_key_names) in sorted_entries(child_map) {
+            let prefixed_value_keys: Vec<String> = match &value_prefix {
+                Some(prefix) => value_key_names
+                    .into_iter()
+                    .map(|k| format!("{prefix}.{k}"))
+                    .collect(),
+                None => value_key_names,
+            };
+            // Mirrors eval_children_with_causes' cause-tag collision renaming.
+            insert_no_collision(&mut merged, cause_tag, prefixed_value_keys);
         }
     }
 
@@ -580,6 +777,71 @@ impl ConstraintEvaluator for AndEvaluator {
         )
     }
 
+    fn compute_named_booleans_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<HashMap<String, Vec<bool>>> {
+        merge_children_named_booleans_diagonal(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+        )
+    }
+
+    fn compute_cause_value_keys(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Vec<String>>> {
+        merge_children_cause_value_keys(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+        )
+    }
+
+    /// One traversal produces both this AND's combined mask and its subtree's leaf
+    /// masks: each child is evaluated exactly once and its own combined result is
+    /// AND-folded here, rather than the whole subtree being walked once for the
+    /// combined answer and again for attribution.
+    fn in_constraint_batch_with_causes(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        roll_deg: Option<f64>,
+    ) -> PyResult<BatchWithCauses> {
+        combinator_batch_with_causes(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            roll_deg,
+            |children_violated, n_targets, n_times| {
+                // Preserve vacuous truth: AND over zero constraints is true everywhere.
+                let mut children_violated = children_violated.into_iter();
+                match children_violated.next() {
+                    None => Array2::from_elem((n_targets, n_times), true),
+                    Some(mut acc) => {
+                        for sub_result in children_violated {
+                            acc.zip_mut_with(&sub_result, |x, &y| *x &= y);
+                        }
+                        acc
+                    }
+                }
+            },
+        )
+    }
+
     fn name(&self) -> String {
         format!(
             "AND({})",
@@ -1065,6 +1327,64 @@ impl ConstraintEvaluator for OrEvaluator {
         )
     }
 
+    fn compute_named_booleans_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<HashMap<String, Vec<bool>>> {
+        merge_children_named_booleans_diagonal(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+        )
+    }
+
+    fn compute_cause_value_keys(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Vec<String>>> {
+        merge_children_cause_value_keys(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+        )
+    }
+
+    /// See `AndEvaluator::in_constraint_batch_with_causes` — same single-traversal
+    /// fusion, OR-folded.
+    fn in_constraint_batch_with_causes(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        roll_deg: Option<f64>,
+    ) -> PyResult<BatchWithCauses> {
+        combinator_batch_with_causes(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            roll_deg,
+            |children_violated, n_targets, n_times| {
+                // Preserve identity: OR over zero constraints is false everywhere.
+                let mut violated = Array2::from_elem((n_targets, n_times), false);
+                for sub_result in &children_violated {
+                    violated.zip_mut_with(sub_result, |x, &y| *x |= y);
+                }
+                violated
+            },
+        )
+    }
+
     fn name(&self) -> String {
         format!(
             "OR({})",
@@ -1297,6 +1617,79 @@ impl ConstraintEvaluator for NotEvaluator {
         // Single child, no collision risk - pass its values straight through unprefixed.
         self.constraint
             .compute_named_values(ephemeris, target_ras, target_decs, time_indices)
+    }
+
+    fn compute_named_booleans_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<HashMap<String, Vec<bool>>> {
+        // See `in_constraint_batch_with_causes`: values are uninverted, keys prefixed
+        // with "not.".
+        let child_booleans =
+            self.constraint
+                .compute_named_booleans_diagonal(ephemeris, target_ras, target_decs)?;
+        Ok(child_booleans
+            .into_iter()
+            .map(|(key, arr)| (format!("not.{key}"), arr))
+            .collect())
+    }
+
+    fn compute_cause_value_keys(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Vec<String>>> {
+        // Cause tags get "not." (matching in_constraint_batch_with_causes); value keys
+        // pass through unprefixed (matching compute_named_values' passthrough — "single
+        // child, no collision risk").
+        let child_map = self.constraint.compute_cause_value_keys(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+        )?;
+        Ok(child_map
+            .into_iter()
+            .map(|(cause_tag, value_keys)| (format!("not.{cause_tag}"), value_keys))
+            .collect())
+    }
+
+    /// One traversal of the wrapped subtree yields both the negated combined mask and
+    /// its leaf masks.
+    ///
+    /// The leaf masks are left *uninverted* — cause attribution reports whether the
+    /// underlying leaf condition (e.g. "too close to sun") itself changed, not the
+    /// NOT-negated combined value — but their keys are prefixed with "not." so a
+    /// wrapped leaf's cause tag is never mistaken for its non-negated counterpart,
+    /// matching how `merge_children_named_values` already tags a NOT child when nested
+    /// under AND/OR/XOR/AT_LEAST.
+    fn in_constraint_batch_with_causes(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        roll_deg: Option<f64>,
+    ) -> PyResult<BatchWithCauses> {
+        let inner = self.constraint.in_constraint_batch_with_causes(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            roll_deg,
+        )?;
+        Ok(BatchWithCauses {
+            violated: inner.violated.mapv(|v| !v),
+            named: inner
+                .named
+                .into_iter()
+                .map(|(key, arr)| (format!("not.{key}"), arr))
+                .collect(),
+        })
     }
 
     fn name(&self) -> String {
@@ -1590,6 +1983,59 @@ impl ConstraintEvaluator for XorEvaluator {
             target_ras,
             target_decs,
             time_indices,
+        )
+    }
+
+    fn compute_named_booleans_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<HashMap<String, Vec<bool>>> {
+        merge_children_named_booleans_diagonal(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+        )
+    }
+
+    fn compute_cause_value_keys(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Vec<String>>> {
+        merge_children_cause_value_keys(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+        )
+    }
+
+    /// See `AndEvaluator::in_constraint_batch_with_causes` — same single-traversal
+    /// fusion, folded by "exactly one child violated".
+    fn in_constraint_batch_with_causes(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        roll_deg: Option<f64>,
+    ) -> PyResult<BatchWithCauses> {
+        combinator_batch_with_causes(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            roll_deg,
+            |children_violated, n_targets, n_times| {
+                fold_children_by_count(&children_violated, n_targets, n_times, |count| count == 1)
+            },
         )
     }
 
@@ -1895,6 +2341,61 @@ impl ConstraintEvaluator for AtLeastEvaluator {
             target_ras,
             target_decs,
             time_indices,
+        )
+    }
+
+    fn compute_named_booleans_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<HashMap<String, Vec<bool>>> {
+        merge_children_named_booleans_diagonal(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+        )
+    }
+
+    fn compute_cause_value_keys(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<HashMap<String, Vec<String>>> {
+        merge_children_cause_value_keys(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+        )
+    }
+
+    /// See `AndEvaluator::in_constraint_batch_with_causes` — same single-traversal
+    /// fusion, folded by "at least `min_violated` children violated".
+    fn in_constraint_batch_with_causes(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        roll_deg: Option<f64>,
+    ) -> PyResult<BatchWithCauses> {
+        combinator_batch_with_causes(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            roll_deg,
+            |children_violated, n_targets, n_times| {
+                fold_children_by_count(&children_violated, n_targets, n_times, |count| {
+                    count >= self.min_violated
+                })
+            },
         )
     }
 
