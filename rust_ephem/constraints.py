@@ -817,7 +817,7 @@ class RustConstraintMixin(BaseModel):
             ValueError: If exactly one of time/index is not provided
         """
         if target_roll is None:
-            rust_constraint_any = cast(Any, self._to_rust_constraint(sweep_roll=True))
+            rust_constraint_any = cast(Any, self._get_cached_sweep_constraint())
         else:
             rust_constraint_any = cast(
                 Any, self._resolve_rust_constraint(target_roll=target_roll)

@@ -76,6 +76,20 @@ fn flipped_causes(
     }
 }
 
+/// `start_cause` for a window beginning at `start_idx`: the leaves that flipped
+/// between the preceding sample and the window's first sample, or `None` at the
+/// very start of the evaluated range where there is no preceding sample.
+fn start_cause_at(
+    component_violated: &HashMap<String, Vec<bool>>,
+    start_idx: usize,
+) -> Option<Vec<String>> {
+    if start_idx == 0 {
+        None
+    } else {
+        flipped_causes(component_violated, start_idx - 1, start_idx)
+    }
+}
+
 /// Result of constraint evaluation
 ///
 /// Contains information about when and where a constraint is violated.
@@ -449,11 +463,7 @@ impl ConstraintResult {
                 if let Some(start_idx) = current_window_start {
                     // Only add window if it's non-zero length
                     if i - 1 != start_idx {
-                        let start_cause = if start_idx == 0 {
-                            None
-                        } else {
-                            flipped_causes(&self.component_violated, start_idx - 1, start_idx)
-                        };
+                        let start_cause = start_cause_at(&self.component_violated, start_idx);
                         let end_cause = flipped_causes(&self.component_violated, i - 1, i);
                         windows.push(VisibilityWindow {
                             start_time: utc_to_python_datetime(py, &self.times[start_idx])?,
@@ -469,11 +479,7 @@ impl ConstraintResult {
 
         // Close any open visibility window at the end
         if let Some(start_idx) = current_window_start {
-            let start_cause = if start_idx == 0 {
-                None
-            } else {
-                flipped_causes(&self.component_violated, start_idx - 1, start_idx)
-            };
+            let start_cause = start_cause_at(&self.component_violated, start_idx);
             windows.push(VisibilityWindow {
                 start_time: utc_to_python_datetime(py, &self.times[start_idx])?,
                 end_time: utc_to_python_datetime(py, &self.times[self.times.len() - 1])?,
@@ -686,11 +692,7 @@ impl MovingBodyResult {
                 }
             } else if let Some(start_idx) = current_window_start {
                 if i - 1 != start_idx {
-                    let start_cause = if start_idx == 0 {
-                        None
-                    } else {
-                        flipped_causes(&self.component_violated, start_idx - 1, start_idx)
-                    };
+                    let start_cause = start_cause_at(&self.component_violated, start_idx);
                     let end_cause = flipped_causes(&self.component_violated, i - 1, i);
                     windows.push(VisibilityWindow {
                         start_time: utc_to_python_datetime(py, &self.times[start_idx])?,
@@ -704,11 +706,7 @@ impl MovingBodyResult {
         }
 
         if let Some(start_idx) = current_window_start {
-            let start_cause = if start_idx == 0 {
-                None
-            } else {
-                flipped_causes(&self.component_violated, start_idx - 1, start_idx)
-            };
+            let start_cause = start_cause_at(&self.component_violated, start_idx);
             windows.push(VisibilityWindow {
                 start_time: utc_to_python_datetime(py, &self.times[start_idx])?,
                 end_time: utc_to_python_datetime(py, &self.times[self.times.len() - 1])?,
@@ -1152,20 +1150,13 @@ pub struct BatchWithCauses {
     pub named: HashMap<String, Array2<bool>>,
 }
 
-/// Combined result and per-leaf cause attribution from one free-roll sweep.
-pub struct RollSweepAttribution {
-    /// (M x N) targets x times, `true` where the constraint is violated at *every*
-    /// swept roll — identical semantics to
-    /// `ConstraintEvaluator::in_constraint_batch_constrained_at_every_roll`.
-    pub violated: Array2<bool>,
-    /// Per-leaf violation masks taken at each cell's witness roll (see
-    /// `sweep_rolls_with_attribution`), keyed by the same cause tags as
-    /// `ConstraintEvaluator::in_constraint_batch_with_causes`.
-    pub named: HashMap<String, Array2<bool>>,
-}
-
 /// Sweep `n_roll_samples` spacecraft rolls, returning both the combined free-roll
 /// violation mask and per-leaf cause masks that are consistent with it.
+///
+/// The returned `violated` has the same semantics as
+/// `ConstraintEvaluator::in_constraint_batch_constrained_at_every_roll` (violated only
+/// where blocked at *every* swept roll), and `named` holds each leaf's state at that
+/// cell's witness roll rather than at any single fixed one.
 ///
 /// Cause attribution has to answer "which leaf changed?" about a result that was
 /// itself produced by a search over rolls, and the naive decomposition — ask each
@@ -1200,19 +1191,15 @@ pub fn sweep_rolls_with_attribution(
     target_decs: &[f64],
     time_indices: Option<&[usize]>,
     n_roll_samples: usize,
-) -> PyResult<RollSweepAttribution> {
+) -> PyResult<BatchWithCauses> {
     if !evaluator.is_roll_dependent() {
-        let evaluated = evaluator.in_constraint_batch_with_causes(
+        return evaluator.in_constraint_batch_with_causes(
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
             None,
-        )?;
-        return Ok(RollSweepAttribution {
-            violated: evaluated.violated,
-            named: evaluated.named,
-        });
+        );
     }
 
     let roll_step = 360.0 / n_roll_samples as f64;
@@ -1282,7 +1269,7 @@ pub fn sweep_rolls_with_attribution(
         }
     }
 
-    Ok(RollSweepAttribution {
+    Ok(BatchWithCauses {
         violated: violated.unwrap_or_else(|| Array2::from_elem((target_ras.len(), 0), false)),
         named,
     })

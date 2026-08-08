@@ -159,6 +159,44 @@ fn fold_children_by_count(
     result
 }
 
+/// Shared body of every combinator's `in_constraint_batch_with_causes`: validate the
+/// inputs, evaluate each child exactly once (collecting the merged per-leaf cause masks
+/// for the whole subtree), then combine the children's own masks with `fold`.
+///
+/// `fold` receives the per-child masks in child list order plus the output shape, so
+/// each combinator keeps its own operator *and* its own vacuous case for an empty child
+/// list without repeating the surrounding traversal.
+fn combinator_batch_with_causes(
+    children: &[Box<dyn ConstraintEvaluator>],
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    target_ras: &[f64],
+    target_decs: &[f64],
+    time_indices: Option<&[usize]>,
+    roll_deg: Option<f64>,
+    fold: impl FnOnce(Vec<Array2<bool>>, usize, usize) -> Array2<bool>,
+) -> PyResult<BatchWithCauses> {
+    if target_ras.len() != target_decs.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "target_ras and target_decs must have the same length",
+        ));
+    }
+    let n_targets = target_ras.len();
+    let n_times = batch_n_times(ephemeris, time_indices)?;
+    let (children_violated, named) = eval_children_with_causes(
+        children,
+        ephemeris,
+        target_ras,
+        target_decs,
+        time_indices,
+        roll_deg,
+    )?;
+
+    Ok(BatchWithCauses {
+        violated: fold(children_violated, n_targets, n_times),
+        named,
+    })
+}
+
 /// Diagonal variant of `eval_children_with_causes`' merge for moving-body evaluation,
 /// merging each child's `compute_named_booleans_diagonal` (target_i paired with
 /// time_i) instead of the full M×N batch.
@@ -781,35 +819,27 @@ impl ConstraintEvaluator for AndEvaluator {
         time_indices: Option<&[usize]>,
         roll_deg: Option<f64>,
     ) -> PyResult<BatchWithCauses> {
-        if target_ras.len() != target_decs.len() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_ras and target_decs must have the same length",
-            ));
-        }
-        let n_targets = target_ras.len();
-        let n_times = batch_n_times(ephemeris, time_indices)?;
-        let (children_violated, named) = eval_children_with_causes(
+        combinator_batch_with_causes(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
             roll_deg,
-        )?;
-
-        // Preserve vacuous truth: AND over zero constraints is true everywhere.
-        let mut children_violated = children_violated.into_iter();
-        let violated = match children_violated.next() {
-            None => Array2::from_elem((n_targets, n_times), true),
-            Some(mut acc) => {
-                for sub_result in children_violated {
-                    acc.zip_mut_with(&sub_result, |x, &y| *x &= y);
+            |children_violated, n_targets, n_times| {
+                // Preserve vacuous truth: AND over zero constraints is true everywhere.
+                let mut children_violated = children_violated.into_iter();
+                match children_violated.next() {
+                    None => Array2::from_elem((n_targets, n_times), true),
+                    Some(mut acc) => {
+                        for sub_result in children_violated {
+                            acc.zip_mut_with(&sub_result, |x, &y| *x &= y);
+                        }
+                        acc
+                    }
                 }
-                acc
-            }
-        };
-
-        Ok(BatchWithCauses { violated, named })
+            },
+        )
     }
 
     fn name(&self) -> String {
@@ -1337,29 +1367,22 @@ impl ConstraintEvaluator for OrEvaluator {
         time_indices: Option<&[usize]>,
         roll_deg: Option<f64>,
     ) -> PyResult<BatchWithCauses> {
-        if target_ras.len() != target_decs.len() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_ras and target_decs must have the same length",
-            ));
-        }
-        let n_targets = target_ras.len();
-        let n_times = batch_n_times(ephemeris, time_indices)?;
-        let (children_violated, named) = eval_children_with_causes(
+        combinator_batch_with_causes(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
             roll_deg,
-        )?;
-
-        // Preserve identity: OR over zero constraints is false everywhere.
-        let mut violated = Array2::from_elem((n_targets, n_times), false);
-        for sub_result in &children_violated {
-            violated.zip_mut_with(sub_result, |x, &y| *x |= y);
-        }
-
-        Ok(BatchWithCauses { violated, named })
+            |children_violated, n_targets, n_times| {
+                // Preserve identity: OR over zero constraints is false everywhere.
+                let mut violated = Array2::from_elem((n_targets, n_times), false);
+                for sub_result in &children_violated {
+                    violated.zip_mut_with(sub_result, |x, &y| *x |= y);
+                }
+                violated
+            },
+        )
     }
 
     fn name(&self) -> String {
@@ -2003,28 +2026,17 @@ impl ConstraintEvaluator for XorEvaluator {
         time_indices: Option<&[usize]>,
         roll_deg: Option<f64>,
     ) -> PyResult<BatchWithCauses> {
-        if target_ras.len() != target_decs.len() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_ras and target_decs must have the same length",
-            ));
-        }
-        let n_targets = target_ras.len();
-        let n_times = batch_n_times(ephemeris, time_indices)?;
-        let (children_violated, named) = eval_children_with_causes(
+        combinator_batch_with_causes(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
             roll_deg,
-        )?;
-
-        Ok(BatchWithCauses {
-            violated: fold_children_by_count(&children_violated, n_targets, n_times, |count| {
-                count == 1
-            }),
-            named,
-        })
+            |children_violated, n_targets, n_times| {
+                fold_children_by_count(&children_violated, n_targets, n_times, |count| count == 1)
+            },
+        )
     }
 
     fn name(&self) -> String {
@@ -2372,28 +2384,19 @@ impl ConstraintEvaluator for AtLeastEvaluator {
         time_indices: Option<&[usize]>,
         roll_deg: Option<f64>,
     ) -> PyResult<BatchWithCauses> {
-        if target_ras.len() != target_decs.len() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_ras and target_decs must have the same length",
-            ));
-        }
-        let n_targets = target_ras.len();
-        let n_times = batch_n_times(ephemeris, time_indices)?;
-        let (children_violated, named) = eval_children_with_causes(
+        combinator_batch_with_causes(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
             roll_deg,
-        )?;
-
-        Ok(BatchWithCauses {
-            violated: fold_children_by_count(&children_violated, n_targets, n_times, |count| {
-                count >= self.min_violated
-            }),
-            named,
-        })
+            |children_violated, n_targets, n_times| {
+                fold_children_by_count(&children_violated, n_targets, n_times, |count| {
+                    count >= self.min_violated
+                })
+            },
+        )
     }
 
     fn name(&self) -> String {

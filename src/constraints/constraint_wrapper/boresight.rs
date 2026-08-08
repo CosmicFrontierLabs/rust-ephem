@@ -253,6 +253,90 @@ impl BoresightOffsetEvaluator {
         Ok(result)
     }
 
+    /// Rotate targets for a diagonal evaluation (target_i paired with time_i),
+    /// returning the rotated RA/Dec to hand to the wrapped constraint. Shared by
+    /// `in_constraint_batch_diagonal` and `compute_named_booleans_diagonal`, which
+    /// differ only in which child method they then delegate to.
+    ///
+    /// Returns empty vectors for an empty input, so callers can short-circuit
+    /// rather than calling the child with nothing to evaluate.
+    fn rotated_diagonal_radec(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+    ) -> PyResult<(Vec<f64>, Vec<f64>)> {
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+
+        let n = target_ras.len();
+        if n == 0 {
+            return Ok((Vec::new(), Vec::new()));
+        }
+
+        let params = self.rotation_params();
+        let north = matches!(self.roll_reference, RollReference::North);
+
+        // Sun-referenced roll makes the rotation time-dependent, so the per-sample
+        // Sun direction is needed; North-referenced roll is time-independent.
+        let sun_observer = if north {
+            None
+        } else {
+            let sun_positions = ephemeris.get_sun_positions()?;
+            let observer_positions = ephemeris.get_gcrs_positions()?;
+            if sun_positions.nrows() < n || observer_positions.nrows() < n {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Ephemeris does not have enough samples for diagonal boresight evaluation",
+                ));
+            }
+            Some((sun_positions, observer_positions))
+        };
+
+        let mut rotated_ras = Vec::with_capacity(n);
+        let mut rotated_decs = Vec::with_capacity(n);
+        for i in 0..n {
+            let target_unit =
+                crate::utils::vector_math::radec_to_unit_vector(target_ras[i], target_decs[i]);
+            let sun_rel = match &sun_observer {
+                None => [0.0, 0.0, 0.0],
+                Some((sun_positions, observer_positions)) => [
+                    sun_positions[[i, 0]] - observer_positions[[i, 0]],
+                    sun_positions[[i, 1]] - observer_positions[[i, 1]],
+                    sun_positions[[i, 2]] - observer_positions[[i, 2]],
+                ],
+            };
+            let rotated =
+                self.rotated_target_for_time_with_params(&target_unit, &sun_rel, params)?;
+            let (ra, dec) = Self::unit_vector_to_radec(&rotated);
+            rotated_ras.push(ra);
+            rotated_decs.push(dec);
+        }
+
+        Ok((rotated_ras, rotated_decs))
+    }
+
+    /// Split a swept candidate spacecraft roll into the two independent places it
+    /// applies: this node's own boresight rotation (only when its own roll is free)
+    /// and the roll forwarded to a roll-dependent inner constraint, so a coordinated
+    /// sweep stays coordinated through the offset wrapper. Shared by
+    /// `in_constraint_batch_at_roll` and `in_constraint_batch_with_causes`.
+    fn candidate_roll_dispatch(&self, roll_deg: f64) -> (RotationParams, Option<f64>) {
+        let params = if self.own_roll_is_free() {
+            self.rotation_params_at_candidate_roll(roll_deg)
+        } else {
+            self.rotation_params()
+        };
+        let inner_roll = if self.constraint.is_roll_dependent() {
+            Some(roll_deg)
+        } else {
+            None
+        };
+        (params, inner_roll)
+    }
+
     fn cross(a: &[f64; 3], b: &[f64; 3]) -> [f64; 3] {
         [
             a[1] * b[2] - a[2] * b[1],
@@ -494,16 +578,7 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         time_indices: Option<&[usize]>,
         roll_deg: f64,
     ) -> PyResult<Array2<bool>> {
-        let params = if self.own_roll_is_free() {
-            self.rotation_params_at_candidate_roll(roll_deg)
-        } else {
-            self.rotation_params()
-        };
-        let inner_roll = if self.constraint.is_roll_dependent() {
-            Some(roll_deg)
-        } else {
-            None
-        };
+        let (params, inner_roll) = self.candidate_roll_dispatch(roll_deg);
         self.in_constraint_batch_with(
             ephemeris,
             target_ras,
@@ -520,66 +595,10 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
     ) -> PyResult<Vec<bool>> {
-        let params = self.rotation_params();
-
-        if target_ras.len() != target_decs.len() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_ras and target_decs must have the same length",
-            ));
-        }
-
-        let n = target_ras.len();
-        if n == 0 {
+        let (rotated_ras, rotated_decs) =
+            self.rotated_diagonal_radec(ephemeris, target_ras, target_decs)?;
+        if rotated_ras.is_empty() {
             return Ok(Vec::new());
-        }
-
-        if matches!(self.roll_reference, RollReference::North) {
-            let mut rotated_ras = Vec::with_capacity(n);
-            let mut rotated_decs = Vec::with_capacity(n);
-            for i in 0..n {
-                let target_unit =
-                    crate::utils::vector_math::radec_to_unit_vector(target_ras[i], target_decs[i]);
-                let rotated = self.rotated_target_for_time_with_params(
-                    &target_unit,
-                    &[0.0, 0.0, 0.0],
-                    params,
-                )?;
-                let (ra, dec) = Self::unit_vector_to_radec(&rotated);
-                rotated_ras.push(ra);
-                rotated_decs.push(dec);
-            }
-
-            return self.constraint.in_constraint_batch_diagonal(
-                ephemeris,
-                &rotated_ras,
-                &rotated_decs,
-            );
-        }
-
-        let sun_positions = ephemeris.get_sun_positions()?;
-        let observer_positions = ephemeris.get_gcrs_positions()?;
-
-        if sun_positions.nrows() < n || observer_positions.nrows() < n {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "Ephemeris does not have enough samples for diagonal boresight evaluation",
-            ));
-        }
-
-        let mut rotated_ras = Vec::with_capacity(n);
-        let mut rotated_decs = Vec::with_capacity(n);
-        for i in 0..n {
-            let target_unit =
-                crate::utils::vector_math::radec_to_unit_vector(target_ras[i], target_decs[i]);
-            let sun_rel = [
-                sun_positions[[i, 0]] - observer_positions[[i, 0]],
-                sun_positions[[i, 1]] - observer_positions[[i, 1]],
-                sun_positions[[i, 2]] - observer_positions[[i, 2]],
-            ];
-            let rotated =
-                self.rotated_target_for_time_with_params(&target_unit, &sun_rel, params)?;
-            let (ra, dec) = Self::unit_vector_to_radec(&rotated);
-            rotated_ras.push(ra);
-            rotated_decs.push(dec);
         }
 
         self.constraint
@@ -1024,18 +1043,7 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         }
 
         let (params, inner_roll) = match roll_deg {
-            Some(roll) => (
-                if self.own_roll_is_free() {
-                    self.rotation_params_at_candidate_roll(roll)
-                } else {
-                    self.rotation_params()
-                },
-                if self.constraint.is_roll_dependent() {
-                    Some(roll)
-                } else {
-                    None
-                },
-            ),
+            Some(roll) => self.candidate_roll_dispatch(roll),
             None => (self.rotation_params(), None),
         };
 
@@ -1135,66 +1143,10 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
     ) -> PyResult<HashMap<String, Vec<bool>>> {
-        let params = self.rotation_params();
-
-        if target_ras.len() != target_decs.len() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_ras and target_decs must have the same length",
-            ));
-        }
-
-        let n = target_ras.len();
-        if n == 0 {
+        let (rotated_ras, rotated_decs) =
+            self.rotated_diagonal_radec(ephemeris, target_ras, target_decs)?;
+        if rotated_ras.is_empty() {
             return Ok(HashMap::new());
-        }
-
-        if matches!(self.roll_reference, RollReference::North) {
-            let mut rotated_ras = Vec::with_capacity(n);
-            let mut rotated_decs = Vec::with_capacity(n);
-            for i in 0..n {
-                let target_unit =
-                    crate::utils::vector_math::radec_to_unit_vector(target_ras[i], target_decs[i]);
-                let rotated = self.rotated_target_for_time_with_params(
-                    &target_unit,
-                    &[0.0, 0.0, 0.0],
-                    params,
-                )?;
-                let (ra, dec) = Self::unit_vector_to_radec(&rotated);
-                rotated_ras.push(ra);
-                rotated_decs.push(dec);
-            }
-
-            return self.constraint.compute_named_booleans_diagonal(
-                ephemeris,
-                &rotated_ras,
-                &rotated_decs,
-            );
-        }
-
-        let sun_positions = ephemeris.get_sun_positions()?;
-        let observer_positions = ephemeris.get_gcrs_positions()?;
-
-        if sun_positions.nrows() < n || observer_positions.nrows() < n {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "Ephemeris does not have enough samples for diagonal boresight evaluation",
-            ));
-        }
-
-        let mut rotated_ras = Vec::with_capacity(n);
-        let mut rotated_decs = Vec::with_capacity(n);
-        for i in 0..n {
-            let target_unit =
-                crate::utils::vector_math::radec_to_unit_vector(target_ras[i], target_decs[i]);
-            let sun_rel = [
-                sun_positions[[i, 0]] - observer_positions[[i, 0]],
-                sun_positions[[i, 1]] - observer_positions[[i, 1]],
-                sun_positions[[i, 2]] - observer_positions[[i, 2]],
-            ];
-            let rotated =
-                self.rotated_target_for_time_with_params(&target_unit, &sun_rel, params)?;
-            let (ra, dec) = Self::unit_vector_to_radec(&rotated);
-            rotated_ras.push(ra);
-            rotated_decs.push(dec);
         }
 
         self.constraint

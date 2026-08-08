@@ -142,34 +142,33 @@ impl PyConstraint {
         Ok(())
     }
 
-    /// Slice out a single target's row from each named-value matrix returned by
-    /// `compute_named_values` (shape M x N, targets x times).
-    pub(super) fn extract_target_values(
-        values_map: &HashMap<String, ndarray::Array2<f64>>,
+    /// Slice out a single target's row from each named matrix keyed by name (shape
+    /// M x N, targets x times) — the per-target values from `compute_named_values`
+    /// and the per-leaf cause masks from the sweep are both shaped this way.
+    pub(super) fn extract_target_row<T: Copy>(
+        matrices: &HashMap<String, ndarray::Array2<T>>,
         target_index: usize,
-    ) -> HashMap<String, Vec<f64>> {
-        values_map
+    ) -> HashMap<String, Vec<T>> {
+        matrices
             .iter()
             .map(|(key, arr)| {
-                let row: Vec<f64> = (0..arr.ncols()).map(|i| arr[[target_index, i]]).collect();
+                let row: Vec<T> = (0..arr.ncols()).map(|i| arr[[target_index, i]]).collect();
                 (key.clone(), row)
             })
             .collect()
     }
 
-    /// Slice out a single target's row from each named-boolean matrix produced by the
-    /// cause attribution (shape M x N, targets x times).
-    pub(super) fn extract_target_booleans(
-        booleans_map: &HashMap<String, ndarray::Array2<bool>>,
-        target_index: usize,
-    ) -> HashMap<String, Vec<bool>> {
-        booleans_map
-            .iter()
-            .map(|(key, arr)| {
-                let row: Vec<bool> = (0..arr.ncols()).map(|i| arr[[target_index, i]]).collect();
-                (key.clone(), row)
-            })
-            .collect()
+    /// Cause tag → `constraint_values` key(s) for this evaluator's tree.
+    ///
+    /// Only key *names* are wanted, and those depend on the evaluator's structure
+    /// rather than on the target position or time, so this probes a single dummy
+    /// target/time instead of paying for a full recompute just to introspect key
+    /// structure.
+    pub(super) fn cause_value_keys_for(
+        evaluator: &dyn ConstraintEvaluator,
+        ephemeris: &dyn EphemerisBase,
+    ) -> PyResult<HashMap<String, Vec<String>>> {
+        evaluator.compute_cause_value_keys(ephemeris, &[0.0], &[0.0], Some(&[0]))
     }
 
     pub(super) fn with_effective_evaluator<T, F>(
@@ -326,18 +325,13 @@ impl PyConstraint {
             &[target_dec],
             time_indices.as_deref(),
         )?;
-        let values = Self::extract_target_values(&values_map, 0);
+        let values = Self::extract_target_row(&values_map, 0);
 
         // Per-leaf violation masks used to attribute
         // VisibilityWindow.start_cause/end_cause, from the same sweep that produced
         // `violation_array` above.
-        let component_violated = Self::extract_target_booleans(&swept.named, 0);
-
-        // Map cause tags to their constraint_values key(s). Only key *names* matter
-        // here (not the actual data), so this evaluates at a single dummy target/time
-        // rather than paying for a full recompute just to introspect key structure.
-        let cause_value_keys =
-            evaluator.compute_cause_value_keys(ephemeris, &[0.0], &[0.0], Some(&[0]))?;
+        let component_violated = Self::extract_target_row(&swept.named, 0);
+        let cause_value_keys = Self::cause_value_keys_for(evaluator, ephemeris)?;
 
         Ok(
             ConstraintResult::new(violations, all_satisfied, evaluator.name(), times)
@@ -383,14 +377,9 @@ impl PyConstraint {
             time_indices.as_deref(),
         )?;
 
-        let booleans_map = swept.named;
-
-        // Map cause tags to their constraint_values key(s), shared across all targets
-        // (the mapping only depends on the evaluator's structure, not the target
-        // positions). Only key *names* matter, so this uses a dummy target/time
-        // rather than paying for a full recompute just to introspect key structure.
-        let cause_value_keys =
-            evaluator.compute_cause_value_keys(ephemeris, &[0.0], &[0.0], Some(&[0]))?;
+        // Shared across all targets: the mapping depends only on the evaluator's
+        // structure, not on the target positions.
+        let cause_value_keys = Self::cause_value_keys_for(evaluator, ephemeris)?;
 
         let mut results = Vec::with_capacity(target_ras.len());
         for target_index in 0..target_ras.len() {
@@ -405,8 +394,8 @@ impl PyConstraint {
             );
 
             let all_satisfied = violations.is_empty();
-            let values = Self::extract_target_values(&values_map, target_index);
-            let component_violated = Self::extract_target_booleans(&booleans_map, target_index);
+            let values = Self::extract_target_row(&values_map, target_index);
+            let component_violated = Self::extract_target_row(&swept.named, target_index);
             results.push(
                 ConstraintResult::new(violations, all_satisfied, evaluator.name(), times.clone())
                     .with_constraint_values(values)

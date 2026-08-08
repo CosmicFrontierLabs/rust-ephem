@@ -2181,13 +2181,8 @@ impl PyConstraint {
                 .compute_named_booleans_diagonal(ephem_ref, &ras, &decs)
         })?;
 
-        // Map cause tags to their constraint_values key(s). Only key *names* matter
-        // here, so this uses a dummy target/time (via the non-diagonal method, at a
-        // single point) rather than paying for a full recompute just to introspect
-        // key structure.
         let cause_value_keys = self.with_ephemeris(bound, |ephem_ref| {
-            self.evaluator
-                .compute_cause_value_keys(ephem_ref, &[0.0], &[0.0], Some(&[0]))
+            Self::cause_value_keys_for(self.evaluator.as_ref(), ephem_ref)
         })?;
 
         Ok(MovingBodyResult::new(
