@@ -790,65 +790,59 @@ pub trait ConstraintEvaluator: Send + Sync {
             .collect())
     }
 
-    /// Compute a per-leaf-constraint violation mask (namespaced under a short tag, e.g.
-    /// `sun`), used to attribute `VisibilityWindow.start_cause`/`end_cause` when this
-    /// constraint is combined with others via `&`, `|`, `~`, `^`, `.at_least()`. Called
-    /// once per `evaluate()`/`evaluate_batch()` call, never inside a roll-sweep loop.
+    /// Compute the combined violation mask *and* a per-leaf-constraint violation mask
+    /// (namespaced under a short tag, e.g. `sun`) in a single traversal of the tree.
     ///
-    /// Default (leaf constraints): a single-entry map from this constraint's own tag to
-    /// its own `in_constraint_batch` result. Combinators override this to merge their
-    /// children's maps instead (see `combinators.rs`).
+    /// The per-leaf masks attribute `VisibilityWindow.start_cause`/`end_cause` when this
+    /// constraint is combined with others via `&`, `|`, `~`, `^`, `.at_least()`. They are
+    /// needed *alongside* the combined result at every swept roll, so returning both from
+    /// one traversal is what keeps the expensive constraint geometry from being computed
+    /// twice per roll sample — see `sweep_rolls_with_attribution`, the only caller.
+    ///
+    /// `roll_deg` selects the fixed-roll semantics: `None` matches `in_constraint_batch`,
+    /// `Some(θ)` matches `in_constraint_batch_at_roll` at θ. The returned `violated` is
+    /// required to equal whichever of those two the argument selects; cause tags must stay
+    /// in lockstep with `compute_cause_value_keys` — a caller maps a cause tag to its
+    /// `constraint_values` key(s) through that.
+    ///
+    /// Default (leaf constraints): evaluate once and report that single mask as both the
+    /// combined result and this leaf's own cause mask. Combinators override this to fuse
+    /// their children's traversals, and `BoresightOffsetEvaluator` to rotate targets once
+    /// rather than once per output.
     ///
     /// # Returns
-    /// Map from tag to an (M x N) boolean array (targets x times), matching the shape of
-    /// `in_constraint_batch`.
-    fn compute_named_booleans(
+    /// The combined (M x N) mask plus a map from tag to an (M x N) boolean array
+    /// (targets x times), both matching the shape of `in_constraint_batch`.
+    fn in_constraint_batch_with_causes(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-    ) -> PyResult<HashMap<String, Array2<bool>>> {
-        let arr = self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices)?;
-        Ok(HashMap::from([(value_key_prefix(&self.name()), arr)]))
+        roll_deg: Option<f64>,
+    ) -> PyResult<BatchWithCauses> {
+        let violated = match roll_deg {
+            Some(roll) => self.in_constraint_batch_at_roll(
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices,
+                roll,
+            )?,
+            None => self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices)?,
+        };
+        Ok(BatchWithCauses {
+            named: HashMap::from([(value_key_prefix(&self.name()), violated.clone())]),
+            violated,
+        })
     }
 
-    /// Per-leaf violation masks at one fixed candidate spacecraft roll, with exactly
-    /// the same tag identity and collision renaming as `compute_named_booleans`.
-    ///
-    /// This is the per-step primitive of the coordinated free-roll cause attribution
-    /// in `sweep_rolls_with_attribution`: that sweep needs, at each roll angle, both
-    /// the combined outcome (`in_constraint_batch_at_roll`) and every leaf's own
-    /// state *at that same angle*, so it can record which leaves were violated at
-    /// the roll it eventually selects as the witness. Tags must stay in lockstep
-    /// with `compute_named_booleans` / `compute_cause_value_keys` — a caller maps a
-    /// cause tag to its `constraint_values` key(s) through the latter.
-    ///
-    /// Default (leaf constraints): a single-entry map from this constraint's own tag
-    /// to its own `in_constraint_batch_at_roll` result, mirroring
-    /// `compute_named_booleans`' default.
-    fn compute_named_booleans_at_roll(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-        time_indices: Option<&[usize]>,
-        roll_deg: f64,
-    ) -> PyResult<HashMap<String, Array2<bool>>> {
-        let arr = self.in_constraint_batch_at_roll(
-            ephemeris,
-            target_ras,
-            target_decs,
-            time_indices,
-            roll_deg,
-        )?;
-        Ok(HashMap::from([(value_key_prefix(&self.name()), arr)]))
-    }
-
-    /// Diagonal variant of `compute_named_booleans` for moving-body evaluation: target_i
-    /// paired with time_i only. Default (leaf constraints): a single-entry map from this
+    /// Diagonal variant of the cause masks from `in_constraint_batch_with_causes`, for
+    /// moving-body evaluation: target_i paired with time_i only. There is no combined
+    /// mask to fuse with here — the diagonal path has no roll sweep, so nothing asks for
+    /// both outputs at once. Default (leaf constraints): a single-entry map from this
     /// constraint's own tag to its own `in_constraint_batch_diagonal` result, mirroring
-    /// `compute_named_booleans`'s default — this reuses whatever O(N) diagonal
+    /// that method's default — this reuses whatever O(N) diagonal
     /// implementation the leaf already has (e.g. SAA) instead of building the full M×N
     /// matrix and slicing it, which would silently regress to O(N²). Combinators override
     /// this to merge their children's diagonal maps instead (see `combinators.rs`).
@@ -862,21 +856,22 @@ pub trait ConstraintEvaluator: Send + Sync {
         Ok(HashMap::from([(value_key_prefix(&self.name()), arr)]))
     }
 
-    /// Map this constraint's own `compute_named_booleans` cause tag(s) to the
+    /// Map this constraint's own `in_constraint_batch_with_causes` cause tag(s) to the
     /// `compute_named_values` key(s) they correspond to, so a caller can look up
     /// "which `constraint_values` key(s) does this cause tag describe" without
     /// guessing from string prefixes — the two namespaces use different prefixing
     /// conventions (cause tags are flat and stable regardless of nesting depth;
     /// value keys are hierarchical and encode the full nesting path) and are not
-    /// generally derivable from one another by string matching. Called once per
-    /// `evaluate()`/`evaluate_batch()` call, alongside `compute_named_values`/
-    /// `compute_named_booleans`, never inside a roll-sweep loop.
+    /// generally derivable from one another by string matching. Only key *names* matter,
+    /// and those don't depend on roll, so this is called once per `evaluate()`/
+    /// `evaluate_batch()` call alongside `compute_named_values` — never inside a
+    /// roll-sweep loop.
     ///
     /// Default (leaf constraints): a single-entry map from this constraint's own
     /// cause tag to the key name(s) `compute_named_values` returns (empty if this
     /// constraint exposes no named values, e.g. SAA). Combinators override this to
-    /// merge their children's maps in lockstep with `compute_named_booleans`' cause-
-    /// tag renaming and `compute_named_values`' per-child key prefixing (see
+    /// merge their children's maps in lockstep with `in_constraint_batch_with_causes`'
+    /// cause-tag renaming and `compute_named_values`' per-child key prefixing (see
     /// `combinators.rs`).
     ///
     /// # Returns
@@ -1145,6 +1140,18 @@ pub trait ConstraintEvaluator: Send + Sync {
     fn as_any(&self) -> &dyn std::any::Any;
 }
 
+/// Combined violation mask plus per-leaf cause masks, produced by a single traversal
+/// of the constraint tree — see `ConstraintEvaluator::in_constraint_batch_with_causes`.
+pub struct BatchWithCauses {
+    /// (M x N) targets x times, `true` where the whole tree is violated. Identical
+    /// semantics to `in_constraint_batch` (or `in_constraint_batch_at_roll`, when the
+    /// traversal was given a candidate roll).
+    pub violated: Array2<bool>,
+    /// Per-leaf violation masks, keyed by cause tag, taken at the same evaluation as
+    /// `violated`.
+    pub named: HashMap<String, Array2<bool>>,
+}
+
 /// Combined result and per-leaf cause attribution from one free-roll sweep.
 pub struct RollSweepAttribution {
     /// (M x N) targets x times, `true` where the constraint is violated at *every*
@@ -1153,7 +1160,7 @@ pub struct RollSweepAttribution {
     pub violated: Array2<bool>,
     /// Per-leaf violation masks taken at each cell's witness roll (see
     /// `sweep_rolls_with_attribution`), keyed by the same cause tags as
-    /// `ConstraintEvaluator::compute_named_booleans`.
+    /// `ConstraintEvaluator::in_constraint_batch_with_causes`.
     pub named: HashMap<String, Array2<bool>>,
 }
 
@@ -1180,7 +1187,10 @@ pub struct RollSweepAttribution {
 ///
 /// Both outputs come from the same pass: `violated` is the AND of the per-roll
 /// combined masks, exactly as `in_constraint_batch_constrained_at_every_roll`
-/// computes it, so callers needing both do not sweep twice.
+/// computes it, so callers needing both do not sweep twice. Within a single roll
+/// step they also come from the same *traversal* — `in_constraint_batch_with_causes`
+/// returns the combined mask and the leaf masks together, so a leaf's geometry is
+/// computed once per roll rather than once for each of the two outputs.
 ///
 /// For a roll-independent tree this degenerates to a single non-swept evaluation.
 pub fn sweep_rolls_with_attribution(
@@ -1192,19 +1202,16 @@ pub fn sweep_rolls_with_attribution(
     n_roll_samples: usize,
 ) -> PyResult<RollSweepAttribution> {
     if !evaluator.is_roll_dependent() {
+        let evaluated = evaluator.in_constraint_batch_with_causes(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            None,
+        )?;
         return Ok(RollSweepAttribution {
-            violated: evaluator.in_constraint_batch(
-                ephemeris,
-                target_ras,
-                target_decs,
-                time_indices,
-            )?,
-            named: evaluator.compute_named_booleans(
-                ephemeris,
-                target_ras,
-                target_decs,
-                time_indices,
-            )?,
+            violated: evaluated.violated,
+            named: evaluated.named,
         });
     }
 
@@ -1223,19 +1230,17 @@ pub fn sweep_rolls_with_attribution(
         }
 
         let roll_deg = step as f64 * roll_step;
-        let combined_step = evaluator.in_constraint_batch_at_roll(
+        // One traversal per roll yields both the combined mask and the leaf masks at
+        // that same roll; evaluating them separately would recompute every leaf twice.
+        let BatchWithCauses {
+            violated: combined_step,
+            named: named_step,
+        } = evaluator.in_constraint_batch_with_causes(
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
-            roll_deg,
-        )?;
-        let named_step = evaluator.compute_named_booleans_at_roll(
-            ephemeris,
-            target_ras,
-            target_decs,
-            time_indices,
-            roll_deg,
+            Some(roll_deg),
         )?;
 
         let (n_targets, n_times) = combined_step.dim();

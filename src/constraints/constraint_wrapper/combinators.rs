@@ -1,6 +1,7 @@
 // Logical combinator evaluators
 use crate::constraints::core::{
-    track_violations, value_key_prefix, ConstraintEvaluator, ConstraintResult, ConstraintViolation,
+    track_violations, value_key_prefix, BatchWithCauses, ConstraintEvaluator, ConstraintResult,
+    ConstraintViolation,
 };
 use crate::utils::vector_math::unit_vectors_to_radec_batch;
 use ndarray::Array2;
@@ -74,32 +75,91 @@ fn sorted_entries<V>(map: HashMap<String, V>) -> Vec<(String, V)> {
     entries
 }
 
-/// Merge per-leaf violation masks from a set of child evaluators, flattening each
-/// child's own tag(s) (already namespaced by `compute_named_booleans` — e.g. `sun`
-/// for a leaf, or `moon`/`sun_2` for an already-merged nested combinator) into one
-/// map. On tag collision between sibling children, the 2nd+ occurrence gets a
-/// numeric suffix (`sun_2`, `sun_3`, ...); see `insert_no_collision`.
-fn merge_children_named_booleans(
+/// What `eval_children_with_causes` hands back: each child's own combined violation
+/// mask in child list order, plus the merged per-leaf cause masks for the whole subtree.
+type ChildrenWithCauses = (Vec<Array2<bool>>, HashMap<String, Array2<bool>>);
+
+/// Evaluate every child once via `in_constraint_batch_with_causes`, returning each
+/// child's own combined mask (in child list order, for the parent's operator to fold)
+/// alongside the merged per-leaf violation masks.
+///
+/// The merge flattens each child's own tag(s) — e.g. `sun` for a leaf, or `moon`/`sun_2`
+/// for an already-merged nested combinator — into one map. On tag collision between
+/// sibling children, the 2nd+ occurrence gets a numeric suffix (`sun_2`, `sun_3`, ...);
+/// see `insert_no_collision`. Children are visited in list order and each child's own
+/// map drained in key-sorted order, so the tags produced here match
+/// `merge_children_cause_value_keys` exactly and `ConstraintResult.cause_value_keys`
+/// stays valid for them.
+///
+/// `roll_deg` is forwarded unchanged: `Some(θ)` evaluates *every* child at that same
+/// candidate roll, so the merged map describes one single, physically realisable
+/// spacecraft orientation rather than a per-child mixture of different ones. That
+/// shared roll is the whole point of the free-roll attribution — a sweep asks whether
+/// *some* orientation clears the tree, and two children can each have some clear roll
+/// without ever sharing the same one, so per-child "is this child violated at every
+/// roll" answers cannot be recombined into the combined result for OR, XOR or AT_LEAST.
+/// `sweep_rolls_with_attribution` therefore drives this once per roll step and keeps the
+/// leaf masks from the roll it selects as that cell's witness.
+fn eval_children_with_causes(
     children: &[Box<dyn ConstraintEvaluator>],
     ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
     target_ras: &[f64],
     target_decs: &[f64],
     time_indices: Option<&[usize]>,
-) -> PyResult<HashMap<String, Array2<bool>>> {
+    roll_deg: Option<f64>,
+) -> PyResult<ChildrenWithCauses> {
+    let mut combined = Vec::with_capacity(children.len());
     let mut merged = HashMap::new();
 
     for child in children {
-        let child_booleans =
-            child.compute_named_booleans(ephemeris, target_ras, target_decs, time_indices)?;
-        for (key, arr) in sorted_entries(child_booleans) {
+        let child_eval = child.in_constraint_batch_with_causes(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            roll_deg,
+        )?;
+        combined.push(child_eval.violated);
+        for (key, arr) in sorted_entries(child_eval.named) {
             insert_no_collision(&mut merged, key, arr);
         }
     }
 
-    Ok(merged)
+    Ok((combined, merged))
 }
 
-/// Diagonal variant of `merge_children_named_booleans` for moving-body evaluation,
+/// Number of time columns a batch evaluation will produce, matching how every
+/// `in_constraint_batch*` implementation sizes its output.
+fn batch_n_times(
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    time_indices: Option<&[usize]>,
+) -> PyResult<usize> {
+    match time_indices {
+        Some(idx) => Ok(idx.len()),
+        None => Ok(ephemeris.get_times()?.len()),
+    }
+}
+
+/// Fold children's combined masks with a per-cell count predicate: XOR accepts a count
+/// of exactly one, AT_LEAST a count of at least `k`. An empty child list yields
+/// `accept(0)` everywhere, preserving each combinator's own vacuous case.
+fn fold_children_by_count(
+    children_violated: &[Array2<bool>],
+    n_targets: usize,
+    n_times: usize,
+    accept: impl Fn(usize) -> bool,
+) -> Array2<bool> {
+    let mut result = Array2::from_elem((n_targets, n_times), false);
+    for i in 0..n_targets {
+        for j in 0..n_times {
+            let count = children_violated.iter().filter(|r| r[[i, j]]).count();
+            result[[i, j]] = accept(count);
+        }
+    }
+    result
+}
+
+/// Diagonal variant of `eval_children_with_causes`' merge for moving-body evaluation,
 /// merging each child's `compute_named_booleans_diagonal` (target_i paired with
 /// time_i) instead of the full M×N batch.
 fn merge_children_named_booleans_diagonal(
@@ -121,56 +181,17 @@ fn merge_children_named_booleans_diagonal(
     Ok(merged)
 }
 
-/// Fixed-roll variant of `merge_children_named_booleans`: every child is evaluated
-/// at the *same* candidate roll, so the merged map describes one single, physically
-/// realisable spacecraft orientation rather than a per-child mixture of different
-/// ones.
-///
-/// That shared roll is the whole point. A free-roll sweep asks whether *some*
-/// orientation clears the tree, and two children can each have some clear roll
-/// without ever sharing the same one — so per-child "is this child violated at
-/// every roll" answers cannot be recombined into the combined result for OR, XOR
-/// or AT_LEAST. `sweep_rolls_with_attribution` therefore drives this function once
-/// per roll step alongside `in_constraint_batch_at_roll`, and keeps the leaf masks
-/// from the roll it selects as that cell's witness.
-///
-/// Children are processed in their original list order so tag-collision numbering
-/// matches `merge_children_named_booleans` and `merge_children_cause_value_keys`
-/// exactly — `ConstraintResult.cause_value_keys` (built from the non-swept path,
-/// since key *names* don't depend on roll) stays valid for the tags this produces.
-fn merge_children_named_booleans_at_roll(
-    children: &[Box<dyn ConstraintEvaluator>],
-    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-    target_ras: &[f64],
-    target_decs: &[f64],
-    time_indices: Option<&[usize]>,
-    roll_deg: f64,
-) -> PyResult<HashMap<String, Array2<bool>>> {
-    let mut merged = HashMap::new();
-
-    for child in children {
-        let child_booleans = child.compute_named_booleans_at_roll(
-            ephemeris,
-            target_ras,
-            target_decs,
-            time_indices,
-            roll_deg,
-        )?;
-        for (key, arr) in sorted_entries(child_booleans) {
-            insert_no_collision(&mut merged, key, arr);
-        }
-    }
-
-    Ok(merged)
-}
-
 /// Merge per-leaf cause-tag → `constraint_values`-key mapping from a set of child
-/// evaluators, mirroring `merge_children_named_booleans`' cause-tag identity/
+/// evaluators, mirroring `eval_children_with_causes`' cause-tag identity/
 /// collision-renaming and `merge_children_named_values`' per-child value-key
 /// prefixing *in lockstep*, so a caller can look up which `constraint_values`
 /// key(s) a given cause tag corresponds to without guessing from string prefixes
 /// (which don't match — cause tags are flat/nesting-stable, value keys are
 /// hierarchical/path-based; see `ConstraintResult.cause_value_keys`).
+///
+/// The cause-tag side mirrors `eval_children_with_causes`; note that key *names* don't
+/// depend on roll, so this non-swept mapping stays valid for the tags a swept
+/// attribution produces.
 fn merge_children_cause_value_keys(
     children: &[Box<dyn ConstraintEvaluator>],
     ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -212,7 +233,7 @@ fn merge_children_cause_value_keys(
                     .collect(),
                 None => value_key_names,
             };
-            // Mirrors merge_children_named_booleans' cause-tag collision renaming.
+            // Mirrors eval_children_with_causes' cause-tag collision renaming.
             insert_no_collision(&mut merged, cause_tag, prefixed_value_keys);
         }
     }
@@ -718,22 +739,6 @@ impl ConstraintEvaluator for AndEvaluator {
         )
     }
 
-    fn compute_named_booleans(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-        time_indices: Option<&[usize]>,
-    ) -> PyResult<HashMap<String, Array2<bool>>> {
-        merge_children_named_booleans(
-            &self.constraints,
-            ephemeris,
-            target_ras,
-            target_decs,
-            time_indices,
-        )
-    }
-
     fn compute_named_booleans_diagonal(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -764,22 +769,47 @@ impl ConstraintEvaluator for AndEvaluator {
         )
     }
 
-    fn compute_named_booleans_at_roll(
+    /// One traversal produces both this AND's combined mask and its subtree's leaf
+    /// masks: each child is evaluated exactly once and its own combined result is
+    /// AND-folded here, rather than the whole subtree being walked once for the
+    /// combined answer and again for attribution.
+    fn in_constraint_batch_with_causes(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
-    ) -> PyResult<HashMap<String, Array2<bool>>> {
-        merge_children_named_booleans_at_roll(
+        roll_deg: Option<f64>,
+    ) -> PyResult<BatchWithCauses> {
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+        let n_targets = target_ras.len();
+        let n_times = batch_n_times(ephemeris, time_indices)?;
+        let (children_violated, named) = eval_children_with_causes(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
             roll_deg,
-        )
+        )?;
+
+        // Preserve vacuous truth: AND over zero constraints is true everywhere.
+        let mut children_violated = children_violated.into_iter();
+        let violated = match children_violated.next() {
+            None => Array2::from_elem((n_targets, n_times), true),
+            Some(mut acc) => {
+                for sub_result in children_violated {
+                    acc.zip_mut_with(&sub_result, |x, &y| *x &= y);
+                }
+                acc
+            }
+        };
+
+        Ok(BatchWithCauses { violated, named })
     }
 
     fn name(&self) -> String {
@@ -1267,22 +1297,6 @@ impl ConstraintEvaluator for OrEvaluator {
         )
     }
 
-    fn compute_named_booleans(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-        time_indices: Option<&[usize]>,
-    ) -> PyResult<HashMap<String, Array2<bool>>> {
-        merge_children_named_booleans(
-            &self.constraints,
-            ephemeris,
-            target_ras,
-            target_decs,
-            time_indices,
-        )
-    }
-
     fn compute_named_booleans_diagonal(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -1313,22 +1327,39 @@ impl ConstraintEvaluator for OrEvaluator {
         )
     }
 
-    fn compute_named_booleans_at_roll(
+    /// See `AndEvaluator::in_constraint_batch_with_causes` — same single-traversal
+    /// fusion, OR-folded.
+    fn in_constraint_batch_with_causes(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
-    ) -> PyResult<HashMap<String, Array2<bool>>> {
-        merge_children_named_booleans_at_roll(
+        roll_deg: Option<f64>,
+    ) -> PyResult<BatchWithCauses> {
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+        let n_targets = target_ras.len();
+        let n_times = batch_n_times(ephemeris, time_indices)?;
+        let (children_violated, named) = eval_children_with_causes(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
             roll_deg,
-        )
+        )?;
+
+        // Preserve identity: OR over zero constraints is false everywhere.
+        let mut violated = Array2::from_elem((n_targets, n_times), false);
+        for sub_result in &children_violated {
+            violated.zip_mut_with(sub_result, |x, &y| *x |= y);
+        }
+
+        Ok(BatchWithCauses { violated, named })
     }
 
     fn name(&self) -> String {
@@ -1565,38 +1596,14 @@ impl ConstraintEvaluator for NotEvaluator {
             .compute_named_values(ephemeris, target_ras, target_decs, time_indices)
     }
 
-    fn compute_named_booleans(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-        time_indices: Option<&[usize]>,
-    ) -> PyResult<HashMap<String, Array2<bool>>> {
-        // Values are uninverted (the child's own violation mask, unchanged: cause
-        // attribution reports whether the underlying leaf condition, e.g. "too close
-        // to sun", itself changed, not the NOT-negated combined value), but keys are
-        // prefixed with "not." so a wrapped leaf's cause tag is never mistaken for its
-        // non-negated counterpart - matching how `merge_children_named_values` already
-        // tags a NOT child when nested under AND/OR/XOR/AT_LEAST.
-        let child_booleans = self.constraint.compute_named_booleans(
-            ephemeris,
-            target_ras,
-            target_decs,
-            time_indices,
-        )?;
-        Ok(child_booleans
-            .into_iter()
-            .map(|(key, arr)| (format!("not.{key}"), arr))
-            .collect())
-    }
-
     fn compute_named_booleans_diagonal(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
     ) -> PyResult<HashMap<String, Vec<bool>>> {
-        // See `compute_named_booleans`: values are uninverted, keys prefixed with "not.".
+        // See `in_constraint_batch_with_causes`: values are uninverted, keys prefixed
+        // with "not.".
         let child_booleans =
             self.constraint
                 .compute_named_booleans_diagonal(ephemeris, target_ras, target_decs)?;
@@ -1613,8 +1620,8 @@ impl ConstraintEvaluator for NotEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<HashMap<String, Vec<String>>> {
-        // Cause tags get "not." (matching compute_named_booleans); value keys pass
-        // through unprefixed (matching compute_named_values' passthrough — "single
+        // Cause tags get "not." (matching in_constraint_batch_with_causes); value keys
+        // pass through unprefixed (matching compute_named_values' passthrough — "single
         // child, no collision risk").
         let child_map = self.constraint.compute_cause_value_keys(
             ephemeris,
@@ -1628,26 +1635,38 @@ impl ConstraintEvaluator for NotEvaluator {
             .collect())
     }
 
-    fn compute_named_booleans_at_roll(
+    /// One traversal of the wrapped subtree yields both the negated combined mask and
+    /// its leaf masks.
+    ///
+    /// The leaf masks are left *uninverted* — cause attribution reports whether the
+    /// underlying leaf condition (e.g. "too close to sun") itself changed, not the
+    /// NOT-negated combined value — but their keys are prefixed with "not." so a
+    /// wrapped leaf's cause tag is never mistaken for its non-negated counterpart,
+    /// matching how `merge_children_named_values` already tags a NOT child when nested
+    /// under AND/OR/XOR/AT_LEAST.
+    fn in_constraint_batch_with_causes(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
-    ) -> PyResult<HashMap<String, Array2<bool>>> {
-        // See `compute_named_booleans`: values are uninverted, keys prefixed with "not.".
-        let child_booleans = self.constraint.compute_named_booleans_at_roll(
+        roll_deg: Option<f64>,
+    ) -> PyResult<BatchWithCauses> {
+        let inner = self.constraint.in_constraint_batch_with_causes(
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
             roll_deg,
         )?;
-        Ok(child_booleans
-            .into_iter()
-            .map(|(key, arr)| (format!("not.{key}"), arr))
-            .collect())
+        Ok(BatchWithCauses {
+            violated: inner.violated.mapv(|v| !v),
+            named: inner
+                .named
+                .into_iter()
+                .map(|(key, arr)| (format!("not.{key}"), arr))
+                .collect(),
+        })
     }
 
     fn name(&self) -> String {
@@ -1944,22 +1963,6 @@ impl ConstraintEvaluator for XorEvaluator {
         )
     }
 
-    fn compute_named_booleans(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-        time_indices: Option<&[usize]>,
-    ) -> PyResult<HashMap<String, Array2<bool>>> {
-        merge_children_named_booleans(
-            &self.constraints,
-            ephemeris,
-            target_ras,
-            target_decs,
-            time_indices,
-        )
-    }
-
     fn compute_named_booleans_diagonal(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -1990,22 +1993,38 @@ impl ConstraintEvaluator for XorEvaluator {
         )
     }
 
-    fn compute_named_booleans_at_roll(
+    /// See `AndEvaluator::in_constraint_batch_with_causes` — same single-traversal
+    /// fusion, folded by "exactly one child violated".
+    fn in_constraint_batch_with_causes(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
-    ) -> PyResult<HashMap<String, Array2<bool>>> {
-        merge_children_named_booleans_at_roll(
+        roll_deg: Option<f64>,
+    ) -> PyResult<BatchWithCauses> {
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+        let n_targets = target_ras.len();
+        let n_times = batch_n_times(ephemeris, time_indices)?;
+        let (children_violated, named) = eval_children_with_causes(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
             roll_deg,
-        )
+        )?;
+
+        Ok(BatchWithCauses {
+            violated: fold_children_by_count(&children_violated, n_targets, n_times, |count| {
+                count == 1
+            }),
+            named,
+        })
     }
 
     fn name(&self) -> String {
@@ -2313,22 +2332,6 @@ impl ConstraintEvaluator for AtLeastEvaluator {
         )
     }
 
-    fn compute_named_booleans(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-        time_indices: Option<&[usize]>,
-    ) -> PyResult<HashMap<String, Array2<bool>>> {
-        merge_children_named_booleans(
-            &self.constraints,
-            ephemeris,
-            target_ras,
-            target_decs,
-            time_indices,
-        )
-    }
-
     fn compute_named_booleans_diagonal(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -2359,22 +2362,38 @@ impl ConstraintEvaluator for AtLeastEvaluator {
         )
     }
 
-    fn compute_named_booleans_at_roll(
+    /// See `AndEvaluator::in_constraint_batch_with_causes` — same single-traversal
+    /// fusion, folded by "at least `min_violated` children violated".
+    fn in_constraint_batch_with_causes(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
-    ) -> PyResult<HashMap<String, Array2<bool>>> {
-        merge_children_named_booleans_at_roll(
+        roll_deg: Option<f64>,
+    ) -> PyResult<BatchWithCauses> {
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+        let n_targets = target_ras.len();
+        let n_times = batch_n_times(ephemeris, time_indices)?;
+        let (children_violated, named) = eval_children_with_causes(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
             roll_deg,
-        )
+        )?;
+
+        Ok(BatchWithCauses {
+            violated: fold_children_by_count(&children_violated, n_targets, n_times, |count| {
+                count >= self.min_violated
+            }),
+            named,
+        })
     }
 
     fn name(&self) -> String {

@@ -157,8 +157,8 @@ impl PyConstraint {
             .collect()
     }
 
-    /// Slice out a single target's row from each named-boolean matrix returned by
-    /// `compute_named_booleans` (shape M x N, targets x times).
+    /// Slice out a single target's row from each named-boolean matrix produced by the
+    /// cause attribution (shape M x N, targets x times).
     pub(super) fn extract_target_booleans(
         booleans_map: &HashMap<String, ndarray::Array2<bool>>,
         target_index: usize,
