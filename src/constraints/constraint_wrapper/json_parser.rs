@@ -154,6 +154,14 @@ enum ConstraintSpec {
         constraint: Box<ConstraintSpec>,
         #[serde(default)]
         roll_deg: Option<f64>,
+        /// Leave the spacecraft roll free for free-roll evaluation while keeping
+        /// `roll_deg` as the instrument's fixed mounting angle: a swept candidate
+        /// roll is *added* to it rather than replacing it.  Two instruments mounted
+        /// 90° apart must stay 90° apart at every step of a sweep, which the older
+        /// `roll_deg: null` spelling (free, and implicitly mounted at 0°) cannot
+        /// express.  `roll_deg: null` is still accepted and still means free.
+        #[serde(default)]
+        roll_free: bool,
         #[serde(default)]
         roll_clockwise: bool,
         #[serde(default)]
@@ -406,6 +414,7 @@ impl ConstraintSpec {
             ConstraintSpec::BoresightOffset {
                 constraint,
                 roll_deg,
+                roll_free,
                 roll_clockwise,
                 roll_reference,
                 pitch_deg,
@@ -427,6 +436,7 @@ impl ConstraintSpec {
                 Ok(Box::new(BoresightOffsetEvaluator {
                     constraint: constraint.into_evaluator()?,
                     roll_deg,
+                    roll_free,
                     roll_clockwise,
                     roll_reference: roll_reference.into(),
                     pitch_deg,

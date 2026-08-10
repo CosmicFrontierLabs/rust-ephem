@@ -170,6 +170,50 @@ or :py:meth:`~rust_ephem.constraints.RustConstraintMixin.in_constraint`, which
 stay on the fast boolean-only path used internally for roll-sweeping and
 field-of-regard computation.
 
+Which Constraint Caused a Window to Start/End
+----------------------------------------------
+
+Every ``VisibilityWindow`` also carries ``start_cause`` and ``end_cause``: the
+short tag(s) of the leaf constraint(s) whose own pass/fail state changed at
+that exact boundary sample. This tells you which part of a composite
+constraint actually opened or closed a window, without evaluating each child
+separately and diffing timestamps by hand:
+
+.. code-block:: python
+
+    combined = SunConstraint(min_angle=45.0) & MoonConstraint(min_angle=10.0)
+    result = combined.evaluate(ephem, target_ra, target_dec)
+
+    for window in result.visibility:
+        print(window.start_time, window.start_cause, "->", window.end_time, window.end_cause)
+        # e.g. 2024-01-01T03:12:00 ['moon'] -> 2024-01-01T05:47:00 ['sun']
+
+Both fields are ``None`` at the edges of the evaluated time range (no
+adjacent sample to compare against), and list multiple tags if more than one
+leaf flips on the same sample.
+
+When the constraint tree depends on spacecraft roll and no ``target_roll`` is
+given, each sample is evaluated by sweeping roll angles and asking whether
+*any* orientation clears the tree. Cause tags then report each leaf's state at
+that sample's **witness roll** - the orientation the sweep settled on: the
+first swept roll that clears the whole tree, or, when the sample is blocked at
+every roll, the roll leaving the fewest leaves violated. Each side of a
+boundary therefore describes an orientation the spacecraft could really hold,
+but the two sides need not share one: a window can open because the required
+attitude moved, not because any leaf changed at a fixed attitude.
+
+Unlike ``constraint_values``, cause tags are
+available even for constraints with no natural continuous scalar
+(``SAAConstraint``, polygon-mode ``BodyConstraint``/``BrightStarConstraint``),
+since attribution only needs each leaf's own boolean state.
+
+Cause tags are *not* the same namespace as ``constraint_values`` keys - they
+look similar for a simple, non-duplicated tree, but diverge as soon as a
+constraint type is nested and repeated (see ``result.cause_value_keys`` in
+:ref:`Visibility Window Causes <visibility-window-cause>` for the mapping
+between the two, and the full semantics including how ``NotConstraint`` tags
+its wrapped leaf's cause with a ``not.`` prefix).
+
 Available Constraint Types
 --------------------------
 
