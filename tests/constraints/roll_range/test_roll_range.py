@@ -364,6 +364,17 @@ class TestRollRangeCompoundConstraints:
                     )
                 ),
             ),
+            (
+                "MIXED_CONVENTIONS",
+                lambda: (
+                    SunConstraint(min_angle=80.0).boresight_offset(
+                        yaw_deg=90.0, roll_clockwise=False
+                    )
+                    | SunConstraint(min_angle=80.0).boresight_offset(
+                        yaw_deg=90.0, roll_clockwise=True
+                    )
+                ),
+            ),
         ],
     )
     def test_roll_range_compound_constraint_matches_per_roll_evaluate(
@@ -472,34 +483,26 @@ class TestRollRangeResolution:
 
 
 # ---------------------------------------------------------------------------
-# Clockwise vs counter-clockwise symmetry
+# Spacecraft roll convention
 # ---------------------------------------------------------------------------
 
 
-class TestRollRangeSymmetry:
-    @pytest.mark.parametrize(
-        "constraint_factory",
-        [
-            lambda: SunConstraint(min_angle=45.0, max_angle=135.0),
-            lambda: SunConstraint(min_angle=30.0, max_angle=150.0),
-            lambda: SunConstraint(min_angle=60.0, max_angle=120.0),
-        ],
-    )
-    def test_roll_range_cw_ccw_symmetry(
+class TestRollRangeConvention:
+    @pytest.mark.parametrize("roll_clockwise", [False, True])
+    def test_roll_range_matches_fixed_roll_evaluation(
         self,
         tle_ephem: rust_ephem.TLEEphemeris,
         sample_time: datetime,
         sample_target_ra: float,
         sample_target_dec: float,
+        reference_valid_rolls: Callable[
+            [RustConstraintMixin, rust_ephem.TLEEphemeris, datetime, float, float, int],
+            list[bool],
+        ],
         roll_valid_from_intervals: Callable[[float, list[tuple[float, float]]], bool],
-        constraint_factory: Callable[[], SunConstraint],
+        roll_clockwise: bool,
     ) -> None:
-        """CW and CCW roll_range results should be mirrors of each other.
-
-        If roll=r is valid for the CCW convention, roll=(360-r) mod 360 should be
-        valid for the CW convention (and vice-versa), because CW and CCW differ only
-        in sign of the roll direction.
-        """
+        """Sweep candidates use the same physical convention as target_roll."""
         ephem = tle_ephem
         time = sample_time
         ra = sample_target_ra
@@ -507,36 +510,24 @@ class TestRollRangeSymmetry:
         n = 36
         step = 360.0 / n
 
-        base_constraint = constraint_factory()
-        ccw = base_constraint.boresight_offset(yaw_deg=90.0, roll_clockwise=False)
-        cw = base_constraint.boresight_offset(yaw_deg=90.0, roll_clockwise=True)
-
-        intervals_ccw = ccw.roll_range(
+        constraint = SunConstraint(min_angle=80.0).boresight_offset(
+            roll_deg=23.0,
+            yaw_deg=90.0,
+            roll_clockwise=roll_clockwise,
+        )
+        intervals = constraint.roll_range(
             time, ephemeris=ephem, target_ra=ra, target_dec=dec, n_roll_samples=n
         )
-        intervals_cw = cw.roll_range(
-            time, ephemeris=ephem, target_ra=ra, target_dec=dec, n_roll_samples=n
-        )
+        expected = reference_valid_rolls(constraint, ephem, time, ra, dec, n)
 
-        # Check that CW and CCW results are mirrors of each other
-        step = 360.0 / n
-        symmetry_violations = []
+        mismatches = []
         for i in range(n):
-            roll_ccw = i * step
-            roll_cw_mirror = (360.0 - roll_ccw) % 360.0
-
-            ccw_valid = roll_valid_from_intervals(roll_ccw, intervals_ccw)
-            # Find the nearest sampled CW roll (mirror may not land exactly on a sample).
-            nearest_cw_idx = round(roll_cw_mirror / step) % n
-            roll_cw_sample = nearest_cw_idx * step
-            cw_valid = roll_valid_from_intervals(roll_cw_sample, intervals_cw)
-
-            if ccw_valid != cw_valid:
-                symmetry_violations.append(
-                    f"CCW roll {roll_ccw}° (valid={ccw_valid}) should mirror "
-                    f"CW roll {roll_cw_sample}° (valid={cw_valid})"
+            roll = i * step
+            actual = roll_valid_from_intervals(roll, intervals)
+            if actual != expected[i]:
+                mismatches.append(
+                    f"Roll {roll}°: roll_range says {actual}, "
+                    f"evaluate() says {expected[i]}"
                 )
 
-        assert not symmetry_violations, (
-            f"Found {len(symmetry_violations)} symmetry violations: {symmetry_violations}"
-        )
+        assert not mismatches, f"Found {len(mismatches)} mismatches: {mismatches}"
