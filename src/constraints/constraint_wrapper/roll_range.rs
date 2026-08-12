@@ -217,8 +217,12 @@ pub(super) fn roll_sweep_vec(
             let mut new_decs = Vec::with_capacity(n);
             for i in 0..n {
                 let target = rsv_radec_to_unit(target_ras[i], target_decs[i]);
-                let eval_ccw = if clockwise { -rolls[i] } else { rolls[i] };
-                let eff_roll = base_ccw + eval_ccw;
+                // A sweep candidate is one coordinated spacecraft roll in the
+                // physical CCW-positive convention. `roll_clockwise` describes
+                // only this instrument's fixed mounting angle; applying it to the
+                // candidate would give different spacecraft attitudes to CW and
+                // CCW nodes in the same constraint tree.
+                let eff_roll = base_ccw + rolls[i];
                 let rotated = boresight_rotate(target, z_ref, eff_roll, pitch_deg, yaw_deg)?;
                 let dec = rotated[2].clamp(-1.0, 1.0).asin().to_degrees();
                 let mut ra = rotated[1].atan2(rotated[0]).to_degrees();
