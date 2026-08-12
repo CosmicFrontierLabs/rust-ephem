@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.14.0...v0.14.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* coordinate roll range convention ([#189](https://github.com/CosmicFrontierLabs/rust-ephem/issues/189)) ([57f6f51](https://github.com/CosmicFrontierLabs/rust-ephem/commit/57f6f51997cc0122f2e5c270af419ff8f8d58872))
+
 ## [0.14.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.13.0...v0.14.0) (2026-08-10)
 
 
