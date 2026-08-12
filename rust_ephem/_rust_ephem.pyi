@@ -859,6 +859,14 @@ class Constraint:
         identifies those where the constraint is *not* violated, and collapses adjacent
         valid samples into ``(min_deg, max_deg)`` intervals.
 
+        The swept angles, and the returned interval bounds, are always expressed in the
+        fixed physical CCW-positive spacecraft convention (the one ``roll_clockwise=False``
+        uses on a ``boresight_offset`` node) — independent of any ``roll_clockwise``
+        setting configured on boresight nodes in this constraint. A node's own
+        ``roll_clockwise`` only affects how its fixed instrument mounting angle combines
+        with the swept spacecraft roll; it does not change the convention of the roll
+        values returned here.
+
         Args:
             time: Timestamp to evaluate (must exist in ephemeris).
             ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
