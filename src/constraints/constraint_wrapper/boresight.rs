@@ -1,3 +1,4 @@
+use super::roll_convention::coordinated_roll_ccw_deg;
 use crate::constraints::core::{
     track_violations, BatchWithCauses, ConstraintEvaluator, ConstraintResult,
 };
@@ -97,12 +98,12 @@ impl BoresightOffsetEvaluator {
     /// sweep exists to model — a tree holding several offsets must keep their
     /// relative mounting angles fixed as the spacecraft rolls.
     fn rotation_params_at_candidate_roll(&self, candidate_roll_deg: f64) -> RotationParams {
-        let own_signed_roll = if self.roll_clockwise {
-            -self.roll_deg.unwrap_or(0.0)
-        } else {
-            self.roll_deg.unwrap_or(0.0)
-        };
-        self.rotation_params_from_signed_roll(own_signed_roll + candidate_roll_deg)
+        let composed = coordinated_roll_ccw_deg(
+            self.roll_deg.unwrap_or(0.0),
+            self.roll_clockwise,
+            candidate_roll_deg,
+        );
+        self.rotation_params_from_signed_roll(composed)
     }
 
     /// Shared body of `in_constraint_batch` / `in_constraint_batch_at_roll`.

@@ -13,6 +13,7 @@ use crate::ephemeris::ephemeris_common::EphemerisBase;
 use pyo3::PyResult;
 
 use super::json_parser::parse_constraint_json;
+use super::roll_convention::coordinated_roll_ccw_deg;
 
 // ---------------------------------------------------------------------------
 // Low-level vector helpers (avoid pulling in a heavy dependency for 3-element ops)
@@ -210,19 +211,12 @@ pub(super) fn roll_sweep_vec(
             } else {
                 [0.0, 0.0, 1.0] // celestial north
             };
-            let base_ccw = if clockwise { -base_roll } else { base_roll };
-
             // Pre-compute the rotated target direction for every roll sample.
             let mut new_ras = Vec::with_capacity(n);
             let mut new_decs = Vec::with_capacity(n);
             for i in 0..n {
                 let target = rsv_radec_to_unit(target_ras[i], target_decs[i]);
-                // A sweep candidate is one coordinated spacecraft roll in the
-                // physical CCW-positive convention. `roll_clockwise` describes
-                // only this instrument's fixed mounting angle; applying it to the
-                // candidate would give different spacecraft attitudes to CW and
-                // CCW nodes in the same constraint tree.
-                let eff_roll = base_ccw + rolls[i];
+                let eff_roll = coordinated_roll_ccw_deg(base_roll, clockwise, rolls[i]);
                 let rotated = boresight_rotate(target, z_ref, eff_roll, pitch_deg, yaw_deg)?;
                 let dec = rotated[2].clamp(-1.0, 1.0).asin().to_degrees();
                 let mut ra = rotated[1].atan2(rotated[0]).to_degrees();

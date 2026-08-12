@@ -13,6 +13,7 @@ use std::collections::HashMap;
 
 use super::PyConstraint;
 use crate::constraints::constraint_wrapper::json_parser::parse_constraint_json;
+use crate::constraints::constraint_wrapper::roll_convention::coordinated_roll_ccw_deg;
 
 impl PyConstraint {
     pub(super) fn resolve_time_indices(
@@ -235,19 +236,16 @@ impl PyConstraint {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
 
-            // Match RustConstraintMixin semantics: add evaluation-time roll in the
-            // configured command convention.
-            let signed_target_roll = if base_clockwise {
-                -target_roll_deg
-            } else {
-                target_roll_deg
-            };
+            // target_roll_deg is a coordinated spacecraft-frame roll in the fixed
+            // physical CCW convention; compose it with this node's own mounting
+            // angle and re-express the result in that same convention so the
+            // rebuilt evaluator (parsed below) doesn't re-flip it.
+            let total_ccw =
+                coordinated_roll_ccw_deg(base_roll_deg, base_clockwise, target_roll_deg);
 
             if let Some(obj) = config.as_object_mut() {
-                obj.insert(
-                    "roll_deg".to_string(),
-                    serde_json::json!(base_roll_deg + signed_target_roll),
-                );
+                obj.insert("roll_deg".to_string(), serde_json::json!(total_ccw));
+                obj.insert("roll_clockwise".to_string(), serde_json::json!(false));
             }
         } else {
             config = serde_json::json!({
