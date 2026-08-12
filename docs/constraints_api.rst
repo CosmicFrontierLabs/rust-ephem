@@ -690,6 +690,14 @@ Evaluation Methods
    identifies those where the constraint is ``False`` (not violated), and collapses
    adjacent valid samples into ``(min_deg, max_deg)`` intervals.
 
+   The swept angles, and the returned interval bounds, are always expressed in the
+   fixed physical CCW-positive spacecraft convention (the one ``roll_clockwise=False``
+   uses on a :py:meth:`boresight_offset` node) — independent of any ``roll_clockwise``
+   setting configured on boresight nodes in this constraint. A node's own
+   ``roll_clockwise`` only affects how its fixed instrument mounting angle combines
+   with the swept spacecraft roll; it does not change the convention of the roll
+   values returned here.
+
    :param time: A single datetime to evaluate (must exist in ephemeris).
    :type time: datetime
    :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
@@ -1628,6 +1636,14 @@ All Pydantic constraint models inherit these methods:
    Sweeps ``n_roll_samples`` uniformly-spaced spacecraft roll angles over [0°, 360°),
    identifies those where the constraint is ``False`` (not violated), and collapses
    adjacent valid samples into ``(min_deg, max_deg)`` intervals.
+
+   The swept angles, and the returned interval bounds, are always expressed in the
+   fixed physical CCW-positive spacecraft convention (the one ``roll_clockwise=False``
+   uses on a :py:meth:`boresight_offset` node) — independent of any ``roll_clockwise``
+   setting configured on boresight nodes in this constraint. A node's own
+   ``roll_clockwise`` only affects how its fixed instrument mounting angle combines
+   with the swept spacecraft roll; it does not change the convention of the roll
+   values returned here.
 
    :param time: A single datetime to evaluate (must exist in ephemeris).
    :type time: datetime
