@@ -384,3 +384,65 @@ def test_fixed_target_roll_preserves_relative_geometry_across_conventions(
             mixed_result.constraint_array,
             err_msg=f"mismatch at target_roll={target_roll}",
         )
+
+
+def test_low_level_constraint_applies_target_roll_through_compound_tree(
+    tle_ephem: rust_ephem.TLEEphemeris,
+) -> None:
+    """A raw ``rust_ephem.Constraint`` must apply ``target_roll`` to every
+    boresight node in the tree, not just a root-level ``boresight_offset``.
+
+    The Pydantic path (``mixed.in_constraint_batch(...)``) bakes the
+    coordinated roll into the JSON config via ``apply_eval_roll`` before
+    handing it to Rust, so it already walks combinators correctly. The
+    low-level path exercises ``with_effective_evaluator`` directly, which
+    used to dispatch purely on the JSON root's ``type`` — an ``or`` of a
+    ``roll_clockwise=False`` leg and a ``roll_clockwise=True`` leg has root
+    type ``"or"``, not ``"boresight_offset"``, so ``target_roll`` used to
+    have no effect at all on this tree via the low-level API.
+    """
+    sun_leg = SunConstraint(min_angle=45.0).boresight_offset(
+        roll_deg=0.0, roll_clockwise=False, pitch_deg=20.0, yaw_deg=0.0
+    )
+    moon_leg_cw = MoonConstraint(min_angle=15.0).boresight_offset(
+        roll_deg=-90.0, roll_clockwise=True, pitch_deg=20.0, yaw_deg=0.0
+    )
+    mixed = sun_leg | moon_leg_cw
+
+    raw_constraint = Constraint.from_json(mixed.model_dump_json())
+
+    ras = np.linspace(0.0, 359.0, 30).tolist()
+    decs = np.linspace(-80.0, 80.0, 29).tolist()
+    target_ras = [ra for ra in ras for _ in decs]
+    target_decs = [dec for _ in ras for dec in decs]
+
+    rolls_to_check = (0.0, 37.0, 73.0, -110.0)
+    raw_arrays = []
+    for target_roll in rolls_to_check:
+        pydantic_result = mixed.in_constraint_batch(
+            tle_ephem,
+            target_ras,
+            target_decs,
+            indices=[0],
+            target_rolls=[target_roll] * len(target_ras),
+        )
+        raw_result = raw_constraint.in_constraint_batch(
+            tle_ephem,
+            target_ras,
+            target_decs,
+            indices=[0],
+            target_rolls=[target_roll] * len(target_ras),
+        )
+        raw_arrays.append(raw_result)
+        np.testing.assert_array_equal(
+            pydantic_result,
+            raw_result,
+            err_msg=f"low-level vs. Pydantic mismatch at target_roll={target_roll}",
+        )
+
+    # Sanity: target_roll must actually change the low-level result for at
+    # least one pair of rolls tested above — otherwise the parity assertions
+    # would trivially pass even with target_roll silently ignored throughout.
+    assert any(not np.array_equal(raw_arrays[0], other) for other in raw_arrays[1:]), (
+        "target_roll had no effect on the low-level compound-tree result"
+    )

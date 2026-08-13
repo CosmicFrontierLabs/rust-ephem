@@ -396,6 +396,11 @@ class RustConstraintMixin(BaseModel):
                 ).lower()
                 if base_reference not in {"sun", "north"}:
                     raise ValueError("roll_reference must be either 'sun' or 'north'")
+                # Mirrors coordinated_roll_ccw_deg() in
+                # src/constraints/constraint_wrapper/roll_convention.rs — the same
+                # mounting-angle/candidate-roll composition, kept as a separate
+                # implementation only because it runs on the Python side of the
+                # PyO3 boundary. Keep the two in sync.
                 base_ccw = -base_roll if base_clockwise else base_roll
 
                 if sweep_roll and has_offset:
@@ -440,6 +445,17 @@ class RustConstraintMixin(BaseModel):
                 # (not during a sweep_roll pass, which doesn't apply here).
                 if target_roll is not None and not sweep_roll:
                     node["roll_deg"] = float(target_roll)
+                return
+
+            if node_type in {"bright_star", "body"}:
+                # Polygon-FoV bright_star/body nodes rotate their own polygon
+                # directly by roll_deg — there is no separate mounting angle to
+                # compose, so target_roll simply overwrites it. A circular FoV
+                # (no fov_polygon) or a plain body proximity check ignores roll
+                # and is left untouched.
+                if node.get("fov_polygon") is not None:
+                    if target_roll is not None and not sweep_roll:
+                        node["roll_deg"] = float(target_roll)
                 return
 
             if node_type in {"and", "or", "xor", "at_least"}:
