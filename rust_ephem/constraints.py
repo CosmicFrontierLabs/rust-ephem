@@ -447,6 +447,17 @@ class RustConstraintMixin(BaseModel):
                     node["roll_deg"] = float(target_roll)
                 return
 
+            if node_type in {"bright_star", "body"}:
+                # Polygon-FoV bright_star/body nodes rotate their own polygon
+                # directly by roll_deg — there is no separate mounting angle to
+                # compose, so target_roll simply overwrites it. A circular FoV
+                # (no fov_polygon) or a plain body proximity check ignores roll
+                # and is left untouched.
+                if node.get("fov_polygon") is not None:
+                    if target_roll is not None and not sweep_roll:
+                        node["roll_deg"] = float(target_roll)
+                return
+
             if node_type in {"and", "or", "xor", "at_least"}:
                 for child in node.get("constraints", []):
                     apply_eval_roll(child)

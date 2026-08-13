@@ -180,6 +180,101 @@ class TestPolygonFovFixedRoll:
         assert _is_violated(c, tle_ephem, 60.0, 5.0)
 
 
+class TestPolygonFovTargetRollCompoundTree:
+    """`target_roll` on ``evaluate()`` must reach a polygon-FoV ``bright_star``
+    node however deeply it's nested under combinators, on both the raw
+    low-level ``Constraint`` API and the Pydantic ``RustConstraintMixin`` API.
+
+    Before this fix, ``target_roll`` was only applied to a polygon
+    ``bright_star``/``body`` node when it was the JSON root: the low-level
+    Rust ``with_effective_evaluator`` special-cased the root type only, and
+    Python's ``apply_eval_roll`` didn't handle these node types at all (so the
+    Pydantic path ignored ``target_roll`` for these nodes even at the root).
+    """
+
+    # Star 0.20° east of target (u-only offset at roll=0): inside the
+    # ±0.25° u / ±0.15° v box at roll=0 (u≈0.20 < 0.25), but rotates outside
+    # at roll=90 (u≈0 but v≈0.20 > 0.15).
+    _TARGET_RA, _TARGET_DEC = 80.0, 10.0
+
+    def _star(self) -> tuple[float, float]:
+        return (_offset_ra(self._TARGET_RA, self._TARGET_DEC, 0.20), self._TARGET_DEC)
+
+    def test_root_level_target_roll_changes_violation(
+        self, tle_ephem: rust_ephem.TLEEphemeris
+    ) -> None:
+        c = rust_ephem.Constraint.bright_star(
+            stars=[self._star()],
+            fov_polygon=_POLYGON,
+            roll_deg=None,
+        )
+        violated_0 = c.evaluate(
+            tle_ephem, self._TARGET_RA, self._TARGET_DEC, target_roll=0.0
+        )
+        violated_90 = c.evaluate(
+            tle_ephem, self._TARGET_RA, self._TARGET_DEC, target_roll=90.0
+        )
+        assert any(violated_0.constraint_array)
+        assert not any(violated_90.constraint_array)
+
+    def test_target_roll_reaches_polygon_node_nested_under_not(
+        self, tle_ephem: rust_ephem.TLEEphemeris
+    ) -> None:
+        from rust_ephem.constraints import BrightStarConstraint
+
+        pyd_root = BrightStarConstraint(
+            stars=[self._star()], fov_polygon=_POLYGON, roll_deg=None
+        )
+        pyd_nested = ~pyd_root
+
+        raw_root = rust_ephem.Constraint.from_json(pyd_root.model_dump_json())
+        raw_nested = rust_ephem.Constraint.not_(raw_root)
+
+        for target_roll, expect_root_violated in ((0.0, True), (90.0, False)):
+            pyd_root_result = pyd_root.evaluate(
+                ephemeris=tle_ephem,
+                target_ra=self._TARGET_RA,
+                target_dec=self._TARGET_DEC,
+                target_roll=target_roll,
+            )
+            pyd_nested_result = pyd_nested.evaluate(
+                ephemeris=tle_ephem,
+                target_ra=self._TARGET_RA,
+                target_dec=self._TARGET_DEC,
+                target_roll=target_roll,
+            )
+            raw_root_result = raw_root.evaluate(
+                tle_ephem,
+                self._TARGET_RA,
+                self._TARGET_DEC,
+                target_roll=target_roll,
+            )
+            raw_nested_result = raw_nested.evaluate(
+                tle_ephem,
+                self._TARGET_RA,
+                self._TARGET_DEC,
+                target_roll=target_roll,
+            )
+
+            root_violated = any(pyd_root_result.constraint_array)
+            nested_violated = any(pyd_nested_result.constraint_array)
+            assert root_violated is expect_root_violated, (
+                f"root mismatch at target_roll={target_roll}"
+            )
+            # NOT must invert whatever the wrapped node reports at this roll.
+            assert nested_violated is (not root_violated), (
+                f"NOT did not invert at target_roll={target_roll}"
+            )
+            # Raw low-level API must agree with the Pydantic-resolved result,
+            # both at the root and nested under NOT.
+            assert any(raw_root_result.constraint_array) is root_violated, (
+                f"raw/pydantic root mismatch at target_roll={target_roll}"
+            )
+            assert any(raw_nested_result.constraint_array) is nested_violated, (
+                f"raw/pydantic nested mismatch at target_roll={target_roll}"
+            )
+
+
 # ── Roll-sweep semantics ───────────────────────────────────────────────────────
 
 
