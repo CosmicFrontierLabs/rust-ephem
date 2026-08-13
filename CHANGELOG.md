@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.2](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.14.1...v0.14.2) (2026-08-13)
+
+
+### Bug Fixes
+
+* code and documentation clean up for roll convention ([#191](https://github.com/CosmicFrontierLabs/rust-ephem/issues/191)) ([bef1f86](https://github.com/CosmicFrontierLabs/rust-ephem/commit/bef1f86fb097e61ba3c7a9cf9d1570d963cc7442))
+
 ## [0.14.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.14.0...v0.14.1) (2026-08-12)
 
 
