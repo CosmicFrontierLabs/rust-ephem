@@ -111,23 +111,65 @@ impl PyConstraint {
         ))
     }
 
-    pub(super) fn inject_solar_roll(config: &mut serde_json::Value, roll_deg: f64) {
+    /// Recursively compose a coordinated spacecraft-frame roll into every
+    /// `boresight_offset` node of the tree, and inject it into every
+    /// `solar_roll` node, descending through `and`/`or`/`xor`/`at_least`/`not`
+    /// combinators to reach nodes at any depth.
+    ///
+    /// Mirrors `RustConstraintMixin._to_rust_constraint`'s `apply_eval_roll` on
+    /// the Python side (`rust_ephem/constraints.py`) — that function walks the
+    /// same combinator shapes for the same reason: `target_roll_deg` is one
+    /// coordinated roll shared unchanged by every boresight node in the tree,
+    /// so composing it only at the root (as this function used to) leaves
+    /// every boresight node buried under a combinator with no roll applied at
+    /// all. A root-only check cannot see those nodes: an `or` of a
+    /// `roll_clockwise=false` leg and a `roll_clockwise=true` leg has type
+    /// `"or"`, not `"boresight_offset"`.
+    ///
+    /// Each `boresight_offset` node's own mounting angle is converted through
+    /// its own `roll_clockwise` via `coordinated_roll_ccw_deg`, then the result
+    /// is written back with `roll_clockwise: false` (the composed value is
+    /// already in the physical CCW convention). Descends into that node's
+    /// inner `constraint` afterward, matching the Python side, in case it
+    /// contains further boresight or solar-roll nodes.
+    pub(super) fn apply_target_roll(config: &mut serde_json::Value, target_roll_deg: f64) {
         let Some(obj) = config.as_object_mut() else {
             return;
         };
+        let node_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
-        if obj.get("type").and_then(|v| v.as_str()) == Some("solar_roll") {
-            obj.insert("roll_deg".to_string(), serde_json::json!(roll_deg));
-        }
+        match node_type {
+            "boresight_offset" => {
+                let base_roll_deg = obj.get("roll_deg").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let base_clockwise = obj
+                    .get("roll_clockwise")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let total_ccw =
+                    coordinated_roll_ccw_deg(base_roll_deg, base_clockwise, target_roll_deg);
+                obj.insert("roll_deg".to_string(), serde_json::json!(total_ccw));
+                obj.insert("roll_clockwise".to_string(), serde_json::json!(false));
 
-        if let Some(inner) = obj.get_mut("constraint") {
-            Self::inject_solar_roll(inner, roll_deg);
-        }
-
-        if let Some(children) = obj.get_mut("constraints").and_then(|v| v.as_array_mut()) {
-            for child in children {
-                Self::inject_solar_roll(child, roll_deg);
+                if let Some(inner) = obj.get_mut("constraint") {
+                    Self::apply_target_roll(inner, target_roll_deg);
+                }
             }
+            "solar_roll" => {
+                obj.insert("roll_deg".to_string(), serde_json::json!(target_roll_deg));
+            }
+            "and" | "or" | "xor" | "at_least" => {
+                if let Some(children) = obj.get_mut("constraints").and_then(|v| v.as_array_mut()) {
+                    for child in children {
+                        Self::apply_target_roll(child, target_roll_deg);
+                    }
+                }
+            }
+            "not" => {
+                if let Some(inner) = obj.get_mut("constraint") {
+                    Self::apply_target_roll(inner, target_roll_deg);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -193,22 +235,20 @@ impl PyConstraint {
         let mut config: serde_json::Value = serde_json::from_str(&self.config_json)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
-        Self::inject_solar_roll(&mut config, target_roll_deg);
-
         let constraint_type = config
             .get("type")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_owned();
 
-        let is_boresight_offset = constraint_type == "boresight_offset";
         let is_bright_star = constraint_type == "bright_star";
         let is_body_polygon = constraint_type == "body" && config.get("fov_polygon").is_some();
-        let is_solar_roll = constraint_type == "solar_roll";
 
         // Bright star or body proximity with a polygon FoV: inject target_roll as roll_deg
         // so the evaluator rotates the polygon to the requested angle.  Both constraint types
-        // handle roll internally, so we bypass the BoresightOffset wrapper.
+        // handle roll internally, so we bypass the BoresightOffset wrapper. This only applies
+        // at the root — unlike boresight_offset/solar_roll below, these types have no Python
+        // (RustConstraintMixin) equivalent that reaches into a combinator subtree for them.
         if is_bright_star || is_body_polygon {
             if config.get("fov_polygon").is_some() {
                 if let Some(obj) = config.as_object_mut() {
@@ -219,45 +259,14 @@ impl PyConstraint {
             return f(&*evaluator);
         }
 
-        // SolarRoll: inject the spacecraft roll so the evaluator can compare to the
-        // solar-optimal roll.  Handled internally — bypass the BoresightOffset wrapper.
-        if is_solar_roll {
-            let evaluator = parse_constraint_json(&config)?;
-            return f(&*evaluator);
-        }
-
-        if is_boresight_offset {
-            let base_roll_deg = config
-                .get("roll_deg")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
-            let base_clockwise = config
-                .get("roll_clockwise")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-
-            // target_roll_deg is a coordinated spacecraft-frame roll in the fixed
-            // physical CCW convention; compose it with this node's own mounting
-            // angle and re-express the result in that same convention so the
-            // rebuilt evaluator (parsed below) doesn't re-flip it.
-            let total_ccw =
-                coordinated_roll_ccw_deg(base_roll_deg, base_clockwise, target_roll_deg);
-
-            if let Some(obj) = config.as_object_mut() {
-                obj.insert("roll_deg".to_string(), serde_json::json!(total_ccw));
-                obj.insert("roll_clockwise".to_string(), serde_json::json!(false));
-            }
-        } else {
-            config = serde_json::json!({
-                "type": "boresight_offset",
-                "constraint": config,
-                "roll_deg": target_roll_deg,
-                "roll_clockwise": false,
-                "roll_reference": "north",
-                "pitch_deg": 0.0,
-                "yaw_deg": 0.0
-            });
-        }
+        // Compose target_roll_deg into every boresight_offset/solar_roll node in the
+        // tree, however deeply nested under and/or/xor/at_least/not combinators. A
+        // tree whose root is a combinator (e.g. an `or` of a roll_clockwise=false leg
+        // and a roll_clockwise=true leg) has no roll-bearing node at the root, so this
+        // must recurse rather than dispatch on the root type alone — see
+        // `apply_target_roll`. Trees with nothing roll-dependent anywhere are left
+        // unchanged, exactly as if target_roll_deg had never been supplied.
+        Self::apply_target_roll(&mut config, target_roll_deg);
 
         let evaluator = parse_constraint_json(&config)?;
         f(&*evaluator)
