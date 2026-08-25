@@ -66,6 +66,22 @@ up-to-date IERS data for accurate values.
     if re.is_eop_available():
         print("EOP data is loaded")
 
+The exact EOP2 content used by each provider is available for output
+provenance and reproducibility checks:
+
+.. code-block:: python
+
+    provenance = re.get_eop_provenance()
+    for provider_name, provider in provenance.items():
+        if provider["available"]:
+            print(provider_name, provider["sha256"])
+
+Each provider reports whether data was loaded, the JPL source URL, SHA-256 of
+the loaded text, whether it came from a download, fresh cache, or stale cache,
+and whether stale fallback was used. Querying provenance does not initialize an
+unused provider. UT1 and polar motion are reported separately because they may
+be initialized at different times.
+
 Polar motion parameters are used for high-precision coordinate transformations.
 
 Assumptions and approximations

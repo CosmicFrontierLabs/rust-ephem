@@ -690,6 +690,7 @@ Functions
 * ``get_polar_motion(py_datetime)`` — Get polar motion parameters (x_p, y_p) for a given datetime. Returns ``Tuple[float, float]`` (arcseconds).
 * ``is_eop_available()`` — Check if EOP data is available. Returns ``bool``.
 * ``init_eop_provider()`` — Initialize EOP provider. Returns ``bool`` indicating success.
+* ``get_eop_provenance()`` — Return source URL, SHA-256, load source, and stale status for the exact EOP2 data loaded by the UT1 and polar-motion providers.
 
 **Cache Management**
 

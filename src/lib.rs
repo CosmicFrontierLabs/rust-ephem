@@ -227,6 +227,38 @@ fn init_eop_provider() -> bool {
     utils::eop_provider::init_eop_provider()
 }
 
+fn eop_provenance_dict<'py>(
+    py: Python<'py>,
+    provenance: Option<utils::eop_cache::Eop2Provenance>,
+) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+    let dict = pyo3::types::PyDict::new(py);
+    if let Some(provenance) = provenance {
+        dict.set_item("available", true)?;
+        dict.set_item("source_url", provenance.source_url)?;
+        dict.set_item("sha256", provenance.sha256)?;
+        dict.set_item("loaded_from", provenance.loaded_from)?;
+        dict.set_item("stale", provenance.stale)?;
+    } else {
+        dict.set_item("available", false)?;
+    }
+    Ok(dict)
+}
+
+/// Return provenance for the exact EOP2 data loaded by each provider.
+#[pyfunction]
+fn get_eop_provenance(py: Python<'_>) -> PyResult<pyo3::Py<pyo3::types::PyDict>> {
+    let dict = pyo3::types::PyDict::new(py);
+    dict.set_item(
+        "ut1",
+        eop_provenance_dict(py, utils::ut1_provider::eop_provenance())?,
+    )?;
+    dict.set_item(
+        "polar_motion",
+        eop_provenance_dict(py, utils::eop_provider::eop_provenance())?,
+    )?;
+    Ok(dict.unbind())
+}
+
 /// Returns the cache directory path used by rust_ephem for storing data files
 #[pyfunction]
 fn get_cache_dir() -> String {
@@ -339,6 +371,7 @@ fn _rust_ephem(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_polar_motion, m)?)?;
     m.add_function(wrap_pyfunction!(is_eop_available, m)?)?;
     m.add_function(wrap_pyfunction!(init_eop_provider, m)?)?;
+    m.add_function(wrap_pyfunction!(get_eop_provenance, m)?)?;
     m.add_function(wrap_pyfunction!(get_cache_dir, m)?)?;
     m.add_function(wrap_pyfunction!(fetch_tle, m)?)?;
     Ok(())
