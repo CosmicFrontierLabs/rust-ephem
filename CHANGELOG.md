@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.14.2...v0.15.0) (2026-08-25)
+
+
+### Features
+
+* expose exact EOP2 data provenance ([#193](https://github.com/CosmicFrontierLabs/rust-ephem/issues/193)) ([a4a99d0](https://github.com/CosmicFrontierLabs/rust-ephem/commit/a4a99d0dda90dbbac8be0a90add24f0cd0316bbd))
+
 ## [0.14.2](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.14.1...v0.14.2) (2026-08-13)
 
 
