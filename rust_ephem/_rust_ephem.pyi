@@ -1,7 +1,7 @@
 """Type stubs for the Rust extension module _rust_ephem"""
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, runtime_checkable
 
 import numpy as np
 import numpy.typing as npt
@@ -11,6 +11,22 @@ from .ephemeris import Ephemeris
 
 if TYPE_CHECKING:
     from .tle import TLERecord
+
+class EopProviderUnavailable(TypedDict):
+    available: Literal[False]
+
+class EopProviderAvailable(TypedDict):
+    available: Literal[True]
+    source_url: str
+    sha256: str
+    loaded_from: Literal["download", "fresh_cache", "stale_cache"]
+    stale: bool
+
+EopProviderProvenance = EopProviderUnavailable | EopProviderAvailable
+
+class EopProvenance(TypedDict):
+    ut1: EopProviderProvenance
+    polar_motion: EopProviderProvenance
 
 @runtime_checkable
 class TLELike(Protocol):
@@ -3980,6 +3996,10 @@ def init_eop_provider() -> bool:
     Returns:
         True if initialization succeeded
     """
+    ...
+
+def get_eop_provenance() -> EopProvenance:
+    """Return provenance for the exact EOP2 data loaded by each provider."""
     ...
 
 def get_cache_dir() -> str:

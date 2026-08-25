@@ -6,7 +6,7 @@
 //! Data is downloaded from JPL's EOP2 service and cached for reuse.
 
 use crate::utils::config::ARCSEC_TO_RAD;
-use crate::utils::eop_cache::load_or_download_eop2_text;
+use crate::utils::eop_cache::{load_or_download_eop2_data, Eop2Provenance};
 use crate::utils::time_utils;
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
@@ -27,6 +27,7 @@ pub struct EopRecord {
 #[derive(Debug, Clone)]
 pub struct EopProvider {
     records: Vec<EopRecord>,
+    provenance: Option<Eop2Provenance>,
 }
 
 // EopRecord is a plain data holder; conversions are provided by EopProvider/free functions.
@@ -34,8 +35,8 @@ pub struct EopProvider {
 impl EopProvider {
     /// Load from cache if available/fresh; otherwise download and update cache
     pub fn load_or_download() -> Result<Self, Box<dyn std::error::Error>> {
-        let text = load_or_download_eop2_text()?;
-        Self::from_eop2_data(text)
+        let data = load_or_download_eop2_data()?;
+        Self::from_eop2_data_with_provenance(data.text, Some(data.provenance))
     }
 
     /// Parse EOP2 CSV data format
@@ -43,6 +44,13 @@ impl EopProvider {
     /// Format: MJD, PMx(mas), PMy(mas), TAI-UT1(ms), ... (additional columns ignored)
     /// Lines starting with '#' or '$' are comments
     pub fn from_eop2_data(data: String) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::from_eop2_data_with_provenance(data, None)
+    }
+
+    fn from_eop2_data_with_provenance(
+        data: String,
+        provenance: Option<Eop2Provenance>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut records = Vec::new();
 
         for raw_line in data.lines() {
@@ -114,7 +122,10 @@ impl EopProvider {
         // Sort by MJD for efficient lookup (ignore partial_cmp None since MJD parsed as f64)
         records.sort_by(|a, b| a.mjd.partial_cmp(&b.mjd).unwrap());
 
-        Ok(EopProvider { records })
+        Ok(EopProvider {
+            records,
+            provenance,
+        })
     }
 
     /// Get polar motion (xp, yp) for a given datetime
@@ -188,6 +199,10 @@ impl EopProvider {
             ))
         }
     }
+
+    pub fn provenance(&self) -> Option<&Eop2Provenance> {
+        self.provenance.as_ref()
+    }
 }
 
 /// Cached EOP provider from JPL
@@ -238,6 +253,14 @@ pub fn get_polar_motion_rad(dt: &DateTime<Utc>) -> (f64, f64) {
     } else {
         (0.0, 0.0)
     }
+}
+
+pub fn eop_provenance() -> Option<Eop2Provenance> {
+    Lazy::get(&EOP_PROVIDER)?
+        .lock()
+        .ok()?
+        .as_ref()
+        .and_then(|provider| provider.provenance().cloned())
 }
 
 // UT1-UTC retrieval is intentionally omitted here; the crate uses the existing UT1 provider.

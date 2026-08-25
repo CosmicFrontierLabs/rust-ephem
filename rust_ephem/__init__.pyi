@@ -41,6 +41,9 @@ from rust_ephem._rust_ephem import (
     get_cache_dir as get_cache_dir,
 )
 from rust_ephem._rust_ephem import (
+    get_eop_provenance as get_eop_provenance,
+)
+from rust_ephem._rust_ephem import (
     get_polar_motion as get_polar_motion,
 )
 from rust_ephem._rust_ephem import (
@@ -237,6 +240,7 @@ __all__ = [
     "is_eop_available",
     "init_eop_provider",
     "get_cache_dir",
+    "get_eop_provenance",
     "BrightStarConstraint",
     "get_bright_stars",
     "WGS72_EARTH_MU_KM3_S2",
