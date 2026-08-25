@@ -178,7 +178,7 @@ pub fn unit_vectors_to_radec_batch(unit_vectors: &Array2<f64>) -> (Vec<f64>, Vec
     if let Some(slice) = unit_vectors.as_slice_memory_order() {
         let mut ras = Vec::with_capacity(n);
         let mut decs = Vec::with_capacity(n);
-        for xyz in slice.chunks_exact(3) {
+        for xyz in slice.as_chunks::<3>().0 {
             let x = xyz[0];
             let y = xyz[1];
             let z = xyz[2].clamp(-1.0, 1.0);
