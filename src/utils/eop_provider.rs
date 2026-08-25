@@ -36,18 +36,14 @@ impl EopProvider {
     /// Load from cache if available/fresh; otherwise download and update cache
     pub fn load_or_download() -> Result<Self, Box<dyn std::error::Error>> {
         let data = load_or_download_eop2_data()?;
-        Self::from_eop2_data_with_provenance(data.text, Some(data.provenance))
+        Self::from_eop2_data(data.text, Some(data.provenance))
     }
 
     /// Parse EOP2 CSV data format
     ///
     /// Format: MJD, PMx(mas), PMy(mas), TAI-UT1(ms), ... (additional columns ignored)
     /// Lines starting with '#' or '$' are comments
-    pub fn from_eop2_data(data: String) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::from_eop2_data_with_provenance(data, None)
-    }
-
-    fn from_eop2_data_with_provenance(
+    fn from_eop2_data(
         data: String,
         provenance: Option<Eop2Provenance>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -258,7 +254,7 @@ pub fn get_polar_motion_rad(dt: &DateTime<Utc>) -> (f64, f64) {
 pub fn eop_provenance() -> Option<Eop2Provenance> {
     Lazy::get(&EOP_PROVIDER)?
         .lock()
-        .ok()?
+        .unwrap()
         .as_ref()
         .and_then(|provider| provider.provenance().cloned())
 }

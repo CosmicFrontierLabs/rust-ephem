@@ -72,7 +72,7 @@ pub fn is_ut1_available() -> bool {
 pub fn eop_provenance() -> Option<Eop2Provenance> {
     Lazy::get(&UT1_PROVIDER)?
         .lock()
-        .ok()?
+        .unwrap()
         .as_ref()
         .map(|state| state.provenance.clone())
 }
