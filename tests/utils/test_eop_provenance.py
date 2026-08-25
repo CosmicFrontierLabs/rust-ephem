@@ -7,7 +7,7 @@ def test_eop_provenance_reports_each_provider() -> None:
     provenance = rust_ephem.get_eop_provenance()
 
     assert set(provenance) == {"ut1", "polar_motion"}
-    for provider in provenance.values():
+    for provider in (provenance["ut1"], provenance["polar_motion"]):
         assert isinstance(provider["available"], bool)
         if not provider["available"]:
             assert provider == {"available": False}
