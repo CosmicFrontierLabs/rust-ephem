@@ -40,9 +40,7 @@ jobs:
           activate-environment: true
           python-version: ${{ matrix.python-version }}
 
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
+      - uses: dtolnay/rust-toolchain@stable
 
       # Cache Cargo registry and build artifacts
       - uses: Swatinem/rust-cache@v2
