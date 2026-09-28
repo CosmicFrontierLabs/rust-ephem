@@ -82,11 +82,16 @@ The coordinate frame is read from the file header (key ``CoordinateSystem`` or
 
 **GCRS-compatible frames** (J2000, EME2000, GCRF, GCRS, ICRF, ICRF2, ICRF3)
   Data are treated as inertial and stored directly in GCRS.  ITRS is derived by
-  applying the ERA rotation (and optionally polar motion).
+  applying IAU 2006/2000A frame bias, precession-nutation, Earth rotation,
+  and optional polar motion. These input aliases are still treated as GCRS;
+  this does not implement distinct transformations for each inertial frame.
 
 **Earth-fixed frames** (ITRS, ECEF, ECF, FIXED, TERRESTRIAL)
   Data are treated as Earth-fixed and stored as ITRS.  GCRS is derived by
-  applying the inverse ERA rotation.
+  applying the inverse of the same celestial-to-terrestrial transformation.
+
+In both directions, velocities include the frame-motion term, not just a
+rotation of velocity components. See :doc:`frames` for the model and limitations.
 
 Units
 -----
