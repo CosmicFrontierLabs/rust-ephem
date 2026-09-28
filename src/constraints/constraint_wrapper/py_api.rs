@@ -16,13 +16,6 @@ use crate::constraints::orbit_pole::OrbitPoleConfig;
 use crate::constraints::orbit_ram::OrbitRamConfig;
 use crate::constraints::saa::SAAConfig;
 use crate::constraints::sun_proximity::SunProximityConfig;
-use crate::ephemeris::ephemeris_common::EphemerisBase;
-use crate::ephemeris::FileEphemeris;
-use crate::ephemeris::GroundEphemeris;
-use crate::ephemeris::OEMEphemeris;
-use crate::ephemeris::ParquetEphemeris;
-use crate::ephemeris::SPICEEphemeris;
-use crate::ephemeris::TLEEphemeris;
 use chrono::{DateTime, Utc};
 use numpy::{PyArray2, PyArrayMethods};
 use pyo3::prelude::*;
@@ -1669,27 +1662,6 @@ impl PyConstraint {
         ephemeris: &Bound<PyAny>,
         times_arg: &Bound<PyAny>,
     ) -> PyResult<Vec<usize>> {
-        use std::collections::HashMap;
-
-        // Get ephemeris times - need to clone to avoid lifetime issues
-        let ephem_times: Vec<DateTime<Utc>> =
-            if let Ok(ephem) = ephemeris.extract::<PyRef<TLEEphemeris>>() {
-                ephem.data().times.as_ref().cloned()
-            } else if let Ok(ephem) = ephemeris.extract::<PyRef<SPICEEphemeris>>() {
-                ephem.data().times.as_ref().cloned()
-            } else if let Ok(ephem) = ephemeris.extract::<PyRef<GroundEphemeris>>() {
-                ephem.data().times.as_ref().cloned()
-            } else if let Ok(ephem) = ephemeris.extract::<PyRef<OEMEphemeris>>() {
-                ephem.data().times.as_ref().cloned()
-            } else if let Ok(ephem) = ephemeris.extract::<PyRef<FileEphemeris>>() {
-                ephem.data().times.as_ref().cloned()
-            } else if let Ok(ephem) = ephemeris.extract::<PyRef<ParquetEphemeris>>() {
-                ephem.data().times.as_ref().cloned()
-            } else {
-                None
-            }
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times in ephemeris"))?;
-
         // Parse input times (single datetime or iterable of datetimes)
         let input_times: Vec<DateTime<Utc>> =
             if let Ok(iter) = pyo3::types::PyIterator::from_object(times_arg) {
@@ -1728,42 +1700,25 @@ impl PyConstraint {
                 vec![dt]
             };
 
-        // Build HashMap for O(1) lookup when multiple times are requested
-        let mut indices = Vec::with_capacity(input_times.len());
-
-        if input_times.len() > 3 {
-            // Use HashMap for multiple lookups
-            let time_map: HashMap<DateTime<Utc>, usize> = ephem_times
+        // Ephemerides have chronological timestamps. Borrow them and search
+        // directly, preserving requested order and duplicate query times.
+        self.with_ephemeris(ephemeris, |ephem| {
+            let timestamps = ephem.get_times()?;
+            input_times
                 .iter()
-                .enumerate()
-                .map(|(i, t)| (*t, i))
-                .collect();
-
-            for dt in input_times {
-                if let Some(&idx) = time_map.get(&dt) {
-                    indices.push(idx);
-                } else {
-                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "Time {} not found in ephemeris timestamps",
-                        dt.to_rfc3339()
-                    )));
-                }
-            }
-        } else {
-            // Use linear search for small number of lookups
-            for dt in input_times {
-                if let Some(idx) = ephem_times.iter().position(|t| t == &dt) {
-                    indices.push(idx);
-                } else {
-                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "Time {} not found in ephemeris timestamps",
-                        dt.to_rfc3339()
-                    )));
-                }
-            }
-        }
-
-        Ok(indices)
+                .map(|dt| {
+                    let index = timestamps.partition_point(|value| value < dt);
+                    if timestamps.get(index) == Some(dt) {
+                        Ok(index)
+                    } else {
+                        Err(pyo3::exceptions::PyValueError::new_err(format!(
+                            "Time {} not found in ephemeris timestamps",
+                            dt.to_rfc3339()
+                        )))
+                    }
+                })
+                .collect()
+        })
     }
 
     /// Helper to parse indices parameter

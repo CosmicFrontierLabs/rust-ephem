@@ -318,12 +318,12 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
         let moon_positions = if let Some(indices) = time_indices {
             moon_positions_all.select(ndarray::Axis(0), indices)
         } else {
-            moon_positions_all
+            moon_positions_all.to_owned()
         };
         let observer_positions = if let Some(indices) = time_indices {
             observer_positions_all.select(ndarray::Axis(0), indices)
         } else {
-            observer_positions_all
+            observer_positions_all.to_owned()
         };
         let gcrs_full = if let Some(indices) = time_indices {
             gcrs_full_all.select(ndarray::Axis(0), indices)
@@ -484,12 +484,12 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
         let moon_positions = if let Some(indices) = time_indices {
             moon_positions_all.select(ndarray::Axis(0), indices)
         } else {
-            moon_positions_all
+            moon_positions_all.to_owned()
         };
         let observer_positions = if let Some(indices) = time_indices {
             observer_positions_all.select(ndarray::Axis(0), indices)
         } else {
-            observer_positions_all
+            observer_positions_all.to_owned()
         };
         let gcrs_full = if let Some(indices) = time_indices {
             gcrs_full_all.select(ndarray::Axis(0), indices)
@@ -580,12 +580,12 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
         let moon_positions = if let Some(indices) = time_indices {
             moon_positions_all.select(ndarray::Axis(0), indices)
         } else {
-            moon_positions_all
+            moon_positions_all.to_owned()
         };
         let observer_positions = if let Some(indices) = time_indices {
             observer_positions_all.select(ndarray::Axis(0), indices)
         } else {
-            observer_positions_all
+            observer_positions_all.to_owned()
         };
 
         let moon_units = self.compute_moon_unit_vectors(&moon_positions, &observer_positions)?;

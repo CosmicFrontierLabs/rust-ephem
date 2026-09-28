@@ -1492,9 +1492,11 @@ macro_rules! extract_body_ephemeris_data {
             let obs_filtered = observer_positions.select(ndarray::Axis(0), indices);
             (filtered_times, body_filtered, obs_filtered)
         } else {
-            // body_positions and observer_positions are already owned (from .to_owned() in getters)
-            // so no need to clone again
-            (times.to_vec(), body_positions, observer_positions)
+            (
+                times.to_vec(),
+                body_positions.to_owned(),
+                observer_positions.to_owned(),
+            )
         }
     }};
 }
@@ -1519,8 +1521,7 @@ macro_rules! extract_observer_ephemeris_data {
             let obs_filtered = observer_positions.select(ndarray::Axis(0), indices);
             (filtered_times, obs_filtered)
         } else {
-            // observer_positions is already owned (from .to_owned() in getter)
-            (times.to_vec(), observer_positions)
+            (times.to_vec(), observer_positions.to_owned())
         }
     }};
 }

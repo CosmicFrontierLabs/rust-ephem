@@ -109,9 +109,11 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
             } else {
                 let moon_positions = ephemeris.get_moon_positions()?;
                 let observer_positions = ephemeris.get_gcrs_positions()?;
-                // moon_positions and observer_positions are already owned (from .to_owned() in getters)
-                // so no need to clone again
-                (moon_positions, observer_positions, times.len())
+                (
+                    moon_positions.to_owned(),
+                    observer_positions.to_owned(),
+                    times.len(),
+                )
             };
         // Validate inputs
         if target_ras.len() != target_decs.len() {
@@ -211,7 +213,11 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
             } else {
                 let moon_positions = ephemeris.get_moon_positions()?;
                 let observer_positions = ephemeris.get_gcrs_positions()?;
-                (moon_positions, observer_positions, times.len())
+                (
+                    moon_positions.to_owned(),
+                    observer_positions.to_owned(),
+                    times.len(),
+                )
             };
 
         let n_targets = target_unit_vectors.nrows();

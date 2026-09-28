@@ -1,5 +1,5 @@
 use chrono::{DateTime, Datelike, Duration, Timelike, Utc};
-use ndarray::{s, Array2};
+use ndarray::{s, Array2, ArrayView2};
 use numpy::IntoPyArray;
 use pyo3::{prelude::*, types::PyDateTime};
 use std::sync::OnceLock;
@@ -490,34 +490,33 @@ pub trait EphemerisBase {
 
     // ========== Constraint helper methods ==========
 
-    /// Get times as Vec<DateTime<Utc>> for constraint evaluation
-    fn get_times(&self) -> PyResult<Vec<DateTime<Utc>>> {
+    /// Borrow timestamps; single-time queries must not clone the full trajectory.
+    fn get_times(&self) -> PyResult<&[DateTime<Utc>]> {
         self.data()
             .times
-            .as_ref()
-            .cloned()
+            .as_deref()
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available"))
     }
 
     /// Get Sun positions in GCRS (N x 3 array, km) for constraint evaluation
-    fn get_sun_positions(&self) -> PyResult<Array2<f64>> {
+    fn get_sun_positions(&self) -> PyResult<ArrayView2<'_, f64>> {
         let sun_data =
             self.data().sun_gcrs.as_ref().ok_or_else(|| {
                 pyo3::exceptions::PyValueError::new_err("No Sun positions available")
             })?;
 
         // Extract only positions (first 3 columns)
-        Ok(sun_data.slice(s![.., 0..3]).to_owned())
+        Ok(sun_data.slice(s![.., 0..3]))
     }
 
     /// Get Moon positions in GCRS (N x 3 array, km) for constraint evaluation
-    fn get_moon_positions(&self) -> PyResult<Array2<f64>> {
+    fn get_moon_positions(&self) -> PyResult<ArrayView2<'_, f64>> {
         let moon_data = self.data().moon_gcrs.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err("No Moon positions available")
         })?;
 
         // Extract only positions (first 3 columns)
-        Ok(moon_data.slice(s![.., 0..3]).to_owned())
+        Ok(moon_data.slice(s![.., 0..3]))
     }
 
     /// Get geocentric GCRS positions (N x 3, km) for any body supported by the
@@ -608,13 +607,13 @@ pub trait EphemerisBase {
     }
 
     /// Get observer (spacecraft/satellite) positions in GCRS (N x 3 array, km) for constraint evaluation
-    fn get_gcrs_positions(&self) -> PyResult<Array2<f64>> {
+    fn get_gcrs_positions(&self) -> PyResult<ArrayView2<'_, f64>> {
         let gcrs_data = self.data().gcrs.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err("No GCRS positions available")
         })?;
 
         // Extract only positions (first 3 columns)
-        Ok(gcrs_data.slice(s![.., 0..3]).to_owned())
+        Ok(gcrs_data.slice(s![.., 0..3]))
     }
 
     // ========== End constraint helper methods ==========

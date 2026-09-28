@@ -155,7 +155,7 @@ impl BodyProximityEvaluator {
                 let body_positions = self.body_positions(ephemeris)?;
                 let observer_positions = ephemeris.get_gcrs_positions()?;
                 let n_times = body_positions.nrows();
-                (body_positions, observer_positions, n_times)
+                (body_positions, observer_positions.to_owned(), n_times)
             };
 
             let mut cache = self.roll_sweep_cache.lock().map_err(|_| {
@@ -181,8 +181,8 @@ impl BodyProximityEvaluator {
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
     ) -> pyo3::PyResult<Array2<f64>> {
         match self.body.to_lowercase().as_str() {
-            "sun" => ephemeris.get_sun_positions(),
-            "moon" => ephemeris.get_moon_positions(),
+            "sun" => Ok(ephemeris.get_sun_positions()?.to_owned()),
+            "moon" => Ok(ephemeris.get_moon_positions()?.to_owned()),
             "earth" => {
                 // Earth centre = GCRS origin: return zero array with the same shape as observer.
                 let obs = ephemeris.get_gcrs_positions()?;
@@ -281,7 +281,7 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
                     obs_all.select(ndarray::Axis(0), indices),
                 )
             } else {
-                (all_times.to_vec(), body_all, obs_all)
+                (all_times.to_vec(), body_all, obs_all.to_owned())
             };
 
         if let Some(ref vertices) = self.fov_polygon {
@@ -354,7 +354,7 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
             } else {
                 let body_positions = self.body_positions(ephemeris)?;
                 let observer_positions = ephemeris.get_gcrs_positions()?;
-                (body_positions, observer_positions, times.len())
+                (body_positions, observer_positions.to_owned(), times.len())
             };
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -458,7 +458,7 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
             } else {
                 let body_positions = self.body_positions(ephemeris)?;
                 let observer_positions = ephemeris.get_gcrs_positions()?;
-                (body_positions, observer_positions, times.len())
+                (body_positions, observer_positions.to_owned(), times.len())
             };
 
         if target_unit_vectors.ncols() != 3 {
@@ -692,7 +692,7 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
                 obs_all.select(ndarray::Axis(0), indices),
             )
         } else {
-            (body_all, obs_all)
+            (body_all, obs_all.to_owned())
         };
 
         let angle_deg = super::core::compute_angle_deg_batch(
