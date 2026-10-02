@@ -1,14 +1,13 @@
 /// Generic coordinate frame conversion functions.
 ///
 /// This module provides reusable conversion functions for transforming between
-/// different coordinate frames (TEME, ITRS, GCRS). These functions are used by
-/// both TLEEphemeris and SPICEEphemeris to avoid code duplication.
+/// different coordinate frames (TEME, ITRS, GCRS), shared by ephemeris classes.
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use sofars::{
     consts::D2PI,
     erst::{era00, gmst06, gst06},
-    pnp::pnm06a,
+    pnp::{c2i06a, c2tcio, pnm06a, pom00, sp00},
     vm::{anp, rxp, rxr},
 };
 use std::f64::consts::PI;
@@ -59,6 +58,11 @@ pub enum Frame {
 enum Rotation {
     /// 3x3 matrix rotation (for precession-nutation)
     Matrix3x3 { matrix: [[f64; 3]; 3] },
+    /// Time-dependent GCRS -> ITRS matrix and its derivative per second.
+    MatrixWithRate {
+        matrix: [[f64; 3]; 3],
+        rate: [[f64; 3]; 3],
+    },
     /// 2D rotation about Z-axis (for GMST/ERA)
     RotationZ {
         cos_angle: f64,
@@ -66,7 +70,7 @@ enum Rotation {
         /// Whether to apply Earth rotation velocity correction (for ITRS conversions)
         earth_rotation: bool,
     },
-    /// Composed rotation: ERA + polar motion (for GCRS <-> ITRS with polar motion correction)
+    /// Composed rotation: sidereal rotation + polar motion (for TEME <-> ITRS).
     EraWithPolarMotion {
         cos_era: f64,
         sin_era: f64,
@@ -79,6 +83,28 @@ impl Rotation {
     /// `inverse`: if true, apply the inverse rotation (transpose for orthogonal matrices).
     fn apply(&self, pos: [f64; 3], vel: [f64; 3], inverse: bool) -> ([f64; 3], [f64; 3]) {
         match self {
+            Rotation::MatrixWithRate { matrix, rate } => {
+                let mut new_pos = [0.0; 3];
+                let mut new_vel = [0.0; 3];
+                let mut frame_velocity = [0.0; 3];
+                if inverse {
+                    // r_c = M^T r_t; v_c = M^T (v_t - Mdot r_c).
+                    let transpose = transpose_matrix(*matrix);
+                    rxp(&transpose, &pos, &mut new_pos);
+                    rxp(rate, &new_pos, &mut frame_velocity);
+                    let corrected = std::array::from_fn(|i| vel[i] - frame_velocity[i]);
+                    rxp(&transpose, &corrected, &mut new_vel);
+                } else {
+                    // r_t = M r_c; v_t = M v_c + Mdot r_c.
+                    rxp(matrix, &pos, &mut new_pos);
+                    rxp(matrix, &vel, &mut new_vel);
+                    rxp(rate, &pos, &mut frame_velocity);
+                    for i in 0..3 {
+                        new_vel[i] += frame_velocity[i];
+                    }
+                }
+                (new_pos, new_vel)
+            }
             Rotation::Matrix3x3 { matrix } => {
                 let mat = if inverse {
                     transpose_matrix(*matrix)
@@ -139,10 +165,10 @@ impl Rotation {
                 sin_era,
                 polar_motion,
             } => {
-                // For GCRS -> ITRS: First apply ERA rotation, then polar motion
-                // For ITRS -> GCRS: First apply inverse polar motion, then inverse ERA
+                // For TEME -> ITRS: sidereal rotation, then polar motion.
+                // The inverse reverses this order.
                 if inverse {
-                    // ITRS -> GCRS: W^T * R_z(-ERA)
+                    // ITRS -> TEME: R_z(-GMST) * W^T
                     // Step 1: Apply inverse polar motion (transpose)
                     let pm_t = transpose_matrix(*polar_motion);
                     let mut pos1 = [0.0; 3];
@@ -150,7 +176,7 @@ impl Rotation {
                     let mut vel1 = [0.0; 3];
                     rxp(&pm_t, &vel, &mut vel1);
 
-                    // Step 2: Apply inverse ERA (with Earth rotation velocity)
+                    // Step 2: Apply inverse sidereal rotation and spin velocity.
                     let (c, s) = (*cos_era, *sin_era);
                     let (x, y, z) = (pos1[0], pos1[1], pos1[2]);
                     let (vx, vy, vz) = (vel1[0], vel1[1], vel1[2]);
@@ -162,8 +188,8 @@ impl Rotation {
 
                     ([nx, ny, z], [nvx, nvy, vz])
                 } else {
-                    // GCRS -> ITRS: R_z(ERA) * W
-                    // Step 1: Apply ERA rotation (with Earth rotation velocity)
+                    // TEME -> ITRS: W * R_z(GMST)
+                    // Step 1: Apply sidereal rotation and spin velocity.
                     let (c, s) = (*cos_era, *sin_era);
                     let (x, y, z) = (pos[0], pos[1], pos[2]);
                     let (vx, vy, vz) = (vel[0], vel[1], vel[2]);
@@ -188,8 +214,92 @@ impl Rotation {
     }
 }
 
+const CELESTIAL_STEP_SECONDS: f64 = 300.0;
+type CelestialNode = (f64, i64, [[f64; 3]; 3]);
+
+/// Batch-local, four-node cubic interpolation of the slowly varying Q matrix.
+/// The fixed five-minute TT grid is independent of input order and cadence.
+/// Only Q is cached: UT1, Earth spin and polar motion remain sample-specific.
+#[derive(Default)]
+struct CelestialMatrixCache {
+    nodes: [Option<CelestialNode>; 4],
+}
+
+impl CelestialMatrixCache {
+    fn at(&mut self, tt: (f64, f64)) -> [[f64; 3]; 3] {
+        let index = (tt.1 * SECONDS_PER_DAY / CELESTIAL_STEP_SECONDS).floor() as i64;
+        let x = (tt.1 * SECONDS_PER_DAY - index as f64 * CELESTIAL_STEP_SECONDS)
+            / CELESTIAL_STEP_SECONDS;
+        let weights = [
+            -x * (x - 1.0) * (x - 2.0) / 6.0,
+            (x + 1.0) * (x - 1.0) * (x - 2.0) / 2.0,
+            -(x + 1.0) * x * (x - 2.0) / 2.0,
+            (x + 1.0) * x * (x - 1.0) / 6.0,
+        ];
+        let matrices: [_; 4] = std::array::from_fn(|k| {
+            let node = index + k as i64 - 1;
+            let slot = &mut self.nodes[node.rem_euclid(4) as usize];
+            if !matches!(slot, Some((day, index, _)) if *day == tt.0 && *index == node) {
+                *slot = Some((
+                    tt.0,
+                    node,
+                    c2i06a(tt.0, node as f64 * CELESTIAL_STEP_SECONDS / SECONDS_PER_DAY),
+                ));
+            }
+            slot.as_ref().unwrap().2
+        });
+        // Interpolate differences so constant terms (especially the diagonal)
+        // do not acquire rounding noise from summing the Lagrange weights.
+        std::array::from_fn(|i| {
+            std::array::from_fn(|j| {
+                matrices[1][i][j]
+                    + (0..4)
+                        .map(|k| weights[k] * (matrices[k][i][j] - matrices[1][i][j]))
+                        .sum::<f64>()
+            })
+        })
+    }
+}
+
+/// IAU 2006/2000A celestial-to-terrestrial rotation: W * R3(ERA) * Q.
+/// Differentiate over one second, including precession/nutation and Earth spin.
+/// EOP values are held fixed locally (no polar-motion rates or LOD correction).
+fn gcrs_itrs_rotation(
+    tt: (f64, f64),
+    ut1: (f64, f64),
+    xp: f64,
+    yp: f64,
+    mut cache: Option<&mut CelestialMatrixCache>,
+) -> Rotation {
+    // Put offsets into fractional days, avoiding cancellation when adding small
+    // time steps to a large Julian/MJD day number. No UTC/leap-second differencing.
+    let tt = (tt.0 + tt.1.floor(), tt.1 - tt.1.floor());
+    let ut1 = (ut1.0 + ut1.1.floor(), ut1.1 - ut1.1.floor());
+    let mut matrix_at = |seconds: f64| {
+        let days = seconds / SECONDS_PER_DAY;
+        let q = match cache.as_mut() {
+            Some(cache) => cache.at((tt.0, tt.1 + days)),
+            None => c2i06a(tt.0, tt.1 + days),
+        };
+        let era = era00(ut1.0, ut1.1 + days);
+        let polar = pom00(xp, yp, sp00(tt.0, tt.1 + days));
+        c2tcio(&q, era, &polar)
+    };
+    let matrix = matrix_at(0.0);
+    let before = matrix_at(-0.5);
+    let after = matrix_at(0.5);
+    let rate = std::array::from_fn(|i| std::array::from_fn(|j| after[i][j] - before[i][j]));
+    Rotation::MatrixWithRate { matrix, rate }
+}
+
 /// Get the rotation transformation for a specific frame conversion at a given time.
-fn get_rotation(from: Frame, to: Frame, dt: &DateTime<Utc>, polar_motion: bool) -> Rotation {
+fn get_rotation(
+    from: Frame,
+    to: Frame,
+    dt: &DateTime<Utc>,
+    polar_motion: bool,
+    cache: Option<&mut CelestialMatrixCache>,
+) -> Rotation {
     match (from, to) {
         // Precession-nutation transformation (TEME <-> GCRS)
         (Frame::TEME, Frame::GCRS) | (Frame::GCRS, Frame::TEME) => {
@@ -229,31 +339,14 @@ fn get_rotation(from: Frame, to: Frame, dt: &DateTime<Utc>, polar_motion: bool) 
                 }
             }
         }
-        // ERA rotation (GCRS <-> ITRS) - with optional polar motion correction
+        // Full celestial-to-terrestrial rotation; only polar motion is optional.
         (Frame::GCRS, Frame::ITRS) | (Frame::ITRS, Frame::GCRS) => {
-            // Use UT1 time scale for Earth rotation angle
-            let (jd_ut1_1, jd_ut1_2) = datetime_to_jd_ut1(dt);
-            let era = era00(jd_ut1_1, jd_ut1_2);
-
-            if polar_motion {
-                // Get polar motion parameters (xp, yp in radians)
-                // If EOP data is not available, this will return (0.0, 0.0) as fallback
-                let (xp, yp) = get_polar_motion_rad(dt);
-                let pm_matrix = polar_motion_matrix(xp, yp);
-
-                Rotation::EraWithPolarMotion {
-                    cos_era: era.cos(),
-                    sin_era: era.sin(),
-                    polar_motion: pm_matrix,
-                }
+            let (xp, yp) = if polar_motion {
+                get_polar_motion_rad(dt)
             } else {
-                // Simple rotation without polar motion correction
-                Rotation::RotationZ {
-                    cos_angle: era.cos(),
-                    sin_angle: era.sin(),
-                    earth_rotation: true,
-                }
-            }
+                (0.0, 0.0)
+            };
+            gcrs_itrs_rotation(datetime_to_jd_tt(dt), datetime_to_jd_ut1(dt), xp, yp, cache)
         }
         _ => unreachable!("Invalid frame combination"),
     }
@@ -291,15 +384,32 @@ pub fn convert_frames(
     // Determine if we need the inverse transformation
     // TEME->GCRS uses transpose (inverse) of pn_matrix
     // GCRS->TEME uses forward pn_matrix
-    // For Z-rotations: TEME->ITRS and GCRS->ITRS are forward, inverses are ITRS->TEME and ITRS->GCRS
+    // TEME->ITRS and GCRS->ITRS are forward; their inverses start in ITRS.
     let needs_inverse = matches!(
         (input_frame, output_frame),
         (Frame::TEME, Frame::GCRS) | (Frame::ITRS, Frame::TEME) | (Frame::ITRS, Frame::GCRS)
     );
 
+    // Sparse or tiny batches do not amortize the four interpolation nodes.
+    // Keep their exact evaluation path; no global cache, locks or EOP state.
+    let mut celestial_cache = (matches!(
+        (input_frame, output_frame),
+        (Frame::GCRS, Frame::ITRS) | (Frame::ITRS, Frame::GCRS)
+    ) && n >= 4
+        && times.windows(2).all(|pair| {
+            (pair[1] - pair[0]).num_milliseconds().abs() <= (CELESTIAL_STEP_SECONDS * 1000.0) as i64
+        }))
+    .then(CelestialMatrixCache::default);
+
     for (i, dt) in times.iter().enumerate() {
         // Get the base rotation (always defined in the "forward" direction)
-        let rotation = get_rotation(input_frame, output_frame, dt, polar_motion);
+        let rotation = get_rotation(
+            input_frame,
+            output_frame,
+            dt,
+            polar_motion,
+            celestial_cache.as_mut(),
+        );
 
         let in_row = data.row(i);
         let pos = [in_row[0], in_row[1], in_row[2]];
@@ -323,6 +433,73 @@ pub fn convert_frames(
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    #[test]
+    fn test_cached_rotation_matches_exact_across_boundaries() {
+        let mut cache = CelestialMatrixCache::default();
+        // Subsecond queries, grid crossings, day crossings and out-of-order
+        // epochs exercise eviction and the derivative's two stencil points.
+        for day in [
+            53736.0, 88069.0, 33282.0, 62502.0, 60310.0, 60401.0, 60492.0, 60583.0,
+        ] {
+            for seconds in [
+                0.0, 0.25, 75.0, 150.0, 225.0, 299.75, 300.0, 300.25, 86400.0, 86399.75, 0.0,
+            ] {
+                let tt = (2400000.5, day + seconds / SECONDS_PER_DAY);
+                let ut1 = (2400000.5, day + (seconds - 65.0) / SECONDS_PER_DAY);
+                for (xp, yp) in [(0.0, 0.0), (2.55060238e-7, 1.860359247e-6)] {
+                    let exact = gcrs_itrs_rotation(tt, ut1, xp, yp, None);
+                    let cached = gcrs_itrs_rotation(tt, ut1, xp, yp, Some(&mut cache));
+                    // Beyond GEO, in both directions, moving and stationary.
+                    for vel in [[1.2, 6.8, -2.4], [0.0; 3]] {
+                        let pos = [70000.0, -12000.0, 18000.0];
+                        for inverse in [false, true] {
+                            let (ep, ev) = exact.apply(pos, vel, inverse);
+                            let (cp, cv) = cached.apply(pos, vel, inverse);
+                            let (rp, rv) = cached.apply(cp, cv, !inverse);
+                            for i in 0..3 {
+                                assert!(
+                                    (cp[i] - ep[i]).abs() < 1e-6,
+                                    "position: {}",
+                                    cp[i] - ep[i]
+                                );
+                                assert!(
+                                    (cv[i] - ev[i]).abs() < 1e-9,
+                                    "velocity: {}",
+                                    cv[i] - ev[i]
+                                );
+                                assert!((rp[i] - pos[i]).abs() < 1e-9);
+                                assert!((rv[i] - vel[i]).abs() < 1e-12);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_gcrs_itrs_reference_and_round_trip() {
+        // Independent ERFA c2t06a reference, TT = UT1 = MJD 53736,
+        // xp = 2.55060238e-7, yp = 1.860359247e-6 radians. Reference velocities
+        // use a fourth-order, 2-second finite difference (not our stencil).
+        let pos = [7000.0, -1200.0, 1800.0];
+        let vel = [1.2, 6.8, -2.4];
+        let expected_pos = [-2447.286866729401, -6666.06286530538, 1803.9935886056828];
+        let expected_vel = [5.984149542054486, -2.2341190029645612, -2.3990368739985186];
+        // Equivalent date splits, including a negative second part.
+        for date in [(2400000.5, 53736.0), (2453736.5, 0.0), (2453737.5, -1.0)] {
+            let rotation = gcrs_itrs_rotation(date, date, 2.55060238e-7, 1.860359247e-6, None);
+            let (itrs_pos, itrs_vel) = rotation.apply(pos, vel, false);
+            let (restored_pos, restored_vel) = rotation.apply(itrs_pos, itrs_vel, true);
+            for i in 0..3 {
+                assert!((itrs_pos[i] - expected_pos[i]).abs() < 1e-9);
+                assert!((itrs_vel[i] - expected_vel[i]).abs() < 1e-9);
+                assert!((restored_pos[i] - pos[i]).abs() < 1e-9);
+                assert!((restored_vel[i] - vel[i]).abs() < 1e-12);
+            }
+        }
+    }
 
     #[test]
     fn test_teme_to_gcrs_includes_eqeq() {

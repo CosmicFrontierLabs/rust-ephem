@@ -58,19 +58,47 @@ Transformation Pipeline
 For TLE-based ephemeris:
 
 1. **SGP4 Propagation** → TEME position/velocity
-2. **TEME → ITRS** using Earth rotation, precession-nutation
-3. **ITRS → GCRS** using polar motion, frame bias
+2. **TEME → ITRS** using GMST and optional polar motion
+3. **TEME → GCRS** separately, using the equation of equinoxes and the inverse
+   bias-precession-nutation matrix
 
 For ground-based ephemeris:
 
 1. **Geodetic → ITRS** using WGS84 ellipsoid
-2. **ITRS → GCRS** using Earth rotation, polar motion
+2. **ITRS → GCRS** using the inverse celestial-to-terrestrial transformation below
+
+For GCRS ↔ ITRS conversions (including file, OEM, SPICE, Parquet, and ground
+ephemerides), the forward matrix is ``M = W * R3(ERA) * Q``:
+
+- ``Q``: frame bias, IAU 2006 precession, and IAU 2000A nutation, evaluated in TT
+- ``R3(ERA)``: Earth rotation angle evaluated in UT1
+- ``W``: polar motion and the TIO locator ``s'``
+
+The implementation uses the SOFA ``c2t06a`` decomposition through ``sofars``.
+For dense batches, the slowly varying ``Q`` matrix is interpolated cubically
+on a fixed 300-second TT grid with a four-node, batch-local cache. Earth rotation
+and polar motion are still evaluated at each requested time. Sparse batches
+(gaps greater than 300 seconds) and batches with fewer than four samples retain
+exact series evaluation. No global cache or cached Earth-orientation data is
+introduced. Setting
+``polar_motion=False`` sets ``xp = yp = 0``; it does **not** disable precession,
+nutation, frame bias, or ``s'``.
+
+Positions transform as ``r_itrs = M * r_gcrs`` and velocities as
+``v_itrs = M * v_gcrs + Mdot * r_gcrs``. The inverse uses the transpose of ``M``
+and subtracts the same frame-motion term. ``Mdot`` is evaluated by a centered
+one-second difference in TT and UT1. Earth-orientation parameters are held fixed
+locally: polar-motion rates and length-of-day corrections are not modeled.
+Observed celestial-pole offsets (``dX``, ``dY``) are also not applied.
+The interpolation retains the position/velocity regression tolerances of 1 mm
+and 1 micrometre/s for the tested near-Earth and beyond-geosynchronous states;
+these are numerical agreement tolerances, not absolute orbit-accuracy claims.
 
 Implementation Details
 ----------------------
 
-- **ERFA library**: IAU-standard routines for astronomical transformations
-- **IAU 2006 model**: Modern precession-nutation matrix
+- **sofars library**: Pure-Rust SOFA routines for astronomical transformations
+- **IAU 2006/2000A model**: Precession-nutation matrix
 - **Frame bias**: Proper ICRS/GCRS alignment
 - **Polar motion**: Optional correction for Earth axis movement
 - **UT1 corrections**: Account for Earth's irregular rotation
@@ -78,15 +106,11 @@ Implementation Details
 Accuracy Impact
 ---------------
 
-Frame transformation accuracy depends on available corrections:
-
-==============================  ============
-Configuration                   Accuracy
-==============================  ============
-Default (no corrections)        ~100 meters
-UT1 corrections enabled         ~20 meters
-UT1 + polar motion              ~10-20 meters
-==============================  ============
+Frame transformation accuracy depends on the input frame, epoch, distance from
+Earth's center, and available Earth-orientation data. Precession and nutation
+are always included in GCRS ↔ ITRS conversions. UT1 and polar-motion accuracy
+remain limited by provider coverage and fallback behavior; enabling polar
+motion does not guarantee accurate data outside the provider's date range.
 
 Enable high-accuracy mode:
 
