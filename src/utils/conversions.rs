@@ -6,8 +6,8 @@ use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use sofars::{
     consts::D2PI,
-    erst::{gmst06, gst06},
-    pnp::{c2t06a, pnm06a},
+    erst::{era00, gmst06, gst06},
+    pnp::{c2i06a, c2tcio, pnm06a, pom00, sp00},
     vm::{anp, rxp, rxr},
 };
 use std::f64::consts::PI;
@@ -214,17 +214,76 @@ impl Rotation {
     }
 }
 
+const CELESTIAL_STEP_SECONDS: f64 = 300.0;
+type CelestialNode = (f64, i64, [[f64; 3]; 3]);
+
+/// Batch-local, four-node cubic interpolation of the slowly varying Q matrix.
+/// The fixed five-minute TT grid is independent of input order and cadence.
+/// Only Q is cached: UT1, Earth spin and polar motion remain sample-specific.
+#[derive(Default)]
+struct CelestialMatrixCache {
+    nodes: [Option<CelestialNode>; 4],
+}
+
+impl CelestialMatrixCache {
+    fn at(&mut self, tt: (f64, f64)) -> [[f64; 3]; 3] {
+        let index = (tt.1 * SECONDS_PER_DAY / CELESTIAL_STEP_SECONDS).floor() as i64;
+        let x = (tt.1 * SECONDS_PER_DAY - index as f64 * CELESTIAL_STEP_SECONDS)
+            / CELESTIAL_STEP_SECONDS;
+        let weights = [
+            -x * (x - 1.0) * (x - 2.0) / 6.0,
+            (x + 1.0) * (x - 1.0) * (x - 2.0) / 2.0,
+            -(x + 1.0) * x * (x - 2.0) / 2.0,
+            (x + 1.0) * x * (x - 1.0) / 6.0,
+        ];
+        let matrices: [_; 4] = std::array::from_fn(|k| {
+            let node = index + k as i64 - 1;
+            let slot = &mut self.nodes[node.rem_euclid(4) as usize];
+            if !matches!(slot, Some((day, index, _)) if *day == tt.0 && *index == node) {
+                *slot = Some((
+                    tt.0,
+                    node,
+                    c2i06a(tt.0, node as f64 * CELESTIAL_STEP_SECONDS / SECONDS_PER_DAY),
+                ));
+            }
+            slot.as_ref().unwrap().2
+        });
+        // Interpolate differences so constant terms (especially the diagonal)
+        // do not acquire rounding noise from summing the Lagrange weights.
+        std::array::from_fn(|i| {
+            std::array::from_fn(|j| {
+                matrices[1][i][j]
+                    + (0..4)
+                        .map(|k| weights[k] * (matrices[k][i][j] - matrices[1][i][j]))
+                        .sum::<f64>()
+            })
+        })
+    }
+}
+
 /// IAU 2006/2000A celestial-to-terrestrial rotation: W * R3(ERA) * Q.
 /// Differentiate over one second, including precession/nutation and Earth spin.
 /// EOP values are held fixed locally (no polar-motion rates or LOD correction).
-fn gcrs_itrs_rotation(tt: (f64, f64), ut1: (f64, f64), xp: f64, yp: f64) -> Rotation {
+fn gcrs_itrs_rotation(
+    tt: (f64, f64),
+    ut1: (f64, f64),
+    xp: f64,
+    yp: f64,
+    mut cache: Option<&mut CelestialMatrixCache>,
+) -> Rotation {
     // Put offsets into fractional days, avoiding cancellation when adding small
     // time steps to a large Julian/MJD day number. No UTC/leap-second differencing.
     let tt = (tt.0 + tt.1.floor(), tt.1 - tt.1.floor());
     let ut1 = (ut1.0 + ut1.1.floor(), ut1.1 - ut1.1.floor());
-    let matrix_at = |seconds: f64| {
+    let mut matrix_at = |seconds: f64| {
         let days = seconds / SECONDS_PER_DAY;
-        c2t06a(tt.0, tt.1 + days, ut1.0, ut1.1 + days, xp, yp)
+        let q = match cache.as_mut() {
+            Some(cache) => cache.at((tt.0, tt.1 + days)),
+            None => c2i06a(tt.0, tt.1 + days),
+        };
+        let era = era00(ut1.0, ut1.1 + days);
+        let polar = pom00(xp, yp, sp00(tt.0, tt.1 + days));
+        c2tcio(&q, era, &polar)
     };
     let matrix = matrix_at(0.0);
     let before = matrix_at(-0.5);
@@ -234,7 +293,13 @@ fn gcrs_itrs_rotation(tt: (f64, f64), ut1: (f64, f64), xp: f64, yp: f64) -> Rota
 }
 
 /// Get the rotation transformation for a specific frame conversion at a given time.
-fn get_rotation(from: Frame, to: Frame, dt: &DateTime<Utc>, polar_motion: bool) -> Rotation {
+fn get_rotation(
+    from: Frame,
+    to: Frame,
+    dt: &DateTime<Utc>,
+    polar_motion: bool,
+    cache: Option<&mut CelestialMatrixCache>,
+) -> Rotation {
     match (from, to) {
         // Precession-nutation transformation (TEME <-> GCRS)
         (Frame::TEME, Frame::GCRS) | (Frame::GCRS, Frame::TEME) => {
@@ -281,7 +346,7 @@ fn get_rotation(from: Frame, to: Frame, dt: &DateTime<Utc>, polar_motion: bool) 
             } else {
                 (0.0, 0.0)
             };
-            gcrs_itrs_rotation(datetime_to_jd_tt(dt), datetime_to_jd_ut1(dt), xp, yp)
+            gcrs_itrs_rotation(datetime_to_jd_tt(dt), datetime_to_jd_ut1(dt), xp, yp, cache)
         }
         _ => unreachable!("Invalid frame combination"),
     }
@@ -325,9 +390,26 @@ pub fn convert_frames(
         (Frame::TEME, Frame::GCRS) | (Frame::ITRS, Frame::TEME) | (Frame::ITRS, Frame::GCRS)
     );
 
+    // Sparse or tiny batches do not amortize the four interpolation nodes.
+    // Keep their exact evaluation path; no global cache, locks or EOP state.
+    let mut celestial_cache = (matches!(
+        (input_frame, output_frame),
+        (Frame::GCRS, Frame::ITRS) | (Frame::ITRS, Frame::GCRS)
+    ) && n >= 4
+        && times.windows(2).all(|pair| {
+            (pair[1] - pair[0]).num_milliseconds().abs() <= (CELESTIAL_STEP_SECONDS * 1000.0) as i64
+        }))
+    .then(CelestialMatrixCache::default);
+
     for (i, dt) in times.iter().enumerate() {
         // Get the base rotation (always defined in the "forward" direction)
-        let rotation = get_rotation(input_frame, output_frame, dt, polar_motion);
+        let rotation = get_rotation(
+            input_frame,
+            output_frame,
+            dt,
+            polar_motion,
+            celestial_cache.as_mut(),
+        );
 
         let in_row = data.row(i);
         let pos = [in_row[0], in_row[1], in_row[2]];
@@ -353,6 +435,50 @@ mod tests {
     use chrono::TimeZone;
 
     #[test]
+    fn test_cached_rotation_matches_exact_across_boundaries() {
+        let mut cache = CelestialMatrixCache::default();
+        // Subsecond queries, grid crossings, day crossings and out-of-order
+        // epochs exercise eviction and the derivative's two stencil points.
+        for day in [
+            53736.0, 88069.0, 33282.0, 62502.0, 60310.0, 60401.0, 60492.0, 60583.0,
+        ] {
+            for seconds in [
+                0.0, 0.25, 75.0, 150.0, 225.0, 299.75, 300.0, 300.25, 86400.0, 86399.75, 0.0,
+            ] {
+                let tt = (2400000.5, day + seconds / SECONDS_PER_DAY);
+                let ut1 = (2400000.5, day + (seconds - 65.0) / SECONDS_PER_DAY);
+                for (xp, yp) in [(0.0, 0.0), (2.55060238e-7, 1.860359247e-6)] {
+                    let exact = gcrs_itrs_rotation(tt, ut1, xp, yp, None);
+                    let cached = gcrs_itrs_rotation(tt, ut1, xp, yp, Some(&mut cache));
+                    // Beyond GEO, in both directions, moving and stationary.
+                    for vel in [[1.2, 6.8, -2.4], [0.0; 3]] {
+                        let pos = [70000.0, -12000.0, 18000.0];
+                        for inverse in [false, true] {
+                            let (ep, ev) = exact.apply(pos, vel, inverse);
+                            let (cp, cv) = cached.apply(pos, vel, inverse);
+                            let (rp, rv) = cached.apply(cp, cv, !inverse);
+                            for i in 0..3 {
+                                assert!(
+                                    (cp[i] - ep[i]).abs() < 1e-6,
+                                    "position: {}",
+                                    cp[i] - ep[i]
+                                );
+                                assert!(
+                                    (cv[i] - ev[i]).abs() < 1e-9,
+                                    "velocity: {}",
+                                    cv[i] - ev[i]
+                                );
+                                assert!((rp[i] - pos[i]).abs() < 1e-9);
+                                assert!((rv[i] - vel[i]).abs() < 1e-12);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_gcrs_itrs_reference_and_round_trip() {
         // Independent ERFA c2t06a reference, TT = UT1 = MJD 53736,
         // xp = 2.55060238e-7, yp = 1.860359247e-6 radians. Reference velocities
@@ -363,7 +489,7 @@ mod tests {
         let expected_vel = [5.984149542054486, -2.2341190029645612, -2.3990368739985186];
         // Equivalent date splits, including a negative second part.
         for date in [(2400000.5, 53736.0), (2453736.5, 0.0), (2453737.5, -1.0)] {
-            let rotation = gcrs_itrs_rotation(date, date, 2.55060238e-7, 1.860359247e-6);
+            let rotation = gcrs_itrs_rotation(date, date, 2.55060238e-7, 1.860359247e-6, None);
             let (itrs_pos, itrs_vel) = rotation.apply(pos, vel, false);
             let (restored_pos, restored_vel) = rotation.apply(itrs_pos, itrs_vel, true);
             for i in 0..3 {

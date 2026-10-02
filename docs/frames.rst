@@ -74,7 +74,13 @@ ephemerides), the forward matrix is ``M = W * R3(ERA) * Q``:
 - ``R3(ERA)``: Earth rotation angle evaluated in UT1
 - ``W``: polar motion and the TIO locator ``s'``
 
-The implementation uses SOFA's ``c2t06a`` through ``sofars``. Setting
+The implementation uses the SOFA ``c2t06a`` decomposition through ``sofars``.
+For dense batches, the slowly varying ``Q`` matrix is interpolated cubically
+on a fixed 300-second TT grid with a four-node, batch-local cache. Earth rotation
+and polar motion are still evaluated at each requested time. Sparse batches
+(gaps greater than 300 seconds) and batches with fewer than four samples retain
+exact series evaluation. No global cache or cached Earth-orientation data is
+introduced. Setting
 ``polar_motion=False`` sets ``xp = yp = 0``; it does **not** disable precession,
 nutation, frame bias, or ``s'``.
 
@@ -84,6 +90,9 @@ and subtracts the same frame-motion term. ``Mdot`` is evaluated by a centered
 one-second difference in TT and UT1. Earth-orientation parameters are held fixed
 locally: polar-motion rates and length-of-day corrections are not modeled.
 Observed celestial-pole offsets (``dX``, ``dY``) are also not applied.
+The interpolation retains the position/velocity regression tolerances of 1 mm
+and 1 micrometre/s for the tested near-Earth and beyond-geosynchronous states;
+these are numerical agreement tolerances, not absolute orbit-accuracy claims.
 
 Implementation Details
 ----------------------

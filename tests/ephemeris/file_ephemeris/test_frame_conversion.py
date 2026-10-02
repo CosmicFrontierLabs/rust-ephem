@@ -16,8 +16,14 @@ from rust_ephem import FileEphemeris, get_polar_motion, get_ut1_utc_offset
 @pytest.mark.parametrize("polar_motion", [False, True])
 @pytest.mark.parametrize("frame", ["GCRS", "ITRS"])
 @pytest.mark.parametrize("stationary", [False, True])
+@pytest.mark.parametrize("step", [2, 60])
 def test_position_and_velocity_against_erfa(
-    tmp_path: Path, year: int, polar_motion: bool, frame: str, stationary: bool
+    tmp_path: Path,
+    year: int,
+    polar_motion: bool,
+    frame: str,
+    stationary: bool,
+    step: int,
 ) -> None:
     """Test actual file ingestion, both directions, and non-orbital velocities.
 
@@ -25,27 +31,30 @@ def test_position_and_velocity_against_erfa(
     EOP table is installed. ERFA supplies the independent transformation; a
     five-point position difference checks velocity, including frame motion.
     """
-    begin = datetime(year, 1, 1, 0, 0, tzinfo=timezone.utc)
-    end = begin + timedelta(seconds=60)
+    # Cross both interpolation-grid and UTC-day boundaries. Dense batches use
+    # the cache; short/sparse batches use exact series evaluation.
+    begin = datetime(year, 1, 1, 23, 59, 37, 250000, tzinfo=timezone.utc)
+    duration = 240
+    end = begin + timedelta(seconds=duration)
     position = np.array([7000.0, -1200.0, 1800.0])
     velocity = np.zeros(3) if stationary else np.array([1.2, 6.8, -2.4])
     path = tmp_path / "state.txt"
     lines = [f"ScenarioEpoch {begin.isoformat()}", f"CoordinateSystem {frame}"]
-    for seconds in (0, 60):
+    for seconds in (0, duration):
         state = np.concatenate((position + seconds * velocity, velocity))
         lines.append(f"{seconds} " + " ".join(str(x) for x in state))
     path.write_text("\n".join(lines) + "\n")
     ephem = FileEphemeris(
-        str(path), begin=begin, end=end, step_size=60, polar_motion=polar_motion
+        str(path), begin=begin, end=end, step_size=step, polar_motion=polar_motion
     )
     actual = ephem.itrs_pv if frame == "GCRS" else ephem.gcrs_pv
 
-    for index, dt in enumerate((begin, end)):
+    for index, dt in enumerate(ephem.timestamp):
         time = Time(dt)
         time.delta_ut1_utc = get_ut1_utc_offset(dt)
         xp, yp = get_polar_motion(dt) if polar_motion else (0.0, 0.0)
         xp, yp = np.deg2rad(np.array([xp, yp]) / 3600.0)
-        center = position + index * 60 * velocity
+        center = position + index * step * velocity
 
         def transformed(seconds: float) -> NDArray[np.float64]:
             # Hold EOP fixed locally; advance TT and UT1, not UTC. This also
@@ -77,3 +86,22 @@ def test_position_and_velocity_against_erfa(
         np.testing.assert_allclose(
             actual.velocity[index], expected_velocity, rtol=0, atol=1e-9
         )
+
+
+def test_dense_and_sparse_queries_agree(tmp_path: Path) -> None:
+    """Batch optimization must not make results depend materially on cadence."""
+    begin = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    end = begin + timedelta(hours=2)
+    path = tmp_path / "stationary.txt"
+    path.write_text(
+        f"ScenarioEpoch {begin.isoformat()}\nCoordinateSystem GCRS\n"
+        "0 70000 -12000 18000 0 0 0\n7200 70000 -12000 18000 0 0 0\n"
+    )
+    dense = FileEphemeris(str(path), begin=begin, end=end, step_size=2)
+    sparse = FileEphemeris(str(path), begin=begin, end=end, step_size=3600)
+    np.testing.assert_allclose(
+        dense.itrs_pv.position[::1800], sparse.itrs_pv.position, rtol=0, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        dense.itrs_pv.velocity[::1800], sparse.itrs_pv.velocity, rtol=0, atol=1e-9
+    )
