@@ -14,7 +14,8 @@ Reference Frames
    - Origin: Earth center
    - Reference: True equator, mean equinox of date
    - Use case: TLE propagation (SGP4 native output)
-   - GCRS conversion: Applies the equation of equinoxes to align mean vs true equinox
+   - Convention: Vallado/SGP4 TEME, using IAU 1982 mean sidereal time
+   - GCRS conversion: Consistent with the TEME → ITRS → GCRS route below
 
 **ITRS (International Terrestrial Reference System)**
    An Earth-fixed coordinate system that rotates with the Earth. Useful for
@@ -58,9 +59,19 @@ Transformation Pipeline
 For TLE-based ephemeris:
 
 1. **SGP4 Propagation** → TEME position/velocity
-2. **TEME → ITRS** using GMST and optional polar motion
-3. **TEME → GCRS** separately, using the equation of equinoxes and the inverse
-   bias-precession-nutation matrix
+2. **TEME → ITRS** using SOFA ``gmst82`` and optional polar motion, without
+   the TIO locator ``s'`` (the Vallado TEME convention)
+3. **TEME → GCRS** using the rotation derived from that TEME → ITRS transform
+   and the inverse IAU 2006/2000A GCRS → ITRS transform. The direct and composed
+   routes agree in both position and velocity when given the same EOP inputs
+   and polar-motion setting.
+
+With ``T = W(xp, yp, 0) * R3(GMST82)`` and the celestial-to-terrestrial matrix
+``M`` below, the GCRS → TEME matrix is ``T^T * M``. Polar motion cancels, leaving
+``R3(s') * R3(ERA - GMST82) * Q``. This avoids both an extra transformation
+through ITRS and replacing the SGP4 mean-equinox convention with GMST06.
+TEME conversions include the matrix-rate velocity term; rotating velocity
+alone omits motion of the reference frame.
 
 For ground-based ephemeris:
 
@@ -75,8 +86,9 @@ ephemerides), the forward matrix is ``M = W * R3(ERA) * Q``:
 - ``W``: polar motion and the TIO locator ``s'``
 
 The implementation uses the SOFA ``c2t06a`` decomposition through ``sofars``.
-For dense batches, the slowly varying ``Q`` matrix is interpolated cubically
-on a fixed 300-second TT grid with a four-node, batch-local cache. Earth rotation
+For dense GCRS ↔ ITRS and TEME ↔ GCRS batches, the slowly varying ``Q`` matrix
+is interpolated cubically on a fixed 300-second TT grid with a four-node,
+batch-local cache. Earth rotation
 and polar motion are still evaluated at each requested time. Sparse batches
 (gaps greater than 300 seconds) and batches with fewer than four samples retain
 exact series evaluation. No global cache or cached Earth-orientation data is
@@ -86,7 +98,8 @@ nutation, frame bias, or ``s'``.
 
 Positions transform as ``r_itrs = M * r_gcrs`` and velocities as
 ``v_itrs = M * v_gcrs + Mdot * r_gcrs``. The inverse uses the transpose of ``M``
-and subtracts the same frame-motion term. ``Mdot`` is evaluated by a centered
+and subtracts the same frame-motion term. The same rule is used for TEME
+transforms. ``Mdot`` is evaluated by a centered
 one-second difference in TT and UT1. Earth-orientation parameters are held fixed
 locally: polar-motion rates and length-of-day corrections are not modeled.
 Observed celestial-pole offsets (``dX``, ``dY``) are also not applied.

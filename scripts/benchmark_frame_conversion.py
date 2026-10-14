@@ -20,17 +20,27 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--steps", type=int, nargs="+", default=[2, 60])
+    parser.add_argument(
+        "--kinds",
+        nargs="+",
+        choices=["ground", "GCRS", "ITRS", "TLE"],
+        default=["ground", "GCRS", "ITRS", "TLE"],
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.repeats < 1 or any(s <= 0 or 86400 % s for s in args.steps):
         parser.error("positive repeats and steps dividing 86400 are required")
-    begin = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    end = begin + timedelta(days=1)
     records = []
     with TemporaryDirectory() as directory:
-        for kind in ("ground", "GCRS", "ITRS"):
+        for kind in args.kinds:
+            begin = (
+                datetime(2025, 10, 14, tzinfo=timezone.utc)
+                if kind == "TLE"
+                else datetime(2024, 1, 1, tzinfo=timezone.utc)
+            )
+            end = begin + timedelta(days=1)
             path = Path(directory) / "state.txt"
-            if kind != "ground":
+            if kind in ("GCRS", "ITRS"):
                 rows = [
                     f"ScenarioEpoch {begin.isoformat()}",
                     f"CoordinateSystem {kind}",
@@ -48,6 +58,14 @@ def main() -> None:
                     if kind == "ground":
                         ephem = rust_ephem.GroundEphemeris(
                             40, -74, 100, begin, end, step
+                        )
+                    elif kind == "TLE":
+                        ephem = rust_ephem.TLEEphemeris(
+                            "1 28485U 04047A   25287.56748435  .00035474  00000+0  70906-3 0  9995",
+                            "2 28485  20.5535 247.0048 0005179 187.1586 172.8782 15.44937919148530",
+                            begin,
+                            end,
+                            step,
                         )
                     else:
                         ephem = rust_ephem.FileEphemeris(
