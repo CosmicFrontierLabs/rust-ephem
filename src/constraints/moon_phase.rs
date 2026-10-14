@@ -199,7 +199,7 @@ impl MoonPhaseEvaluator {
             }
         }
 
-        let itrs_data = convert_frames(gcrs_full, times, Frame::GCRS, Frame::ITRS, true);
+        let itrs_data = convert_frames(gcrs_full, times, Frame::GCRS, Frame::ITRS, true)?;
         let itrs_positions = itrs_data.slice(s![.., 0..3]).to_owned();
         let (lats_deg, lons_deg, heights_km) = ecef_to_geodetic_deg(&itrs_positions);
 

@@ -86,26 +86,37 @@ ephemerides), the forward matrix is ``M = W * R3(ERA) * Q``:
 - ``W``: polar motion and the TIO locator ``s'``
 
 The implementation uses the SOFA ``c2t06a`` decomposition through ``sofars``.
-For dense GCRS ↔ ITRS and TEME ↔ GCRS batches, the slowly varying ``Q`` matrix
-is interpolated cubically on a fixed 300-second TT grid with a four-node,
-batch-local cache. Earth rotation
-and polar motion are still evaluated at each requested time. Sparse batches
-(gaps greater than 300 seconds) and batches with fewer than four samples retain
-exact series evaluation. No global cache or cached Earth-orientation data is
-introduced. Setting
+For nearby GCRS ↔ ITRS and TEME ↔ GCRS samples, the slowly varying ``Q``
+matrix is interpolated cubically on a fixed 300-second TT grid with a four-node,
+batch-local cache. Its derivative comes from the same cubic, without additional
+series evaluations or stencil-driven cache eviction. Isolated samples use two
+full series evaluations at TT ±0.5 seconds to obtain a midpoint matrix and its
+centered derivative. Cache selection is local: a large gap does not disable
+interpolation elsewhere in the batch. Interpolated and isolated rotations are
+orthonormalized, with the same operation differentiated for velocity consistency.
+TT and UT1 retain separate whole-day and fractional-day values throughout;
+sub-microsecond offsets are not rounded into a large Julian date first.
+Earth rotation and polar motion are evaluated at each requested time. No global
+cache or cached Earth-orientation data is introduced. Setting
 ``polar_motion=False`` sets ``xp = yp = 0``; it does **not** disable precession,
 nutation, frame bias, or ``s'``.
 
 Positions transform as ``r_itrs = M * r_gcrs`` and velocities as
 ``v_itrs = M * v_gcrs + Mdot * r_gcrs``. The inverse uses the transpose of ``M``
 and subtracts the same frame-motion term. The same rule is used for TEME
-transforms. ``Mdot`` is evaluated by a centered
-one-second difference in TT and UT1. Earth-orientation parameters are held fixed
+transforms. ``Mdot`` combines analytic ERA, GMST82 and ``s'`` rates with the
+celestial derivative using the product rule. The celestial derivative is
+retained: omitting it can exceed the velocity tolerance even in low Earth orbit.
+Earth-orientation parameters are held fixed
 locally: polar-motion rates and length-of-day corrections are not modeled.
 Observed celestial-pole offsets (``dX``, ``dY``) are also not applied.
 The interpolation retains the position/velocity regression tolerances of 1 mm
 and 1 micrometre/s for the tested near-Earth and beyond-geosynchronous states;
 these are numerical agreement tolerances, not absolute orbit-accuracy claims.
+Round trips are additionally checked at lunar, 1 AU and 30 AU distances with
+floating-point-scaled tolerances. Inputs must have exactly one six-component
+state per timestamp; invalid shapes raise ``ValueError``, including identity
+conversions.
 
 Implementation Details
 ----------------------

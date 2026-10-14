@@ -347,7 +347,7 @@ impl TLEEphemeris {
         time_indices: Option<Vec<usize>>,
     ) -> PyResult<Py<PyAny>> {
         use crate::utils::celestial::radec_to_altaz;
-        let result = radec_to_altaz(ra_deg, dec_deg, self, time_indices.as_deref());
+        let result = radec_to_altaz(ra_deg, dec_deg, self, time_indices.as_deref())?;
         Ok(result.into_pyarray(py).into())
     }
 
@@ -732,7 +732,7 @@ impl TLEEphemeris {
             conversions::Frame::TEME,
             conversions::Frame::ITRS,
             self.polar_motion,
-        );
+        )?;
         self.itrs = Some(itrs_result);
         Ok(())
     }
@@ -770,7 +770,7 @@ impl TLEEphemeris {
             conversions::Frame::TEME,
             conversions::Frame::GCRS,
             self.polar_motion,
-        );
+        )?;
         self.common_data.gcrs = Some(gcrs_result);
         Ok(())
     }
@@ -803,7 +803,7 @@ impl EphemerisBase for TLEEphemeris {
         ra_deg: f64,
         dec_deg: f64,
         time_indices: Option<&[usize]>,
-    ) -> Array2<f64> {
+    ) -> PyResult<Array2<f64>> {
         crate::utils::celestial::radec_to_altaz(ra_deg, dec_deg, self, time_indices)
     }
 }

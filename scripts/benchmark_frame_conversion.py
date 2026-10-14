@@ -16,6 +16,31 @@ from time import perf_counter
 import rust_ephem
 
 
+def benchmark_queries(repeats: int) -> list[dict[str, object]]:
+    """Include filtered celestial queries with tiny, gapped and reordered batches."""
+    begin = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    ephem = rust_ephem.GroundEphemeris(
+        40, -74, 100, begin, begin + timedelta(days=1), 60
+    )
+    records: list[dict[str, object]] = []
+    for name, indices in [
+        ("tiny", [0]),
+        ("gap", list(range(600)) + list(range(900, 1441))),
+        ("shuffled", list(range(0, 1441, 2)) + list(range(1, 1441, 2))),
+    ]:
+        timings = []
+        for repeat in range(repeats + 1):
+            started = perf_counter()
+            ephem.radec_to_altaz(180, 45, time_indices=indices)
+            elapsed = perf_counter() - started
+            if repeat:
+                timings.append(elapsed)
+        record = {"kind": name, "samples": len(indices), "median_s": median(timings)}
+        records.append(record)
+        print(json.dumps(record), flush=True)
+    return records
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repeats", type=int, default=5)
@@ -25,6 +50,9 @@ def main() -> None:
         nargs="+",
         choices=["ground", "GCRS", "ITRS", "TLE"],
         default=["ground", "GCRS", "ITRS", "TLE"],
+    )
+    parser.add_argument(
+        "--queries", action="store_true", help="also time filtered alt/az queries"
     )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
@@ -84,6 +112,8 @@ def main() -> None:
                 }
                 records.append(record)
                 print(json.dumps(record), flush=True)
+    if args.queries:
+        records.extend(benchmark_queries(args.repeats))
     if args.output:
         args.output.write_text(json.dumps(records, indent=2) + "\n")
 

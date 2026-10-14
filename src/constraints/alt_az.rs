@@ -91,7 +91,7 @@ impl ConstraintEvaluator for AltAzEvaluator {
             extract_observer_ephemeris_data!(ephemeris, time_indices);
 
         // Compute alt/az for this target at selected times
-        let altaz = ephemeris.radec_to_altaz(target_ra, target_dec, time_indices);
+        let altaz = ephemeris.radec_to_altaz(target_ra, target_dec, time_indices)?;
 
         let violations = track_violations(
             &times_filtered,
@@ -184,7 +184,7 @@ impl ConstraintEvaluator for AltAzEvaluator {
             .iter()
             .zip(target_decs.iter())
             .map(|(&ra, &dec)| ephemeris.radec_to_altaz(ra, dec, time_indices))
-            .collect();
+            .collect::<PyResult<_>>()?;
 
         let n_times = altaz_list.first().map(|a| a.nrows()).unwrap_or(0);
 
@@ -257,7 +257,7 @@ impl ConstraintEvaluator for AltAzEvaluator {
             .iter()
             .zip(target_decs.iter())
             .map(|(&ra, &dec)| ephemeris.radec_to_altaz(ra, dec, time_indices))
-            .collect();
+            .collect::<PyResult<_>>()?;
 
         let n_times = altaz_list.first().map(|a| a.nrows()).unwrap_or(0);
 

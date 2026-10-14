@@ -4,9 +4,11 @@
 /// different coordinate frames (TEME, ITRS, GCRS), shared by ephemeris classes.
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
+use pyo3::{exceptions::PyValueError, PyResult};
 use sofars::{
+    consts::{DAS2R, DJ00, DJC, DS2R},
     erst::{era00, gmst82},
-    pnp::{c2i06a, c2tcio, pom00, sp00},
+    pnp::{c2i06a, pom00, sp00},
     vm::rxp,
 };
 
@@ -55,28 +57,119 @@ impl Rotation {
     }
 }
 
-/// Differentiate over one second of TT/UT1, with EOP held fixed locally.
-fn rotation_with_rate(mut matrix_at: impl FnMut(f64) -> [[f64; 3]; 3]) -> Rotation {
-    let matrix = matrix_at(0.0);
-    let before = matrix_at(-0.5);
-    let after = matrix_at(0.5);
-    let rate = std::array::from_fn(|i| std::array::from_fn(|j| after[i][j] - before[i][j]));
+/// Compose rotations and their derivatives using the product rule.
+fn compose(left: &Rotation, right: &Rotation) -> Rotation {
+    let matrix = std::array::from_fn(|i| {
+        std::array::from_fn(|j| (0..3).map(|k| left.matrix[i][k] * right.matrix[k][j]).sum())
+    });
+    let rate = std::array::from_fn(|i| {
+        std::array::from_fn(|j| {
+            (0..3)
+                .map(|k| {
+                    left.rate[i][k] * right.matrix[k][j] + left.matrix[i][k] * right.rate[k][j]
+                })
+                .sum()
+        })
+    });
     Rotation { matrix, rate }
+}
+
+fn rotation_z(angle: f64, rate: f64) -> Rotation {
+    let (s, c) = angle.sin_cos();
+    Rotation {
+        matrix: [[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]],
+        rate: [
+            [-s * rate, c * rate, 0.0],
+            [-c * rate, -s * rate, 0.0],
+            [0.0; 3],
+        ],
+    }
 }
 
 fn split_day(date: (f64, f64)) -> (f64, f64) {
     (date.0 + date.1.floor(), date.1 - date.1.floor())
 }
 
-/// Vallado TEME -> ITRS: IAU 1982 mean sidereal time, then polar motion.
-/// TEME has no TIO locator s'; use an orthogonal polar-motion matrix.
+/// Analytic derivative of SOFA's IAU 1982 GMST polynomial, radians/second.
+fn gmst82_rate(ut1: (f64, f64)) -> f64 {
+    let t = ((ut1.0 - DJ00) + ut1.1) / DJC;
+    DS2R * (1.0
+        + (8640184.812866 + 2.0 * 0.093104 * t - 3.0 * 6.2e-6 * t * t) / (DJC * SECONDS_PER_DAY))
+}
+
+/// Vallado TEME -> ITRS, with EOP held fixed during the local derivative.
 fn teme_itrs_rotation(ut1: (f64, f64), xp: f64, yp: f64) -> Rotation {
     let ut1 = split_day(ut1);
-    let polar = pom00(xp, yp, 0.0);
-    let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-    rotation_with_rate(|seconds| {
-        let gmst = gmst82(ut1.0, ut1.1 + seconds / SECONDS_PER_DAY);
-        c2tcio(&identity, gmst, &polar)
+    compose(
+        &Rotation {
+            matrix: pom00(xp, yp, 0.0),
+            rate: [[0.0; 3]; 3],
+        },
+        &rotation_z(gmst82(ut1.0, ut1.1), gmst82_rate(ut1)),
+    )
+}
+
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    (0..3).map(|i| a[i] * b[i]).sum()
+}
+
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+/// Keep interpolation on SO(3), differentiating the same orthonormalization.
+/// This makes transpose a valid inverse even for planetary-distance states.
+fn orthonormalize(rotation: Rotation) -> Rotation {
+    fn normalize(v: [f64; 3], dv: [f64; 3]) -> ([f64; 3], [f64; 3]) {
+        let length = dot(v, v).sqrt();
+        let n = v.map(|x| x / length);
+        let radial_rate = dot(n, dv);
+        (
+            n,
+            std::array::from_fn(|i| (dv[i] - n[i] * radial_rate) / length),
+        )
+    }
+    let (a, da) = normalize(rotation.matrix[0], rotation.rate[0]);
+    let projection = dot(a, rotation.matrix[1]);
+    let projection_rate = dot(da, rotation.matrix[1]) + dot(a, rotation.rate[1]);
+    let (b, db) = normalize(
+        std::array::from_fn(|i| rotation.matrix[1][i] - projection * a[i]),
+        std::array::from_fn(|i| rotation.rate[1][i] - projection_rate * a[i] - projection * da[i]),
+    );
+    let dc1 = cross(da, b);
+    let dc2 = cross(a, db);
+    Rotation {
+        matrix: [a, b, cross(a, b)],
+        rate: [da, db, std::array::from_fn(|i| dc1[i] + dc2[i])],
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static CELESTIAL_EVALUATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn celestial_matrix(tt: (f64, f64)) -> [[f64; 3]; 3] {
+    #[cfg(test)]
+    CELESTIAL_EVALUATIONS.with(|count| count.set(count.get() + 1));
+    c2i06a(tt.0, tt.1)
+}
+
+/// Two full series evaluations suffice for an isolated sample: midpoint Q and
+/// its centered derivative. Q curvature over half a second is below roundoff
+/// at the tested epochs; Earth spin is never averaged or differenced here.
+fn isolated_celestial_rotation(tt: (f64, f64)) -> Rotation {
+    let before = celestial_matrix((tt.0, tt.1 - 0.5 / SECONDS_PER_DAY));
+    let after = celestial_matrix((tt.0, tt.1 + 0.5 / SECONDS_PER_DAY));
+    orthonormalize(Rotation {
+        matrix: std::array::from_fn(|i| {
+            std::array::from_fn(|j| (after[i][j] + before[i][j]) * 0.5)
+        }),
+        rate: std::array::from_fn(|i| std::array::from_fn(|j| after[i][j] - before[i][j])),
     })
 }
 
@@ -92,7 +185,7 @@ struct CelestialMatrixCache {
 }
 
 impl CelestialMatrixCache {
-    fn at(&mut self, tt: (f64, f64)) -> [[f64; 3]; 3] {
+    fn at(&mut self, tt: (f64, f64)) -> Rotation {
         let index = (tt.1 * SECONDS_PER_DAY / CELESTIAL_STEP_SECONDS).floor() as i64;
         let x = (tt.1 * SECONDS_PER_DAY - index as f64 * CELESTIAL_STEP_SECONDS)
             / CELESTIAL_STEP_SECONDS;
@@ -109,21 +202,39 @@ impl CelestialMatrixCache {
                 *slot = Some((
                     tt.0,
                     node,
-                    c2i06a(tt.0, node as f64 * CELESTIAL_STEP_SECONDS / SECONDS_PER_DAY),
+                    celestial_matrix((
+                        tt.0,
+                        node as f64 * CELESTIAL_STEP_SECONDS / SECONDS_PER_DAY,
+                    )),
                 ));
             }
             slot.as_ref().unwrap().2
         });
-        // Interpolate differences so constant terms (especially the diagonal)
-        // do not acquire rounding noise from summing the Lagrange weights.
-        std::array::from_fn(|i| {
+        // Differentiate the cubic itself, using the same four nodes once.
+        // Subtract the center matrix to suppress cancellation of constant terms.
+        let derivative_weights = [
+            (-3.0 * x * x + 6.0 * x - 2.0) / 6.0,
+            (3.0 * x * x - 4.0 * x - 1.0) / 2.0,
+            (-3.0 * x * x + 2.0 * x + 2.0) / 2.0,
+            (3.0 * x * x - 1.0) / 6.0,
+        ];
+        let matrix = std::array::from_fn(|i| {
             std::array::from_fn(|j| {
                 matrices[1][i][j]
                     + (0..4)
                         .map(|k| weights[k] * (matrices[k][i][j] - matrices[1][i][j]))
                         .sum::<f64>()
             })
-        })
+        });
+        let rate = std::array::from_fn(|i| {
+            std::array::from_fn(|j| {
+                (0..4)
+                    .map(|k| derivative_weights[k] * (matrices[k][i][j] - matrices[1][i][j]))
+                    .sum::<f64>()
+                    / CELESTIAL_STEP_SECONDS
+            })
+        });
+        orthonormalize(Rotation { matrix, rate })
     }
 }
 
@@ -139,26 +250,36 @@ fn gcrs_rotation(
     xp: f64,
     yp: f64,
     to: Frame,
-    mut cache: Option<&mut CelestialMatrixCache>,
+    cache: Option<&mut CelestialMatrixCache>,
 ) -> Rotation {
-    // Add small offsets to fractional days rather than large Julian dates.
     let tt = split_day(tt);
     let ut1 = split_day(ut1);
-    rotation_with_rate(|seconds| {
-        let days = seconds / SECONDS_PER_DAY;
-        let q = match cache.as_mut() {
-            Some(cache) => cache.at((tt.0, tt.1 + days)),
-            None => c2i06a(tt.0, tt.1 + days),
-        };
-        let era = era00(ut1.0, ut1.1 + days);
-        let sp = sp00(tt.0, tt.1 + days);
-        let (angle, polar) = match to {
-            Frame::ITRS => (era, pom00(xp, yp, sp)),
-            Frame::TEME => (era - gmst82(ut1.0, ut1.1 + days), pom00(0.0, 0.0, sp)),
-            Frame::GCRS => unreachable!("GCRS is already the input frame"),
-        };
-        c2tcio(&q, angle, &polar)
-    })
+    let q = match cache {
+        Some(cache) => cache.at(tt),
+        None => isolated_celestial_rotation(tt),
+    };
+    // W(xp,yp,s') = W(xp,yp,0) R3(s'). Combine the two axial rotations
+    // before applying Q; retain both Qdot and the small s' rate.
+    let era = era00(ut1.0, ut1.1);
+    let era_rate = std::f64::consts::TAU * 1.002_737_811_911_354_6 / SECONDS_PER_DAY;
+    let sp = sp00(tt.0, tt.1);
+    let sp_rate = -47e-6 * DAS2R / (DJC * SECONDS_PER_DAY);
+    let (angle, rate, polar) = match to {
+        Frame::ITRS => (era + sp, era_rate + sp_rate, pom00(xp, yp, 0.0)),
+        Frame::TEME => (
+            era - gmst82(ut1.0, ut1.1) + sp,
+            era_rate - gmst82_rate(ut1) + sp_rate,
+            pom00(0.0, 0.0, 0.0),
+        ),
+        Frame::GCRS => unreachable!("GCRS is already the input frame"),
+    };
+    compose(
+        &Rotation {
+            matrix: polar,
+            rate: [[0.0; 3]; 3],
+        },
+        &compose(&rotation_z(angle, rate), &q),
+    )
 }
 
 /// Get the forward rotation for either direction of a frame pair.
@@ -207,10 +328,18 @@ pub fn convert_frames(
     input_frame: Frame,
     output_frame: Frame,
     polar_motion: bool,
-) -> Array2<f64> {
+) -> PyResult<Array2<f64>> {
+    if data.nrows() != times.len() || data.ncols() != 6 {
+        return Err(PyValueError::new_err(format!(
+            "Frame conversion requires shape ({}, 6), got ({}, {})",
+            times.len(),
+            data.nrows(),
+            data.ncols()
+        )));
+    }
     // Fast path: same-frame -> return a copy
     if input_frame == output_frame {
-        return data.to_owned();
+        return Ok(data.to_owned());
     }
 
     let n = times.len();
@@ -225,28 +354,25 @@ pub fn convert_frames(
         (Frame::TEME, Frame::GCRS) | (Frame::ITRS, Frame::TEME) | (Frame::ITRS, Frame::GCRS)
     );
 
-    // Sparse or tiny batches do not amortize the four interpolation nodes.
-    // Keep their exact evaluation path; no global cache, locks or EOP state.
-    let mut celestial_cache = (matches!(
-        (input_frame, output_frame),
-        (Frame::GCRS, Frame::ITRS)
-            | (Frame::ITRS, Frame::GCRS)
-            | (Frame::GCRS, Frame::TEME)
-            | (Frame::TEME, Frame::GCRS)
-    ) && n >= 4
-        && times.windows(2).all(|pair| {
-            (pair[1] - pair[0]).num_milliseconds().abs() <= (CELESTIAL_STEP_SECONDS * 1000.0) as i64
-        }))
-    .then(CelestialMatrixCache::default);
+    let mut celestial_cache = CelestialMatrixCache::default();
 
     for (i, dt) in times.iter().enumerate() {
+        // Only nearby samples amortize interpolation. A data hole affects its
+        // isolated samples, never the dense stretches elsewhere in the batch.
+        let nearby = |other: &DateTime<Utc>| {
+            (*other - *dt).num_milliseconds().abs() <= (CELESTIAL_STEP_SECONDS * 1000.0) as i64
+        };
+        let use_cache = times.get(i + 1).is_some_and(nearby)
+            || i.checked_sub(1)
+                .and_then(|j| times.get(j))
+                .is_some_and(nearby);
         // Get the base rotation (always defined in the "forward" direction)
         let rotation = get_rotation(
             input_frame,
             output_frame,
             dt,
             polar_motion,
-            celestial_cache.as_mut(),
+            use_cache.then_some(&mut celestial_cache),
         );
 
         let in_row = data.row(i);
@@ -264,7 +390,7 @@ pub fn convert_frames(
         out_row[5] = new_vel[2];
     }
 
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -415,5 +541,143 @@ mod tests {
                 }
             }
         }
+    }
+    #[test]
+    fn test_shape_errors_are_value_errors_even_for_identity() {
+        pyo3::Python::initialize();
+        let times = ["2024-01-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap()];
+        for shape in [(0, 6), (2, 6), (1, 3), (1, 7)] {
+            for to in [Frame::GCRS, Frame::ITRS] {
+                let err = convert_frames(&Array2::zeros(shape), &times, Frame::GCRS, to, false)
+                    .unwrap_err();
+                pyo3::Python::attach(|py| assert!(err.is_instance_of::<PyValueError>(py)));
+            }
+        }
+        assert_eq!(
+            convert_frames(&Array2::zeros((0, 6)), &[], Frame::GCRS, Frame::ITRS, false)
+                .unwrap()
+                .shape(),
+            &[0, 6]
+        );
+    }
+
+    #[test]
+    fn test_planetary_round_trips_and_rotation_derivatives() {
+        let mut cache = CelestialMatrixCache::default();
+        for day in [33282.0, 53736.0, 60310.0, 88069.0] {
+            for seconds in [0.0, 0.25, 75.0, 299.75, 300.25, 86399.75] {
+                let tt = (2400000.5 + day, seconds / SECONDS_PER_DAY);
+                for cached in [false, true] {
+                    for to in [Frame::ITRS, Frame::TEME] {
+                        let r = gcrs_rotation(tt, tt, 1e-6, 2e-6, to, cached.then_some(&mut cache));
+                        // A rotation's derivative must be tangent to SO(3).
+                        for i in 0..3 {
+                            for j in 0..3 {
+                                let identity = if i == j { 1.0 } else { 0.0 };
+                                assert!((dot(r.matrix[i], r.matrix[j]) - identity).abs() < 1e-15);
+                                assert!(
+                                    (dot(r.rate[i], r.matrix[j]) + dot(r.matrix[i], r.rate[j]))
+                                        .abs()
+                                        < 1e-19
+                                );
+                            }
+                        }
+                        for distance in [384400.0, 149597870.7, 4.5e9] {
+                            let p = [distance, -distance * 0.3, distance * 0.2];
+                            let v = [1.2, -6.8, 2.4];
+                            for inverse in [false, true] {
+                                let (p1, v1) = r.apply(p, v, inverse);
+                                let (p2, v2) = r.apply(p1, v1, !inverse);
+                                for i in 0..3 {
+                                    assert!((p2[i] - p[i]).abs() < 2e-15 * distance);
+                                    assert!((v2[i] - v[i]).abs() < 2e-15 * distance * 1e-4 + 1e-12);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_sparse_gap_and_reordered_batches_agree() {
+        let begin = "2024-01-01T23:59:37.250Z".parse::<DateTime<Utc>>().unwrap();
+        let offsets = [0, 60, 120, 180, 7200, 7260, 7320, 7380, 20000];
+        let times: Vec<_> = offsets.map(|s| begin + chrono::Duration::seconds(s)).into();
+        let data = Array2::from_shape_fn((times.len(), 6), |(_, j)| {
+            [70000.0, -12000.0, 18000.0, 1.2, 6.8, -2.4][j]
+        });
+        for (from, to) in [(Frame::GCRS, Frame::ITRS), (Frame::TEME, Frame::GCRS)] {
+            let whole = convert_frames(&data, &times, from, to, false).unwrap();
+            for (i, time) in times.iter().enumerate() {
+                let single = convert_frames(
+                    &data.slice(ndarray::s![i..i + 1, ..]).to_owned(),
+                    &[*time],
+                    from,
+                    to,
+                    false,
+                )
+                .unwrap();
+                for j in 0..6 {
+                    let tolerance = if j < 3 { 1e-6 } else { 1e-9 };
+                    assert!((whole[[i, j]] - single[[0, j]]).abs() < tolerance);
+                }
+            }
+            let reversed = convert_frames(
+                &data,
+                &times.iter().copied().rev().collect::<Vec<_>>(),
+                from,
+                to,
+                false,
+            )
+            .unwrap();
+            for i in 0..times.len() {
+                for j in 0..6 {
+                    let tolerance = if j < 3 { 1e-6 } else { 1e-9 };
+                    assert!((whole[[i, j]] - reversed[[times.len() - i - 1, j]]).abs() < tolerance);
+                }
+            }
+        }
+    }
+    #[test]
+    fn test_series_work_is_bounded_for_isolated_and_gapped_queries() {
+        let begin = "2024-01-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let dense: Vec<_> = (0..120)
+            .map(|i| begin + chrono::Duration::seconds(60 * i))
+            .collect();
+        let gapped: Vec<_> = dense
+            .iter()
+            .enumerate()
+            .map(|(i, t)| *t + chrono::Duration::seconds(if i >= 60 { 7200 } else { 0 }))
+            .collect();
+        for times in [
+            vec![begin],
+            vec![begin, begin + chrono::Duration::seconds(3600)],
+            dense,
+            gapped,
+        ] {
+            CELESTIAL_EVALUATIONS.with(|count| count.set(0));
+            convert_frames(
+                &Array2::zeros((times.len(), 6)),
+                &times,
+                Frame::GCRS,
+                Frame::ITRS,
+                false,
+            )
+            .unwrap();
+            let evaluations = CELESTIAL_EVALUATIONS.with(|count| count.get());
+            if times.len() <= 2 {
+                assert_eq!(evaluations, 2 * times.len());
+            } else {
+                // One isolated hole must not cause 3 full evaluations for all 120 samples.
+                assert!(evaluations < 40, "{evaluations} full series evaluations");
+            }
+        }
+        let mut cache = CelestialMatrixCache::default();
+        CELESTIAL_EVALUATIONS.with(|count| count.set(0));
+        cache.at((2453736.5, 300.25 / SECONDS_PER_DAY));
+        cache.at((2453736.5, 300.49 / SECONDS_PER_DAY));
+        assert_eq!(CELESTIAL_EVALUATIONS.with(|count| count.get()), 4);
     }
 }

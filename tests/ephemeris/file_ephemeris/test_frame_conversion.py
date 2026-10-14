@@ -16,7 +16,7 @@ from rust_ephem import FileEphemeris, get_polar_motion, get_ut1_utc_offset
 @pytest.mark.parametrize("polar_motion", [False, True])
 @pytest.mark.parametrize("frame", ["GCRS", "ITRS"])
 @pytest.mark.parametrize("stationary", [False, True])
-@pytest.mark.parametrize("step", [2, 60])
+@pytest.mark.parametrize("step", [2, 60, 600, 3600])
 def test_position_and_velocity_against_erfa(
     tmp_path: Path,
     year: int,
@@ -32,9 +32,9 @@ def test_position_and_velocity_against_erfa(
     five-point position difference checks velocity, including frame motion.
     """
     # Cross both interpolation-grid and UTC-day boundaries. Dense batches use
-    # the cache; short/sparse batches use exact series evaluation.
+    # the cache; isolated samples use the two-evaluation midpoint path.
     begin = datetime(year, 1, 1, 23, 59, 37, 250000, tzinfo=timezone.utc)
-    duration = 240
+    duration = max(240, 3 * step)
     end = begin + timedelta(seconds=duration)
     position = np.array([7000.0, -1200.0, 1800.0])
     velocity = np.zeros(3) if stationary else np.array([1.2, 6.8, -2.4])
@@ -56,7 +56,13 @@ def test_position_and_velocity_against_erfa(
         xp, yp = np.deg2rad(np.array([xp, yp]) / 3600.0)
         center = position + index * step * velocity
 
-        def transformed(seconds: float) -> NDArray[np.float64]:
+        def transformed(
+            seconds: float,
+            time: Time = time,
+            xp: float = xp,
+            yp: float = yp,
+            center: NDArray[np.float64] = center,
+        ) -> NDArray[np.float64]:
             # Hold EOP fixed locally; advance TT and UT1, not UTC. This also
             # avoids introducing leap-second steps into the derivative.
             matrix = erfa.c2t06a(

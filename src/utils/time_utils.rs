@@ -37,16 +37,27 @@ pub fn datetime_to_jd_utc(dt: &DateTime<Utc>) -> (f64, f64) {
     (JD_EPOCH, chrono_to_epoch(dt).to_mjd_utc_days())
 }
 
+/// Split integer nanoseconds before converting to f64. Forming one large
+/// floating-point Julian/MJD date first discards sub-microsecond precision.
+fn split_julian_duration(duration: Duration) -> (f64, f64) {
+    const NANOS_PER_DAY: i128 = 86_400_000_000_000;
+    let nanos = duration.total_nanoseconds();
+    (
+        nanos.div_euclid(NANOS_PER_DAY) as f64,
+        nanos.rem_euclid(NANOS_PER_DAY) as f64 / NANOS_PER_DAY as f64,
+    )
+}
+
 /// Convert DateTime to two-part Julian Date in TT for ERFA precession/nutation
 #[inline]
 pub fn datetime_to_jd_tt(dt: &DateTime<Utc>) -> (f64, f64) {
-    (JD_EPOCH, chrono_to_epoch(dt).to_jde_tt_days() - JD_EPOCH)
+    split_julian_duration(chrono_to_epoch(dt).to_jde_tt_duration())
 }
 
 /// Convert DateTime to two-part Julian Date in UT1 time scale
 #[inline]
 pub fn datetime_to_jd_ut1(dt: &DateTime<Utc>) -> (f64, f64) {
-    let (jd1, jd2) = datetime_to_jd_utc(dt);
+    let (jd1, jd2) = split_julian_duration(chrono_to_epoch(dt).to_jde_utc_duration());
     (
         jd1,
         jd2 + ut1_provider::get_ut1_utc_offset(dt) / SECONDS_PER_DAY,
@@ -103,4 +114,36 @@ pub fn utc_to_python_datetime(py: Python, dt: &DateTime<Utc>) -> PyResult<Py<PyA
             tz_utc,
         ))?
         .into())
+}
+
+#[cfg(test)]
+mod precision_tests {
+    use super::*;
+
+    #[test]
+    fn tt_and_ut1_retain_submicrosecond_offsets() {
+        for stamp in [
+            "1950-01-01T23:59:59.123456789Z",
+            "2024-01-01T23:59:59.123456789Z",
+            "2100-01-01T23:59:59.123456789Z",
+        ] {
+            let first = stamp.parse::<DateTime<Utc>>().unwrap();
+            let second = first + chrono::Duration::nanoseconds(100);
+            for convert in [datetime_to_jd_tt, datetime_to_jd_ut1] {
+                let a = convert(&first);
+                let b = convert(&second);
+                let elapsed = ((b.0 - a.0) + (b.1 - a.1)) * SECONDS_PER_DAY;
+                assert!((elapsed - 1e-7).abs() < 2e-11, "{elapsed}");
+            }
+        }
+    }
+
+    #[test]
+    fn tt_retains_the_2016_leap_second() {
+        let before = "2016-12-31T23:59:59Z".parse::<DateTime<Utc>>().unwrap();
+        let after = "2017-01-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let a = datetime_to_jd_tt(&before);
+        let b = datetime_to_jd_tt(&after);
+        assert!((((b.0 - a.0) + (b.1 - a.1)) * SECONDS_PER_DAY - 2.0).abs() < 1e-10);
+    }
 }
