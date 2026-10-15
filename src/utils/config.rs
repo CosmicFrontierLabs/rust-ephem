@@ -37,7 +37,6 @@ pub const EOP2_URL: &str = "https://eop2-external.jpl.nasa.gov/eop2/latest_eop2.
 // Distance/time conversions
 pub const AU_TO_KM: f64 = 149597870.7;
 pub const SECONDS_PER_DAY: f64 = 86400.0;
-pub const SECS_PER_DAY: f64 = SECONDS_PER_DAY;
 pub const AU_PER_DAY_TO_KM_PER_SEC: f64 = AU_TO_KM / SECONDS_PER_DAY;
 pub const ARCSEC_TO_RAD: f64 = 4.848_136_811_095_36e-6;
 
@@ -48,7 +47,6 @@ pub const JD_EPOCH: f64 = 2400000.5;
 pub const GM_EARTH: f64 = 398600.4418;
 pub const JD_J2000: f64 = 2451545.0;
 pub const DAYS_PER_CENTURY: f64 = 36525.0;
-pub const OMEGA_EARTH: f64 = 7.292115e-5; // rad/s
 
 // NAIF IDs
 pub const MOON_NAIF_ID: i32 = 301;
@@ -62,13 +60,6 @@ pub const EARTH_RADIUS_KM: f64 = 6378.1; // Earth equatorial radius (IAU 2015 Re
 
 // Limits
 pub const MAX_TIMESTAMPS: i64 = 100_000;
-
-// GMST helper constants used in TLE calculations
-pub const PI_OVER_43200: f64 = std::f64::consts::PI / 43200.0;
-pub const GMST_COEFF_0: f64 = 67310.54841;
-pub const GMST_COEFF_1: f64 = 876600.0 * 3600.0 + 8640184.812866;
-pub const GMST_COEFF_2: f64 = 0.093104;
-pub const GMST_COEFF_3: f64 = -6.2e-6;
 
 /// Celestrak GP TLE API endpoint
 pub const CELESTRAK_API_BASE: &str = "https://celestrak.org/NORAD/elements/gp.php";

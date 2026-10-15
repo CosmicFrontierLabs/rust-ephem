@@ -574,8 +574,12 @@ impl ParquetEphemeris {
         dec_deg: f64,
         time_indices: Option<Vec<usize>>,
     ) -> PyResult<Py<PyAny>> {
-        let arr =
-            <Self as EphemerisBase>::radec_to_altaz(self, ra_deg, dec_deg, time_indices.as_deref());
+        let arr = <Self as EphemerisBase>::radec_to_altaz(
+            self,
+            ra_deg,
+            dec_deg,
+            time_indices.as_deref(),
+        )?;
         Ok(arr.into_pyarray(py).into())
     }
 
@@ -628,7 +632,7 @@ impl ParquetEphemeris {
             Frame::GCRS,
             Frame::ITRS,
             self.polar_motion,
-        );
+        )?;
         self.itrs = Some(itrs);
         Ok(())
     }
@@ -649,7 +653,7 @@ impl ParquetEphemeris {
             Frame::ITRS,
             Frame::GCRS,
             self.polar_motion,
-        );
+        )?;
         self.common_data.gcrs = Some(gcrs);
         Ok(())
     }
@@ -683,7 +687,7 @@ impl EphemerisBase for ParquetEphemeris {
         ra_deg: f64,
         dec_deg: f64,
         time_indices: Option<&[usize]>,
-    ) -> Array2<f64> {
+    ) -> PyResult<Array2<f64>> {
         crate::utils::celestial::radec_to_altaz(ra_deg, dec_deg, self, time_indices)
     }
 }

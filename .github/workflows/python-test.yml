@@ -57,7 +57,11 @@ jobs:
           uv pip install target/wheels/*.whl --force-reinstall --no-deps
 
       - name: Run cargo test
-        run: cargo test --verbose --no-default-features --features ut1
+        run: |
+          # Rust tests that inspect PyErr embed the selected Python runtime.
+          python_libdir="$(python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+          export LD_LIBRARY_PATH="$python_libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          cargo test --verbose --no-default-features --features ut1
 
       - name: Run mypy
         run: mypy rust_ephem tests

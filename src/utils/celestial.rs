@@ -1,5 +1,6 @@
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use ndarray::{s, Array1, Array2};
+use pyo3::PyResult;
 use sofars::astro::atco13;
 use sofars::consts::{DJ00, DJY};
 use sofars::eph::epv00;
@@ -469,7 +470,7 @@ pub fn radec_to_altaz(
     dec_deg: f64,
     ephemeris: &dyn EphemerisBase,
     time_indices: Option<&[usize]>,
-) -> Array2<f64> {
+) -> PyResult<Array2<f64>> {
     // Get ephemeris data
     let times = ephemeris.get_times().expect("Ephemeris must have times");
     let gcrs_data = ephemeris
@@ -497,7 +498,7 @@ pub fn radec_to_altaz(
         Frame::GCRS,
         Frame::ITRS,
         true,
-    );
+    )?;
 
     // Convert ITRS positions to geodetic coordinates (extract position columns only)
     let positions_slice = itrs_data.slice(s![.., 0..3]);
@@ -535,7 +536,7 @@ pub fn radec_to_altaz(
         result[[i, 1]] = az_deg;
     }
 
-    result
+    Ok(result)
 }
 
 /// Calculate airmass using Kasten empirical formula (fast approximation)

@@ -135,7 +135,7 @@ impl GroundEphemeris {
             ra_deg,
             dec_deg,
             time_indices.as_deref(),
-        );
+        )?;
         Ok(result.into_pyarray(py).into())
     }
 
@@ -574,7 +574,7 @@ impl GroundEphemeris {
             Frame::ITRS,
             Frame::GCRS,
             self.polar_motion,
-        );
+        )?;
 
         self.common_data.gcrs = Some(gcrs_array);
         Ok(())
@@ -608,7 +608,7 @@ impl EphemerisBase for GroundEphemeris {
         ra_deg: f64,
         dec_deg: f64,
         time_indices: Option<&[usize]>,
-    ) -> Array2<f64> {
+    ) -> PyResult<Array2<f64>> {
         crate::utils::celestial::radec_to_altaz(ra_deg, dec_deg, self, time_indices)
     }
 }

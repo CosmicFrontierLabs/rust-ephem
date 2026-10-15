@@ -259,7 +259,7 @@ pub trait EphemerisBase {
         ra_deg: f64,
         dec_deg: f64,
         time_indices: Option<&[usize]>,
-    ) -> Array2<f64>;
+    ) -> PyResult<Array2<f64>>;
 
     /// Calculate airmass for a target at given RA/Dec
     ///
@@ -293,7 +293,7 @@ pub trait EphemerisBase {
         use crate::utils::celestial::calculate_airmass_kasten;
 
         // Get altitudes
-        let altaz = self.radec_to_altaz(ra_deg, dec_deg, time_indices);
+        let altaz = self.radec_to_altaz(ra_deg, dec_deg, time_indices)?;
 
         // Calculate airmass for each time using Kasten formula
         // Kasten & Czeplak (1980): accurate to ±0.02 airmass for zenith angles up to ~75°
@@ -783,7 +783,7 @@ pub trait EphemerisBase {
                 .times
                 .as_ref()
                 .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available"))?;
-            let itrs_array = convert_frames(gcrs, times, Frame::GCRS, Frame::ITRS, false);
+            let itrs_array = convert_frames(gcrs, times, Frame::GCRS, Frame::ITRS, false)?;
             Some(itrs_array.slice(s![.., 0..3]).to_owned())
         } else {
             None

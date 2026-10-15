@@ -214,7 +214,7 @@ impl SPICEEphemeris {
             ra_deg,
             dec_deg,
             time_indices.as_deref(),
-        );
+        )?;
         Ok(arr.into_pyarray(py).into())
     }
 
@@ -539,7 +539,7 @@ impl SPICEEphemeris {
             conversions::Frame::GCRS,
             conversions::Frame::ITRS,
             self.polar_motion,
-        );
+        )?;
         self.itrs = Some(itrs_result);
         Ok(())
     }
@@ -572,7 +572,7 @@ impl EphemerisBase for SPICEEphemeris {
         ra_deg: f64,
         dec_deg: f64,
         time_indices: Option<&[usize]>,
-    ) -> Array2<f64> {
+    ) -> PyResult<Array2<f64>> {
         crate::utils::celestial::radec_to_altaz(ra_deg, dec_deg, self, time_indices)
     }
 }
