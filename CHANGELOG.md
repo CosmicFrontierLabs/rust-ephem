@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.15.0...v0.15.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* correct GCRS/ITRS and TEME frame conversions ([#199](https://github.com/CosmicFrontierLabs/rust-ephem/issues/199)) ([4909090](https://github.com/CosmicFrontierLabs/rust-ephem/commit/49090900436d8e028d73072a13bf56f0f5cf5193))
+
 ## [0.15.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.14.2...v0.15.0) (2026-08-25)
 
 
