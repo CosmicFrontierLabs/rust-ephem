@@ -1636,43 +1636,7 @@ impl PyConstraint {
             }
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times in ephemeris"))?;
 
-        // Parse input times (single datetime or iterable of datetimes)
-        let input_times: Vec<DateTime<Utc>> =
-            if let Ok(iter) = pyo3::types::PyIterator::from_object(times_arg) {
-                // Handle any iterable (list, numpy array, etc.)
-                iter.map(|item| {
-                    let item = item?;
-                    let year: i32 = item.getattr("year")?.extract()?;
-                    let month: u32 = item.getattr("month")?.extract()?;
-                    let day: u32 = item.getattr("day")?.extract()?;
-                    let hour: u32 = item.getattr("hour")?.extract()?;
-                    let minute: u32 = item.getattr("minute")?.extract()?;
-                    let second: u32 = item.getattr("second")?.extract()?;
-                    let microsecond: u32 = item.getattr("microsecond")?.extract()?;
-
-                    chrono::NaiveDate::from_ymd_opt(year, month, day)
-                        .and_then(|d| d.and_hms_micro_opt(hour, minute, second, microsecond))
-                        .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
-                        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid datetime"))
-                })
-                .collect::<PyResult<_>>()?
-            } else {
-                // Single datetime
-                let year: i32 = times_arg.getattr("year")?.extract()?;
-                let month: u32 = times_arg.getattr("month")?.extract()?;
-                let day: u32 = times_arg.getattr("day")?.extract()?;
-                let hour: u32 = times_arg.getattr("hour")?.extract()?;
-                let minute: u32 = times_arg.getattr("minute")?.extract()?;
-                let second: u32 = times_arg.getattr("second")?.extract()?;
-                let microsecond: u32 = times_arg.getattr("microsecond")?.extract()?;
-
-                let dt = chrono::NaiveDate::from_ymd_opt(year, month, day)
-                    .and_then(|d| d.and_hms_micro_opt(hour, minute, second, microsecond))
-                    .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
-                    .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid datetime"))?;
-
-                vec![dt]
-            };
+        let input_times = Self::parse_datetime_input(times_arg)?;
 
         // Build HashMap for O(1) lookup when multiple times are requested
         let mut indices = Vec::with_capacity(input_times.len());
@@ -1912,6 +1876,10 @@ impl PyConstraint {
     /// 1. Explicit coordinates: Provide `target_ras`, `target_decs`, and optionally `times`
     /// 2. Body lookup: Provide `body` name/ID and optionally `use_horizons` to query positions
     ///
+    /// Exact explicit times select matching ephemeris rows. Off-grid tracks
+    /// retain positional pairing with the first N rows and the supplied
+    /// timestamps; no geometry is interpolated.
+    ///
     /// Args:
     ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
     ///     target_ras (list[float], optional): Array of right ascensions in degrees (ICRS/J2000)
@@ -1952,6 +1920,7 @@ impl PyConstraint {
     ) -> PyResult<MovingBodyResult> {
         let bound = ephemeris.bind(py);
         let all_times = self.with_ephemeris(bound, |ephem| ephem.get_times())?;
+        let mut track_times = None;
         let (ras, decs, indices) = if let Some(body_id) = body {
             let kwargs = pyo3::types::PyDict::new(py);
             kwargs.set_item("use_horizons", use_horizons)?;
@@ -1979,7 +1948,29 @@ impl PyConstraint {
                 ));
             }
             let indices = match times {
-                Some(times) => self.parse_times_to_indices(bound, times)?,
+                Some(times) => {
+                    let supplied_times = Self::parse_datetime_input(times)?;
+                    // Preserve off-grid tracks: historically these
+                    // were paired with ephemeris rows by position. Exact subsets
+                    // continue to select the matching ephemeris samples.
+                    let exact: Option<Vec<_>> = supplied_times
+                        .iter()
+                        .map(|time| all_times.binary_search(time).ok())
+                        .collect();
+                    let indices = match exact {
+                        Some(indices) => indices,
+                        None if supplied_times.len() <= all_times.len() => {
+                            (0..supplied_times.len()).collect()
+                        }
+                        None => {
+                            return Err(pyo3::exceptions::PyValueError::new_err(
+                                "Off-grid tracks cannot exceed the ephemeris length",
+                            ))
+                        }
+                    };
+                    track_times = Some(supplied_times);
+                    indices
+                }
                 None => (0..all_times.len()).collect(),
             };
             (ras, decs, indices)
@@ -1989,7 +1980,8 @@ impl PyConstraint {
                 "timestamps length must match target_ras/target_decs length",
             ));
         }
-        let timestamps: Vec<_> = indices.iter().map(|&i| all_times[i]).collect();
+        let timestamps =
+            track_times.unwrap_or_else(|| indices.iter().map(|&i| all_times[i]).collect());
         let evaluation = self.with_ephemeris(bound, |ephem| {
             self.evaluator
                 .evaluate_diagonal(ephem, &ras, &decs, Some(&indices))

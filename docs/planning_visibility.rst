@@ -593,6 +593,13 @@ Moving Target Visibility
 For targets that move across the sky (asteroids, comets, spacecraft), use the
 ``Constraint.evaluate_moving_body()`` method with JPL Horizons support:
 
+For explicit coordinate tracks, ``times`` must match the coordinate count.
+Exact ephemeris timestamps select matching rows, including subsets and reordered
+selections. A track with off-grid timestamps retains positional pairing with
+the first N ephemeris rows and uses the supplied timestamps as output labels,
+preserving existing behavior. No interpolation is performed; for positional
+pairing, the coordinate count cannot exceed the ephemeris length.
+
 Basic Moving Target Tracking
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

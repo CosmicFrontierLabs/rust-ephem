@@ -160,17 +160,8 @@ impl ConstraintEvaluator for EclipseEvaluator {
         for t in indices {
             let obs = [observer[[t, 0]], observer[[t, 1]], observer[[t, 2]]];
             let sun = [sun[[t, 0]], sun[[t, 1]], sun[[t, 2]]];
-            let (blocked, depth) = match Self::shadow_geometry(obs, sun) {
-                Some((axis, umbra, penumbra)) => (
-                    (umbra > 0.0 && axis < umbra) || (!self.umbra_only && axis < penumbra),
-                    if penumbra > 0.0 {
-                        (1.0 - axis / penumbra).clamp(0.0, 1.0)
-                    } else {
-                        0.0
-                    },
-                ),
-                None => (false, 0.0),
-            };
+            let (blocked, _) = self.shadow_status(obs, sun);
+            let depth = Self::shadow_depth_frac(obs, sun);
             violated.push(blocked);
             depths.push(depth);
         }

@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anise::prelude::*;
@@ -8,6 +9,12 @@ use url::Url;
 /// Global almanac for planetary ephemeris (Moon, Sun, planets) loaded from DE440/DE440s SPK files.
 /// This is NOT used for spacecraft-specific ephemeris.
 static PLANETARY_EPHEMERIS: OnceCell<Mutex<Option<Arc<Almanac>>>> = OnceCell::new();
+static PLANETARY_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Invalidate derived body-position caches when the loaded kernel is replaced.
+pub(crate) fn planetary_ephemeris_generation() -> u64 {
+    PLANETARY_GENERATION.load(Ordering::Acquire)
+}
 
 /// Initialize the planetary almanac with the SPK at `path`. If already initialized, replaces it.
 /// This should be used for planetary ephemeris files like de440s.bsp, NOT spacecraft kernels.
@@ -24,6 +31,7 @@ pub fn init_planetary_ephemeris<P: AsRef<Path>>(path: P) -> Result<(), Box<dyn s
     let cell = PLANETARY_EPHEMERIS.get_or_init(|| Mutex::new(None));
     let mut guard = cell.lock().unwrap();
     *guard = Some(Arc::new(almanac));
+    PLANETARY_GENERATION.fetch_add(1, Ordering::Release);
     Ok(())
 }
 

@@ -9,12 +9,22 @@ use crate::ephemeris::OEMEphemeris;
 use crate::ephemeris::ParquetEphemeris;
 use crate::ephemeris::SPICEEphemeris;
 use crate::ephemeris::TLEEphemeris;
+use chrono::{DateTime, Utc};
 use pyo3::prelude::*;
 use std::collections::HashMap;
 
 use super::PyConstraint;
 
 impl PyConstraint {
+    pub(super) fn parse_datetime_input(times: &Bound<PyAny>) -> PyResult<Vec<DateTime<Utc>>> {
+        let parse = crate::utils::time_utils::python_datetime_to_utc;
+        if let Ok(iter) = pyo3::types::PyIterator::from_object(times) {
+            iter.map(|item| parse(&item?)).collect()
+        } else {
+            Ok(vec![parse(times)?])
+        }
+    }
+
     pub(super) fn resolve_time_indices(
         &self,
         bound: &Bound<'_, PyAny>,

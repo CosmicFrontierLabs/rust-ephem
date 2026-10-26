@@ -8,6 +8,7 @@ to configure the Rust constraint evaluators.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -101,7 +102,7 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-        target_rolls: list[float] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> list[ConstraintResult]: ...
     def in_constraint_batch(
@@ -111,7 +112,7 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-        target_rolls: list[float] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> npt.NDArray[np.bool_]: ...
     def in_constraint(

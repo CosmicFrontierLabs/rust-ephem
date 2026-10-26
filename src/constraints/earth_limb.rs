@@ -54,6 +54,19 @@ struct EarthLimbEvaluator {
     horizon_dip: bool,
 }
 
+impl EarthLimbEvaluator {
+    fn threshold_deg(&self, distance_km: f64) -> f64 {
+        const EARTH_RADIUS: f64 = 6378.137;
+        let ratio = (EARTH_RADIUS / distance_km).clamp(-1.0, 1.0);
+        let correction = if self.horizon_dip && (distance_km - EARTH_RADIUS).abs() < 100.0 {
+            ratio.acos().to_degrees() + if self.include_refraction { 0.57 } else { 0.0 }
+        } else {
+            0.0
+        };
+        ratio.asin().to_degrees() + self.min_angle_deg + correction
+    }
+}
+
 impl ConstraintEvaluator for EarthLimbEvaluator {
     fn evaluate_diagonal(
         &self,
@@ -70,17 +83,10 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         let max_cos = self.max_angle_deg.map(|max| max.to_radians().cos());
         let mut violated = Vec::with_capacity(target_ras.len());
         let mut angles = Vec::with_capacity(target_ras.len());
-        const EARTH_RADIUS: f64 = 6378.137;
         for (i, &t) in indices.iter().enumerate() {
             let position = [observer[[t, 0]], observer[[t, 1]], observer[[t, 2]]];
             let distance = vector_magnitude(&position);
-            let ratio = (EARTH_RADIUS / distance).clamp(-1.0, 1.0);
-            let correction = if self.horizon_dip && (distance - EARTH_RADIUS).abs() < 100.0 {
-                ratio.acos().to_degrees() + if self.include_refraction { 0.57 } else { 0.0 }
-            } else {
-                0.0
-            };
-            let threshold = ratio.asin().to_degrees() + self.min_angle_deg + correction;
+            let threshold = self.threshold_deg(distance);
             let center = normalize_vector(&[-position[0], -position[1], -position[2]]);
             let target = radec_to_unit_vector(target_ras[i], target_decs[i]);
             let cosine = dot_product(&target, &center);
@@ -109,9 +115,6 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         let mut violations = Vec::new();
         let mut current_violation: Option<(usize, f64)> = None;
 
-        // Earth radius in km
-        const EARTH_RADIUS: f64 = 6378.137;
-
         // Convert target RA/Dec to unit vector
         let target_vec = radec_to_unit_vector(target_ra, target_dec);
         let cos_max_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
@@ -125,23 +128,7 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
             ];
 
             let r = vector_magnitude(&obs_pos);
-            let ratio = (EARTH_RADIUS / r).clamp(-1.0, 1.0);
-            let earth_ang_radius_deg = ratio.asin().to_degrees();
-
-            // For ground observers (r close to EARTH_RADIUS), add horizon dip correction
-            // Horizon dip angle = arccos(R/r), which makes objects visible slightly beyond 90°
-            // For spacecraft (r >> R), this correction is negligible
-            let horizon_dip_correction = if self.horizon_dip && (r - EARTH_RADIUS).abs() < 100.0 {
-                // True ground observer or very low altitude (<100 km above surface)
-                let dip_angle_deg = (EARTH_RADIUS / r).clamp(-1.0, 1.0).acos().to_degrees();
-                let refraction = if self.include_refraction { 0.57 } else { 0.0 };
-                dip_angle_deg + refraction
-            } else {
-                // Spacecraft or high altitude - no correction needed
-                0.0
-            };
-
-            let threshold_deg = earth_ang_radius_deg + self.min_angle_deg + horizon_dip_correction;
+            let threshold_deg = self.threshold_deg(r);
 
             let center_unit = normalize_vector(&[-obs_pos[0], -obs_pos[1], -obs_pos[2]]);
             let cos_angle = dot_product(&target_vec, &center_unit);
@@ -194,22 +181,7 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
                 obs_filtered[[times_filtered.len() - 1, 2]],
             ];
             let r = vector_magnitude(&obs_pos);
-            let ratio = (EARTH_RADIUS / r).clamp(-1.0, 1.0);
-            let earth_ang_radius_deg = ratio.asin().to_degrees();
-
-            let horizon_dip_correction = if (r - EARTH_RADIUS).abs() < 100.0 {
-                if self.horizon_dip {
-                    let dip_angle_deg = (EARTH_RADIUS / r).clamp(-1.0, 1.0).acos().to_degrees();
-                    let refraction = if self.include_refraction { 0.57 } else { 0.0 };
-                    dip_angle_deg + refraction
-                } else {
-                    0.0
-                }
-            } else {
-                0.0
-            };
-
-            let threshold_deg = earth_ang_radius_deg + self.min_angle_deg + horizon_dip_correction;
+            let threshold_deg = self.threshold_deg(r);
 
             violations.push(ConstraintViolation {
                 start_time_internal: times_filtered[start_idx],
@@ -297,7 +269,6 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         let (times_filtered, obs_filtered) =
             extract_observer_ephemeris_data!(ephemeris, time_indices);
         // Earth radius in km
-        const EARTH_RADIUS: f64 = 6378.137;
 
         // Validate inputs
         if target_ras.len() != target_decs.len() {
@@ -329,18 +300,7 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
             ];
 
             let r = vector_magnitude(&obs_pos);
-            let ratio = (EARTH_RADIUS / r).clamp(-1.0, 1.0);
-            let earth_ang_radius_deg = ratio.asin().to_degrees();
-
-            let horizon_dip_correction = if self.horizon_dip && (r - EARTH_RADIUS).abs() < 100.0 {
-                let dip_angle_deg = (EARTH_RADIUS / r).clamp(-1.0, 1.0).acos().to_degrees();
-                let refraction = if self.include_refraction { 0.57 } else { 0.0 };
-                dip_angle_deg + refraction
-            } else {
-                0.0
-            };
-
-            let threshold_deg = earth_ang_radius_deg + self.min_angle_deg + horizon_dip_correction;
+            let threshold_deg = self.threshold_deg(r);
             // Pre-compute cosine of threshold (avoids acos() in inner loop)
             cos_thresholds[t] = threshold_deg.to_radians().cos();
 
@@ -388,7 +348,6 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         let (times_filtered, obs_filtered) =
             extract_observer_ephemeris_data!(ephemeris, time_indices);
         // Earth radius in km
-        const EARTH_RADIUS: f64 = 6378.137;
 
         if target_unit_vectors.ncols() != 3 {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -413,18 +372,7 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
             ];
 
             let r = vector_magnitude(&obs_pos);
-            let ratio = (EARTH_RADIUS / r).clamp(-1.0, 1.0);
-            let earth_ang_radius_deg = ratio.asin().to_degrees();
-
-            let horizon_dip_correction = if self.horizon_dip && (r - EARTH_RADIUS).abs() < 100.0 {
-                let dip_angle_deg = (EARTH_RADIUS / r).clamp(-1.0, 1.0).acos().to_degrees();
-                let refraction = if self.include_refraction { 0.57 } else { 0.0 };
-                dip_angle_deg + refraction
-            } else {
-                0.0
-            };
-
-            let threshold_deg = earth_ang_radius_deg + self.min_angle_deg + horizon_dip_correction;
+            let threshold_deg = self.threshold_deg(r);
             cos_thresholds[t] = threshold_deg.to_radians().cos();
             center_units[t] = normalize_vector(&[-obs_pos[0], -obs_pos[1], -obs_pos[2]]);
         }

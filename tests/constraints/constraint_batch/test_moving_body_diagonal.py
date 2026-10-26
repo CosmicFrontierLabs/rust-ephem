@@ -187,8 +187,50 @@ def test_invalid_track_times_raise(ground_ephem_5h: GroundEphemeris) -> None:
             ground_ephem_5h,
             [0.0],
             [0.0],
-            times=[ground_ephem_5h.timestamp[0] - timedelta(seconds=1)],
+            times=[ground_ephem_5h.timestamp[0], ground_ephem_5h.timestamp[1]],
         )
+
+
+@pytest.mark.parametrize("backend_kind", ["python", "rust"])
+@pytest.mark.parametrize("count", [1, 3, 6])
+@pytest.mark.parametrize("offset", [-1.0, 0.25])
+def test_off_grid_tracks_keep_positional_pairing(
+    ground_ephem_5h: GroundEphemeris, backend_kind: str, count: int, offset: float
+) -> None:
+    constraint = moving_constraints()["coast"]
+    backend: Any = (
+        constraint
+        if backend_kind == "python"
+        else Constraint.from_json(constraint.model_dump_json())
+    )
+    ras, decs = (
+        np.linspace(0, 300, count).tolist(),
+        np.linspace(-60, 60, count).tolist(),
+    )
+    selected = list(ground_ephem_5h.timestamp[:count])
+    times = [time + timedelta(seconds=offset) for time in selected]
+    expected = backend.evaluate_moving_body(ground_ephem_5h, ras, decs, times=selected)
+    actual = backend.evaluate_moving_body(ground_ephem_5h, ras, decs, times=times)
+    np.testing.assert_array_equal(
+        actual.timestamps if backend_kind == "python" else actual.timestamp, times
+    )
+    assert actual.constraint_array == expected.constraint_array
+    assert actual.constraint_values == expected.constraint_values
+    assert actual.cause_value_keys == expected.cause_value_keys
+
+
+def test_value_namespaces_match_with_valueless_duplicate_children(
+    ground_ephem_5h: GroundEphemeris,
+) -> None:
+    sun = SunConstraint(min_angle=30)
+    saa = SAAConstraint(polygon=[(-80.0, -40.0), (0.0, -40.0), (0.0, 0.0)])
+    constraint = (saa | sun) | (sun | saa) | sun | ~sun
+    n = len(ground_ephem_5h.timestamp)
+    ras, decs = [30.0] * n, [10.0] * n
+    moving = constraint.evaluate_moving_body(ground_ephem_5h, ras, decs)
+    regular = constraint.evaluate_batch(ground_ephem_5h, ras, decs)[0]
+    assert moving.constraint_values.keys() == regular.constraint_values.keys()
+    assert moving.cause_value_keys == regular.cause_value_keys
 
 
 @pytest.mark.parametrize("name", ["coast", "sun_offset", "moon_phase"])

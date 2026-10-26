@@ -9,6 +9,7 @@ to configure the Rust constraint evaluators.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -227,8 +228,8 @@ class RustConstraintMixin(BaseModel):
     def _normalize_target_rolls(
         target_ras: list[float],
         target_decs: list[float],
-        target_rolls: list[float] | None,
-    ) -> list[float] | None:
+        target_rolls: Sequence[float | None] | None,
+    ) -> list[float | None] | None:
         """Validate per-target roll inputs for batch APIs."""
         if len(target_ras) != len(target_decs):
             raise ValueError("target_ras and target_decs must have the same length")
@@ -238,21 +239,7 @@ class RustConstraintMixin(BaseModel):
             raise ValueError(
                 "target_rolls must have the same length as target_ras and target_decs"
             )
-        return target_rolls
-
-    @staticmethod
-    def _group_target_roll_indices(
-        target_rolls: list[float],
-    ) -> list[tuple[float, list[int]]]:
-        """Group target indices by shared roll values while preserving order."""
-        grouped: dict[float, list[int]] = {}
-        order: list[float] = []
-        for index, target_roll in enumerate(target_rolls):
-            if target_roll not in grouped:
-                grouped[target_roll] = []
-                order.append(target_roll)
-            grouped[target_roll].append(index)
-        return [(target_roll, grouped[target_roll]) for target_roll in order]
+        return list(target_rolls)
 
     def _evaluate_batch_uniform(
         self,
@@ -261,16 +248,11 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-        target_roll: float | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> list[ConstraintResult]:
         """Evaluate a batch where all targets share the same roll semantics."""
-        rust_constraint = self._resolve_evaluation_constraint(target_roll)
-        roll_kwargs = (
-            {}
-            if target_roll is None
-            else {"target_rolls": [target_roll] * len(target_ras)}
-        )
+        rust_constraint = self._resolve_evaluation_constraint(None)
+
         rust_results = rust_constraint.evaluate_batch(
             ephemeris,
             target_ras,
@@ -278,7 +260,6 @@ class RustConstraintMixin(BaseModel):
             times,
             indices,
             n_roll_samples=n_roll_samples,
-            **roll_kwargs,
         )
         return [
             ConstraintResult._from_rust_result(rust_result)
@@ -292,7 +273,6 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-        target_roll: float | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> npt.NDArray[np.bool_]:
         """Evaluate a batch where all targets share the same roll semantics."""
@@ -302,12 +282,8 @@ class RustConstraintMixin(BaseModel):
         # projections, SolarRoll computes the optimal roll once per cell).  Delegate
         # to it directly instead of looping in Python and rebuilding a fresh Rust
         # constraint per roll step.
-        rust_constraint = self._resolve_evaluation_constraint(target_roll)
-        roll_kwargs = (
-            {}
-            if target_roll is None
-            else {"target_rolls": [target_roll] * len(target_ras)}
-        )
+        rust_constraint = self._resolve_evaluation_constraint(None)
+
         return cast(
             npt.NDArray[np.bool_],
             rust_constraint.in_constraint_batch(
@@ -317,7 +293,6 @@ class RustConstraintMixin(BaseModel):
                 times,
                 indices,
                 n_roll_samples=n_roll_samples,
-                **roll_kwargs,
             ),
         )
 
@@ -570,7 +545,7 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-        target_rolls: list[float] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> list[ConstraintResult]:
         """Evaluate the constraint for multiple targets and return one result per target.
@@ -596,9 +571,35 @@ class RustConstraintMixin(BaseModel):
                 target_decs,
                 times=times,
                 indices=indices,
-                target_roll=None,
                 n_roll_samples=n_roll_samples,
             )
+
+        if any(roll is None for roll in normalized_target_rolls):
+            free = [i for i, roll in enumerate(normalized_target_rolls) if roll is None]
+            fixed = [
+                i for i, roll in enumerate(normalized_target_rolls) if roll is not None
+            ]
+            free_results = self._evaluate_batch_uniform(
+                ephemeris,
+                [target_ras[i] for i in free],
+                [target_decs[i] for i in free],
+                times=times,
+                indices=indices,
+                n_roll_samples=n_roll_samples,
+            )
+            if not fixed:
+                return free_results
+            fixed_results = self.evaluate_batch(
+                ephemeris,
+                [target_ras[i] for i in fixed],
+                [target_decs[i] for i in fixed],
+                times=times,
+                indices=indices,
+                target_rolls=[normalized_target_rolls[i] for i in fixed],
+                n_roll_samples=n_roll_samples,
+            )
+            ordered = dict(zip(free + fixed, free_results + fixed_results, strict=True))
+            return [ordered[i] for i in range(len(target_ras))]
 
         rust_results = self._get_cached_rust_constraint().evaluate_batch(
             ephemeris,
@@ -606,7 +607,7 @@ class RustConstraintMixin(BaseModel):
             target_decs,
             times,
             indices,
-            target_rolls=normalized_target_rolls,
+            target_rolls=cast(list[float], normalized_target_rolls),
             n_roll_samples=n_roll_samples,
         )
         return [ConstraintResult._from_rust_result(result) for result in rust_results]
@@ -618,7 +619,7 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-        target_rolls: list[float] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> npt.NDArray[np.bool_]:
         """
@@ -663,9 +664,36 @@ class RustConstraintMixin(BaseModel):
                 target_decs,
                 times=times,
                 indices=indices,
-                target_roll=None,
                 n_roll_samples=n_roll_samples,
             )
+
+        if any(roll is None for roll in normalized_target_rolls):
+            free = [i for i, roll in enumerate(normalized_target_rolls) if roll is None]
+            fixed = [
+                i for i, roll in enumerate(normalized_target_rolls) if roll is not None
+            ]
+            free_mask = self._in_constraint_batch_uniform(
+                ephemeris,
+                [target_ras[i] for i in free],
+                [target_decs[i] for i in free],
+                times=times,
+                indices=indices,
+                n_roll_samples=n_roll_samples,
+            )
+            if not fixed:
+                return free_mask
+            result = np.empty((len(target_ras), free_mask.shape[1]), dtype=np.bool_)
+            result[free] = free_mask
+            result[fixed] = self.in_constraint_batch(
+                ephemeris,
+                [target_ras[i] for i in fixed],
+                [target_decs[i] for i in fixed],
+                times=times,
+                indices=indices,
+                target_rolls=[normalized_target_rolls[i] for i in fixed],
+                n_roll_samples=n_roll_samples,
+            )
+            return result
 
         return cast(
             npt.NDArray[np.bool_],
@@ -675,7 +703,7 @@ class RustConstraintMixin(BaseModel):
                 target_decs,
                 times,
                 indices,
-                target_rolls=normalized_target_rolls,
+                target_rolls=cast(list[float], normalized_target_rolls),
                 n_roll_samples=n_roll_samples,
             ),
         )
@@ -856,7 +884,11 @@ class RustConstraintMixin(BaseModel):
             ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
             target_ras: Array of right ascensions in degrees (ICRS/J2000)
             target_decs: Array of declinations in degrees (ICRS/J2000)
-            times: Specific times to evaluate (must match ras/decs length)
+            times: Timestamps matching the ras/decs length. Exact ephemeris times
+                select the matching rows. Off-grid tracks retain positional
+                pairing with the first N ephemeris rows and the supplied labels;
+                no interpolation is performed. Off-grid tracks cannot exceed the
+                ephemeris length.
             body: Body identifier (NAIF ID or name like "Jupiter", "90004910")
             use_horizons: If True, query JPL Horizons for body positions (default: False)
             spice_kernel: Path or URL to a SPICE kernel file for body positions.

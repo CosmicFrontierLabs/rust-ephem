@@ -364,18 +364,13 @@ impl ConstraintEvaluator for BrightStarEvaluator {
             } => vertices,
             _ => return Ok(None),
         };
-        let mut active = vec![false; target_ras.len()];
-        for &(i, _) in cells {
-            active[i] = true;
-        }
+        let first = cells.iter().map(|&(i, _)| i).min().unwrap_or(0);
+        let end = cells.iter().map(|&(i, _)| i + 1).max().unwrap_or(first);
         // A star's projection depends on the target, but neither time nor roll.
-        let offsets: Vec<_> = active
-            .par_iter()
-            .enumerate()
-            .map(|(i, &active)| {
-                if !active {
-                    return Vec::new();
-                }
+        // Keep only this chunk's rows, rather than allocating for every target.
+        let offsets: Vec<_> = (first..end)
+            .into_par_iter()
+            .map(|i| {
                 let ra = target_ras[i].to_radians();
                 let (sd, cd) = target_decs[i].to_radians().sin_cos();
                 let (sr, cr) = ra.sin_cos();
@@ -385,15 +380,19 @@ impl ConstraintEvaluator for BrightStarEvaluator {
         Ok(Some(super::roll_sweep::PreparedRollEvaluator::new(
             move |cells, roll| {
                 let (sr, cr) = roll.to_radians().sin_cos();
-                Ok(cells
-                    .iter()
-                    .map(|&(i, _)| {
-                        offsets[i].iter().any(|&(east, north)| {
+                // Reuse each target's polygon result across all timestamps at
+                // this candidate roll, even as other children prune cells.
+                Ok(super::roll_sweep::evaluate_per_target(
+                    cells,
+                    first,
+                    offsets.len(),
+                    |i| {
+                        offsets[i - first].iter().any(|&(east, north)| {
                             let (u, v) = Self::to_instrument(east, north, sr, cr);
                             Self::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
                         })
-                    })
-                    .collect())
+                    },
+                ))
             },
         )))
     }

@@ -10,6 +10,26 @@ use ndarray::Array2;
 use pyo3::PyResult;
 use std::collections::HashMap;
 
+/// Share numbering across Cartesian values, attribution, and paired results.
+/// Children without named values do not consume a suffix.
+fn next_value_prefix(
+    counts: &mut HashMap<String, usize>,
+    name: &str,
+    has_values: bool,
+) -> Option<String> {
+    if !has_values {
+        return None;
+    }
+    let tag = value_key_prefix(name);
+    let count = counts.entry(tag.clone()).or_default();
+    *count += 1;
+    Some(if *count == 1 {
+        tag
+    } else {
+        format!("{tag}_{count}")
+    })
+}
+
 /// Merge values and cause namespaces with the same collision rules as the
 /// Cartesian API, but obtain every child's data in a single paired traversal.
 fn evaluate_children_diagonal(
@@ -31,18 +51,11 @@ fn evaluate_children_diagonal(
         for (count, violated) in counts.iter_mut().zip(result.violated) {
             *count += usize::from(violated);
         }
-        let prefix = if result.values.is_empty() {
-            None
-        } else {
-            let tag = value_key_prefix(&child.name());
-            let count = value_tag_counts.entry(tag.clone()).or_default();
-            *count += 1;
-            Some(if *count == 1 {
-                tag
-            } else {
-                format!("{tag}_{count}")
-            })
-        };
+        let prefix = next_value_prefix(
+            &mut value_tag_counts,
+            &child.name(),
+            !result.values.is_empty(),
+        );
         for (key, array) in result.values {
             let key = prefix
                 .as_ref()
@@ -195,14 +208,7 @@ fn merge_children_named_values(
             continue;
         }
 
-        let base_tag = value_key_prefix(&child.name());
-        let count = tag_counts.entry(base_tag.clone()).or_insert(0);
-        *count += 1;
-        let prefix = if *count == 1 {
-            base_tag
-        } else {
-            format!("{base_tag}_{count}")
-        };
+        let prefix = next_value_prefix(&mut tag_counts, &child.name(), true).unwrap();
 
         for (key, arr) in child_values {
             merged.insert(format!("{prefix}.{key}"), arr);
@@ -393,18 +399,7 @@ fn merge_children_cause_value_keys(
         // skip — but its cause tag(s) must still surface, just with an empty
         // value-key list, so `cause_value_keys` never silently drops a tag.
         let has_any_values = child_map.values().any(|v| !v.is_empty());
-        let value_prefix = if has_any_values {
-            let base_tag = value_key_prefix(&child.name());
-            let count = value_tag_counts.entry(base_tag.clone()).or_insert(0);
-            *count += 1;
-            Some(if *count == 1 {
-                base_tag
-            } else {
-                format!("{base_tag}_{count}")
-            })
-        } else {
-            None
-        };
+        let value_prefix = next_value_prefix(&mut value_tag_counts, &child.name(), has_any_values);
 
         for (cause_tag, value_key_names) in sorted_entries(child_map) {
             let prefixed_value_keys: Vec<String> = match &value_prefix {
