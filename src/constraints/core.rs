@@ -731,6 +731,21 @@ pub trait ConstraintConfig: fmt::Debug + Send + Sync {
 ///
 /// Implementations of this trait perform the actual constraint checking logic.
 pub trait ConstraintEvaluator: Send + Sync {
+    /// Prepare roll-independent geometry once for a coordinated boolean sweep.
+    /// `cells` are the unresolved cells of the original target/time grid. The
+    /// returned evaluator is local to this call, so no cross-ephemeris cache key
+    /// or mutable shared state is needed.
+    fn prepare_roll_sweep<'a>(
+        &'a self,
+        _ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        _target_ras: &'a [f64],
+        _target_decs: &'a [f64],
+        _time_indices: Option<&'a [usize]>,
+        _cells: &[super::roll_sweep::RollCell],
+    ) -> PyResult<Option<super::roll_sweep::PreparedRollEvaluator<'a>>> {
+        Ok(None)
+    }
+
     /// Evaluate the constraint with full ephemeris access
     ///
     /// # Arguments
@@ -1020,11 +1035,9 @@ pub trait ConstraintEvaluator: Send + Sync {
     /// `n_roll_samples` uniform roll angles are swept over [0°, 360°) for evaluators
     /// that depend on spacecraft roll; constraints without roll dependence ignore it.
     ///
-    /// Default: sweeps `n_roll_samples` roll angles and calls `field_of_regard_violated_at_roll`
-    /// at each step, marking a direction accessible if *any* roll satisfies it.
-    /// Leaf implementations that carry their own roll state (e.g. `BoresightOffsetEvaluator`
-    /// with fixed roll) override `field_of_regard_violated_at_roll` instead, and the sweep
-    /// here automatically propagates the correct roll to them.
+    /// Default: evaluate roll-independent constraints once; otherwise prepare
+    /// geometry in bounded chunks and sweep unresolved directions at the same
+    /// candidate rolls. Leaves may override this with a specialized complete sweep.
     fn field_of_regard_violated_batch(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -1043,30 +1056,15 @@ pub trait ConstraintEvaluator: Send + Sync {
             );
         }
 
-        // Roll-dependent: sweep n_roll_samples angles over [0°, 360°).
         let n_targets = target_unit_vectors.nrows();
-        let roll_step_deg = 360.0 / n_roll_samples as f64;
-        let mut accessible = vec![false; n_targets];
-
-        for step in 0..n_roll_samples {
-            if accessible.iter().all(|&a| a) {
-                break;
-            }
-            let roll_deg = step as f64 * roll_step_deg;
-            let violated = self.field_of_regard_violated_at_roll(
-                ephemeris,
-                target_unit_vectors,
-                time_index,
-                roll_deg,
-            )?;
-            for i in 0..n_targets {
-                if !violated[i] {
-                    accessible[i] = true;
-                }
-            }
-        }
-
-        Ok(accessible.iter().map(|&a| !a).collect())
+        let (ras, decs) =
+            crate::utils::vector_math::unit_vectors_to_radec_batch(target_unit_vectors);
+        let indices = [time_index];
+        let mut result = Array2::from_elem((n_targets, 1), true);
+        super::roll_sweep::sweep_chunks(&mut result, true, n_roll_samples, |cells| {
+            super::roll_sweep::prepare(self, ephemeris, &ras, &decs, Some(&indices), cells)
+        })?;
+        Ok(result.column(0).to_vec())
     }
 
     /// Evaluate constraint for the full target set at a single fixed roll angle.
@@ -1092,9 +1090,9 @@ pub trait ConstraintEvaluator: Send + Sync {
     /// (i.e., no clear roll exists).  Used by `in_constraint_batch(target_rolls=None)`.
     ///
     /// Default: roll-independent evaluators bypass the sweep with a single
-    /// `in_constraint_batch` call; roll-dependent ones loop calling `in_constraint_batch_at_roll`
-    /// and AND-accumulate.  Combinators override this to hoist roll-independent children out
-    /// of the loop, and BrightStar overrides it to reuse its cached gnomonic projections.
+    /// `in_constraint_batch` call. Others prepare geometry in bounded chunks and
+    /// remove cleared cells after each roll. Combinators hoist independent
+    /// siblings; leaves may provide a specialized complete sweep.
     fn in_constraint_batch_constrained_at_every_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -1106,28 +1104,22 @@ pub trait ConstraintEvaluator: Send + Sync {
         if !self.is_roll_dependent() {
             return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices);
         }
-        let roll_step = 360.0 / n_roll_samples as f64;
-        let mut acc: Option<Array2<bool>> = None;
-        for step in 0..n_roll_samples {
-            if let Some(ref a) = acc {
-                if a.iter().all(|&b| !b) {
-                    break;
-                }
-            }
-            let roll_deg = step as f64 * roll_step;
-            let step_result = self.in_constraint_batch_at_roll(
+        let n_times = match time_indices {
+            Some(idx) => idx.len(),
+            None => ephemeris.get_times()?.len(),
+        };
+        let mut result = Array2::from_elem((target_ras.len(), n_times), true);
+        super::roll_sweep::sweep_chunks(&mut result, true, n_roll_samples, |cells| {
+            super::roll_sweep::prepare(
+                self,
                 ephemeris,
                 target_ras,
                 target_decs,
                 time_indices,
-                roll_deg,
-            )?;
-            match acc {
-                None => acc = Some(step_result),
-                Some(ref mut a) => a.zip_mut_with(&step_result, |x, &y| *x &= y),
-            }
-        }
-        Ok(acc.unwrap_or_else(|| Array2::from_elem((target_ras.len(), 0), false)))
+                cells,
+            )
+        })?;
+        Ok(result)
     }
 
     /// Get constraint name

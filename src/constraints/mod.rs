@@ -9,6 +9,7 @@ pub mod core;
 
 // Shared FoV geometry
 pub mod fov_polygon;
+pub mod roll_sweep;
 
 // Constraint implementations
 pub mod airmass;

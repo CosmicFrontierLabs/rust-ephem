@@ -263,6 +263,51 @@ impl BodyProximityEvaluator {
 }
 
 impl ConstraintEvaluator for BodyProximityEvaluator {
+    fn prepare_roll_sweep<'a>(
+        &'a self,
+        ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &'a [f64],
+        target_decs: &'a [f64],
+        time_indices: Option<&'a [usize]>,
+        cells: &[super::roll_sweep::RollCell],
+    ) -> pyo3::PyResult<Option<super::roll_sweep::PreparedRollEvaluator<'a>>> {
+        let vertices = match &self.fov_polygon {
+            Some(vertices) if self.roll_rad.is_none() => vertices,
+            _ => return Ok(None),
+        };
+        let body = self.body_positions(ephemeris)?;
+        let obs = ephemeris.get_gcrs_positions()?;
+        let n_times = time_indices.map_or(body.nrows(), |idx| idx.len());
+        let body_radec: Vec<_> = (0..n_times)
+            .map(|j| Self::body_radec_at(&body, &obs, time_indices.map_or(j, |idx| idx[j])))
+            .collect();
+        let mut offsets = super::roll_sweep::PreparedGrid::new(n_times, cells, None);
+        for &(i, j) in cells {
+            if let Some((ra, dec)) = body_radec[j] {
+                offsets[(i, j)] = fov_polygon::gnomonic_project(
+                    target_ras[i].to_radians(),
+                    target_decs[i].to_radians(),
+                    ra,
+                    dec,
+                );
+            }
+        }
+        Ok(Some(super::roll_sweep::PreparedRollEvaluator::new(
+            move |cells, roll| {
+                let (sr, cr) = roll.to_radians().sin_cos();
+                Ok(cells
+                    .iter()
+                    .map(|&(i, j)| {
+                        offsets[(i, j)].is_some_and(|(east, north)| {
+                            let (u, v) = fov_polygon::to_instrument(east, north, sr, cr);
+                            fov_polygon::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
+                        })
+                    })
+                    .collect())
+            },
+        )))
+    }
+
     fn evaluate(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,

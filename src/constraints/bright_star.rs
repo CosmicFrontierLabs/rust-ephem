@@ -338,6 +338,55 @@ impl BrightStarEvaluator {
 }
 
 impl ConstraintEvaluator for BrightStarEvaluator {
+    fn prepare_roll_sweep<'a>(
+        &'a self,
+        _ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &'a [f64],
+        target_decs: &'a [f64],
+        _time_indices: Option<&'a [usize]>,
+        cells: &[super::roll_sweep::RollCell],
+    ) -> PyResult<Option<super::roll_sweep::PreparedRollEvaluator<'a>>> {
+        let vertices = match &self.fov {
+            FovDefinition::Polygon {
+                vertices,
+                roll_rad: None,
+            } => vertices,
+            _ => return Ok(None),
+        };
+        let mut active = vec![false; target_ras.len()];
+        for &(i, _) in cells {
+            active[i] = true;
+        }
+        // A star's projection depends on the target, but neither time nor roll.
+        let offsets: Vec<_> = active
+            .par_iter()
+            .enumerate()
+            .map(|(i, &active)| {
+                if !active {
+                    return Vec::new();
+                }
+                let ra = target_ras[i].to_radians();
+                let (sd, cd) = target_decs[i].to_radians().sin_cos();
+                let (sr, cr) = ra.sin_cos();
+                self.nearby_tangent_offsets([cd * cr, cd * sr, sd], ra, sd, cd)
+            })
+            .collect();
+        Ok(Some(super::roll_sweep::PreparedRollEvaluator::new(
+            move |cells, roll| {
+                let (sr, cr) = roll.to_radians().sin_cos();
+                Ok(cells
+                    .iter()
+                    .map(|&(i, _)| {
+                        offsets[i].iter().any(|&(east, north)| {
+                            let (u, v) = Self::to_instrument(east, north, sr, cr);
+                            Self::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
+                        })
+                    })
+                    .collect())
+            },
+        )))
+    }
+
     fn evaluate(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
