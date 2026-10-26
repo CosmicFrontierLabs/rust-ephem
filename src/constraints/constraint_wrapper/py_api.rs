@@ -53,11 +53,12 @@ impl PyConstraint {
     /// Angles are ICRS degrees. Supply exactly one of time (datetime or Unix
     /// seconds, selecting the sample at or before it) or index. None target_roll
     /// sweeps coordinated rolls; a point is blocked only at every sampled roll.
-    /// The default preserves coast-sim's original candidate geometry. Opt into
-    /// grow_margin for perpendicular offsets doubled up to 90 degrees. A route
+    /// Times outside the ephemeris range are rejected.
+    /// The default tries perpendicular offsets doubled up to 90 degrees. Set
+    /// grow_margin=false for coast-sim's legacy candidate geometry. A route
     /// is validated on the specified sample grid, not continuously along arcs.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (ephemeris, start_ra, start_dec, end_ra, end_dec, time=None, index=None, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, samples=50, margin_deg=5.0, grow_margin=false))]
+    #[pyo3(signature = (ephemeris, start_ra, start_dec, end_ra, end_dec, time=None, index=None, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, samples=50, margin_deg=5.0, grow_margin=true))]
     fn route_around(
         &self,
         ephemeris: &Bound<'_, PyAny>,
@@ -73,6 +74,9 @@ impl PyConstraint {
         margin_deg: f64,
         grow_margin: bool,
     ) -> PyResult<super::route::RouteResult> {
+        if let Some(roll) = target_roll {
+            Self::validate_target_roll(roll)?;
+        }
         self.with_ephemeris(ephemeris, |eph| {
             let index = super::route::sample_index(eph, time.as_ref(), index)?;
             super::route::route_around(

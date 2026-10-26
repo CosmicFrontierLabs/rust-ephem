@@ -143,7 +143,9 @@ def test_faithful_matches_numpy_reference(
     coords = random_pointings(240)
     for a, b in zip(coords[::2], coords[1::2], strict=True):
         expected = reference(a, b, check, samples)
-        actual = constraint.route_around(ephemeris, *a, *b, index=3, samples=samples)
+        actual = constraint.route_around(
+            ephemeris, *a, *b, index=3, samples=samples, grow_margin=False
+        )
         flags = check([radec(v) for v in points(vec(*a), vec(*b), samples)])
         assert actual.violated == any(flags)
         assert actual.first_violation == (
@@ -217,7 +219,9 @@ def test_faithful_mode_can_return_the_reference_waypoint(
     check = checker(constraint, ephemeris)
     expected = reference(a, b, check, samples)
     assert expected is not None
-    result = constraint.route_around(ephemeris, *a, *b, index=3, samples=samples)
+    result = constraint.route_around(
+        ephemeris, *a, *b, index=3, samples=samples, grow_margin=False
+    )
     assert result.waypoint == pytest.approx(expected, abs=1e-9)
     assert_clear_route(result, a, b, check, samples)
 
@@ -235,17 +239,21 @@ def test_growing_margin_reaches_the_cap(
 
 
 @pytest.mark.parametrize("samples", [1, 2, 50])
-def test_short_grids_and_growth_opt_in(
+def test_short_grids_and_growth_by_default(
     ephemeris: GroundEphemeris, samples: int
 ) -> None:
     a, b = crossing(ephemeris)
     constraint = SunConstraint(min_angle=45)
-    result = constraint.route_around(ephemeris, *a, *b, index=3, samples=samples)
+    result = constraint.route_around(
+        ephemeris, *a, *b, index=3, samples=samples, grow_margin=False
+    )
     assert result.waypoint is None
     assert result.violated == (samples > 1)
-    grown = constraint.route_around(
-        ephemeris, *a, *b, index=3, samples=samples, grow_margin=True
+    grown = constraint.route_around(ephemeris, *a, *b, index=3, samples=samples)
+    native = Constraint.sun_proximity(45).route_around(
+        ephemeris, *a, *b, index=3, samples=samples
     )
+    assert native.waypoint == grown.waypoint
     if samples > 1:
         assert_clear_route(grown, a, b, checker(constraint, ephemeris), samples)
     else:
@@ -358,6 +366,75 @@ def test_time_floor_native_result_and_immutability(ephemeris: GroundEphemeris) -
         setattr(native, "violated", False)
 
 
+@pytest.mark.parametrize(
+    "epoch",
+    [
+        BEGIN,
+        datetime(1970, 1, 1, tzinfo=timezone.utc),
+        datetime(1969, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
+    ],
+)
+@pytest.mark.parametrize("microsecond", [1, 3, 7, 654321])
+def test_float_sample_times_and_adjacent_floats_select_the_right_geometry(
+    ensure_planetary_data: None, microsecond: int, epoch: datetime
+) -> None:
+    begin = epoch.replace(microsecond=microsecond)
+    ephem = GroundEphemeris(35, -120, 0, begin, begin + timedelta(hours=6), 3600)
+    constraint = SunConstraint(min_angle=45)
+    a, b = crossing(ephem)
+    for index in [0, 1, 3, 6]:
+        instant = begin + timedelta(hours=index)
+        expected = constraint.route_around(ephem, *a, *b, index=index)
+        actual = constraint.route_around(ephem, *a, *b, time=instant.timestamp())
+        assert actual.waypoint == expected.waypoint
+        assert actual.first_violation == expected.first_violation
+        previous = float(np.nextafter(instant.timestamp(), -np.inf))
+        if index == 0:
+            with pytest.raises(ValueError, match="outside"):
+                constraint.route_around(ephem, *a, *b, time=previous)
+        else:
+            prior = constraint.route_around(ephem, *a, *b, index=index - 1)
+            before = constraint.route_around(ephem, *a, *b, time=previous)
+            assert before.waypoint == prior.waypoint
+            assert before.first_violation == prior.first_violation
+
+
+@pytest.mark.parametrize(
+    "constraint,roll",
+    [
+        (SunConstraint(min_angle=45), None),
+        (SolarRollConstraint(tolerance_deg=19), 45.0),
+    ],
+)
+def test_backend_resolution_avoids_unneeded_sweep_backend(
+    ephemeris: GroundEphemeris,
+    monkeypatch: pytest.MonkeyPatch,
+    constraint: RustConstraintMixin,
+    roll: float | None,
+) -> None:
+    def unexpected_sweep(self: RustConstraintMixin) -> Constraint:
+        raise AssertionError(
+            "an independent or fixed-roll call must use the regular backend"
+        )
+
+    monkeypatch.setattr(
+        RustConstraintMixin, "_get_cached_sweep_constraint", unexpected_sweep
+    )
+    constraint.route_around(ephemeris, 0, 0, 90, 0, index=3, target_roll=roll)
+
+
+@pytest.mark.parametrize("roll", [float("nan"), float("inf"), -float("inf")])
+def test_roll_validation_matches_other_constraint_methods(
+    ephemeris: GroundEphemeris, roll: float
+) -> None:
+    constraint = SunConstraint(min_angle=45)
+    with pytest.raises(ValueError) as route_error:
+        constraint.route_around(ephemeris, 0, 0, 90, 0, index=3, target_roll=roll)
+    with pytest.raises(ValueError) as evaluate_error:
+        constraint.evaluate(ephemeris, 0, 0, indices=[3], target_roll=roll)
+    assert str(route_error.value) == str(evaluate_error.value)
+
+
 @pytest.mark.parametrize("index", [0, 3, 6])
 def test_time_only_tree_has_no_route(ephemeris: GroundEphemeris, index: int) -> None:
     constraint = ~DaytimeConstraint()
@@ -407,15 +484,16 @@ def test_snapshot_matches_full_ephemeris_and_mount_conventions(
             assert_clear_route(result, a, b, check)
 
 
-def test_time_after_ephemeris_uses_final_sample(ephemeris: GroundEphemeris) -> None:
+@pytest.mark.parametrize("as_float", [False, True])
+def test_time_after_ephemeris_is_rejected(
+    ephemeris: GroundEphemeris, as_float: bool
+) -> None:
     constraint = SunConstraint(min_angle=45)
     a, b = crossing(ephemeris)
-    last = constraint.route_around(ephemeris, *a, *b, index=6, grow_margin=True)
-    after = constraint.route_around(
-        ephemeris, *a, *b, time=BEGIN + timedelta(days=1), grow_margin=True
-    )
-    assert after.waypoint == last.waypoint
-    assert after.first_violation == last.first_violation
+    instant = BEGIN + timedelta(days=1)
+    time: datetime | float = instant.timestamp() if as_float else instant
+    with pytest.raises(ValueError, match="outside the ephemeris range"):
+        constraint.route_around(ephemeris, *a, *b, time=time)
 
 
 @pytest.mark.parametrize(

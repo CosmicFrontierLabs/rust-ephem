@@ -59,9 +59,10 @@ and the Pydantic constraint models, including combined constraints:
 All coordinates are ICRS degrees. Supply exactly one of ``time`` (a datetime or
 Unix timestamp in seconds) or ``index``. A time between samples selects the sample
 at or before it; all path checks use that same sample. Naive datetimes mean UTC;
-aware datetimes are converted to UTC. Times before the first sample are rejected;
-times after the final sample select the final sample. Time rounding and caching
-remain the caller's responsibility.
+aware datetimes are converted to UTC. Times outside the ephemeris range are
+rejected. Within that range, floor selection intentionally differs from the
+nearest-sample rule of ``ephem.index()`` and the exact-match rule of constraint
+evaluation. Time rounding and caching remain the caller's responsibility.
 
 ``target_roll=None`` uses the same coordinated roll sweep as
 ``in_constraint_batch``: a direction is blocked only if every sampled roll
@@ -75,13 +76,15 @@ adjust ``n_roll_samples`` (default 360). Roll is not interpolated by the router.
 * ``waypoint``: a clear candidate as ``(ra, dec)`` degrees, or ``None``.
 * ``detour_deg``: the total angular length of the two legs, or ``None``.
 
-The default, ``grow_margin=False``, preserves coast-sim's legacy candidate
-geometry and shorter-candidate-first order. That geometry offsets along the
-original arc plane, so it often fails to avoid real keep-outs. Opting into
-``grow_margin=True`` first tries the legacy candidates, then offsets in both
-directions perpendicular to the plane, starting at ``margin_deg`` and doubling
+The default, ``grow_margin=True``, offsets candidates in both directions
+perpendicular to the arc plane, starting at ``margin_deg`` and doubling
 up to 90 degrees. This bounds the search even for very small margins. Each pair
 is ordered by total path length, and the first validating candidate wins.
+Set ``grow_margin=False`` to preserve coast-sim's legacy candidate geometry and
+ordering for regression comparisons. That geometry offsets along the original
+arc plane and often fails to avoid real keep-outs. Growing mode skips those
+legacy candidates.
+
 The margin must be finite and in (0, 90]; it is an initial offset from the first
 blocked sample, not a guaranteed clearance from the keep-out boundary. For a
 single cone with half-angle at most 90 degrees and clear endpoints, the final

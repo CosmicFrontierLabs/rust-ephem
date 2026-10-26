@@ -814,21 +814,23 @@ class RustConstraintMixin(BaseModel):
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         samples: int = 50,
         margin_deg: float = 5.0,
-        grow_margin: bool = False,
+        grow_margin: bool = True,
     ) -> RouteResult:
         """Find a single waypoint around a sampled constraint crossing.
 
         Pointings are ICRS degrees. Supply exactly one of ``time`` (UTC datetime
         or Unix seconds) or ``index``. Time selects the ephemeris sample at or
-        before it; all checks use that one sample. Naive datetimes mean UTC.
+        before it; all checks use that one sample. Times outside the ephemeris
+        range are rejected. Naive datetimes mean UTC.
         With ``target_roll=None``, each point is blocked only if every sampled
         spacecraft roll violates the combined constraint.
 
-        The default reproduces coast-sim's original candidate search. With
-        ``grow_margin=True``, failed legacy candidates are followed by offsets
-        perpendicular to the arc plane, starting at ``margin_deg`` and doubling
-        up to 90 degrees. ``margin_deg`` must be in (0, 90]. It is an initial
-        offset from the first blocked sample, not a clearance from the boundary.
+        By default, candidates are offset perpendicular to the arc plane,
+        starting at ``margin_deg`` and doubling up to 90 degrees. Set
+        ``grow_margin=False`` to reproduce coast-sim's legacy candidate geometry
+        for regression comparisons. ``margin_deg`` must be in (0, 90]. It is an
+        initial offset from the first blocked sample, not a clearance from the
+        boundary.
 
         ``samples`` (at least 1) divides each arc into equal fractions: the
         direct arc includes endpoints, and validation legs exclude endpoints.
@@ -840,12 +842,7 @@ class RustConstraintMixin(BaseModel):
         deterministic plane; negligible slews do not produce waypoints.
         """
         constraint = cast(
-            rust_ephem.Constraint,
-            (
-                self._get_cached_sweep_constraint()
-                if target_roll is None
-                else self._get_cached_rust_constraint()
-            ),
+            rust_ephem.Constraint, self._resolve_evaluation_constraint(target_roll)
         )
         return constraint.route_around(
             ephemeris,

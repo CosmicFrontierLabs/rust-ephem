@@ -305,7 +305,7 @@ class Constraint:
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         samples: int = 50,
         margin_deg: float = 5.0,
-        grow_margin: bool = False,
+        grow_margin: bool = True,
     ) -> RouteResult: ...
     @staticmethod
     def sun_proximity(min_angle: float, max_angle: float | None = None) -> Constraint:

@@ -3,6 +3,7 @@
 use crate::constraints::core::{ConstraintEvaluator, EvaluationRoll};
 use crate::constraints::diagonal::SampleEphemeris;
 use crate::ephemeris::ephemeris_common::EphemerisBase;
+use crate::utils::vector_math::{cross_product, dot_product, normalize_vector, vector_to_radec};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -23,20 +24,14 @@ pub(super) fn sample_index(
         (None, Some(i)) if i < times.len() => Ok(i),
         (None, Some(_)) => Err(PyValueError::new_err("index out of bounds")),
         (Some(time), None) => {
-            let instant = if time.is_instance_of::<pyo3::types::PyDateTime>() {
-                let utc_time;
-                let time = if !time.call_method0("utcoffset")?.is_none() {
-                    let utc = time
-                        .py()
-                        .import("datetime")?
-                        .getattr("timezone")?
-                        .getattr("utc")?;
-                    utc_time = time.call_method1("astimezone", (utc,))?;
-                    &utc_time
-                } else {
-                    time
-                };
-                crate::utils::time_utils::python_datetime_to_utc(time)?
+            if time.is_instance_of::<pyo3::types::PyDateTime>() {
+                let instant = crate::utils::time_utils::python_datetime_to_utc(time)?;
+                if times.first().is_none_or(|first| instant < *first)
+                    || times.last().is_none_or(|last| instant > *last)
+                {
+                    return Err(PyValueError::new_err("time is outside the ephemeris range"));
+                }
+                Ok(times.partition_point(|t| *t <= instant) - 1)
             } else {
                 let seconds: f64 = time.extract().map_err(|_| {
                     PyValueError::new_err("time must be a datetime or Unix timestamp")
@@ -44,16 +39,23 @@ pub(super) fn sample_index(
                 if !seconds.is_finite() {
                     return Err(PyValueError::new_err("time must be finite"));
                 }
-                chrono::DateTime::from_timestamp(
-                    seconds.floor() as i64,
-                    ((seconds - seconds.floor()) * 1e9) as u32,
-                )
-                .ok_or_else(|| PyValueError::new_err("time is out of range"))?
-            };
-            times
-                .partition_point(|t| *t <= instant)
-                .checked_sub(1)
-                .ok_or_else(|| PyValueError::new_err("time precedes ephemeris"))
+                // Compare on the float timestamp axis rather than truncating
+                // fractional seconds into nanoseconds. A datetime's timestamp()
+                // must select that sample, even when its f64 representation is
+                // slightly before the exact (microsecond-resolution) instant.
+                let as_seconds = |t: &chrono::DateTime<chrono::Utc>| {
+                    t.timestamp_micros() as f64 / 1e6
+                        + (t.timestamp_subsec_nanos() % 1000) as f64 / 1e9
+                };
+                if times
+                    .first()
+                    .is_none_or(|first| seconds < as_seconds(first))
+                    || times.last().is_none_or(|last| seconds > as_seconds(last))
+                {
+                    return Err(PyValueError::new_err("time is outside the ephemeris range"));
+                }
+                Ok(times.partition_point(|t| as_seconds(t) <= seconds) - 1)
+            }
         }
         _ => Err(PyValueError::new_err(
             "provide exactly one of time or index",
@@ -90,31 +92,14 @@ impl RouteResult {
     }
 }
 
-fn dot(a: Vec3, b: Vec3) -> f64 {
-    a.iter().zip(b).map(|(a, b)| a * b).sum()
-}
-
-fn cross(a: Vec3, b: Vec3) -> Vec3 {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-
-fn normalize(v: Vec3) -> Vec3 {
-    let norm = dot(v, v).sqrt();
-    v.map(|x| x / norm)
-}
-
 fn angle(a: Vec3, b: Vec3) -> f64 {
-    dot(a, b).clamp(-1.0, 1.0).acos()
+    dot_product(&a, &b).clamp(-1.0, 1.0).acos()
 }
 
 fn normal(a: Vec3, b: Vec3) -> Vec3 {
-    let n = cross(a, b);
-    if dot(n, n).sqrt() >= 1e-12 {
-        return normalize(n);
+    let n = cross_product(&a, &b);
+    if dot_product(&n, &n).sqrt() >= 1e-12 {
+        return normalize_vector(&n);
     }
     let mut axis = [0.0; 3];
     let mut smallest = 0;
@@ -124,15 +109,7 @@ fn normal(a: Vec3, b: Vec3) -> Vec3 {
         }
     }
     axis[smallest] = 1.0;
-    normalize(cross(a, axis))
-}
-
-fn radec(v: Vec3) -> (f64, f64) {
-    let v = normalize(v);
-    (
-        v[1].atan2(v[0]).to_degrees().rem_euclid(360.0),
-        v[2].clamp(-1.0, 1.0).asin().to_degrees(),
-    )
+    normalize_vector(&cross_product(&a, &axis))
 }
 
 struct Arc {
@@ -160,15 +137,15 @@ impl Arc {
             return self.b;
         }
         if self.theta < 0.01 {
-            return normalize(std::array::from_fn(|i| {
+            return normalize_vector(&std::array::from_fn(|i| {
                 self.a[i] + t * (self.b[i] - self.a[i])
             }));
         }
         if self.theta.cos() < 0.0 && self.theta.sin().abs() < 1e-7 {
             // The reference's sin(theta) denominator is undefined at antipodes.
             // Use the prescribed plane, including its deterministic axis fallback.
-            let tangent = cross(self.n, self.a);
-            return normalize(std::array::from_fn(|i| {
+            let tangent = cross_product(&self.n, &self.a);
+            return normalize_vector(&std::array::from_fn(|i| {
                 (t * self.theta).cos() * self.a[i] + (t * self.theta).sin() * tangent[i]
             }));
         }
@@ -194,20 +171,19 @@ fn validate<F>(a: Vec3, b: Vec3, w: Vec3, samples: usize, check: &mut F) -> PyRe
 where
     F: FnMut(&[Vec3]) -> PyResult<Vec<bool>>,
 {
-    if check(&[w])?[0] {
-        return Ok(false);
-    }
-    for arc in [Arc::new(a, w), Arc::new(w, b)] {
-        if arc.theta > NO_ROTATION
-            && samples > 1
-            && check(&arc.points(samples, false))?
-                .iter()
-                .any(|&blocked| blocked)
-        {
-            return Ok(false);
+    // One coordinated sweep for the complete candidate. The same waypoint and
+    // interior-leg grids are checked as before; endpoint checks were made on
+    // the direct arc. Never infer clearance from independent child roll sweeps.
+    let mut points = Vec::with_capacity(1 + 2 * samples.saturating_sub(1));
+    points.push(w);
+    if samples > 1 {
+        for arc in [Arc::new(a, w), Arc::new(w, b)] {
+            if arc.theta > NO_ROTATION {
+                points.extend(arc.points(samples, false));
+            }
         }
     }
-    Ok(true)
+    Ok(!check(&points)?.iter().any(|&blocked| blocked))
 }
 
 fn candidates<F>(
@@ -222,7 +198,7 @@ where
     F: FnMut(&[Vec3]) -> PyResult<Vec<bool>>,
 {
     let mut candidates = [1.0, -1.0].map(|sign| {
-        let w = normalize(std::array::from_fn(|i| {
+        let w = normalize_vector(&std::array::from_fn(|i| {
             offset.cos() * c[i] + sign * offset.sin() * direction[i]
         }));
         let length = angle(arc.a, w).to_degrees() + angle(w, arc.b).to_degrees();
@@ -273,32 +249,30 @@ where
     if flags[0] || flags[samples] || arc.theta < NO_ROTATION {
         return Ok(result);
     }
-    let c = normalize(points[first]);
-    // Preserve coast-sim's original (in-plane) direction in faithful mode.
-    let mut found = candidates(
-        &arc,
-        c,
-        normalize(cross(arc.n, c)),
-        margin_deg.to_radians(),
-        samples,
-        &mut check,
-    )?;
-    if found.is_none() && grow_margin {
-        // A real detour must leave the original plane. Increase the offset
-        // geometrically, bounding work even for extremely small margins. Include
-        // 90 degrees: for a single <=90-degree cone one of +/-n clears both legs
-        // when both endpoints are outside. Other geometries may remain blocked.
+    let c = normalize_vector(&points[first]);
+    // Faithful mode alone retains the legacy in-plane candidates. Growing
+    // mode starts with the useful perpendicular pair, skipping those failures.
+    let found = if grow_margin {
         let mut offset = margin_deg;
         loop {
-            found = candidates(&arc, c, arc.n, offset.to_radians(), samples, &mut check)?;
+            let found = candidates(&arc, c, arc.n, offset.to_radians(), samples, &mut check)?;
             if found.is_some() || offset >= 90.0 {
-                break;
+                break found;
             }
             offset = (2.0 * offset).min(90.0);
         }
-    }
+    } else {
+        candidates(
+            &arc,
+            c,
+            normalize_vector(&cross_product(&arc.n, &c)),
+            margin_deg.to_radians(),
+            samples,
+            &mut check,
+        )?
+    };
     if let Some((w, length)) = found {
-        result.waypoint = Some(radec(w));
+        result.waypoint = Some(vector_to_radec(&w));
         result.detour_deg = Some(length);
     }
     Ok(result)
@@ -332,9 +306,6 @@ pub(super) fn route_around(
     if n_roll_samples == 0 {
         return Err(PyValueError::new_err("n_roll_samples must be positive"));
     }
-    if target_roll.is_some_and(|r| !r.is_finite()) {
-        return Err(PyValueError::new_err("target_roll must be finite"));
-    }
     for (ra, dec) in [(start_ra, start_dec), (end_ra, end_dec)] {
         if !ra.is_finite() || !dec.is_finite() || !(-90.0..=90.0).contains(&dec) {
             return Err(PyValueError::new_err(
@@ -342,10 +313,10 @@ pub(super) fn route_around(
             ));
         }
     }
-    let a = normalize(crate::utils::vector_math::radec_to_unit_vector(
+    let a = normalize_vector(&crate::utils::vector_math::radec_to_unit_vector(
         start_ra, start_dec,
     ));
-    let b = normalize(crate::utils::vector_math::radec_to_unit_vector(
+    let b = normalize_vector(&crate::utils::vector_math::radec_to_unit_vector(
         end_ra, end_dec,
     ));
     // Snapshot just this sample, so per-arc geometry work is independent of the
@@ -359,7 +330,7 @@ pub(super) fn route_around(
         grow_margin,
         evaluator.is_target_dependent(),
         |points| {
-            let (ras, decs): (Vec<_>, Vec<_>) = points.iter().map(|&v| radec(v)).unzip();
+            let (ras, decs): (Vec<_>, Vec<_>) = points.iter().map(vector_to_radec).unzip();
             let flags = match target_roll {
                 Some(roll) => evaluator.in_constraint_batch_at_roll(
                     &sample,
@@ -384,6 +355,50 @@ pub(super) fn route_around(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn candidate_validation_batches_waypoint_and_both_leg_interiors() {
+        for samples in [1, 2, 50] {
+            let mut lengths = Vec::new();
+            assert!(validate(
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                samples,
+                &mut |points| {
+                    lengths.push(points.len());
+                    assert_eq!(points[0], [0.0, 0.0, 1.0]);
+                    Ok(vec![false; points.len()])
+                }
+            )
+            .unwrap());
+            assert_eq!(lengths, [1 + 2 * (samples - 1)]);
+        }
+    }
+
+    #[test]
+    fn growing_search_starts_perpendicular_and_checks_each_candidate_once() {
+        let a = [0.5, 3.0_f64.sqrt() / 2.0, 0.0];
+        let b = [0.5, -3.0_f64.sqrt() / 2.0, 0.0];
+        let mut calls = 0;
+        let result = search(a, b, 2, 5.0, true, true, |points| {
+            calls += 1;
+            if calls > 1 {
+                assert_eq!(points.len(), 3);
+                assert!(
+                    points[0][2].abs() > 0.01,
+                    "legacy in-plane candidate was evaluated"
+                );
+            }
+            Ok(points
+                .iter()
+                .map(|v| v[0] > 45.0_f64.to_radians().cos())
+                .collect())
+        })
+        .unwrap();
+        assert!(result.waypoint.is_some());
+        assert_eq!(calls, 10); // Direct arc, both sides at 5/10/20/40, first at 80.
+    }
 
     #[test]
     fn time_only_constraints_evaluate_once_without_arc_sampling() {
@@ -418,7 +433,7 @@ mod tests {
         assert!(mid[0].abs() < 1e-15);
         assert!((mid[1] - 1.0).abs() < 1e-15);
         for v in arc.points(50, true) {
-            assert!((dot(v, v) - 1.0).abs() < 1e-14);
+            assert!((dot_product(&v, &v) - 1.0).abs() < 1e-14);
         }
     }
 
@@ -427,7 +442,7 @@ mod tests {
         for theta in [0.0_f64, 1e-8, 0.005, std::f64::consts::PI - 1e-9] {
             let arc = Arc::new([1.0, 0.0, 0.0], [theta.cos(), theta.sin(), 0.0]);
             for v in arc.points(50, true) {
-                assert!((dot(v, v) - 1.0).abs() < 1e-14);
+                assert!((dot_product(&v, &v) - 1.0).abs() < 1e-14);
             }
         }
     }
