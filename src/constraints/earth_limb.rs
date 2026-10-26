@@ -55,6 +55,47 @@ struct EarthLimbEvaluator {
 }
 
 impl ConstraintEvaluator for EarthLimbEvaluator {
+    fn evaluate_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<super::diagonal::DiagonalEvaluation> {
+        let indices =
+            super::diagonal::time_indices(ephemeris, target_ras, target_decs, time_indices)?;
+        let observer = ephemeris.data().gcrs.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("No GCRS positions available")
+        })?;
+        let max_cos = self.max_angle_deg.map(|max| max.to_radians().cos());
+        let mut violated = Vec::with_capacity(target_ras.len());
+        let mut angles = Vec::with_capacity(target_ras.len());
+        const EARTH_RADIUS: f64 = 6378.137;
+        for (i, &t) in indices.iter().enumerate() {
+            let position = [observer[[t, 0]], observer[[t, 1]], observer[[t, 2]]];
+            let distance = vector_magnitude(&position);
+            let ratio = (EARTH_RADIUS / distance).clamp(-1.0, 1.0);
+            let correction = if self.horizon_dip && (distance - EARTH_RADIUS).abs() < 100.0 {
+                ratio.acos().to_degrees() + if self.include_refraction { 0.57 } else { 0.0 }
+            } else {
+                0.0
+            };
+            let threshold = ratio.asin().to_degrees() + self.min_angle_deg + correction;
+            let center = normalize_vector(&[-position[0], -position[1], -position[2]]);
+            let target = radec_to_unit_vector(target_ras[i], target_decs[i]);
+            let cosine = dot_product(&target, &center);
+            violated.push(
+                cosine > threshold.to_radians().cos() || max_cos.is_some_and(|max| cosine < max),
+            );
+            angles.push(cosine.clamp(-1.0, 1.0).acos().to_degrees());
+        }
+        Ok(super::diagonal::DiagonalEvaluation::leaf(
+            &self.name(),
+            violated,
+            HashMap::from([("earth_limb_angle_deg".to_string(), angles)]),
+        ))
+    }
+
     fn evaluate(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,

@@ -8,6 +8,7 @@
 pub mod core;
 
 // Shared FoV geometry
+pub mod diagonal;
 pub mod fov_polygon;
 pub mod roll_sweep;
 

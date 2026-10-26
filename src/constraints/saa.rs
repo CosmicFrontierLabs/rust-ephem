@@ -102,6 +102,23 @@ impl SAAEvaluator {
 }
 
 impl ConstraintEvaluator for SAAEvaluator {
+    fn evaluate_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+    ) -> PyResult<super::diagonal::DiagonalEvaluation> {
+        let indices = super::diagonal::time_indices(ephemeris, ras, decs, indices)?;
+        // SAA depends only on time: one target broadcasts exactly the needed row.
+        let mask = self.in_constraint_batch(ephemeris, &[0.0], &[0.0], Some(&indices))?;
+        Ok(super::diagonal::DiagonalEvaluation::leaf(
+            &self.name(),
+            mask.row(0).to_vec(),
+            std::collections::HashMap::new(),
+        ))
+    }
+
     fn evaluate(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -148,36 +165,6 @@ impl ConstraintEvaluator for SAAEvaluator {
 
         let result = self.in_constraint_batch_with_latlon(&dummy_targets, &lats_slice, &lons_slice);
         Ok(Some(result))
-    }
-
-    /// Optimized diagonal evaluation for SAA - O(N) since SAA only depends on time
-    ///
-    /// SAA constraint doesn't depend on target position, only on spacecraft lat/lon.
-    /// So for diagonal evaluation, we just return the SAA status at each time.
-    fn in_constraint_batch_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        _target_decs: &[f64],
-    ) -> PyResult<Vec<bool>> {
-        let n = target_ras.len();
-        if n == 0 {
-            return Ok(Vec::new());
-        }
-
-        // Get lat/lon for first n time indices
-        let time_indices: Vec<usize> = (0..n).collect();
-        let (_times_slice, lats_slice, lons_slice) =
-            extract_latlon_data!(ephemeris, Some(&time_indices[..]));
-
-        // Evaluate SAA at each time
-        let mut result = Vec::with_capacity(n);
-        for i in 0..n {
-            let in_saa = self.point_in_polygon(lons_slice[i], lats_slice[i]);
-            result.push(in_saa);
-        }
-
-        Ok(result)
     }
 
     fn name(&self) -> String {

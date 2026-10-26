@@ -3,11 +3,74 @@ use crate::constraints::core::{
     track_violations, value_key_prefix, BatchWithCauses, ConstraintEvaluator, ConstraintResult,
     ConstraintViolation, EvaluationRoll,
 };
+use crate::constraints::diagonal::{self, DiagonalEvaluation};
 use crate::constraints::roll_sweep::{self, PreparedRollEvaluator, RollCell};
 use crate::utils::vector_math::unit_vectors_to_radec_batch;
 use ndarray::Array2;
 use pyo3::PyResult;
 use std::collections::HashMap;
+
+/// Merge values and cause namespaces with the same collision rules as the
+/// Cartesian API, but obtain every child's data in a single paired traversal.
+fn evaluate_children_diagonal(
+    children: &[Box<dyn ConstraintEvaluator>],
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    ras: &[f64],
+    decs: &[f64],
+    indices: Option<&[usize]>,
+    accept: impl Fn(usize) -> bool,
+) -> PyResult<DiagonalEvaluation> {
+    diagonal::time_indices(ephemeris, ras, decs, indices)?;
+    let mut counts = vec![0; ras.len()];
+    let mut values = HashMap::new();
+    let mut named = HashMap::new();
+    let mut cause_value_keys = HashMap::new();
+    let mut value_tag_counts: HashMap<String, usize> = HashMap::new();
+    for child in children {
+        let result = child.evaluate_diagonal(ephemeris, ras, decs, indices)?;
+        for (count, violated) in counts.iter_mut().zip(result.violated) {
+            *count += usize::from(violated);
+        }
+        let prefix = if result.values.is_empty() {
+            None
+        } else {
+            let tag = value_key_prefix(&child.name());
+            let count = value_tag_counts.entry(tag.clone()).or_default();
+            *count += 1;
+            Some(if *count == 1 {
+                tag
+            } else {
+                format!("{tag}_{count}")
+            })
+        };
+        for (key, array) in result.values {
+            let key = prefix
+                .as_ref()
+                .map_or_else(|| key.clone(), |prefix| format!("{prefix}.{key}"));
+            values.insert(key, array);
+        }
+        for (key, array) in sorted_entries(result.named) {
+            insert_no_collision(&mut named, key, array);
+        }
+        for (tag, keys) in sorted_entries(result.cause_value_keys) {
+            let keys = keys
+                .into_iter()
+                .map(|key| {
+                    prefix
+                        .as_ref()
+                        .map_or_else(|| key.clone(), |prefix| format!("{prefix}.{key}"))
+                })
+                .collect();
+            insert_no_collision(&mut cause_value_keys, tag, keys);
+        }
+    }
+    Ok(DiagonalEvaluation {
+        violated: counts.into_iter().map(accept).collect(),
+        named,
+        values,
+        cause_value_keys,
+    })
+}
 
 fn prepare_children<'a>(
     children: &'a [Box<dyn ConstraintEvaluator>],
@@ -299,28 +362,6 @@ fn combinator_batch_with_causes(
     })
 }
 
-/// Diagonal variant of `eval_children_with_causes`' merge for moving-body evaluation,
-/// merging each child's `compute_named_booleans_diagonal` (target_i paired with
-/// time_i) instead of the full M×N batch.
-fn merge_children_named_booleans_diagonal(
-    children: &[Box<dyn ConstraintEvaluator>],
-    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-    target_ras: &[f64],
-    target_decs: &[f64],
-) -> PyResult<HashMap<String, Vec<bool>>> {
-    let mut merged = HashMap::new();
-
-    for child in children {
-        let child_booleans =
-            child.compute_named_booleans_diagonal(ephemeris, target_ras, target_decs)?;
-        for (key, arr) in sorted_entries(child_booleans) {
-            insert_no_collision(&mut merged, key, arr);
-        }
-    }
-
-    Ok(merged)
-}
-
 /// Merge per-leaf cause-tag → `constraint_values`-key mapping from a set of child
 /// evaluators, mirroring `eval_children_with_causes`' cause-tag identity/
 /// collision-renaming and `merge_children_named_values`' per-child value-key
@@ -446,6 +487,18 @@ pub(super) struct AndEvaluator {
 }
 
 impl ConstraintEvaluator for AndEvaluator {
+    fn evaluate_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+    ) -> PyResult<DiagonalEvaluation> {
+        evaluate_children_diagonal(&self.constraints, ephemeris, ras, decs, indices, |count| {
+            count == self.constraints.len()
+        })
+    }
+
     fn prepare_roll_sweep<'a>(
         &'a self,
         ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -642,36 +695,6 @@ impl ConstraintEvaluator for AndEvaluator {
         Ok(Some(result))
     }
 
-    /// Optimized diagonal evaluation for AND - uses O(N) diagonal from each sub-constraint
-    fn in_constraint_batch_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<Vec<bool>> {
-        let n = target_ras.len();
-        if n == 0 {
-            return Ok(Vec::new());
-        }
-
-        // Get diagonal results from each sub-constraint
-        let sub_results: Result<Vec<_>, _> = self
-            .constraints
-            .iter()
-            .map(|c| c.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs))
-            .collect();
-        let sub_results = sub_results?;
-
-        // AND logic: violated if ALL sub-constraints are violated at each time
-        let mut result = Vec::with_capacity(n);
-        for i in 0..n {
-            let all_violated = sub_results.iter().all(|r| r[i]);
-            result.push(all_violated);
-        }
-
-        Ok(result)
-    }
-
     fn in_constraint_batch_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -841,20 +864,6 @@ impl ConstraintEvaluator for AndEvaluator {
         )
     }
 
-    fn compute_named_booleans_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<HashMap<String, Vec<bool>>> {
-        merge_children_named_booleans_diagonal(
-            &self.constraints,
-            ephemeris,
-            target_ras,
-            target_decs,
-        )
-    }
-
     fn compute_cause_value_keys(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -931,6 +940,18 @@ pub(super) struct OrEvaluator {
 }
 
 impl ConstraintEvaluator for OrEvaluator {
+    fn evaluate_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+    ) -> PyResult<DiagonalEvaluation> {
+        evaluate_children_diagonal(&self.constraints, ephemeris, ras, decs, indices, |count| {
+            count > 0
+        })
+    }
+
     fn prepare_roll_sweep<'a>(
         &'a self,
         ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -1115,36 +1136,6 @@ impl ConstraintEvaluator for OrEvaluator {
         }
 
         Ok(Some(result))
-    }
-
-    /// Optimized diagonal evaluation for OR - uses O(N) diagonal from each sub-constraint
-    fn in_constraint_batch_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<Vec<bool>> {
-        let n = target_ras.len();
-        if n == 0 {
-            return Ok(Vec::new());
-        }
-
-        // Get diagonal results from each sub-constraint
-        let sub_results: Result<Vec<_>, _> = self
-            .constraints
-            .iter()
-            .map(|c| c.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs))
-            .collect();
-        let sub_results = sub_results?;
-
-        // OR logic: violated if ANY sub-constraint is violated at each time
-        let mut result = Vec::with_capacity(n);
-        for i in 0..n {
-            let any_violated = sub_results.iter().any(|r| r[i]);
-            result.push(any_violated);
-        }
-
-        Ok(result)
     }
 
     fn in_constraint_batch_at_roll(
@@ -1354,20 +1345,6 @@ impl ConstraintEvaluator for OrEvaluator {
         )
     }
 
-    fn compute_named_booleans_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<HashMap<String, Vec<bool>>> {
-        merge_children_named_booleans_diagonal(
-            &self.constraints,
-            ephemeris,
-            target_ras,
-            target_decs,
-        )
-    }
-
     fn compute_cause_value_keys(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -1437,6 +1414,32 @@ pub(super) struct NotEvaluator {
 }
 
 impl ConstraintEvaluator for NotEvaluator {
+    fn evaluate_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+    ) -> PyResult<DiagonalEvaluation> {
+        let mut result = self
+            .constraint
+            .evaluate_diagonal(ephemeris, ras, decs, indices)?;
+        for value in &mut result.violated {
+            *value = !*value;
+        }
+        result.named = result
+            .named
+            .into_iter()
+            .map(|(key, values)| (format!("not.{key}"), values))
+            .collect();
+        result.cause_value_keys = result
+            .cause_value_keys
+            .into_iter()
+            .map(|(key, values)| (format!("not.{key}"), values))
+            .collect();
+        Ok(result)
+    }
+
     fn prepare_roll_sweep<'a>(
         &'a self,
         ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -1600,21 +1603,6 @@ impl ConstraintEvaluator for NotEvaluator {
         Ok(Some(result))
     }
 
-    /// Optimized diagonal evaluation for NOT - uses O(N) diagonal from sub-constraint
-    fn in_constraint_batch_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<Vec<bool>> {
-        let sub_result =
-            self.constraint
-                .in_constraint_batch_diagonal(ephemeris, target_ras, target_decs)?;
-
-        // NOT logic: invert all values
-        Ok(sub_result.into_iter().map(|v| !v).collect())
-    }
-
     fn in_constraint_batch_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -1691,23 +1679,6 @@ impl ConstraintEvaluator for NotEvaluator {
         )
     }
 
-    fn compute_named_booleans_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<HashMap<String, Vec<bool>>> {
-        // See `in_constraint_batch_with_causes`: values are uninverted, keys prefixed
-        // with "not.".
-        let child_booleans =
-            self.constraint
-                .compute_named_booleans_diagonal(ephemeris, target_ras, target_decs)?;
-        Ok(child_booleans
-            .into_iter()
-            .map(|(key, arr)| (format!("not.{key}"), arr))
-            .collect())
-    }
-
     fn compute_cause_value_keys(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -1782,6 +1753,18 @@ pub(super) struct XorEvaluator {
 }
 
 impl ConstraintEvaluator for XorEvaluator {
+    fn evaluate_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+    ) -> PyResult<DiagonalEvaluation> {
+        evaluate_children_diagonal(&self.constraints, ephemeris, ras, decs, indices, |count| {
+            count == 1
+        })
+    }
+
     fn prepare_roll_sweep<'a>(
         &'a self,
         ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -1962,36 +1945,6 @@ impl ConstraintEvaluator for XorEvaluator {
         Ok(Some(result))
     }
 
-    /// Optimized diagonal evaluation for XOR - uses O(N) diagonal from each sub-constraint
-    fn in_constraint_batch_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<Vec<bool>> {
-        let n = target_ras.len();
-        if n == 0 {
-            return Ok(Vec::new());
-        }
-
-        // Get diagonal results from each sub-constraint
-        let sub_results: Result<Vec<_>, _> = self
-            .constraints
-            .iter()
-            .map(|c| c.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs))
-            .collect();
-        let sub_results = sub_results?;
-
-        // XOR logic: violated when EXACTLY ONE sub-constraint is violated at each time
-        let mut result = Vec::with_capacity(n);
-        for i in 0..n {
-            let violation_count = sub_results.iter().filter(|r| r[i]).count();
-            result.push(violation_count == 1);
-        }
-
-        Ok(result)
-    }
-
     fn in_constraint_batch_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -2093,20 +2046,6 @@ impl ConstraintEvaluator for XorEvaluator {
         )
     }
 
-    fn compute_named_booleans_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<HashMap<String, Vec<bool>>> {
-        merge_children_named_booleans_diagonal(
-            &self.constraints,
-            ephemeris,
-            target_ras,
-            target_decs,
-        )
-    }
-
     fn compute_cause_value_keys(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -2172,6 +2111,18 @@ pub(super) struct AtLeastEvaluator {
 }
 
 impl ConstraintEvaluator for AtLeastEvaluator {
+    fn evaluate_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+    ) -> PyResult<DiagonalEvaluation> {
+        evaluate_children_diagonal(&self.constraints, ephemeris, ras, decs, indices, |count| {
+            count >= self.min_violated
+        })
+    }
+
     fn prepare_roll_sweep<'a>(
         &'a self,
         ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -2350,33 +2301,6 @@ impl ConstraintEvaluator for AtLeastEvaluator {
         Ok(Some(result))
     }
 
-    fn in_constraint_batch_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<Vec<bool>> {
-        let n = target_ras.len();
-        if n == 0 {
-            return Ok(Vec::new());
-        }
-
-        let sub_results: Result<Vec<_>, _> = self
-            .constraints
-            .iter()
-            .map(|c| c.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs))
-            .collect();
-        let sub_results = sub_results?;
-
-        let mut result = Vec::with_capacity(n);
-        for i in 0..n {
-            let violation_count = sub_results.iter().filter(|r| r[i]).count();
-            result.push(violation_count >= self.min_violated);
-        }
-
-        Ok(result)
-    }
-
     fn in_constraint_batch_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -2483,20 +2407,6 @@ impl ConstraintEvaluator for AtLeastEvaluator {
             target_decs,
             time_indices,
             target_roll,
-        )
-    }
-
-    fn compute_named_booleans_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<HashMap<String, Vec<bool>>> {
-        merge_children_named_booleans_diagonal(
-            &self.constraints,
-            ephemeris,
-            target_ras,
-            target_decs,
         )
     }
 

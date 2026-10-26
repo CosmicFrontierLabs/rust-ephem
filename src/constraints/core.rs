@@ -750,6 +750,19 @@ impl EvaluationRoll {
 
 /// Evaluate constraints against observer ephemerides and target coordinates.
 pub trait ConstraintEvaluator: Send + Sync {
+    /// Evaluate target_i at its selected time_i, returning masks, values, and
+    /// attribution together. The default bounds all leaf work to one sample;
+    /// common leaves and combinators override it with vectorized paired kernels.
+    fn evaluate_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<super::diagonal::DiagonalEvaluation> {
+        super::diagonal::evaluate(self, ephemeris, target_ras, target_decs, time_indices)
+    }
+
     /// Continuous values at an explicit spacecraft roll. Most leaves expose
     /// roll-independent values; boresight nodes rotate targets before delegating.
     fn compute_named_values_at_roll(
@@ -820,25 +833,6 @@ pub trait ConstraintEvaluator: Send + Sync {
         Ok(HashMap::new())
     }
 
-    /// Diagonal variant of `compute_named_values` for moving-body evaluation: target_i
-    /// paired with time_i only. Default falls back to the full batch and extracts the
-    /// diagonal, mirroring `in_constraint_batch_diagonal`'s default.
-    fn compute_named_values_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<HashMap<String, Vec<f64>>> {
-        let n = target_ras.len();
-        let time_indices: Vec<usize> = (0..n).collect();
-        let full =
-            self.compute_named_values(ephemeris, target_ras, target_decs, Some(&time_indices))?;
-        Ok(full
-            .into_iter()
-            .map(|(key, arr)| (key, (0..n).map(|i| arr[[i, i]]).collect()))
-            .collect())
-    }
-
     /// Compute the combined violation mask *and* a per-leaf-constraint violation mask
     /// (namespaced under a short tag, e.g. `sun`) in a single traversal of the tree.
     ///
@@ -884,25 +878,6 @@ pub trait ConstraintEvaluator: Send + Sync {
             named: HashMap::from([(value_key_prefix(&self.name()), violated.clone())]),
             violated,
         })
-    }
-
-    /// Diagonal variant of the cause masks from `in_constraint_batch_with_causes`, for
-    /// moving-body evaluation: target_i paired with time_i only. There is no combined
-    /// mask to fuse with here — the diagonal path has no roll sweep, so nothing asks for
-    /// both outputs at once. Default (leaf constraints): a single-entry map from this
-    /// constraint's own tag to its own `in_constraint_batch_diagonal` result, mirroring
-    /// that method's default — this reuses whatever O(N) diagonal
-    /// implementation the leaf already has (e.g. SAA) instead of building the full M×N
-    /// matrix and slicing it, which would silently regress to O(N²). Combinators override
-    /// this to merge their children's diagonal maps instead (see `combinators.rs`).
-    fn compute_named_booleans_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<HashMap<String, Vec<bool>>> {
-        let arr = self.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs)?;
-        Ok(HashMap::from([(value_key_prefix(&self.name()), arr)]))
     }
 
     /// Map this constraint's own `in_constraint_batch_with_causes` cause tag(s) to the
@@ -975,35 +950,6 @@ pub trait ConstraintEvaluator: Send + Sync {
         _time_indices: Option<&[usize]>,
     ) -> PyResult<Option<Array2<bool>>> {
         Ok(None)
-    }
-
-    /// Evaluate constraint for moving body (diagonal evaluation)
-    ///
-    /// For moving bodies, we need to evaluate target_i at time_i only (diagonal).
-    /// This is much more efficient than computing the full M×N matrix and extracting diagonal.
-    ///
-    /// # Arguments
-    /// * `ephemeris` - Ephemeris object providing all positional data
-    /// * `target_ras` - Array of right ascensions in degrees (length N)
-    /// * `target_decs` - Array of declinations in degrees (length N)
-    ///
-    /// # Returns
-    /// 1D boolean array (N) where result[i] = in_constraint(target_i, time_i)
-    ///
-    /// Default implementation falls back to N×N batch with diagonal extraction.
-    /// Implementations can override for O(N) performance.
-    fn in_constraint_batch_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<Vec<bool>> {
-        // Default: compute full N×N and extract diagonal
-        let n = target_ras.len();
-        let time_indices: Vec<usize> = (0..n).collect();
-        let full =
-            self.in_constraint_batch(ephemeris, target_ras, target_decs, Some(&time_indices))?;
-        Ok((0..n).map(|i| full[[i, i]]).collect())
     }
 
     /// Returns `true` if this constraint's FoR result changes depending on the spacecraft
