@@ -18,6 +18,7 @@ import numpy as np
 import numpy.typing as npt
 from pydantic import BaseModel, TypeAdapter
 
+from ._rust_ephem import RouteResult as RouteResult
 from .ephemeris import Ephemeris
 
 DEFAULT_N_POINTS: int
@@ -83,6 +84,21 @@ class MovingVisibilityResult(BaseModel):
 class RustConstraintMixin(BaseModel):
     """Base class for Rust constraint configurations"""
 
+    def route_around(
+        self,
+        ephemeris: Ephemeris,
+        start_ra: float,
+        start_dec: float,
+        end_ra: float,
+        end_dec: float,
+        time: datetime | float | None = None,
+        index: int | None = None,
+        target_roll: float | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        samples: int = 50,
+        margin_deg: float = 5.0,
+        grow_margin: bool = False,
+    ) -> RouteResult: ...
     def to_toml(self) -> str: ...
     def to_toml_file(self, path: str | Path) -> None: ...
     def evaluate(

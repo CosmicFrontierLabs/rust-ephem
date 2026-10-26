@@ -756,6 +756,10 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         Ok(Some(result))
     }
 
+    fn is_target_dependent(&self) -> bool {
+        self.constraint.is_target_dependent()
+    }
+
     /// Roll-dependent if this node's own offset leaves roll free, or if the inner
     /// constraint is itself roll-dependent (e.g. a `SolarRoll` or a polygon FoV
     /// nested under a zero-offset wrapper). Mirrors the Python-side

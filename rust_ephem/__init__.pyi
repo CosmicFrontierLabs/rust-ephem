@@ -23,6 +23,9 @@ from rust_ephem._rust_ephem import (
     PositionVelocityData as PositionVelocityData,
 )
 from rust_ephem._rust_ephem import (
+    RouteResult as RouteResult,
+)
+from rust_ephem._rust_ephem import (
     SPICEEphemeris as SPICEEphemeris,
 )
 from rust_ephem._rust_ephem import (

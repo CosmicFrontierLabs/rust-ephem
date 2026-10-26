@@ -35,6 +35,73 @@ Basic Constraint Evaluation
     print(f"Number of violations: {len(result.violations)}")
     print(f"Total violation duration: {result.total_violation_duration()} seconds")
 
+Routing a Slew Around Constraints
+---------------------------------
+
+``route_around`` checks a great-circle slew and returns a single validated
+waypoint when it finds one. It is available on both the native ``Constraint``
+and the Pydantic constraint models, including combined constraints:
+
+.. code-block:: python
+
+    constraint = SunConstraint(min_angle=45.0)
+    route = constraint.route_around(
+        ephem, start_ra=220.0, start_dec=-10.0,
+        end_ra=340.0, end_dec=-10.0,
+        time=begin, samples=50, margin_deg=5.0, grow_margin=True,
+    )
+    if route.waypoint is not None:
+        waypoint_ra, waypoint_dec = route.waypoint
+        # Build the start -> waypoint -> end slew; interpolate roll separately.
+    elif route.violated:
+        print("No candidate cleared the constraint", route.first_violation)
+
+All coordinates are ICRS degrees. Supply exactly one of ``time`` (a datetime or
+Unix timestamp in seconds) or ``index``. A time between samples selects the sample
+at or before it; all path checks use that same sample. Naive datetimes mean UTC;
+aware datetimes are converted to UTC. Times before the first sample are rejected;
+times after the final sample select the final sample. Time rounding and caching
+remain the caller's responsibility.
+
+``target_roll=None`` uses the same coordinated roll sweep as
+``in_constraint_batch``: a direction is blocked only if every sampled roll
+violates the constraint. Set ``target_roll`` for a fixed spacecraft roll, or
+adjust ``n_roll_samples`` (default 360). Roll is not interpolated by the router.
+
+``RouteResult`` has four read-only fields:
+
+* ``violated``: whether the sampled direct arc is blocked.
+* ``first_violation``: the first blocked sample's arc fraction, or ``None``.
+* ``waypoint``: a clear candidate as ``(ra, dec)`` degrees, or ``None``.
+* ``detour_deg``: the total angular length of the two legs, or ``None``.
+
+The default, ``grow_margin=False``, preserves coast-sim's legacy candidate
+geometry and shorter-candidate-first order. That geometry offsets along the
+original arc plane, so it often fails to avoid real keep-outs. Opting into
+``grow_margin=True`` first tries the legacy candidates, then offsets in both
+directions perpendicular to the plane, starting at ``margin_deg`` and doubling
+up to 90 degrees. This bounds the search even for very small margins. Each pair
+is ordered by total path length, and the first validating candidate wins.
+The margin must be finite and in (0, 90]; it is an initial offset from the first
+blocked sample, not a guaranteed clearance from the keep-out boundary. For a
+single cone with half-angle at most 90 degrees and clear endpoints, the final
+90-degree pair provides an escape; more complex masks may have no such route.
+
+``samples`` is the number of subdivisions per arc (minimum 1). The direct arc
+includes both endpoints; each validation leg checks interior samples and the
+waypoint separately. A blocked endpoint prevents routing, while
+``first_violation`` still reports the earliest blocked direct sample. A
+negligible slew (less than 1e-6 radians) does not generate a waypoint. Antipodal
+arcs use a deterministic plane normal from the start vector's smallest component
+and stable interpolation, avoiding the legacy sine interpolation's singularity.
+Time-only constraint trees are evaluated once: no pointing detour can change
+their result.
+
+A validated route is clear on this sample grid. Narrow hazards between samples
+can be missed, and roll clearance at separate pointings does not establish a
+continuous clear roll trajectory. ``violated=True`` with ``waypoint=None`` means
+the search failed; callers should handle that explicitly when selecting a slew.
+
 Combining Constraints
 ---------------------
 

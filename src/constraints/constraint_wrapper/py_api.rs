@@ -48,6 +48,50 @@ pub struct PyConstraint {
 
 #[pymethods]
 impl PyConstraint {
+    /// Route a sampled great-circle slew around this constraint at one time.
+    ///
+    /// Angles are ICRS degrees. Supply exactly one of time (datetime or Unix
+    /// seconds, selecting the sample at or before it) or index. None target_roll
+    /// sweeps coordinated rolls; a point is blocked only at every sampled roll.
+    /// The default preserves coast-sim's original candidate geometry. Opt into
+    /// grow_margin for perpendicular offsets doubled up to 90 degrees. A route
+    /// is validated on the specified sample grid, not continuously along arcs.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (ephemeris, start_ra, start_dec, end_ra, end_dec, time=None, index=None, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, samples=50, margin_deg=5.0, grow_margin=false))]
+    fn route_around(
+        &self,
+        ephemeris: &Bound<'_, PyAny>,
+        start_ra: f64,
+        start_dec: f64,
+        end_ra: f64,
+        end_dec: f64,
+        time: Option<Bound<'_, PyAny>>,
+        index: Option<usize>,
+        target_roll: Option<f64>,
+        n_roll_samples: usize,
+        samples: usize,
+        margin_deg: f64,
+        grow_margin: bool,
+    ) -> PyResult<super::route::RouteResult> {
+        self.with_ephemeris(ephemeris, |eph| {
+            let index = super::route::sample_index(eph, time.as_ref(), index)?;
+            super::route::route_around(
+                self.evaluator.as_ref(),
+                eph,
+                start_ra,
+                start_dec,
+                end_ra,
+                end_dec,
+                index,
+                target_roll,
+                n_roll_samples,
+                samples,
+                margin_deg,
+                grow_margin,
+            )
+        })
+    }
+
     /// Create a Sun proximity constraint
     ///
     /// Args:

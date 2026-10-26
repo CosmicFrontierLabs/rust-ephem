@@ -22,6 +22,10 @@ The constraint system provides two complementary APIs:
 
 Both APIs can be used interchangeably and produce identical results.
 
+``route_around`` is available on both APIs for single-waypoint slew routing.
+See :doc:`planning_constraints` for its faithful and growing-margin modes,
+sample-grid semantics, and the ``RouteResult`` fields.
+
 Quick Start
 -----------
 
@@ -57,12 +61,11 @@ Constraint Class (Rust Backend)
 -------------------------------
 
 The low-level ``Constraint`` class provides direct access to Rust constraint evaluation
-for maximum performance. However, **this class still has limited roll support**:
-single-target methods use a single ``target_roll`` value, while batch methods support
-per-target ``target_rolls``. Roll-sweeping is not supported at this layer. Most users should use the
-**Pydantic configuration models** (``SunConstraint``, ``MoonConstraint``, etc.) instead,
-which wrap ``Constraint`` with full support for per-target rolls and roll-sweeping via ``target_rolls``
-and ``n_roll_samples`` parameters.
+for maximum performance. Single-target methods accept ``target_roll`` and batch
+methods accept per-target ``target_rolls``. Omitting the roll uses a coordinated
+sweep for roll-dependent constraints, controlled by ``n_roll_samples``.
+The Pydantic models (``SunConstraint``, ``MoonConstraint``, etc.) provide typed
+configuration and convenient composition around the same native evaluators.
 
 Factory Methods
 ^^^^^^^^^^^^^^^
@@ -1739,6 +1742,20 @@ All Pydantic constraint models inherit these methods:
 
 Result Classes
 --------------
+
+RouteResult
+^^^^^^^^^^^
+
+.. py:class:: RouteResult
+
+   Read-only result of ``Constraint.route_around`` and
+   ``RustConstraintMixin.route_around``. See :doc:`planning_constraints` for the
+   search modes and sampled-clearance limitations.
+
+   - ``violated`` (bool): Whether the direct arc has a blocked sample.
+   - ``first_violation`` (float | None): First blocked arc fraction.
+   - ``waypoint`` (tuple[float, float] | None): Validated ICRS RA/Dec in degrees.
+   - ``detour_deg`` (float | None): Total length of the two validated legs.
 
 ConstraintResult
 ^^^^^^^^^^^^^^^^

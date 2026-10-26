@@ -139,14 +139,14 @@ pub fn evaluate<T: ConstraintEvaluator + ?Sized>(
     Ok(result)
 }
 
-struct SampleEphemeris {
+pub(crate) struct SampleEphemeris {
     data: EphemerisData,
     itrs: Option<Array2<f64>>,
     itrs_skycoord: OnceLock<Py<PyAny>>,
 }
 
 impl SampleEphemeris {
-    fn new(ephemeris: &dyn EphemerisBase, index: usize) -> Self {
+    pub(crate) fn new(ephemeris: &dyn EphemerisBase, index: usize) -> Self {
         let original = ephemeris.data();
         let row = |array: &Array2<f64>| array.slice(s![index..index + 1, ..]).to_owned();
         let mut data = EphemerisData::new();

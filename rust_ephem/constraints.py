@@ -29,6 +29,7 @@ from pydantic import (
 import rust_ephem
 
 from ._rust_ephem import ConstraintResult as _RustConstraintResult
+from ._rust_ephem import RouteResult
 from .ephemeris import Ephemeris
 
 #: Default number of roll-angle samples used when sweeping spacecraft roll in
@@ -798,6 +799,67 @@ class RustConstraintMixin(BaseModel):
             self._get_cached_rust_constraint().roll_range(
                 time, ephemeris, target_ra, target_dec, n_roll_samples
             ),
+        )
+
+    def route_around(
+        self,
+        ephemeris: Ephemeris,
+        start_ra: float,
+        start_dec: float,
+        end_ra: float,
+        end_dec: float,
+        time: datetime | float | None = None,
+        index: int | None = None,
+        target_roll: float | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        samples: int = 50,
+        margin_deg: float = 5.0,
+        grow_margin: bool = False,
+    ) -> RouteResult:
+        """Find a single waypoint around a sampled constraint crossing.
+
+        Pointings are ICRS degrees. Supply exactly one of ``time`` (UTC datetime
+        or Unix seconds) or ``index``. Time selects the ephemeris sample at or
+        before it; all checks use that one sample. Naive datetimes mean UTC.
+        With ``target_roll=None``, each point is blocked only if every sampled
+        spacecraft roll violates the combined constraint.
+
+        The default reproduces coast-sim's original candidate search. With
+        ``grow_margin=True``, failed legacy candidates are followed by offsets
+        perpendicular to the arc plane, starting at ``margin_deg`` and doubling
+        up to 90 degrees. ``margin_deg`` must be in (0, 90]. It is an initial
+        offset from the first blocked sample, not a clearance from the boundary.
+
+        ``samples`` (at least 1) divides each arc into equal fractions: the
+        direct arc includes endpoints, and validation legs exclude endpoints.
+        Returned routes are clear on that grid; undersampling can miss hazards.
+        A blocked endpoint prevents a waypoint. ``first_violation`` always
+        records the first blocked direct sample. ``detour_deg`` is the total
+        length of both legs, not the extra distance. A violated result without
+        a waypoint means no candidate validated. Antipodal arcs use a stable,
+        deterministic plane; negligible slews do not produce waypoints.
+        """
+        constraint = cast(
+            rust_ephem.Constraint,
+            (
+                self._get_cached_sweep_constraint()
+                if target_roll is None
+                else self._get_cached_rust_constraint()
+            ),
+        )
+        return constraint.route_around(
+            ephemeris,
+            start_ra,
+            start_dec,
+            end_ra,
+            end_dec,
+            time=time,
+            index=index,
+            target_roll=target_roll,
+            n_roll_samples=n_roll_samples,
+            samples=samples,
+            margin_deg=margin_deg,
+            grow_margin=grow_margin,
         )
 
     def instantaneous_field_of_regard(

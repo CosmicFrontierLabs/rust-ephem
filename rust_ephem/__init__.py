@@ -6,6 +6,7 @@ from ._rust_ephem import (
     OEMEphemeris,
     ParquetEphemeris,
     PositionVelocityData,
+    RouteResult,
     SPICEEphemeris,
     TLEEphemeris,
     VisibilityWindow,
@@ -72,6 +73,7 @@ from .tle import (
 )
 
 __all__ = [
+    "RouteResult",
     "ConstraintConfig",
     "SunConstraint",
     "MoonConstraint",

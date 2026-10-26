@@ -8,6 +8,9 @@ mod field_of_regard;
 
 mod roll_range;
 
+mod route;
+pub use route::RouteResult;
+
 mod json_parser;
 
 mod combinators;

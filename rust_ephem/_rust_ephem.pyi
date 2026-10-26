@@ -292,6 +292,21 @@ class MovingBodyResult:
 class Constraint:
     """Wrapper for constraint evaluation with ephemeris data"""
 
+    def route_around(
+        self,
+        ephemeris: Ephemeris,
+        start_ra: float,
+        start_dec: float,
+        end_ra: float,
+        end_dec: float,
+        time: datetime | float | None = None,
+        index: int | None = None,
+        target_roll: float | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        samples: int = 50,
+        margin_deg: float = 5.0,
+        grow_margin: bool = False,
+    ) -> RouteResult: ...
     @staticmethod
     def sun_proximity(min_angle: float, max_angle: float | None = None) -> Constraint:
         """
@@ -4095,3 +4110,13 @@ def fetch_tle(
         ValueError: If no valid TLE source is specified or fetching fails
     """
     ...
+
+class RouteResult:
+    @property
+    def violated(self) -> bool: ...
+    @property
+    def first_violation(self) -> float | None: ...
+    @property
+    def waypoint(self) -> tuple[float, float] | None: ...
+    @property
+    def detour_deg(self) -> float | None: ...

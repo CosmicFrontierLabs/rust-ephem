@@ -35,5 +35,5 @@ pub mod sun_proximity;
 pub mod constraint_wrapper;
 
 // Re-export main types for public API
-pub use constraint_wrapper::PyConstraint;
+pub use constraint_wrapper::{PyConstraint, RouteResult};
 pub use core::{ConstraintResult, ConstraintViolation, MovingBodyResult, VisibilityWindow};
