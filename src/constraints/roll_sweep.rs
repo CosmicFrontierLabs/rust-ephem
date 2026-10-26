@@ -1,6 +1,6 @@
 //! Evaluation-local geometry for coordinated roll sweeps. Cell indices always
 //! refer to the original target/time grid, even as resolved cells are removed.
-use super::core::ConstraintEvaluator;
+use super::core::{ConstraintEvaluator, EvaluationRoll};
 use crate::ephemeris::ephemeris_common::EphemerisBase;
 use ndarray::Array2;
 use pyo3::PyResult;
@@ -74,7 +74,7 @@ pub fn prepare<'a, T: ConstraintEvaluator + ?Sized>(
             &subset_ras,
             &subset_decs,
             Some(&indices),
-            roll,
+            EvaluationRoll::Sweep(roll),
         )?;
         Ok(cells
             .iter()

@@ -1,3 +1,4 @@
+use super::core::EvaluationRoll;
 /// Generic solar system body proximity constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
 use crate::constraints::fov_polygon;
@@ -212,8 +213,12 @@ impl BodyProximityEvaluator {
     }
 
     fn format_name(&self) -> String {
+        self.format_name_at_roll(None)
+    }
+
+    fn format_name_at_roll(&self, target_roll: Option<f64>) -> String {
         if let Some(ref vertices) = self.fov_polygon {
-            match self.roll_rad {
+            match target_roll.map(f64::to_radians).or(self.roll_rad) {
                 Some(r) => format!(
                     "BodyProximity(body='{}', fov_polygon={} vertices, roll={:.1}°)",
                     self.body,
@@ -263,6 +268,10 @@ impl BodyProximityEvaluator {
 }
 
 impl ConstraintEvaluator for BodyProximityEvaluator {
+    fn name_at_roll(&self, target_roll: Option<f64>) -> String {
+        self.format_name_at_roll(target_roll)
+    }
+
     fn prepare_roll_sweep<'a>(
         &'a self,
         ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -593,35 +602,64 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
         Ok(Some(result))
     }
 
-    /// Hot path for coordinated roll sweep: evaluate polygon at `roll_deg` without
-    /// JSON round-trips.  Circle mode and fixed-roll polygon delegate unchanged.
+    /// Evaluate polygon geometry without rebuilding the evaluator. Explicit fixed
+    /// rolls override configured rolls; sweep candidates preserve them. Circles
+    /// ignore roll and delegate to the ordinary batch implementation.
     fn in_constraint_batch_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
+        roll_deg: EvaluationRoll,
     ) -> pyo3::PyResult<Array2<bool>> {
         let vertices = match &self.fov_polygon {
-            Some(v) if self.roll_rad.is_none() => v,
+            Some(v) if roll_deg.is_fixed() || self.roll_rad.is_none() => v,
             _ => return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices),
         };
 
-        self.ensure_roll_sweep_cache(ephemeris, time_indices)?;
-        let cached = self.roll_sweep_cache.lock().map_err(|_| {
-            pyo3::exceptions::PyRuntimeError::new_err("roll_sweep_cache mutex was poisoned")
-        })?;
-        let entry = cached
-            .as_ref()
-            .expect("roll_sweep_cache must be initialized");
-        let body_positions_slice = &entry.body_positions;
-        let observer_positions_slice = &entry.observer_positions;
-        let n_times = entry.n_times;
+        // Fixed-roll calls previously built a fresh evaluator. Keep their body
+        // data local rather than extending the sweep cache across independent
+        // calls, whose ephemerides may have matching endpoints but differ inside.
+        let fixed_positions = if roll_deg.is_fixed() {
+            let body = self.body_positions(ephemeris)?;
+            let observer = ephemeris.get_gcrs_positions()?;
+            Some(match time_indices {
+                Some(idx) => (
+                    body.select(ndarray::Axis(0), idx),
+                    observer.select(ndarray::Axis(0), idx),
+                ),
+                None => (body, observer),
+            })
+        } else {
+            self.ensure_roll_sweep_cache(ephemeris, time_indices)?;
+            None
+        };
+        let cached = if fixed_positions.is_none() {
+            Some(self.roll_sweep_cache.lock().map_err(|_| {
+                pyo3::exceptions::PyRuntimeError::new_err("roll_sweep_cache mutex was poisoned")
+            })?)
+        } else {
+            None
+        };
+        let (body_positions_slice, observer_positions_slice, n_times) = match &fixed_positions {
+            Some((body, observer)) => (body, observer, body.nrows()),
+            None => {
+                let entry = cached
+                    .as_ref()
+                    .and_then(|guard| guard.as_ref())
+                    .expect("roll_sweep_cache must be initialized");
+                (
+                    &entry.body_positions,
+                    &entry.observer_positions,
+                    entry.n_times,
+                )
+            }
+        };
 
         let n_targets = target_ras.len();
         let mut result = Array2::from_elem((n_targets, n_times), false);
-        let (sin_roll, cos_roll) = roll_deg.to_radians().sin_cos();
+        let (sin_roll, cos_roll) = roll_deg.degrees().to_radians().sin_cos();
 
         for (i, (&ra, &dec)) in target_ras.iter().zip(target_decs.iter()).enumerate() {
             let target_ra_rad = ra.to_radians();

@@ -1,7 +1,7 @@
 // Logical combinator evaluators
 use crate::constraints::core::{
     track_violations, value_key_prefix, BatchWithCauses, ConstraintEvaluator, ConstraintResult,
-    ConstraintViolation,
+    ConstraintViolation, EvaluationRoll,
 };
 use crate::constraints::roll_sweep::{self, PreparedRollEvaluator, RollCell};
 use crate::utils::vector_math::unit_vectors_to_radec_batch;
@@ -115,13 +115,19 @@ fn merge_children_named_values(
     target_ras: &[f64],
     target_decs: &[f64],
     time_indices: Option<&[usize]>,
+    target_roll: Option<f64>,
 ) -> PyResult<HashMap<String, Array2<f64>>> {
     let mut merged = HashMap::new();
     let mut tag_counts: HashMap<String, usize> = HashMap::new();
 
     for child in children {
-        let child_values =
-            child.compute_named_values(ephemeris, target_ras, target_decs, time_indices)?;
+        let child_values = child.compute_named_values_at_roll(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            target_roll,
+        )?;
         if child_values.is_empty() {
             continue;
         }
@@ -202,7 +208,7 @@ fn eval_children_with_causes(
     target_ras: &[f64],
     target_decs: &[f64],
     time_indices: Option<&[usize]>,
-    roll_deg: Option<f64>,
+    roll_deg: Option<EvaluationRoll>,
 ) -> PyResult<ChildrenWithCauses> {
     let mut combined = Vec::with_capacity(children.len());
     let mut merged = HashMap::new();
@@ -268,7 +274,7 @@ fn combinator_batch_with_causes(
     target_ras: &[f64],
     target_decs: &[f64],
     time_indices: Option<&[usize]>,
-    roll_deg: Option<f64>,
+    roll_deg: Option<EvaluationRoll>,
     fold: impl FnOnce(Vec<Array2<bool>>, usize, usize) -> Array2<bool>,
 ) -> PyResult<BatchWithCauses> {
     if target_ras.len() != target_decs.len() {
@@ -672,7 +678,7 @@ impl ConstraintEvaluator for AndEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
+        roll_deg: EvaluationRoll,
     ) -> pyo3::PyResult<Array2<bool>> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -814,12 +820,24 @@ impl ConstraintEvaluator for AndEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<HashMap<String, Array2<f64>>> {
+        self.compute_named_values_at_roll(ephemeris, target_ras, target_decs, time_indices, None)
+    }
+
+    fn compute_named_values_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        target_roll: Option<f64>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
         merge_children_named_values(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
+            target_roll,
         )
     }
 
@@ -863,7 +881,7 @@ impl ConstraintEvaluator for AndEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: Option<f64>,
+        roll_deg: Option<EvaluationRoll>,
     ) -> PyResult<BatchWithCauses> {
         combinator_batch_with_causes(
             &self.constraints,
@@ -889,11 +907,15 @@ impl ConstraintEvaluator for AndEvaluator {
     }
 
     fn name(&self) -> String {
+        self.name_at_roll(None)
+    }
+
+    fn name_at_roll(&self, target_roll: Option<f64>) -> String {
         format!(
             "AND({})",
             self.constraints
                 .iter()
-                .map(|c| c.name())
+                .map(|c| c.name_at_roll(target_roll))
                 .collect::<Vec<_>>()
                 .join(", ")
         )
@@ -1131,7 +1153,7 @@ impl ConstraintEvaluator for OrEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
+        roll_deg: EvaluationRoll,
     ) -> pyo3::PyResult<Array2<bool>> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1311,12 +1333,24 @@ impl ConstraintEvaluator for OrEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<HashMap<String, Array2<f64>>> {
+        self.compute_named_values_at_roll(ephemeris, target_ras, target_decs, time_indices, None)
+    }
+
+    fn compute_named_values_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        target_roll: Option<f64>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
         merge_children_named_values(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
+            target_roll,
         )
     }
 
@@ -1358,7 +1392,7 @@ impl ConstraintEvaluator for OrEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: Option<f64>,
+        roll_deg: Option<EvaluationRoll>,
     ) -> PyResult<BatchWithCauses> {
         combinator_batch_with_causes(
             &self.constraints,
@@ -1379,11 +1413,15 @@ impl ConstraintEvaluator for OrEvaluator {
     }
 
     fn name(&self) -> String {
+        self.name_at_roll(None)
+    }
+
+    fn name_at_roll(&self, target_roll: Option<f64>) -> String {
         format!(
             "OR({})",
             self.constraints
                 .iter()
-                .map(|c| c.name())
+                .map(|c| c.name_at_roll(target_roll))
                 .collect::<Vec<_>>()
                 .join(", ")
         )
@@ -1583,7 +1621,7 @@ impl ConstraintEvaluator for NotEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
+        roll_deg: EvaluationRoll,
     ) -> pyo3::PyResult<Array2<bool>> {
         let times = ephemeris.get_times()?;
         let sub_result = self.constraint.in_constraint_batch_at_roll(
@@ -1632,9 +1670,25 @@ impl ConstraintEvaluator for NotEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<HashMap<String, Array2<f64>>> {
+        self.compute_named_values_at_roll(ephemeris, target_ras, target_decs, time_indices, None)
+    }
+
+    fn compute_named_values_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        target_roll: Option<f64>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
         // Single child, no collision risk - pass its values straight through unprefixed.
-        self.constraint
-            .compute_named_values(ephemeris, target_ras, target_decs, time_indices)
+        self.constraint.compute_named_values_at_roll(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            target_roll,
+        )
     }
 
     fn compute_named_booleans_diagonal(
@@ -1691,7 +1745,7 @@ impl ConstraintEvaluator for NotEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: Option<f64>,
+        roll_deg: Option<EvaluationRoll>,
     ) -> PyResult<BatchWithCauses> {
         let inner = self.constraint.in_constraint_batch_with_causes(
             ephemeris,
@@ -1711,7 +1765,11 @@ impl ConstraintEvaluator for NotEvaluator {
     }
 
     fn name(&self) -> String {
-        format!("NOT({})", self.constraint.name())
+        self.name_at_roll(None)
+    }
+
+    fn name_at_roll(&self, target_roll: Option<f64>) -> String {
+        format!("NOT({})", self.constraint.name_at_roll(target_roll))
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -1940,7 +1998,7 @@ impl ConstraintEvaluator for XorEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
+        roll_deg: EvaluationRoll,
     ) -> pyo3::PyResult<Array2<bool>> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -2014,12 +2072,24 @@ impl ConstraintEvaluator for XorEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<HashMap<String, Array2<f64>>> {
+        self.compute_named_values_at_roll(ephemeris, target_ras, target_decs, time_indices, None)
+    }
+
+    fn compute_named_values_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        target_roll: Option<f64>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
         merge_children_named_values(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
+            target_roll,
         )
     }
 
@@ -2061,7 +2131,7 @@ impl ConstraintEvaluator for XorEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: Option<f64>,
+        roll_deg: Option<EvaluationRoll>,
     ) -> PyResult<BatchWithCauses> {
         combinator_batch_with_causes(
             &self.constraints,
@@ -2077,11 +2147,15 @@ impl ConstraintEvaluator for XorEvaluator {
     }
 
     fn name(&self) -> String {
+        self.name_at_roll(None)
+    }
+
+    fn name_at_roll(&self, target_roll: Option<f64>) -> String {
         format!(
             "XOR({})",
             self.constraints
                 .iter()
-                .map(|c| c.name())
+                .map(|c| c.name_at_roll(target_roll))
                 .collect::<Vec<_>>()
                 .join(", ")
         )
@@ -2309,7 +2383,7 @@ impl ConstraintEvaluator for AtLeastEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
+        roll_deg: EvaluationRoll,
     ) -> pyo3::PyResult<Array2<bool>> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -2391,12 +2465,24 @@ impl ConstraintEvaluator for AtLeastEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<HashMap<String, Array2<f64>>> {
+        self.compute_named_values_at_roll(ephemeris, target_ras, target_decs, time_indices, None)
+    }
+
+    fn compute_named_values_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        target_roll: Option<f64>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
         merge_children_named_values(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
+            target_roll,
         )
     }
 
@@ -2438,7 +2524,7 @@ impl ConstraintEvaluator for AtLeastEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: Option<f64>,
+        roll_deg: Option<EvaluationRoll>,
     ) -> PyResult<BatchWithCauses> {
         combinator_batch_with_causes(
             &self.constraints,
@@ -2456,12 +2542,16 @@ impl ConstraintEvaluator for AtLeastEvaluator {
     }
 
     fn name(&self) -> String {
+        self.name_at_roll(None)
+    }
+
+    fn name_at_roll(&self, target_roll: Option<f64>) -> String {
         format!(
             "AT_LEAST(k={}, {})",
             self.min_violated,
             self.constraints
                 .iter()
-                .map(|c| c.name())
+                .map(|c| c.name_at_roll(target_roll))
                 .collect::<Vec<_>>()
                 .join(", ")
         )

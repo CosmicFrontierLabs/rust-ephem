@@ -1,3 +1,4 @@
+use super::core::EvaluationRoll;
 /// Solar roll constraint implementation.
 ///
 /// Violated when the spacecraft's actual roll deviates from the solar-optimal roll
@@ -368,21 +369,21 @@ impl ConstraintEvaluator for SolarRollEvaluator {
         Ok(None)
     }
 
-    /// Hot path for coordinated roll sweep: evaluate at `roll_deg` without any
-    /// JSON round-trip.  Fixed-roll mode delegates to `in_constraint_batch` unchanged.
+    /// Evaluate a supplied roll without rebuilding the evaluator. Sweep candidates
+    /// preserve a configured roll; explicit fixed rolls override it.
     fn in_constraint_batch_at_roll(
         &self,
         ephemeris: &dyn EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
+        roll_deg: EvaluationRoll,
     ) -> PyResult<Array2<bool>> {
-        if self.roll_deg.is_some() {
-            // Fixed roll — in_constraint_batch already evaluates at self.roll_deg.
+        if self.roll_deg.is_some() && !roll_deg.is_fixed() {
+            // A sweep candidate leaves the configured roll in force.
             return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices);
         }
-        // Free roll: evaluate at the sweep-provided roll_deg.
+        // Evaluate the supplied sweep candidate or explicit override.
         let (times_filtered,) = extract_time_data!(ephemeris, time_indices);
         let n_targets = target_ras.len();
         let n_times = times_filtered.len();
@@ -410,7 +411,8 @@ impl ConstraintEvaluator for SolarRollEvaluator {
                     result[[j, i]] = false;
                 } else {
                     let opt = solar_optimal_roll_deg(&target, &sun_unit, self.panel_normal);
-                    result[[j, i]] = circular_diff_deg(roll_deg, opt) > self.tolerance_deg;
+                    result[[j, i]] =
+                        circular_diff_deg(roll_deg.degrees(), opt) > self.tolerance_deg;
                 }
             }
         }

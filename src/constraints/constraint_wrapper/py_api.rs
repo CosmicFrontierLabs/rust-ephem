@@ -1333,21 +1333,21 @@ impl PyConstraint {
         n_roll_samples: usize,
     ) -> PyResult<ConstraintResult> {
         Self::validate_n_roll_samples(n_roll_samples)?;
-        // Parse time filtering options
+        if let Some(roll) = target_roll {
+            Self::validate_target_roll(roll)?;
+        }
         let bound = ephemeris.bind(py);
         let time_indices = self.resolve_time_indices(bound, times, indices)?;
-
-        self.with_effective_evaluator(target_roll, |evaluator| {
-            self.with_ephemeris(bound, |ephem_ref| {
-                self.eval_with_ephemeris(
-                    evaluator,
-                    ephem_ref,
-                    target_ra,
-                    target_dec,
-                    time_indices.clone(),
-                    n_roll_samples,
-                )
-            })
+        self.with_ephemeris(bound, |ephem_ref| {
+            self.eval_with_ephemeris(
+                &*self.evaluator,
+                ephem_ref,
+                target_ra,
+                target_dec,
+                time_indices.clone(),
+                n_roll_samples,
+                target_roll,
+            )
         })
     }
 
@@ -1375,97 +1375,68 @@ impl PyConstraint {
                 "target_ras and target_decs must have the same length",
             ));
         }
-
-        // Validate target_rolls if provided
-        if let Some(ref rolls) = target_rolls {
-            if rolls.len() != target_ras.len() {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "target_rolls must have the same length as target_ras and target_decs",
-                ));
-            }
+        if target_rolls
+            .as_ref()
+            .is_some_and(|rolls| rolls.len() != target_ras.len())
+        {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_rolls must have the same length as target_ras and target_decs",
+            ));
         }
-
         let bound = ephemeris.bind(py);
         let time_indices = self.resolve_time_indices(bound, times, indices)?;
-
-        // If no per-target rolls, use uniform None roll for all targets
-        if target_rolls.is_none() {
-            return self.with_effective_evaluator(None, |evaluator| {
-                self.with_ephemeris(bound, |ephem_ref| {
-                    self.eval_batch_with_ephemeris(
-                        evaluator,
-                        ephem_ref,
-                        &target_ras,
-                        &target_decs,
-                        time_indices.clone(),
-                        n_roll_samples,
-                    )
-                })
+        let Some(rolls) = target_rolls else {
+            return self.with_ephemeris(bound, |ephem_ref| {
+                self.eval_batch_with_ephemeris(
+                    &*self.evaluator,
+                    ephem_ref,
+                    &target_ras,
+                    &target_decs,
+                    time_indices.clone(),
+                    n_roll_samples,
+                    None,
+                )
             });
-        }
-
-        // Group targets by roll value for efficient evaluation
-        let rolls = target_rolls.unwrap();
-        let roll_map = Self::build_roll_groups(&rolls);
-
-        // Create a result vector with capacity for all targets
-        let mut results: Vec<Option<ConstraintResult>> = Vec::with_capacity(target_ras.len());
-        for _ in 0..target_ras.len() {
-            results.push(None);
-        }
-
-        // Evaluate each roll group
-        for (_, group_indices) in roll_map {
-            // Get the roll value from the first index in the group
-            let target_roll = rolls[group_indices[0]];
-
-            // Extract targets for this group
-            let (group_ras, group_decs) =
-                Self::extract_group_targets(&target_ras, &target_decs, &group_indices);
-
-            let group_results = self.with_effective_evaluator(Some(target_roll), |evaluator| {
-                self.with_ephemeris(bound, |ephem_ref| {
-                    self.eval_batch_with_ephemeris(
-                        evaluator,
-                        ephem_ref,
-                        &group_ras,
-                        &group_decs,
-                        time_indices.clone(),
-                        n_roll_samples,
-                    )
-                })
-            })?;
-
-            if group_results.len() != group_indices.len() {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "Batch evaluation returned {} results for {} targets",
-                    group_results.len(),
-                    group_indices.len()
-                )));
+        };
+        let groups = Self::build_roll_groups(&rolls)?;
+        self.with_ephemeris(bound, |ephem_ref| {
+            let mut results: Vec<Option<ConstraintResult>> =
+                (0..target_ras.len()).map(|_| None).collect();
+            for group_indices in groups.values() {
+                let roll = rolls[group_indices[0]];
+                let (ras, decs) =
+                    Self::extract_group_targets(&target_ras, &target_decs, group_indices);
+                let group_results = self.eval_batch_with_ephemeris(
+                    &*self.evaluator,
+                    ephem_ref,
+                    &ras,
+                    &decs,
+                    time_indices.clone(),
+                    n_roll_samples,
+                    Some(roll),
+                )?;
+                if group_results.len() != group_indices.len() {
+                    return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                        "Batch evaluation returned an incorrect number of results",
+                    ));
+                }
+                for (result, &idx) in group_results.into_iter().zip(group_indices) {
+                    results[idx] = Some(result);
+                }
             }
-
-            // Place results back in original order
-            // Convert group_results into an iterator and zip with group_indices
-            for (result, &original_idx) in group_results.into_iter().zip(group_indices.iter()) {
-                results[original_idx] = Some(result);
-            }
-        }
-
-        // Convert Option results to owned results, preserving the invariant that
-        // every input target produces exactly one result.
-        let final_results: Vec<ConstraintResult> = results
-            .into_iter()
-            .enumerate()
-            .map(|(index, result)| {
-                result.ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "Batch evaluation did not produce a result for target index {}",
-                        index
-                    ))
+            results
+                .into_iter()
+                .enumerate()
+                .map(|(idx, result)| {
+                    result.ok_or_else(|| {
+                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "Batch evaluation did not produce a result for target index {}",
+                            idx
+                        ))
+                    })
                 })
-            })
-            .collect::<PyResult<Vec<_>>>()?;
-        Ok(final_results)
+                .collect()
+        })
     }
 
     /// Check if targets are in-constraint for multiple RA/Dec positions (vectorized)
@@ -1511,29 +1482,42 @@ impl PyConstraint {
                 "target_ras and target_decs must have the same length",
             ));
         }
-
-        // Validate target_rolls if provided
-        if let Some(ref rolls) = target_rolls {
-            if rolls.len() != target_ras.len() {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "target_rolls must have the same length as target_ras and target_decs",
-                ));
-            }
+        if target_rolls
+            .as_ref()
+            .is_some_and(|rolls| rolls.len() != target_ras.len())
+        {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_rolls must have the same length as target_ras and target_decs",
+            ));
         }
-
-        // Parse time filtering options
         let bound = ephemeris.bind(py);
         let time_indices = self.resolve_time_indices(bound, times, indices)?;
-
-        // target_rolls=None means "evaluate at all rolls and report targets constrained at every
-        // roll" (i.e., no valid roll exists).  For roll-dependent constraints the sweep must be
-        // coordinated: the same roll angle is injected into every sub-constraint simultaneously
-        // so that, e.g., SolarRollConstraint and BodyConstraint share the same roll value.
-        if target_rolls.is_none() {
-            // Single dispatch: evaluators that aren't roll-dependent take the fast path
-            // inside the trait method; combinators hoist roll-independent children; leaves
-            // like BrightStar reuse cached projections across the sweep.
-            let result_array = self.with_ephemeris(bound, |ephem_ref| {
+        let result = if let Some(rolls) = target_rolls {
+            let groups = Self::build_roll_groups(&rolls)?;
+            self.with_ephemeris(bound, |ephem_ref| {
+                let n_times = match &time_indices {
+                    Some(idx) => idx.len(),
+                    None => ephem_ref.get_times()?.len(),
+                };
+                let mut result = ndarray::Array2::from_elem((target_ras.len(), n_times), false);
+                for group_indices in groups.values() {
+                    let (ras, decs) =
+                        Self::extract_group_targets(&target_ras, &target_decs, group_indices);
+                    let mask = self.evaluator.in_constraint_batch_at_roll(
+                        ephem_ref,
+                        &ras,
+                        &decs,
+                        time_indices.as_deref(),
+                        EvaluationRoll::Fixed(rolls[group_indices[0]]),
+                    )?;
+                    for (local, &idx) in group_indices.iter().enumerate() {
+                        result.row_mut(idx).assign(&mask.row(local));
+                    }
+                }
+                Ok(result)
+            })?
+        } else {
+            self.with_ephemeris(bound, |ephem_ref| {
                 self.evaluator
                     .in_constraint_batch_constrained_at_every_roll(
                         ephem_ref,
@@ -1542,48 +1526,10 @@ impl PyConstraint {
                         time_indices.as_deref(),
                         n_roll_samples,
                     )
-            })?;
-
-            use numpy::IntoPyArray;
-            return Ok(result_array.into_pyarray(py).into());
-        }
-
-        // Handle per-target rolls: group targets by roll and stack results
-        let rolls = target_rolls.unwrap();
-        let roll_map = Self::build_roll_groups(&rolls);
-
-        // First pass: get dimensions and collect results
-        let mut all_groups: Vec<(Vec<usize>, numpy::ndarray::Array2<bool>)> = Vec::new();
-        let mut n_times = 0;
-
-        for (_, group_indices) in roll_map {
-            let target_roll = rolls[group_indices[0]];
-            let (group_ras, group_decs) =
-                Self::extract_group_targets(&target_ras, &target_decs, &group_indices);
-
-            let group_array = self.with_effective_evaluator(Some(target_roll), |evaluator| {
-                self.with_ephemeris(bound, |ephem_ref| {
-                    evaluator.in_constraint_batch(
-                        ephem_ref,
-                        &group_ras,
-                        &group_decs,
-                        time_indices.as_deref(),
-                    )
-                })
-            })?;
-
-            if n_times == 0 {
-                n_times = group_array.len_of(ndarray::Axis(1));
-            }
-
-            all_groups.push((group_indices, group_array));
-        }
-
-        let arr = Self::reassemble_grouped_batch_results(target_ras.len(), n_times, all_groups)?;
-
-        // Convert to numpy array
+            })?
+        };
         use numpy::IntoPyArray;
-        Ok(arr.into_pyarray(py).into())
+        Ok(result.into_pyarray(py).into())
     }
 
     /// Compute instantaneous field of regard for this constraint in steradians.
@@ -1835,7 +1781,7 @@ impl PyConstraint {
 
         // Call the batch method with the time parameter as is
         // Convert target_roll to target_rolls (per-target list with single element)
-        let target_rolls = target_roll.map(|roll| vec![roll]);
+        let target_rolls = target_roll.map(|roll| vec![roll; num_times]);
         let result_array = self.in_constraint_batch(
             py,
             ephemeris,

@@ -727,10 +727,46 @@ pub trait ConstraintConfig: fmt::Debug + Send + Sync {
     fn to_evaluator(&self) -> Box<dyn ConstraintEvaluator>;
 }
 
-/// Trait for evaluating constraints
-///
-/// Implementations of this trait perform the actual constraint checking logic.
+/// Distinguish free-roll candidates from an explicit spacecraft-roll override.
+#[derive(Clone, Copy)]
+pub enum EvaluationRoll {
+    /// A sweep candidate preserves explicitly configured leaf rolls.
+    Sweep(f64),
+    /// An explicit spacecraft roll replaces leaf rolls and composes mounting angles.
+    Fixed(f64),
+}
+
+impl EvaluationRoll {
+    pub fn degrees(self) -> f64 {
+        match self {
+            Self::Sweep(roll) | Self::Fixed(roll) => roll,
+        }
+    }
+
+    pub fn is_fixed(self) -> bool {
+        matches!(self, Self::Fixed(_))
+    }
+}
+
+/// Evaluate constraints against observer ephemerides and target coordinates.
 pub trait ConstraintEvaluator: Send + Sync {
+    /// Continuous values at an explicit spacecraft roll. Most leaves expose
+    /// roll-independent values; boresight nodes rotate targets before delegating.
+    fn compute_named_values_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        _target_roll: Option<f64>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        self.compute_named_values(ephemeris, target_ras, target_decs, time_indices)
+    }
+
+    fn name_at_roll(&self, _target_roll: Option<f64>) -> String {
+        self.name()
+    }
+
     /// Prepare roll-independent geometry once for a coordinated boolean sweep.
     /// `cells` are the unresolved cells of the original target/time grid. The
     /// returned evaluator is local to this call, so no cross-ephemeris cache key
@@ -832,7 +868,7 @@ pub trait ConstraintEvaluator: Send + Sync {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: Option<f64>,
+        roll_deg: Option<EvaluationRoll>,
     ) -> PyResult<BatchWithCauses> {
         let violated = match roll_deg {
             Some(roll) => self.in_constraint_batch_at_roll(
@@ -1081,7 +1117,7 @@ pub trait ConstraintEvaluator: Send + Sync {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        _roll_deg: f64,
+        _roll_deg: EvaluationRoll,
     ) -> PyResult<Array2<bool>> {
         self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices)
     }
@@ -1219,7 +1255,7 @@ pub fn sweep_rolls_with_attribution(
             target_ras,
             target_decs,
             time_indices,
-            Some(roll_deg),
+            Some(EvaluationRoll::Sweep(roll_deg)),
         )?;
 
         let (n_targets, n_times) = combined_step.dim();

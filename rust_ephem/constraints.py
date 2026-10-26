@@ -266,6 +266,11 @@ class RustConstraintMixin(BaseModel):
     ) -> list[ConstraintResult]:
         """Evaluate a batch where all targets share the same roll semantics."""
         rust_constraint = self._resolve_evaluation_constraint(target_roll)
+        roll_kwargs = (
+            {}
+            if target_roll is None
+            else {"target_rolls": [target_roll] * len(target_ras)}
+        )
         rust_results = rust_constraint.evaluate_batch(
             ephemeris,
             target_ras,
@@ -273,6 +278,7 @@ class RustConstraintMixin(BaseModel):
             times,
             indices,
             n_roll_samples=n_roll_samples,
+            **roll_kwargs,
         )
         return [
             ConstraintResult._from_rust_result(rust_result)
@@ -297,6 +303,11 @@ class RustConstraintMixin(BaseModel):
         # to it directly instead of looping in Python and rebuilding a fresh Rust
         # constraint per roll step.
         rust_constraint = self._resolve_evaluation_constraint(target_roll)
+        roll_kwargs = (
+            {}
+            if target_roll is None
+            else {"target_rolls": [target_roll] * len(target_ras)}
+        )
         return cast(
             npt.NDArray[np.bool_],
             rust_constraint.in_constraint_batch(
@@ -306,6 +317,7 @@ class RustConstraintMixin(BaseModel):
                 times,
                 indices,
                 n_roll_samples=n_roll_samples,
+                **roll_kwargs,
             ),
         )
 
@@ -352,11 +364,11 @@ class RustConstraintMixin(BaseModel):
         ``target_roll=None`` on a roll-dependent tree means "any spacecraft
         orientation is allowed", which the Rust layer evaluates as a coordinated
         sweep over the free-roll constraint; anything else is a fixed orientation
-        and uses the ordinary resolved constraint.
+        and passes that roll to the cached definition-only backend.
         """
         if target_roll is None and self._is_roll_dependent():
             return self._get_cached_sweep_constraint()
-        return self._resolve_rust_constraint(target_roll=target_roll)
+        return self._get_cached_rust_constraint()
 
     def _to_rust_constraint(
         self,
@@ -537,6 +549,7 @@ class RustConstraintMixin(BaseModel):
         # from per-leaf state at the roll the sweep actually selected.
         rust_constraint = self._resolve_evaluation_constraint(target_roll)
 
+        roll_kwargs = {} if target_roll is None else {"target_roll": target_roll}
         rust_result = rust_constraint.evaluate(
             ephemeris,
             target_ra,
@@ -544,6 +557,7 @@ class RustConstraintMixin(BaseModel):
             times,
             indices,
             n_roll_samples=n_roll_samples,
+            **roll_kwargs,
         )
 
         # Convert to Pydantic model - Rust now returns datetime objects directly
@@ -586,23 +600,16 @@ class RustConstraintMixin(BaseModel):
                 n_roll_samples=n_roll_samples,
             )
 
-        results: list[ConstraintResult | None] = [None] * len(target_ras)
-        for target_roll, batch_indices in self._group_target_roll_indices(
-            normalized_target_rolls
-        ):
-            batch_results = self._evaluate_batch_uniform(
-                ephemeris,
-                [target_ras[i] for i in batch_indices],
-                [target_decs[i] for i in batch_indices],
-                times=times,
-                indices=indices,
-                target_roll=target_roll,
-                n_roll_samples=n_roll_samples,
-            )
-            for source_index, result in zip(batch_indices, batch_results):
-                results[source_index] = result
-
-        return [cast(ConstraintResult, result) for result in results]
+        rust_results = self._get_cached_rust_constraint().evaluate_batch(
+            ephemeris,
+            target_ras,
+            target_decs,
+            times,
+            indices,
+            target_rolls=normalized_target_rolls,
+            n_roll_samples=n_roll_samples,
+        )
+        return [ConstraintResult._from_rust_result(result) for result in rust_results]
 
     def in_constraint_batch(
         self,
@@ -660,41 +667,17 @@ class RustConstraintMixin(BaseModel):
                 n_roll_samples=n_roll_samples,
             )
 
-        # Special case: empty target list should still return proper (0, n_times) shape
-        if len(target_ras) == 0:
-            return self._in_constraint_batch_uniform(
-                ephemeris,
-                [],
-                [],
-                times=times,
-                indices=indices,
-                target_roll=None,
-                n_roll_samples=n_roll_samples,
-            )
-
-        result: npt.NDArray[np.bool_] | None = None
-        for target_roll, batch_indices in self._group_target_roll_indices(
-            normalized_target_rolls
-        ):
-            batch_result = self._in_constraint_batch_uniform(
-                ephemeris,
-                [target_ras[i] for i in batch_indices],
-                [target_decs[i] for i in batch_indices],
-                times=times,
-                indices=indices,
-                target_roll=target_roll,
-                n_roll_samples=n_roll_samples,
-            )
-            if result is None:
-                result = np.empty(
-                    (len(target_ras), batch_result.shape[1]),
-                    dtype=bool,
-                )
-            result[batch_indices, :] = batch_result
-
         return cast(
             npt.NDArray[np.bool_],
-            result if result is not None else np.ones((0, 0), dtype=bool),
+            self._get_cached_rust_constraint().in_constraint_batch(
+                ephemeris,
+                target_ras,
+                target_decs,
+                times,
+                indices,
+                target_rolls=normalized_target_rolls,
+                n_roll_samples=n_roll_samples,
+            ),
         )
 
     def in_constraint(
@@ -749,7 +732,7 @@ class RustConstraintMixin(BaseModel):
                 ephemeris,
                 target_ra,
                 target_dec,
-                None,
+                target_roll,
                 n_roll_samples,
             ),
         )
