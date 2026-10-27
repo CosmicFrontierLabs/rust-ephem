@@ -46,6 +46,49 @@ Basic Usage
     sun_sc = ephem.get_body("Sun")
     print(f"Sun RA/Dec: {sun_sc[0].ra}, {sun_sc[0].dec}")
 
+Geometric and Apparent Positions
+--------------------------------
+
+By default, ``get_body()`` returns the body's geometric position at the
+observation time. For the direction in which received light appears to arrive,
+request an apparent position explicitly:
+
+.. code-block:: python
+
+    sun = ephem.get_body("sun", apparent=True)
+    moon = ephem.get_body("moon", apparent=True)
+    print(sun.ra.deg, sun.dec.deg)
+
+This option is available on every ephemeris type. It uses the observer's
+position and velocity, including a spacecraft's motion, and applies:
+
+* Converged reception light-travel time, solved in barycentric coordinates.
+* Solar light deflection with finite source distance.
+* Relativistic aberration using the observer's barycentric velocity.
+
+The result is an observer-centred GCRS ``SkyCoord`` with apparent direction
+and light-time distance, using the same convention as Astropy's
+``get_body()``. The distance is the source-to-observer distance along the
+retarded light path, rather than the instantaneous geometric distance.
+The correction is calculated in Rust; Astropy is used to package the result.
+Apparent queries return positions only, without velocity differentials.
+``get_body_pv()`` continues to return geometric states.
+
+An apparent query requires a planetary SPICE kernel covering both reception
+and emission times, with barycentric states for the target, Earth, and Sun.
+Use ``ensure_planetary_ephemeris()`` as above or pass
+``spice_kernel="/path/to/de440s.bsp"``. Apparent queries do not use the
+approximate analytic Sun/Moon models or the Horizons fallback;
+``apparent=True, use_horizons=True`` raises ``ValueError``.
+
+Existing ``sun``, ``moon``, ``sun_pv``, ``moon_pv``, RA/Dec properties, and
+constraint calculations retain their geometric convention. Calling
+``get_body(..., apparent=True)`` does not change those cached values.
+Astropy's ``get_body()`` defaults to an apparent position, so comparisons
+should select ``apparent=True`` and use the same planetary kernel and
+observer states. Remaining differences can reflect kernel or
+Earth-orientation inputs.
+
 Body Identifiers
 ----------------
 

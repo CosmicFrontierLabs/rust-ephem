@@ -4,6 +4,7 @@
 //! including time conversions, coordinate transformations, EOP data handling,
 //! and mathematical operations.
 
+pub mod apparent;
 pub mod celestial;
 pub mod config;
 pub mod conversions;

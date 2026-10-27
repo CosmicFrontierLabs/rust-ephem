@@ -393,38 +393,10 @@ pub fn calculate_body_positions_spice_result(
     center_id: i32,
     spice_kernel: Option<&str>,
 ) -> Result<Array2<f64>, String> {
-    use crate::ephemeris::spice_manager;
     use anise::prelude::*;
     use hifitime::Epoch as HifiEpoch;
 
-    // If a kernel is specified, initialize from it (URL or path). Otherwise use cache/defaults.
-    if let Some(spec) = spice_kernel {
-        spice_manager::ensure_planetary_ephemeris_spec(spec)
-            .map_err(|e| format!("Failed to initialize planetary ephemeris from '{spec}': {e}"))?;
-    }
-
-    let almanac = if let Some(almanac) = spice_manager::get_planetary_ephemeris() {
-        almanac
-    } else {
-        let path = if let Some(p) = spice_manager::best_available_planetary_path() {
-            p
-        } else {
-            DEFAULT_DE440S_PATH.as_path().to_path_buf()
-        };
-        if !path.exists() {
-            return Err(format!(
-                "SPK file not found at '{}'. Initialize planetary ephemeris with ensure_planetary_ephemeris().",
-                path.display()
-            ));
-        }
-        let path_str = path
-            .to_str()
-            .ok_or_else(|| "Invalid UTF-8 in SPK path".to_string())?;
-        let spk = SPK::load(path_str)
-            .map_err(|e| format!("Failed to load SPK file '{}': {:?}", path.display(), e))?;
-        Arc::new(Almanac::default().with_spk(spk))
-    };
-
+    let almanac = planetary_almanac(spice_kernel)?;
     let n = times.len();
     let mut out = Array2::<f64>::zeros((n, 6));
 
@@ -463,6 +435,44 @@ pub fn calculate_body_positions_spice_result(
     }
 
     Ok(out)
+}
+
+/// Select the same planetary kernel for geometric and apparent queries.
+pub(crate) fn planetary_almanac(
+    spice_kernel: Option<&str>,
+) -> Result<Arc<anise::almanac::Almanac>, String> {
+    use crate::ephemeris::spice_manager;
+    use anise::prelude::*;
+
+    // If a kernel is specified, initialize from it (URL or path). Otherwise use cache/defaults.
+    if let Some(spec) = spice_kernel {
+        spice_manager::ensure_planetary_ephemeris_spec(spec)
+            .map_err(|e| format!("Failed to initialize planetary ephemeris from '{spec}': {e}"))?;
+    }
+
+    let almanac = if let Some(almanac) = spice_manager::get_planetary_ephemeris() {
+        almanac
+    } else {
+        let path = if let Some(p) = spice_manager::best_available_planetary_path() {
+            p
+        } else {
+            DEFAULT_DE440S_PATH.as_path().to_path_buf()
+        };
+        if !path.exists() {
+            return Err(format!(
+                "SPK file not found at '{}'. Initialize planetary ephemeris with ensure_planetary_ephemeris().",
+                path.display()
+            ));
+        }
+        let path_str = path
+            .to_str()
+            .ok_or_else(|| "Invalid UTF-8 in SPK path".to_string())?;
+        let spk = SPK::load(path_str)
+            .map_err(|e| format!("Failed to load SPK file '{}': {:?}", path.display(), e))?;
+        Arc::new(Almanac::default().with_spk(spk))
+    };
+
+    Ok(almanac)
 }
 
 pub fn radec_to_altaz(

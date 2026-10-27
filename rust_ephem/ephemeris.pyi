@@ -264,7 +264,12 @@ class Ephemeris(abc.ABC):
     ) -> PositionVelocityData: ...
     @abc.abstractmethod
     def get_body(
-        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+        self,
+        body: str,
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        apparent: bool = ...,
     ) -> Any: ...
     @property
     @abc.abstractmethod

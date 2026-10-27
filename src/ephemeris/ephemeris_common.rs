@@ -823,6 +823,7 @@ pub trait EphemerisBase {
 
         Ok(SkyCoordConfig {
             data,
+            include_velocity: true,
             time_objects,
             frame_name,
             negate_vectors,
@@ -1010,9 +1011,10 @@ pub trait EphemerisBase {
 
     /// Get SkyCoord object for any body identified by NAIF ID or name
     ///
-    /// This is analogous to astropy's `get_body()` function but returns a SkyCoord
-    /// object with the observer location properly set. The returned SkyCoord is in
-    /// the GCRS frame with obsgeoloc and obsgeovel set to the observer's position.
+    /// The default is geometric. With `apparent`, return a position-only SkyCoord
+    /// including reception light time, solar deflection and observer aberration,
+    /// using a planetary SPICE kernel. The returned GCRS frame has obsgeoloc and
+    /// obsgeovel set to the observer's state.
     ///
     /// # Arguments
     /// * `body_identifier` - NAIF ID (as string) or body name (e.g., "Jupiter", "mars", "301")
@@ -1027,6 +1029,7 @@ pub trait EphemerisBase {
     /// # Can now compute separations, altaz coordinates, etc.
     /// separation = jupiter.separation(target_sc)
     /// ```
+    #[allow(clippy::too_many_arguments)]
     fn get_body(
         &self,
         py: Python,
@@ -1034,6 +1037,7 @@ pub trait EphemerisBase {
         body_identifier: &str,
         spice_kernel: Option<&str>,
         use_horizons: bool,
+        apparent: bool,
     ) -> PyResult<Py<PyAny>> {
         use crate::utils::celestial::calculate_body_by_id_or_name;
         use crate::utils::config::EARTH_NAIF_ID;
@@ -1043,6 +1047,28 @@ pub trait EphemerisBase {
             .times
             .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available."))?;
+
+        if apparent {
+            if use_horizons {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "apparent=True requires SPICE kernels; use_horizons=True is not supported",
+                ));
+            }
+            let observer = self.data().gcrs.as_ref().ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("No GCRS observer states available")
+            })?;
+            let positions = crate::utils::apparent::apparent_body_positions(
+                times,
+                observer,
+                body_identifier,
+                spice_kernel,
+            )
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+            let mut config =
+                self.build_skycoord_config(py, &positions, "GCRS", false, Some(observer))?;
+            config.include_velocity = false;
+            return to_skycoord(py, Some(modules), config);
+        }
 
         // Calculate body position relative to Earth center
         let body_geocentric = calculate_body_by_id_or_name(

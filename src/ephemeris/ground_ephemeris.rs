@@ -476,13 +476,17 @@ impl GroundEphemeris {
         <Self as EphemerisBase>::get_body_pv(self, py, body, spice_kernel.as_deref(), use_horizons)
     }
 
-    #[pyo3(signature = (body, spice_kernel=None, use_horizons=false))]
+    /// Get a body in observer-centred GCRS. With apparent=True, apply reception
+    /// light time, solar deflection, and observer aberration using SPICE.
+    /// Apparent results contain positions only; the default is geometric.
+    #[pyo3(signature = (body, spice_kernel=None, use_horizons=false, *, apparent=false))]
     fn get_body(
         &self,
         py: Python,
         body: &str,
         spice_kernel: Option<String>,
         use_horizons: bool,
+        apparent: bool,
     ) -> PyResult<Py<PyAny>> {
         let modules = AstropyModules::import(py)?;
         <Self as EphemerisBase>::get_body(
@@ -492,6 +496,7 @@ impl GroundEphemeris {
             body,
             spice_kernel.as_deref(),
             use_horizons,
+            apparent,
         )
     }
 }
