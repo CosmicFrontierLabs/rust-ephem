@@ -35,8 +35,8 @@ def ephemeris(ensure_planetary_data: None) -> GroundEphemeris:
     return GroundEphemeris(35, -120, 0, BEGIN, BEGIN + timedelta(hours=6), 3600)
 
 
-def unit(v: Vector) -> Vector:
-    return v / np.linalg.norm(v)
+def unit(v: npt.NDArray[np.floating[Any]]) -> Vector:
+    return np.asarray(v / np.linalg.norm(v), dtype=np.float64)
 
 
 def vec(ra: float, dec: float) -> Vector:
