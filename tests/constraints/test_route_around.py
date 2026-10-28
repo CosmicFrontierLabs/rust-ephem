@@ -67,26 +67,28 @@ def points(a: Vector, b: Vector, samples: int, endpoints: bool = True) -> list[V
     ]
 
 
-def reference(
+def reference_candidates(
     start: tuple[float, float],
     end: tuple[float, float],
     check: Check,
     samples: int = 50,
     margin: float = 5,
-) -> tuple[float, float] | None:
+) -> list[tuple[float, float]]:
+    """Return all clear legacy candidates, ordered by total path length."""
     a, b = vec(*start), vec(*end)
     if angle(a, b) < 1e-6:
-        return None
+        return []
     n = unit(np.cross(a, b))
     direct = points(a, b, samples)
     flags = check([radec(v) for v in direct])
     if not any(flags):
-        return None
+        return []
     c = unit(direct[flags.index(True)])
     d = unit(np.cross(n, c))
     m = np.radians(margin)
     candidates = [unit(np.cos(m) * c + sign * np.sin(m) * d) for sign in (1, -1)]
     candidates.sort(key=lambda w: np.degrees(angle(a, w)) + np.degrees(angle(w, b)))
+    clear = []
     for w in candidates:
         if check([radec(w)])[0]:
             continue
@@ -96,8 +98,8 @@ def reference(
             for x, y in ((a, w), (w, b))
         ):
             continue
-        return radec(w)
-    return None
+        clear.append(radec(w))
+    return clear
 
 
 def checker(
@@ -142,7 +144,7 @@ def test_faithful_matches_numpy_reference(
     check = checker(constraint, ephemeris)
     coords = random_pointings(240)
     for a, b in zip(coords[::2], coords[1::2], strict=True):
-        expected = reference(a, b, check, samples)
+        expected = reference_candidates(a, b, check, samples)
         actual = constraint.route_around(
             ephemeris, *a, *b, index=3, samples=samples, grow_margin=False
         )
@@ -154,11 +156,7 @@ def test_faithful_matches_numpy_reference(
         if flags[0] or flags[-1]:
             assert actual.waypoint is None
         else:
-            assert (
-                actual.waypoint == pytest.approx(expected, abs=1e-9)
-                if expected
-                else actual.waypoint is None
-            )
+            assert_reference_route(actual, a, b, check, expected, samples)
         assert (actual.detour_deg is None) == (actual.waypoint is None)
 
 
@@ -178,6 +176,32 @@ def assert_clear_route(
     assert result.detour_deg == pytest.approx(
         np.degrees(angle(vec(*a), w)) + np.degrees(angle(w, vec(*b)))
     )
+
+
+def assert_reference_route(
+    result: RouteResult,
+    a: tuple[float, float],
+    b: tuple[float, float],
+    check: Check,
+    candidates: list[tuple[float, float]],
+    samples: int,
+) -> None:
+    if not candidates:
+        assert result.waypoint is None
+        return
+    # Rust and NumPy may break a floating-point length tie differently. Require
+    # a clear legacy candidate with optimal length, not the same tie winner.
+    assert any(
+        result.waypoint == pytest.approx(candidate, rel=0, abs=1e-9)
+        for candidate in candidates
+    )
+    best = vec(*candidates[0])
+    assert result.detour_deg == pytest.approx(
+        np.degrees(angle(vec(*a), best)) + np.degrees(angle(best, vec(*b))),
+        rel=0,
+        abs=1e-9,
+    )
+    assert_clear_route(result, a, b, check, samples)
 
 
 def test_growing_margin_routes_every_sampled_45_degree_cone_crossing(
@@ -211,19 +235,18 @@ def crossing(
 
 
 @pytest.mark.parametrize("samples", [2, 4])
-def test_faithful_mode_can_return_the_reference_waypoint(
+def test_faithful_mode_returns_an_optimal_reference_candidate(
     ephemeris: GroundEphemeris, samples: int
 ) -> None:
     a, b = crossing(ephemeris)
     constraint = SunConstraint(min_angle=2)
     check = checker(constraint, ephemeris)
-    expected = reference(a, b, check, samples)
-    assert expected is not None
+    expected = reference_candidates(a, b, check, samples)
+    assert len(expected) == 2
     result = constraint.route_around(
         ephemeris, *a, *b, index=3, samples=samples, grow_margin=False
     )
-    assert result.waypoint == pytest.approx(expected, abs=1e-9)
-    assert_clear_route(result, a, b, check, samples)
+    assert_reference_route(result, a, b, check, expected, samples)
 
 
 @pytest.mark.parametrize("margin", [0.01, 5.0, 89.0, 90.0])
