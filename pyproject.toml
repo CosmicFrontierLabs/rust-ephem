@@ -56,12 +56,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0", "astropy>=5.0", "pytest-cov>=7.0.0"]
+test = ["pytest>=7.0", "astropy>=5.0", "pytest-cov>=7.0.0", "jplephem>=2.21"]
 docs = ["sphinx>=6.0", "sphinx-rtd-theme"]
 dev = ["mypy", "ruff", "prek", "maturin", "pyarrow-stubs"]
 all = [
     "pytest>=7.0",
     "astropy>=5.0",
+    "jplephem>=2.21",
     "pytest-cov>=7.0.0",
     "sphinx>=6.0",
     "sphinx-rtd-theme",

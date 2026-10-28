@@ -4,8 +4,10 @@ use pyo3::{prelude::*, types::PyDateTime, types::PyModule};
 
 /// Configuration for converting position/velocity data to astropy SkyCoord
 pub struct SkyCoordConfig<'a> {
-    /// Position and velocity data (N x 6: [x, y, z, vx, vy, vz])
+    /// Position data (N x 3), or position/velocity (N x 6).
     pub data: &'a Array2<f64>,
+    /// Attach velocity differentials only when they have been computed.
+    pub include_velocity: bool,
     /// Time objects as Python datetime
     pub time_objects: Vec<Py<PyDateTime>>,
     /// Coordinate frame name (e.g., "GCRS", "ITRS")
@@ -68,18 +70,15 @@ pub fn to_skycoord(
 
     // Get position and velocity arrays
     let positions = config.data.slice(ndarray::s![.., 0..3]).to_owned();
-    let velocities = config.data.slice(ndarray::s![.., 3..6]).to_owned();
-
     // Apply negation if requested (for Earth-relative coordinates)
-    let (final_positions, final_velocities) = if config.negate_vectors {
-        (-positions, -velocities)
+    let final_positions = if config.negate_vectors {
+        -positions
     } else {
-        (positions, velocities)
+        positions
     };
 
     // Convert to numpy arrays
     let pos_array = final_positions.into_pyarray(py);
-    let vel_array = final_velocities.into_pyarray(py);
 
     // Get units (km and km/s)
     let km_unit = astropy_units.getattr("km")?;
@@ -88,7 +87,6 @@ pub fn to_skycoord(
 
     // Multiply arrays by units using __rmul__ on the unit side
     let pos_with_unit = km_unit.call_method1("__rmul__", (pos_array,))?;
-    let vel_with_unit = km_per_s_unit.call_method1("__rmul__", (vel_array,))?;
 
     // Create Time object from Python datetime objects
     let time_dict = pyo3::types::PyDict::new(py);
@@ -183,34 +181,44 @@ pub fn to_skycoord(
         .getattr("__getitem__")?
         .call1((2,))?;
 
-    let v_x = vel_with_unit
-        .getattr("T")?
-        .getattr("__getitem__")?
-        .call1((0,))?;
-    let v_y = vel_with_unit
-        .getattr("T")?
-        .getattr("__getitem__")?
-        .call1((1,))?;
-    let v_z = vel_with_unit
-        .getattr("T")?
-        .getattr("__getitem__")?
-        .call1((2,))?;
-
-    // Create CartesianDifferential for velocity
-    let diff_dict = pyo3::types::PyDict::new(py);
-    diff_dict.set_item("d_x", v_x)?;
-    diff_dict.set_item("d_y", v_y)?;
-    diff_dict.set_item("d_z", v_z)?;
-    let cart_diff = astropy_coords
-        .getattr("CartesianDifferential")?
-        .call((), Some(&diff_dict))?;
-
-    // Create CartesianRepresentation with differential
+    // Create CartesianRepresentation, with a differential only for state queries.
     let rep_dict = pyo3::types::PyDict::new(py);
     rep_dict.set_item("x", x)?;
     rep_dict.set_item("y", y)?;
     rep_dict.set_item("z", z)?;
-    rep_dict.set_item("differentials", cart_diff)?;
+    if config.include_velocity {
+        let velocities = config.data.slice(ndarray::s![.., 3..6]).to_owned();
+        let velocities = if config.negate_vectors {
+            -velocities
+        } else {
+            velocities
+        };
+        let vel_with_unit =
+            km_per_s_unit.call_method1("__rmul__", (velocities.into_pyarray(py),))?;
+        let v_x = vel_with_unit
+            .getattr("T")?
+            .getattr("__getitem__")?
+            .call1((0,))?;
+        let v_y = vel_with_unit
+            .getattr("T")?
+            .getattr("__getitem__")?
+            .call1((1,))?;
+        let v_z = vel_with_unit
+            .getattr("T")?
+            .getattr("__getitem__")?
+            .call1((2,))?;
+
+        // Create CartesianDifferential for velocity
+        let diff_dict = pyo3::types::PyDict::new(py);
+        diff_dict.set_item("d_x", v_x)?;
+        diff_dict.set_item("d_y", v_y)?;
+        diff_dict.set_item("d_z", v_z)?;
+        let cart_diff = astropy_coords
+            .getattr("CartesianDifferential")?
+            .call((), Some(&diff_dict))?;
+
+        rep_dict.set_item("differentials", cart_diff)?;
+    }
     let cart_rep = astropy_coords
         .getattr("CartesianRepresentation")?
         .call((), Some(&rep_dict))?;

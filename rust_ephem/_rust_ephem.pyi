@@ -1560,7 +1560,12 @@ class TLEEphemeris(Ephemeris):
         ...
 
     def get_body(
-        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+        self,
+        body: str,
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        apparent: bool = ...,
     ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
@@ -1568,7 +1573,10 @@ class TLEEphemeris(Ephemeris):
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
             spice_kernel: Optional path to SPICE kernel
-            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+            use_horizons: Geometric queries only: fall back to JPL Horizons.
+            apparent: Apply reception light time, solar deflection and observer
+                aberration using SPICE. Returns positions without differentials.
+                Default False preserves geometric positions.
 
         Returns:
             astropy.coordinates.SkyCoord object
@@ -2131,7 +2139,12 @@ class SPICEEphemeris(Ephemeris):
         ...
 
     def get_body(
-        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+        self,
+        body: str,
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        apparent: bool = ...,
     ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
@@ -2139,7 +2152,10 @@ class SPICEEphemeris(Ephemeris):
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
             spice_kernel: Optional path to SPICE kernel
-            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+            use_horizons: Geometric queries only: fall back to JPL Horizons.
+            apparent: Apply reception light time, solar deflection and observer
+                aberration using SPICE. Returns positions without differentials.
+                Default False preserves geometric positions.
 
         Returns:
             astropy.coordinates.SkyCoord object
@@ -2643,7 +2659,12 @@ class OEMEphemeris(Ephemeris):
         ...
 
     def get_body(
-        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+        self,
+        body: str,
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        apparent: bool = ...,
     ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
@@ -2651,7 +2672,10 @@ class OEMEphemeris(Ephemeris):
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
             spice_kernel: Optional path to SPICE kernel
-            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+            use_horizons: Geometric queries only: fall back to JPL Horizons.
+            apparent: Apply reception light time, solar deflection and observer
+                aberration using SPICE. Returns positions without differentials.
+                Default False preserves geometric positions.
 
         Returns:
             astropy.coordinates.SkyCoord object
@@ -3040,9 +3064,17 @@ class FileEphemeris(Ephemeris):
         ...
 
     def get_body(
-        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+        self,
+        body: str,
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        apparent: bool = ...,
     ) -> Any:  # Returns astropy.coordinates.SkyCoord
-        """Get a SkyCoord for a named solar-system body."""
+        """Get a body SkyCoord. apparent=True applies light time, solar deflection
+        and observer aberration using SPICE, returning positions only.
+        The default is geometric.
+        """
         ...
 
     def radec_to_altaz(
@@ -3335,7 +3367,12 @@ class ParquetEphemeris(Ephemeris):
         self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
     ) -> PositionVelocityData: ...
     def get_body(
-        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+        self,
+        body: str,
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        apparent: bool = ...,
     ) -> Any: ...
     def radec_to_altaz(
         self,
@@ -3845,7 +3882,12 @@ class GroundEphemeris(Ephemeris):
         ...
 
     def get_body(
-        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+        self,
+        body: str,
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        apparent: bool = ...,
     ) -> Any:  # Returns astropy.coordinates.SkyCoord
         """
         Get SkyCoord for a celestial body.
@@ -3853,7 +3895,10 @@ class GroundEphemeris(Ephemeris):
         Args:
             body: Name of the body (e.g., 'sun', 'moon', 'earth')
             spice_kernel: Optional path to SPICE kernel
-            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+            use_horizons: Geometric queries only: fall back to JPL Horizons.
+            apparent: Apply reception light time, solar deflection and observer
+                aberration using SPICE. Returns positions without differentials.
+                Default False preserves geometric positions.
 
         Returns:
             astropy.coordinates.SkyCoord object
