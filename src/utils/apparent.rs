@@ -49,7 +49,10 @@ pub fn apparent_body_positions(
     let mut out = Array2::zeros((times.len(), 3));
 
     for (i, dt) in times.iter().enumerate() {
-        let reception = chrono_to_epoch(dt);
+        // hifitime subtracts durations in the epoch's stored time scale.
+        // Use continuous TAI so light time remains physical elapsed time
+        // when reception and emission straddle a UTC leap second.
+        let reception = chrono_to_epoch(dt).to_time_scale(hifitime::TimeScale::TAI);
         let state = |id, epoch| {
             almanac
                 .translate_geometric(Frame::from_ephem_j2000(id), barycentre, epoch)

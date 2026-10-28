@@ -92,6 +92,25 @@ def test_apparent_matches_astropy(
     assert not actual.data.differentials
 
 
+@pytest.mark.parametrize("second", [0, 1, 2])
+def test_apparent_moon_across_leap_second(
+    ensure_planetary_data: None, second: int
+) -> None:
+    # At 00:00:00 and 00:00:01 the Moon's emission time precedes the
+    # 2016 leap-second boundary; 00:00:02 is a control after that boundary.
+    begin = datetime(2017, 1, 1, 0, 0, second, tzinfo=timezone.utc)
+    ephem = re.GroundEphemeris(19.8207, -155.4681, 4207, begin, begin, 60)
+    actual = ephem.get_body("moon", apparent=True)
+    expected = reference(ephem, "moon")
+    assert np.max(actual.separation(expected).arcsec) < 1e-4
+    np.testing.assert_allclose(
+        actual.distance.to_value(u.km),
+        expected.distance.to_value(u.km),
+        atol=1e-3,
+        rtol=0,
+    )
+
+
 @pytest.mark.parametrize("body", ["sun", "moon"])
 def test_tle_apparent_matches_astropy(tle_ephemeris: Any, body: str) -> None:
     actual = tle_ephemeris.get_body(body, apparent=True)
