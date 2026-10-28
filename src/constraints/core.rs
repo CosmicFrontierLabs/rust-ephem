@@ -727,10 +727,74 @@ pub trait ConstraintConfig: fmt::Debug + Send + Sync {
     fn to_evaluator(&self) -> Box<dyn ConstraintEvaluator>;
 }
 
-/// Trait for evaluating constraints
-///
-/// Implementations of this trait perform the actual constraint checking logic.
+/// Distinguish free-roll candidates from an explicit spacecraft-roll override.
+#[derive(Clone, Copy)]
+pub enum EvaluationRoll {
+    /// A sweep candidate preserves explicitly configured leaf rolls.
+    Sweep(f64),
+    /// An explicit spacecraft roll replaces leaf rolls and composes mounting angles.
+    Fixed(f64),
+}
+
+impl EvaluationRoll {
+    pub fn degrees(self) -> f64 {
+        match self {
+            Self::Sweep(roll) | Self::Fixed(roll) => roll,
+        }
+    }
+
+    pub fn is_fixed(self) -> bool {
+        matches!(self, Self::Fixed(_))
+    }
+}
+
+/// Evaluate constraints against observer ephemerides and target coordinates.
 pub trait ConstraintEvaluator: Send + Sync {
+    /// Evaluate target_i at its selected time_i, returning masks, values, and
+    /// attribution together. The default bounds all leaf work to one sample;
+    /// common leaves and combinators override it with vectorized paired kernels.
+    fn evaluate_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<super::diagonal::DiagonalEvaluation> {
+        super::diagonal::evaluate(self, ephemeris, target_ras, target_decs, time_indices)
+    }
+
+    /// Continuous values at an explicit spacecraft roll. Most leaves expose
+    /// roll-independent values; boresight nodes rotate targets before delegating.
+    fn compute_named_values_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        _target_roll: Option<f64>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        self.compute_named_values(ephemeris, target_ras, target_decs, time_indices)
+    }
+
+    fn name_at_roll(&self, _target_roll: Option<f64>) -> String {
+        self.name()
+    }
+
+    /// Prepare roll-independent geometry once for a coordinated boolean sweep.
+    /// `cells` are the unresolved cells of the original target/time grid. The
+    /// returned evaluator is local to this call, so no cross-ephemeris cache key
+    /// or mutable shared state is needed.
+    fn prepare_roll_sweep<'a>(
+        &'a self,
+        _ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        _target_ras: &'a [f64],
+        _target_decs: &'a [f64],
+        _time_indices: Option<&'a [usize]>,
+        _cells: &[super::roll_sweep::RollCell],
+    ) -> PyResult<Option<super::roll_sweep::PreparedRollEvaluator<'a>>> {
+        Ok(None)
+    }
+
     /// Evaluate the constraint with full ephemeris access
     ///
     /// # Arguments
@@ -769,25 +833,6 @@ pub trait ConstraintEvaluator: Send + Sync {
         Ok(HashMap::new())
     }
 
-    /// Diagonal variant of `compute_named_values` for moving-body evaluation: target_i
-    /// paired with time_i only. Default falls back to the full batch and extracts the
-    /// diagonal, mirroring `in_constraint_batch_diagonal`'s default.
-    fn compute_named_values_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<HashMap<String, Vec<f64>>> {
-        let n = target_ras.len();
-        let time_indices: Vec<usize> = (0..n).collect();
-        let full =
-            self.compute_named_values(ephemeris, target_ras, target_decs, Some(&time_indices))?;
-        Ok(full
-            .into_iter()
-            .map(|(key, arr)| (key, (0..n).map(|i| arr[[i, i]]).collect()))
-            .collect())
-    }
-
     /// Compute the combined violation mask *and* a per-leaf-constraint violation mask
     /// (namespaced under a short tag, e.g. `sun`) in a single traversal of the tree.
     ///
@@ -817,7 +862,7 @@ pub trait ConstraintEvaluator: Send + Sync {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: Option<f64>,
+        roll_deg: Option<EvaluationRoll>,
     ) -> PyResult<BatchWithCauses> {
         let violated = match roll_deg {
             Some(roll) => self.in_constraint_batch_at_roll(
@@ -833,25 +878,6 @@ pub trait ConstraintEvaluator: Send + Sync {
             named: HashMap::from([(value_key_prefix(&self.name()), violated.clone())]),
             violated,
         })
-    }
-
-    /// Diagonal variant of the cause masks from `in_constraint_batch_with_causes`, for
-    /// moving-body evaluation: target_i paired with time_i only. There is no combined
-    /// mask to fuse with here — the diagonal path has no roll sweep, so nothing asks for
-    /// both outputs at once. Default (leaf constraints): a single-entry map from this
-    /// constraint's own tag to its own `in_constraint_batch_diagonal` result, mirroring
-    /// that method's default — this reuses whatever O(N) diagonal
-    /// implementation the leaf already has (e.g. SAA) instead of building the full M×N
-    /// matrix and slicing it, which would silently regress to O(N²). Combinators override
-    /// this to merge their children's diagonal maps instead (see `combinators.rs`).
-    fn compute_named_booleans_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<HashMap<String, Vec<bool>>> {
-        let arr = self.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs)?;
-        Ok(HashMap::from([(value_key_prefix(&self.name()), arr)]))
     }
 
     /// Map this constraint's own `in_constraint_batch_with_causes` cause tag(s) to the
@@ -926,35 +952,6 @@ pub trait ConstraintEvaluator: Send + Sync {
         Ok(None)
     }
 
-    /// Evaluate constraint for moving body (diagonal evaluation)
-    ///
-    /// For moving bodies, we need to evaluate target_i at time_i only (diagonal).
-    /// This is much more efficient than computing the full M×N matrix and extracting diagonal.
-    ///
-    /// # Arguments
-    /// * `ephemeris` - Ephemeris object providing all positional data
-    /// * `target_ras` - Array of right ascensions in degrees (length N)
-    /// * `target_decs` - Array of declinations in degrees (length N)
-    ///
-    /// # Returns
-    /// 1D boolean array (N) where result[i] = in_constraint(target_i, time_i)
-    ///
-    /// Default implementation falls back to N×N batch with diagonal extraction.
-    /// Implementations can override for O(N) performance.
-    fn in_constraint_batch_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<Vec<bool>> {
-        // Default: compute full N×N and extract diagonal
-        let n = target_ras.len();
-        let time_indices: Vec<usize> = (0..n).collect();
-        let full =
-            self.in_constraint_batch(ephemeris, target_ras, target_decs, Some(&time_indices))?;
-        Ok((0..n).map(|i| full[[i, i]]).collect())
-    }
-
     /// Returns `true` if this constraint's FoR result changes depending on the spacecraft
     /// roll angle.  Roll-independent constraints return `false` (the default); only
     /// `BoresightOffsetEvaluator` with a free roll angle (`roll_deg = None`) and a
@@ -1020,11 +1017,9 @@ pub trait ConstraintEvaluator: Send + Sync {
     /// `n_roll_samples` uniform roll angles are swept over [0°, 360°) for evaluators
     /// that depend on spacecraft roll; constraints without roll dependence ignore it.
     ///
-    /// Default: sweeps `n_roll_samples` roll angles and calls `field_of_regard_violated_at_roll`
-    /// at each step, marking a direction accessible if *any* roll satisfies it.
-    /// Leaf implementations that carry their own roll state (e.g. `BoresightOffsetEvaluator`
-    /// with fixed roll) override `field_of_regard_violated_at_roll` instead, and the sweep
-    /// here automatically propagates the correct roll to them.
+    /// Default: evaluate roll-independent constraints once; otherwise prepare
+    /// geometry in bounded chunks and sweep unresolved directions at the same
+    /// candidate rolls. Leaves may override this with a specialized complete sweep.
     fn field_of_regard_violated_batch(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -1043,30 +1038,15 @@ pub trait ConstraintEvaluator: Send + Sync {
             );
         }
 
-        // Roll-dependent: sweep n_roll_samples angles over [0°, 360°).
         let n_targets = target_unit_vectors.nrows();
-        let roll_step_deg = 360.0 / n_roll_samples as f64;
-        let mut accessible = vec![false; n_targets];
-
-        for step in 0..n_roll_samples {
-            if accessible.iter().all(|&a| a) {
-                break;
-            }
-            let roll_deg = step as f64 * roll_step_deg;
-            let violated = self.field_of_regard_violated_at_roll(
-                ephemeris,
-                target_unit_vectors,
-                time_index,
-                roll_deg,
-            )?;
-            for i in 0..n_targets {
-                if !violated[i] {
-                    accessible[i] = true;
-                }
-            }
-        }
-
-        Ok(accessible.iter().map(|&a| !a).collect())
+        let (ras, decs) =
+            crate::utils::vector_math::unit_vectors_to_radec_batch(target_unit_vectors);
+        let indices = [time_index];
+        let mut result = Array2::from_elem((n_targets, 1), true);
+        super::roll_sweep::sweep_chunks(&mut result, true, n_roll_samples, |cells| {
+            super::roll_sweep::prepare(self, ephemeris, &ras, &decs, Some(&indices), cells)
+        })?;
+        Ok(result.column(0).to_vec())
     }
 
     /// Evaluate constraint for the full target set at a single fixed roll angle.
@@ -1083,7 +1063,7 @@ pub trait ConstraintEvaluator: Send + Sync {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        _roll_deg: f64,
+        _roll_deg: EvaluationRoll,
     ) -> PyResult<Array2<bool>> {
         self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices)
     }
@@ -1092,9 +1072,9 @@ pub trait ConstraintEvaluator: Send + Sync {
     /// (i.e., no clear roll exists).  Used by `in_constraint_batch(target_rolls=None)`.
     ///
     /// Default: roll-independent evaluators bypass the sweep with a single
-    /// `in_constraint_batch` call; roll-dependent ones loop calling `in_constraint_batch_at_roll`
-    /// and AND-accumulate.  Combinators override this to hoist roll-independent children out
-    /// of the loop, and BrightStar overrides it to reuse its cached gnomonic projections.
+    /// `in_constraint_batch` call. Others prepare geometry in bounded chunks and
+    /// remove cleared cells after each roll. Combinators hoist independent
+    /// siblings; leaves may provide a specialized complete sweep.
     fn in_constraint_batch_constrained_at_every_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -1106,28 +1086,22 @@ pub trait ConstraintEvaluator: Send + Sync {
         if !self.is_roll_dependent() {
             return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices);
         }
-        let roll_step = 360.0 / n_roll_samples as f64;
-        let mut acc: Option<Array2<bool>> = None;
-        for step in 0..n_roll_samples {
-            if let Some(ref a) = acc {
-                if a.iter().all(|&b| !b) {
-                    break;
-                }
-            }
-            let roll_deg = step as f64 * roll_step;
-            let step_result = self.in_constraint_batch_at_roll(
+        let n_times = match time_indices {
+            Some(idx) => idx.len(),
+            None => ephemeris.get_times()?.len(),
+        };
+        let mut result = Array2::from_elem((target_ras.len(), n_times), true);
+        super::roll_sweep::sweep_chunks(&mut result, true, n_roll_samples, |cells| {
+            super::roll_sweep::prepare(
+                self,
                 ephemeris,
                 target_ras,
                 target_decs,
                 time_indices,
-                roll_deg,
-            )?;
-            match acc {
-                None => acc = Some(step_result),
-                Some(ref mut a) => a.zip_mut_with(&step_result, |x, &y| *x &= y),
-            }
-        }
-        Ok(acc.unwrap_or_else(|| Array2::from_elem((target_ras.len(), 0), false)))
+                cells,
+            )
+        })?;
+        Ok(result)
     }
 
     /// Get constraint name
@@ -1227,7 +1201,7 @@ pub fn sweep_rolls_with_attribution(
             target_ras,
             target_decs,
             time_indices,
-            Some(roll_deg),
+            Some(EvaluationRoll::Sweep(roll_deg)),
         )?;
 
         let (n_targets, n_times) = combined_step.dim();

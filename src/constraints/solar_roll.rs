@@ -1,3 +1,4 @@
+use super::core::EvaluationRoll;
 /// Solar roll constraint implementation.
 ///
 /// Violated when the spacecraft's actual roll deviates from the solar-optimal roll
@@ -168,6 +169,64 @@ impl SolarRollEvaluator {
 }
 
 impl ConstraintEvaluator for SolarRollEvaluator {
+    fn prepare_roll_sweep<'a>(
+        &'a self,
+        ephemeris: &'a dyn EphemerisBase,
+        target_ras: &'a [f64],
+        target_decs: &'a [f64],
+        time_indices: Option<&'a [usize]>,
+        cells: &[super::roll_sweep::RollCell],
+    ) -> PyResult<Option<super::roll_sweep::PreparedRollEvaluator<'a>>> {
+        if self.roll_deg.is_some() {
+            return Ok(None);
+        }
+        let sun = ephemeris.get_sun_positions()?;
+        let obs = ephemeris.get_gcrs_positions()?;
+        let n_times = time_indices.map_or(sun.nrows(), |idx| idx.len());
+        let sun_units: Vec<_> = (0..n_times)
+            .map(|j| {
+                let idx = time_indices.map_or(j, |indices| indices[j]);
+                let v = [
+                    sun[[idx, 0]] - obs[[idx, 0]],
+                    sun[[idx, 1]] - obs[[idx, 1]],
+                    sun[[idx, 2]] - obs[[idx, 2]],
+                ];
+                let n = norm3(v);
+                if n < NEAR_ZERO {
+                    [1.0, 0.0, 0.0]
+                } else {
+                    [v[0] / n, v[1] / n, v[2] / n]
+                }
+            })
+            .collect();
+        let targets: Vec<_> = target_ras
+            .iter()
+            .zip(target_decs)
+            .map(|(&ra, &dec)| radec_to_unit(ra, dec))
+            .collect();
+        let mut optimal = super::roll_sweep::PreparedGrid::new(n_times, cells, None);
+        for &(i, j) in cells {
+            if !roll_is_unconstrained(&targets[i], &sun_units[j], self.panel_normal) {
+                optimal[(i, j)] = Some(solar_optimal_roll_deg(
+                    &targets[i],
+                    &sun_units[j],
+                    self.panel_normal,
+                ));
+            }
+        }
+        Ok(Some(super::roll_sweep::PreparedRollEvaluator::new(
+            move |cells, roll| {
+                Ok(cells
+                    .iter()
+                    .map(|&(i, j)| {
+                        optimal[(i, j)]
+                            .is_some_and(|opt| circular_diff_deg(roll, opt) > self.tolerance_deg)
+                    })
+                    .collect())
+            },
+        )))
+    }
+
     fn evaluate(
         &self,
         ephemeris: &dyn EphemerisBase,
@@ -310,21 +369,21 @@ impl ConstraintEvaluator for SolarRollEvaluator {
         Ok(None)
     }
 
-    /// Hot path for coordinated roll sweep: evaluate at `roll_deg` without any
-    /// JSON round-trip.  Fixed-roll mode delegates to `in_constraint_batch` unchanged.
+    /// Evaluate a supplied roll without rebuilding the evaluator. Sweep candidates
+    /// preserve a configured roll; explicit fixed rolls override it.
     fn in_constraint_batch_at_roll(
         &self,
         ephemeris: &dyn EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
+        roll_deg: EvaluationRoll,
     ) -> PyResult<Array2<bool>> {
-        if self.roll_deg.is_some() {
-            // Fixed roll — in_constraint_batch already evaluates at self.roll_deg.
+        if self.roll_deg.is_some() && !roll_deg.is_fixed() {
+            // A sweep candidate leaves the configured roll in force.
             return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices);
         }
-        // Free roll: evaluate at the sweep-provided roll_deg.
+        // Evaluate the supplied sweep candidate or explicit override.
         let (times_filtered,) = extract_time_data!(ephemeris, time_indices);
         let n_targets = target_ras.len();
         let n_times = times_filtered.len();
@@ -352,7 +411,8 @@ impl ConstraintEvaluator for SolarRollEvaluator {
                     result[[j, i]] = false;
                 } else {
                     let opt = solar_optimal_roll_deg(&target, &sun_unit, self.panel_normal);
-                    result[[j, i]] = circular_diff_deg(roll_deg, opt) > self.tolerance_deg;
+                    result[[j, i]] =
+                        circular_diff_deg(roll_deg.degrees(), opt) > self.tolerance_deg;
                 }
             }
         }

@@ -1,7 +1,8 @@
 use super::roll_convention::coordinated_roll_ccw_deg;
 use crate::constraints::core::{
-    track_violations, BatchWithCauses, ConstraintEvaluator, ConstraintResult,
+    track_violations, BatchWithCauses, ConstraintEvaluator, ConstraintResult, EvaluationRoll,
 };
+use crate::constraints::diagonal::{self, DiagonalEvaluation};
 use crate::utils::vector_math::unit_vectors_to_radec_batch;
 use ndarray::Array2;
 use pyo3::PyResult;
@@ -121,7 +122,7 @@ impl BoresightOffsetEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
         params: RotationParams,
-        inner_roll: Option<f64>,
+        inner_roll: Option<EvaluationRoll>,
     ) -> PyResult<Array2<bool>> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -255,9 +256,8 @@ impl BoresightOffsetEvaluator {
     }
 
     /// Rotate targets for a diagonal evaluation (target_i paired with time_i),
-    /// returning the rotated RA/Dec to hand to the wrapped constraint. Shared by
-    /// `in_constraint_batch_diagonal` and `compute_named_booleans_diagonal`, which
-    /// differ only in which child method they then delegate to.
+    /// returning the rotated RA/Dec to hand to the wrapped constraint's fused
+    /// paired evaluation of masks, values, and attribution.
     ///
     /// Returns empty vectors for an empty input, so callers can short-circuit
     /// rather than calling the child with nothing to evaluate.
@@ -266,6 +266,7 @@ impl BoresightOffsetEvaluator {
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
+        time_indices: Option<&[usize]>,
     ) -> PyResult<(Vec<f64>, Vec<f64>)> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -273,6 +274,7 @@ impl BoresightOffsetEvaluator {
             ));
         }
 
+        let indices = diagonal::time_indices(ephemeris, target_ras, target_decs, time_indices)?;
         let n = target_ras.len();
         if n == 0 {
             return Ok((Vec::new(), Vec::new()));
@@ -288,7 +290,10 @@ impl BoresightOffsetEvaluator {
         } else {
             let sun_positions = ephemeris.get_sun_positions()?;
             let observer_positions = ephemeris.get_gcrs_positions()?;
-            if sun_positions.nrows() < n || observer_positions.nrows() < n {
+            if indices
+                .iter()
+                .any(|&i| i >= sun_positions.nrows() || i >= observer_positions.nrows())
+            {
                 return Err(pyo3::exceptions::PyValueError::new_err(
                     "Ephemeris does not have enough samples for diagonal boresight evaluation",
                 ));
@@ -304,9 +309,9 @@ impl BoresightOffsetEvaluator {
             let sun_rel = match &sun_observer {
                 None => [0.0, 0.0, 0.0],
                 Some((sun_positions, observer_positions)) => [
-                    sun_positions[[i, 0]] - observer_positions[[i, 0]],
-                    sun_positions[[i, 1]] - observer_positions[[i, 1]],
-                    sun_positions[[i, 2]] - observer_positions[[i, 2]],
+                    sun_positions[[indices[i], 0]] - observer_positions[[indices[i], 0]],
+                    sun_positions[[indices[i], 1]] - observer_positions[[indices[i], 1]],
+                    sun_positions[[indices[i], 2]] - observer_positions[[indices[i], 2]],
                 ],
             };
             let rotated =
@@ -319,19 +324,24 @@ impl BoresightOffsetEvaluator {
         Ok((rotated_ras, rotated_decs))
     }
 
-    /// Split a swept candidate spacecraft roll into the two independent places it
+    /// Split a supplied spacecraft roll into the two independent places it
     /// applies: this node's own boresight rotation (only when its own roll is free)
     /// and the roll forwarded to a roll-dependent inner constraint, so a coordinated
     /// sweep stays coordinated through the offset wrapper. Shared by
     /// `in_constraint_batch_at_roll` and `in_constraint_batch_with_causes`.
-    fn candidate_roll_dispatch(&self, roll_deg: f64) -> (RotationParams, Option<f64>) {
-        let params = if self.own_roll_is_free() {
-            self.rotation_params_at_candidate_roll(roll_deg)
+    /// Explicit fixed rolls always compose this node's mounting angle and propagate
+    /// to the child, including children with a configured roll.
+    fn candidate_roll_dispatch(
+        &self,
+        roll: EvaluationRoll,
+    ) -> (RotationParams, Option<EvaluationRoll>) {
+        let params = if roll.is_fixed() || self.own_roll_is_free() {
+            self.rotation_params_at_candidate_roll(roll.degrees())
         } else {
             self.rotation_params()
         };
-        let inner_roll = if self.constraint.is_roll_dependent() {
-            Some(roll_deg)
+        let inner_roll = if roll.is_fixed() || self.constraint.is_roll_dependent() {
+            Some(roll)
         } else {
             None
         };
@@ -446,6 +456,18 @@ impl BoresightOffsetEvaluator {
 }
 
 impl ConstraintEvaluator for BoresightOffsetEvaluator {
+    fn evaluate_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+    ) -> PyResult<DiagonalEvaluation> {
+        let (ras, decs) = self.rotated_diagonal_radec(ephemeris, ras, decs, indices)?;
+        self.constraint
+            .evaluate_diagonal(ephemeris, &ras, &decs, indices)
+    }
+
     fn evaluate(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -577,7 +599,7 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
+        roll_deg: EvaluationRoll,
     ) -> PyResult<Array2<bool>> {
         let (params, inner_roll) = self.candidate_roll_dispatch(roll_deg);
         self.in_constraint_batch_with(
@@ -588,22 +610,6 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
             params,
             inner_roll,
         )
-    }
-
-    fn in_constraint_batch_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<Vec<bool>> {
-        let (rotated_ras, rotated_decs) =
-            self.rotated_diagonal_radec(ephemeris, target_ras, target_decs)?;
-        if rotated_ras.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        self.constraint
-            .in_constraint_batch_diagonal(ephemeris, &rotated_ras, &rotated_decs)
     }
 
     fn in_constraint_batch_unit_vectors(
@@ -926,7 +932,21 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<HashMap<String, Array2<f64>>> {
-        let params = self.rotation_params();
+        self.compute_named_values_at_roll(ephemeris, target_ras, target_decs, time_indices, None)
+    }
+
+    fn compute_named_values_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        target_roll: Option<f64>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        let params = target_roll.map_or_else(
+            || self.rotation_params(),
+            |roll| self.rotation_params_at_candidate_roll(roll),
+        );
         let n_targets = target_ras.len();
         let target_units: Vec<[f64; 3]> = target_ras
             .iter()
@@ -950,11 +970,12 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
                 rotated_units[[i, 2]] = rotated[2];
             }
             let (rotated_ras, rotated_decs) = unit_vectors_to_radec_batch(&rotated_units);
-            return self.constraint.compute_named_values(
+            return self.constraint.compute_named_values_at_roll(
                 ephemeris,
                 &rotated_ras,
                 &rotated_decs,
                 time_indices,
+                target_roll,
             );
         }
 
@@ -990,11 +1011,12 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
             }
 
             let (rotated_ras, rotated_decs) = unit_vectors_to_radec_batch(&rotated_units);
-            let column_values = self.constraint.compute_named_values(
+            let column_values = self.constraint.compute_named_values_at_roll(
                 ephemeris,
                 &rotated_ras,
                 &rotated_decs,
                 Some(&[time_idx]),
+                target_roll,
             )?;
 
             for (key, arr) in column_values {
@@ -1035,7 +1057,7 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: Option<f64>,
+        roll_deg: Option<EvaluationRoll>,
     ) -> PyResult<BatchWithCauses> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1135,25 +1157,6 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         Ok(BatchWithCauses { violated, named })
     }
 
-    /// Diagonal variant of the cause attribution for moving-body evaluation:
-    /// target_i paired with time_i. Mirrors `in_constraint_batch_diagonal`'s
-    /// rotation logic above, delegating to the child's own diagonal attribution.
-    fn compute_named_booleans_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<HashMap<String, Vec<bool>>> {
-        let (rotated_ras, rotated_decs) =
-            self.rotated_diagonal_radec(ephemeris, target_ras, target_decs)?;
-        if rotated_ras.is_empty() {
-            return Ok(HashMap::new());
-        }
-
-        self.constraint
-            .compute_named_booleans_diagonal(ephemeris, &rotated_ras, &rotated_decs)
-    }
-
     /// Maps this wrapper's (pass-through) cause tag(s) to their `constraint_values`
     /// key(s), mirroring `in_constraint_batch_with_causes`' unprefixed passthrough so a
     /// wrapped leaf's cause tag (e.g. `sun`) — not `boresight_offset` — is what
@@ -1218,11 +1221,18 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
     }
 
     fn name(&self) -> String {
+        self.name_at_roll(None)
+    }
+
+    fn name_at_roll(&self, target_roll: Option<f64>) -> String {
+        let roll = target_roll.map_or(self.roll_deg.unwrap_or(0.0), |r| {
+            coordinated_roll_ccw_deg(self.roll_deg.unwrap_or(0.0), self.roll_clockwise, r)
+        });
         format!(
             "BoresightOffset({}, roll={:.3}°, roll_clockwise={}, roll_reference={}, pitch={:.3}°, yaw={:.3}°)",
-            self.constraint.name(),
-            self.roll_deg.unwrap_or(0.0),
-            self.roll_clockwise,
+            self.constraint.name_at_roll(target_roll),
+            roll,
+            target_roll.is_none() && self.roll_clockwise,
             match self.roll_reference {
                 RollReference::Sun => "sun",
                 RollReference::North => "north",

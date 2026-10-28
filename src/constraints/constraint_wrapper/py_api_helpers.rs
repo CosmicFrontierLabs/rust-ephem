@@ -1,5 +1,6 @@
 use crate::constraints::core::{
     sweep_rolls_with_attribution, track_violations, ConstraintEvaluator, ConstraintResult,
+    EvaluationRoll,
 };
 use crate::ephemeris::ephemeris_common::EphemerisBase;
 use crate::ephemeris::FileEphemeris;
@@ -8,14 +9,22 @@ use crate::ephemeris::OEMEphemeris;
 use crate::ephemeris::ParquetEphemeris;
 use crate::ephemeris::SPICEEphemeris;
 use crate::ephemeris::TLEEphemeris;
+use chrono::{DateTime, Utc};
 use pyo3::prelude::*;
 use std::collections::HashMap;
 
 use super::PyConstraint;
-use crate::constraints::constraint_wrapper::json_parser::parse_constraint_json;
-use crate::constraints::constraint_wrapper::roll_convention::coordinated_roll_ccw_deg;
 
 impl PyConstraint {
+    pub(super) fn parse_datetime_input(times: &Bound<PyAny>) -> PyResult<Vec<DateTime<Utc>>> {
+        let parse = crate::utils::time_utils::python_datetime_to_utc;
+        if let Ok(iter) = pyo3::types::PyIterator::from_object(times) {
+            iter.map(|item| parse(&item?)).collect()
+        } else {
+            Ok(vec![parse(times)?])
+        }
+    }
+
     pub(super) fn resolve_time_indices(
         &self,
         bound: &Bound<'_, PyAny>,
@@ -36,16 +45,27 @@ impl PyConstraint {
         }
     }
 
+    pub(super) fn validate_target_roll(roll: f64) -> PyResult<()> {
+        if !roll.is_finite() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_roll must be a finite number",
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn build_roll_groups(
         rolls: &[f64],
-    ) -> std::collections::BTreeMap<String, Vec<usize>> {
-        let mut roll_map: std::collections::BTreeMap<String, Vec<usize>> =
-            std::collections::BTreeMap::new();
-        for (idx, roll) in rolls.iter().enumerate() {
-            let key = format!("{}", roll);
-            roll_map.entry(key).or_default().push(idx);
+    ) -> PyResult<std::collections::BTreeMap<u64, Vec<usize>>> {
+        let mut groups = std::collections::BTreeMap::new();
+        for (idx, &roll) in rolls.iter().enumerate() {
+            Self::validate_target_roll(roll)?;
+            groups
+                .entry(roll.to_bits())
+                .or_insert_with(Vec::new)
+                .push(idx);
         }
-        roll_map
+        Ok(groups)
     }
 
     pub(super) fn extract_group_targets(
@@ -57,30 +77,6 @@ impl PyConstraint {
             indices.iter().map(|&i| target_ras[i]).collect(),
             indices.iter().map(|&i| target_decs[i]).collect(),
         )
-    }
-
-    pub(super) fn reassemble_grouped_batch_results(
-        n_targets: usize,
-        n_times: usize,
-        all_groups: Vec<(Vec<usize>, ndarray::Array2<bool>)>,
-    ) -> PyResult<ndarray::Array2<bool>> {
-        let mut final_results: Vec<Vec<bool>> = vec![vec![false; n_times]; n_targets];
-
-        for (group_indices, group_array) in all_groups {
-            for (row_in_group, &orig_idx) in group_indices.iter().enumerate() {
-                for col in 0..n_times {
-                    final_results[orig_idx][col] = group_array[[row_in_group, col]];
-                }
-            }
-        }
-
-        ndarray::Array2::from_shape_vec(
-            (n_targets, n_times),
-            final_results.into_iter().flatten().collect(),
-        )
-        .map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Failed to create array: {}", e))
-        })
     }
 
     pub(super) fn with_ephemeris<T, F>(&self, bound: &Bound<'_, PyAny>, mut f: F) -> PyResult<T>
@@ -109,86 +105,6 @@ impl PyConstraint {
         Err(pyo3::exceptions::PyTypeError::new_err(
             "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris",
         ))
-    }
-
-    /// Recursively compose a coordinated spacecraft-frame roll into every
-    /// `boresight_offset` node of the tree, inject it into every `solar_roll`
-    /// node and every polygon-FoV `bright_star`/`body` node, descending
-    /// through `and`/`or`/`xor`/`at_least`/`not` combinators to reach nodes at
-    /// any depth.
-    ///
-    /// Mirrors `RustConstraintMixin._to_rust_constraint`'s `apply_eval_roll` on
-    /// the Python side (`rust_ephem/constraints.py`) — that function walks the
-    /// same combinator shapes for the same reason: `target_roll_deg` is one
-    /// coordinated roll shared unchanged by every roll-dependent node in the
-    /// tree, so composing it only at the root (as this function used to)
-    /// leaves every such node buried under a combinator with no roll applied
-    /// at all. A root-only check cannot see those nodes: an `or` of a
-    /// `roll_clockwise=false` leg and a `roll_clockwise=true` leg has type
-    /// `"or"`, not `"boresight_offset"`; a polygon `bright_star` under a `not`
-    /// has type `"not"`, not `"bright_star"`.
-    ///
-    /// Each `boresight_offset` node's own mounting angle is converted through
-    /// its own `roll_clockwise` via `coordinated_roll_ccw_deg`, then the result
-    /// is written back with `roll_clockwise: false` (the composed value is
-    /// already in the physical CCW convention). Descends into that node's
-    /// inner `constraint` afterward, matching the Python side, in case it
-    /// contains further roll-dependent nodes.
-    ///
-    /// `bright_star`/`body` nodes rotate their own polygon FoV directly by
-    /// `roll_deg` — there is no separate mounting angle to compose, so
-    /// `target_roll_deg` simply overwrites `roll_deg` (only when a
-    /// non-null `fov_polygon` is present; a circular FoV or a plain
-    /// `body` proximity check ignores roll and is left untouched, same as
-    /// any other roll-independent leaf).
-    pub(super) fn apply_target_roll(config: &mut serde_json::Value, target_roll_deg: f64) {
-        let Some(obj) = config.as_object_mut() else {
-            return;
-        };
-        let node_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
-
-        match node_type {
-            "boresight_offset" => {
-                let base_roll_deg = obj.get("roll_deg").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let base_clockwise = obj
-                    .get("roll_clockwise")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                let total_ccw =
-                    coordinated_roll_ccw_deg(base_roll_deg, base_clockwise, target_roll_deg);
-                obj.insert("roll_deg".to_string(), serde_json::json!(total_ccw));
-                obj.insert("roll_clockwise".to_string(), serde_json::json!(false));
-
-                if let Some(inner) = obj.get_mut("constraint") {
-                    Self::apply_target_roll(inner, target_roll_deg);
-                }
-            }
-            "solar_roll" => {
-                obj.insert("roll_deg".to_string(), serde_json::json!(target_roll_deg));
-            }
-            "bright_star" | "body" => {
-                let has_polygon = obj
-                    .get("fov_polygon")
-                    .map(|v| !v.is_null())
-                    .unwrap_or(false);
-                if has_polygon {
-                    obj.insert("roll_deg".to_string(), serde_json::json!(target_roll_deg));
-                }
-            }
-            "and" | "or" | "xor" | "at_least" => {
-                if let Some(children) = obj.get_mut("constraints").and_then(|v| v.as_array_mut()) {
-                    for child in children {
-                        Self::apply_target_roll(child, target_roll_deg);
-                    }
-                }
-            }
-            "not" => {
-                if let Some(inner) = obj.get_mut("constraint") {
-                    Self::apply_target_roll(inner, target_roll_deg);
-                }
-            }
-            _ => {}
-        }
     }
 
     /// Reject a zero roll-sample count before it reaches a sweep loop, where it
@@ -232,44 +148,9 @@ impl PyConstraint {
         evaluator.compute_cause_value_keys(ephemeris, &[0.0], &[0.0], Some(&[0]))
     }
 
-    pub(super) fn with_effective_evaluator<T, F>(
-        &self,
-        target_roll: Option<f64>,
-        f: F,
-    ) -> PyResult<T>
-    where
-        F: FnOnce(&dyn ConstraintEvaluator) -> PyResult<T>,
-    {
-        let Some(target_roll_deg) = target_roll else {
-            return f(&*self.evaluator);
-        };
-
-        if !target_roll_deg.is_finite() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_roll must be a finite number",
-            ));
-        }
-
-        let mut config: serde_json::Value = serde_json::from_str(&self.config_json)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-
-        // Compose target_roll_deg into every roll-dependent node in the tree
-        // (boresight_offset, solar_roll, polygon-FoV bright_star/body), however
-        // deeply nested under and/or/xor/at_least/not combinators. A tree whose
-        // root is a combinator (e.g. an `or` of a roll_clockwise=false leg and a
-        // roll_clockwise=true leg, or a polygon bright_star under a `not`) has no
-        // roll-bearing node at the root, so this must recurse rather than dispatch
-        // on the root type alone — see `apply_target_roll`. Trees with nothing
-        // roll-dependent anywhere are left unchanged, exactly as if
-        // target_roll_deg had never been supplied.
-        Self::apply_target_roll(&mut config, target_roll_deg);
-
-        let evaluator = parse_constraint_json(&config)?;
-        f(&*evaluator)
-    }
-
     /// Internal helper to evaluate against any Ephemeris implementing EphemerisBase
     #[allow(deprecated)]
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn eval_with_ephemeris(
         &self,
         evaluator: &dyn ConstraintEvaluator,
@@ -278,6 +159,7 @@ impl PyConstraint {
         target_dec: f64,
         time_indices: Option<Vec<usize>>,
         n_roll_samples: usize,
+        target_roll: Option<f64>,
     ) -> PyResult<ConstraintResult> {
         // PERFORMANCE OPTIMIZATION: Use fast batch path internally
         // Instead of the slow evaluate() that tracks violations step-by-step,
@@ -288,14 +170,24 @@ impl PyConstraint {
         // reported cause always describes an orientation consistent with the
         // visibility it explains.  A no-op single evaluation when the tree isn't
         // roll-dependent.
-        let swept = sweep_rolls_with_attribution(
-            evaluator,
-            ephemeris,
-            &[target_ra],
-            &[target_dec],
-            time_indices.as_deref(),
-            n_roll_samples,
-        )?;
+        let swept = if let Some(roll) = target_roll {
+            evaluator.in_constraint_batch_with_causes(
+                ephemeris,
+                &[target_ra],
+                &[target_dec],
+                time_indices.as_deref(),
+                Some(EvaluationRoll::Fixed(roll)),
+            )?
+        } else {
+            sweep_rolls_with_attribution(
+                evaluator,
+                ephemeris,
+                &[target_ra],
+                &[target_dec],
+                time_indices.as_deref(),
+                n_roll_samples,
+            )?
+        };
         let violation_array = swept.violated;
 
         // Get the times we evaluated
@@ -316,17 +208,18 @@ impl PyConstraint {
         let violations = track_violations(
             &times,
             |i| (violated[i], if violated[i] { 1.0 } else { 0.0 }),
-            |_i, _is_open| evaluator.name(),
+            |_i, _is_open| evaluator.name_at_roll(target_roll),
         );
 
         let all_satisfied = violations.is_empty();
 
         // Compute named continuous values once (not swept across roll angles).
-        let values_map = evaluator.compute_named_values(
+        let values_map = evaluator.compute_named_values_at_roll(
             ephemeris,
             &[target_ra],
             &[target_dec],
             time_indices.as_deref(),
+            target_roll,
         )?;
         let values = Self::extract_target_row(&values_map, 0);
 
@@ -336,14 +229,18 @@ impl PyConstraint {
         let component_violated = Self::extract_target_row(&swept.named, 0);
         let cause_value_keys = Self::cause_value_keys_for(evaluator, ephemeris)?;
 
-        Ok(
-            ConstraintResult::new(violations, all_satisfied, evaluator.name(), times)
-                .with_constraint_values(values)
-                .with_component_violated(component_violated)
-                .with_cause_value_keys(cause_value_keys),
+        Ok(ConstraintResult::new(
+            violations,
+            all_satisfied,
+            evaluator.name_at_roll(target_roll),
+            times,
         )
+        .with_constraint_values(values)
+        .with_component_violated(component_violated)
+        .with_cause_value_keys(cause_value_keys))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn eval_batch_with_ephemeris(
         &self,
         evaluator: &dyn ConstraintEvaluator,
@@ -352,17 +249,28 @@ impl PyConstraint {
         target_decs: &[f64],
         time_indices: Option<Vec<usize>>,
         n_roll_samples: usize,
+        target_roll: Option<f64>,
     ) -> PyResult<Vec<ConstraintResult>> {
         // See `eval_with_ephemeris`: one coordinated sweep produces both the
         // violation array and the cause masks consistent with it.
-        let swept = sweep_rolls_with_attribution(
-            evaluator,
-            ephemeris,
-            target_ras,
-            target_decs,
-            time_indices.as_deref(),
-            n_roll_samples,
-        )?;
+        let swept = if let Some(roll) = target_roll {
+            evaluator.in_constraint_batch_with_causes(
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices.as_deref(),
+                Some(EvaluationRoll::Fixed(roll)),
+            )?
+        } else {
+            sweep_rolls_with_attribution(
+                evaluator,
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices.as_deref(),
+                n_roll_samples,
+            )?
+        };
         let violation_array = swept.violated;
 
         let all_times = ephemeris.get_times()?;
@@ -373,11 +281,12 @@ impl PyConstraint {
         };
 
         // Compute named continuous values once for all targets (not swept across roll angles).
-        let values_map = evaluator.compute_named_values(
+        let values_map = evaluator.compute_named_values_at_roll(
             ephemeris,
             target_ras,
             target_decs,
             time_indices.as_deref(),
+            target_roll,
         )?;
 
         // Shared across all targets: the mapping depends only on the evaluator's
@@ -393,83 +302,25 @@ impl PyConstraint {
             let violations = track_violations(
                 &times,
                 |i| (violated[i], if violated[i] { 1.0 } else { 0.0 }),
-                |_i, _is_open| evaluator.name(),
+                |_i, _is_open| evaluator.name_at_roll(target_roll),
             );
 
             let all_satisfied = violations.is_empty();
             let values = Self::extract_target_row(&values_map, target_index);
             let component_violated = Self::extract_target_row(&swept.named, target_index);
             results.push(
-                ConstraintResult::new(violations, all_satisfied, evaluator.name(), times.clone())
-                    .with_constraint_values(values)
-                    .with_component_violated(component_violated)
-                    .with_cause_value_keys(cause_value_keys.clone()),
+                ConstraintResult::new(
+                    violations,
+                    all_satisfied,
+                    evaluator.name_at_roll(target_roll),
+                    times.clone(),
+                )
+                .with_constraint_values(values)
+                .with_component_violated(component_violated)
+                .with_cause_value_keys(cause_value_keys.clone()),
             );
         }
 
         Ok(results)
-    }
-
-    /// Vectorized evaluation for moving bodies - evaluates all targets at their corresponding times
-    ///
-    /// For N targets at N times, this calls in_constraint_batch once with all N targets
-    /// Uses the efficient diagonal batch evaluation for moving bodies.
-    /// Each target_i is evaluated only at time_i, which is O(N) instead of O(N²).
-    pub(super) fn eval_moving_body_batch_diagonal(
-        &self,
-        py: Python,
-        ephemeris: &Py<PyAny>,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<Vec<bool>> {
-        let n = target_ras.len();
-        if n == 0 {
-            return Ok(Vec::new());
-        }
-
-        let bound = ephemeris.bind(py);
-
-        // Use the efficient diagonal batch evaluation
-        if let Ok(ephem) = bound.extract::<PyRef<TLEEphemeris>>() {
-            self.evaluator.in_constraint_batch_diagonal(
-                &*ephem as &dyn EphemerisBase,
-                target_ras,
-                target_decs,
-            )
-        } else if let Ok(ephem) = bound.extract::<PyRef<SPICEEphemeris>>() {
-            self.evaluator.in_constraint_batch_diagonal(
-                &*ephem as &dyn EphemerisBase,
-                target_ras,
-                target_decs,
-            )
-        } else if let Ok(ephem) = bound.extract::<PyRef<GroundEphemeris>>() {
-            self.evaluator.in_constraint_batch_diagonal(
-                &*ephem as &dyn EphemerisBase,
-                target_ras,
-                target_decs,
-            )
-        } else if let Ok(ephem) = bound.extract::<PyRef<OEMEphemeris>>() {
-            self.evaluator.in_constraint_batch_diagonal(
-                &*ephem as &dyn EphemerisBase,
-                target_ras,
-                target_decs,
-            )
-        } else if let Ok(ephem) = bound.extract::<PyRef<FileEphemeris>>() {
-            self.evaluator.in_constraint_batch_diagonal(
-                &*ephem as &dyn EphemerisBase,
-                target_ras,
-                target_decs,
-            )
-        } else if let Ok(ephem) = bound.extract::<PyRef<ParquetEphemeris>>() {
-            self.evaluator.in_constraint_batch_diagonal(
-                &*ephem as &dyn EphemerisBase,
-                target_ras,
-                target_decs,
-            )
-        } else {
-            Err(pyo3::exceptions::PyTypeError::new_err(
-                "Unsupported ephemeris type. Expected TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris",
-            ))
-        }
     }
 }

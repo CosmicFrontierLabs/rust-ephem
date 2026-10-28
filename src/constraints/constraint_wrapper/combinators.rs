@@ -1,12 +1,184 @@
 // Logical combinator evaluators
 use crate::constraints::core::{
     track_violations, value_key_prefix, BatchWithCauses, ConstraintEvaluator, ConstraintResult,
-    ConstraintViolation,
+    ConstraintViolation, EvaluationRoll,
 };
+use crate::constraints::diagonal::{self, DiagonalEvaluation};
+use crate::constraints::roll_sweep::{self, PreparedRollEvaluator, RollCell};
 use crate::utils::vector_math::unit_vectors_to_radec_batch;
 use ndarray::Array2;
 use pyo3::PyResult;
 use std::collections::HashMap;
+
+/// Share numbering across Cartesian values, attribution, and paired results.
+/// Children without named values do not consume a suffix.
+fn next_value_prefix(
+    counts: &mut HashMap<String, usize>,
+    name: &str,
+    has_values: bool,
+) -> Option<String> {
+    if !has_values {
+        return None;
+    }
+    let tag = value_key_prefix(name);
+    let count = counts.entry(tag.clone()).or_default();
+    *count += 1;
+    Some(if *count == 1 {
+        tag
+    } else {
+        format!("{tag}_{count}")
+    })
+}
+
+/// Merge values and cause namespaces with the same collision rules as the
+/// Cartesian API, but obtain every child's data in a single paired traversal.
+fn evaluate_children_diagonal(
+    children: &[Box<dyn ConstraintEvaluator>],
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    ras: &[f64],
+    decs: &[f64],
+    indices: Option<&[usize]>,
+    accept: impl Fn(usize) -> bool,
+) -> PyResult<DiagonalEvaluation> {
+    diagonal::time_indices(ephemeris, ras, decs, indices)?;
+    let mut counts = vec![0; ras.len()];
+    let mut values = HashMap::new();
+    let mut named = HashMap::new();
+    let mut cause_value_keys = HashMap::new();
+    let mut value_tag_counts: HashMap<String, usize> = HashMap::new();
+    for child in children {
+        let result = child.evaluate_diagonal(ephemeris, ras, decs, indices)?;
+        for (count, violated) in counts.iter_mut().zip(result.violated) {
+            *count += usize::from(violated);
+        }
+        let prefix = next_value_prefix(
+            &mut value_tag_counts,
+            &child.name(),
+            !result.values.is_empty(),
+        );
+        for (key, array) in result.values {
+            let key = prefix
+                .as_ref()
+                .map_or_else(|| key.clone(), |prefix| format!("{prefix}.{key}"));
+            values.insert(key, array);
+        }
+        for (key, array) in sorted_entries(result.named) {
+            insert_no_collision(&mut named, key, array);
+        }
+        for (tag, keys) in sorted_entries(result.cause_value_keys) {
+            let keys = keys
+                .into_iter()
+                .map(|key| {
+                    prefix
+                        .as_ref()
+                        .map_or_else(|| key.clone(), |prefix| format!("{prefix}.{key}"))
+                })
+                .collect();
+            insert_no_collision(&mut cause_value_keys, tag, keys);
+        }
+    }
+    Ok(DiagonalEvaluation {
+        violated: counts.into_iter().map(accept).collect(),
+        named,
+        values,
+        cause_value_keys,
+    })
+}
+
+fn prepare_children<'a>(
+    children: &'a [Box<dyn ConstraintEvaluator>],
+    ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    ras: &'a [f64],
+    decs: &'a [f64],
+    time_indices: Option<&'a [usize]>,
+    cells: &[RollCell],
+    accept: impl Fn(usize) -> bool + 'a,
+) -> PyResult<PreparedRollEvaluator<'a>> {
+    let prepared: Vec<_> = children
+        .iter()
+        .map(|child| roll_sweep::prepare(&**child, ephemeris, ras, decs, time_indices, cells))
+        .collect::<PyResult<_>>()?;
+    Ok(PreparedRollEvaluator::new(move |cells, roll| {
+        let mut counts = vec![0; cells.len()];
+        for child in &prepared {
+            for (count, violated) in counts.iter_mut().zip(child.evaluate(cells, roll)?) {
+                *count += usize::from(violated);
+            }
+        }
+        Ok(counts.into_iter().map(&accept).collect())
+    }))
+}
+
+/// Hoist independent siblings, then sweep only cells whose answer still depends
+/// on roll. A single dependent child can use its own optimized complete sweep.
+fn sweep_combination(
+    children: &[Box<dyn ConstraintEvaluator>],
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    ras: &[f64],
+    decs: &[f64],
+    time_indices: Option<&[usize]>,
+    n_roll_samples: usize,
+    is_and: bool,
+) -> PyResult<Array2<bool>> {
+    let n_times = batch_n_times(ephemeris, time_indices)?;
+    let mut independent = Array2::from_elem((ras.len(), n_times), is_and);
+    let mut dependent = Vec::new();
+    for child in children {
+        if child.is_roll_dependent() {
+            dependent.push(&**child);
+        } else {
+            let mask = child.in_constraint_batch(ephemeris, ras, decs, time_indices)?;
+            independent.zip_mut_with(&mask, |v, &b| {
+                *v = if is_and { *v && b } else { *v || b };
+            });
+        }
+    }
+    if dependent.is_empty() {
+        return Ok(independent);
+    }
+    if !independent.iter().any(|&v| v == is_and) {
+        return Ok(independent);
+    }
+    if dependent.len() == 1 {
+        let rows: Vec<_> = (0..ras.len())
+            .filter(|&i| independent.row(i).iter().any(|&v| v == is_and))
+            .collect();
+        let subset_ras: Vec<_> = rows.iter().map(|&i| ras[i]).collect();
+        let subset_decs: Vec<_> = rows.iter().map(|&i| decs[i]).collect();
+        let mask = dependent[0].in_constraint_batch_constrained_at_every_roll(
+            ephemeris,
+            &subset_ras,
+            &subset_decs,
+            time_indices,
+            n_roll_samples,
+        )?;
+        for (local, &i) in rows.iter().enumerate() {
+            independent
+                .row_mut(i)
+                .zip_mut_with(&mask.row(local), |v, &b| {
+                    *v = if is_and { *v && b } else { *v || b }
+                });
+        }
+        return Ok(independent);
+    }
+    let mut result = independent;
+    roll_sweep::sweep_chunks(&mut result, is_and, n_roll_samples, |cells| {
+        let prepared: Vec<_> = dependent
+            .iter()
+            .map(|child| roll_sweep::prepare(*child, ephemeris, ras, decs, time_indices, cells))
+            .collect::<PyResult<_>>()?;
+        Ok(PreparedRollEvaluator::new(move |cells, roll| {
+            let mut result = vec![is_and; cells.len()];
+            for child in &prepared {
+                for (v, b) in result.iter_mut().zip(child.evaluate(cells, roll)?) {
+                    *v = if is_and { *v && b } else { *v || b };
+                }
+            }
+            Ok(result)
+        }))
+    })?;
+    Ok(result)
+}
 
 /// Merge named-value maps from a set of child evaluators, namespacing each child's
 /// keys under a short type tag (e.g. `sun.sun_angle_deg`) so composite constraints
@@ -19,25 +191,24 @@ fn merge_children_named_values(
     target_ras: &[f64],
     target_decs: &[f64],
     time_indices: Option<&[usize]>,
+    target_roll: Option<f64>,
 ) -> PyResult<HashMap<String, Array2<f64>>> {
     let mut merged = HashMap::new();
     let mut tag_counts: HashMap<String, usize> = HashMap::new();
 
     for child in children {
-        let child_values =
-            child.compute_named_values(ephemeris, target_ras, target_decs, time_indices)?;
+        let child_values = child.compute_named_values_at_roll(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            target_roll,
+        )?;
         if child_values.is_empty() {
             continue;
         }
 
-        let base_tag = value_key_prefix(&child.name());
-        let count = tag_counts.entry(base_tag.clone()).or_insert(0);
-        *count += 1;
-        let prefix = if *count == 1 {
-            base_tag
-        } else {
-            format!("{base_tag}_{count}")
-        };
+        let prefix = next_value_prefix(&mut tag_counts, &child.name(), true).unwrap();
 
         for (key, arr) in child_values {
             merged.insert(format!("{prefix}.{key}"), arr);
@@ -106,7 +277,7 @@ fn eval_children_with_causes(
     target_ras: &[f64],
     target_decs: &[f64],
     time_indices: Option<&[usize]>,
-    roll_deg: Option<f64>,
+    roll_deg: Option<EvaluationRoll>,
 ) -> PyResult<ChildrenWithCauses> {
     let mut combined = Vec::with_capacity(children.len());
     let mut merged = HashMap::new();
@@ -172,7 +343,7 @@ fn combinator_batch_with_causes(
     target_ras: &[f64],
     target_decs: &[f64],
     time_indices: Option<&[usize]>,
-    roll_deg: Option<f64>,
+    roll_deg: Option<EvaluationRoll>,
     fold: impl FnOnce(Vec<Array2<bool>>, usize, usize) -> Array2<bool>,
 ) -> PyResult<BatchWithCauses> {
     if target_ras.len() != target_decs.len() {
@@ -195,28 +366,6 @@ fn combinator_batch_with_causes(
         violated: fold(children_violated, n_targets, n_times),
         named,
     })
-}
-
-/// Diagonal variant of `eval_children_with_causes`' merge for moving-body evaluation,
-/// merging each child's `compute_named_booleans_diagonal` (target_i paired with
-/// time_i) instead of the full M×N batch.
-fn merge_children_named_booleans_diagonal(
-    children: &[Box<dyn ConstraintEvaluator>],
-    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-    target_ras: &[f64],
-    target_decs: &[f64],
-) -> PyResult<HashMap<String, Vec<bool>>> {
-    let mut merged = HashMap::new();
-
-    for child in children {
-        let child_booleans =
-            child.compute_named_booleans_diagonal(ephemeris, target_ras, target_decs)?;
-        for (key, arr) in sorted_entries(child_booleans) {
-            insert_no_collision(&mut merged, key, arr);
-        }
-    }
-
-    Ok(merged)
 }
 
 /// Merge per-leaf cause-tag → `constraint_values`-key mapping from a set of child
@@ -250,18 +399,7 @@ fn merge_children_cause_value_keys(
         // skip — but its cause tag(s) must still surface, just with an empty
         // value-key list, so `cause_value_keys` never silently drops a tag.
         let has_any_values = child_map.values().any(|v| !v.is_empty());
-        let value_prefix = if has_any_values {
-            let base_tag = value_key_prefix(&child.name());
-            let count = value_tag_counts.entry(base_tag.clone()).or_insert(0);
-            *count += 1;
-            Some(if *count == 1 {
-                base_tag
-            } else {
-                format!("{base_tag}_{count}")
-            })
-        } else {
-            None
-        };
+        let value_prefix = next_value_prefix(&mut value_tag_counts, &child.name(), has_any_values);
 
         for (cause_tag, value_key_names) in sorted_entries(child_map) {
             let prefixed_value_keys: Vec<String> = match &value_prefix {
@@ -344,6 +482,38 @@ pub(super) struct AndEvaluator {
 }
 
 impl ConstraintEvaluator for AndEvaluator {
+    fn evaluate_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+    ) -> PyResult<DiagonalEvaluation> {
+        evaluate_children_diagonal(&self.constraints, ephemeris, ras, decs, indices, |count| {
+            count == self.constraints.len()
+        })
+    }
+
+    fn prepare_roll_sweep<'a>(
+        &'a self,
+        ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &'a [f64],
+        target_decs: &'a [f64],
+        time_indices: Option<&'a [usize]>,
+        cells: &[RollCell],
+    ) -> PyResult<Option<PreparedRollEvaluator<'a>>> {
+        let n_children = self.constraints.len();
+        Ok(Some(prepare_children(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            cells,
+            move |count| count == n_children,
+        )?))
+    }
+
     fn evaluate(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -520,43 +690,13 @@ impl ConstraintEvaluator for AndEvaluator {
         Ok(Some(result))
     }
 
-    /// Optimized diagonal evaluation for AND - uses O(N) diagonal from each sub-constraint
-    fn in_constraint_batch_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<Vec<bool>> {
-        let n = target_ras.len();
-        if n == 0 {
-            return Ok(Vec::new());
-        }
-
-        // Get diagonal results from each sub-constraint
-        let sub_results: Result<Vec<_>, _> = self
-            .constraints
-            .iter()
-            .map(|c| c.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs))
-            .collect();
-        let sub_results = sub_results?;
-
-        // AND logic: violated if ALL sub-constraints are violated at each time
-        let mut result = Vec::with_capacity(n);
-        for i in 0..n {
-            let all_violated = sub_results.iter().all(|r| r[i]);
-            result.push(all_violated);
-        }
-
-        Ok(result)
-    }
-
     fn in_constraint_batch_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
+        roll_deg: EvaluationRoll,
     ) -> pyo3::PyResult<Array2<bool>> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -608,85 +748,15 @@ impl ConstraintEvaluator for AndEvaluator {
         time_indices: Option<&[usize]>,
         n_roll_samples: usize,
     ) -> PyResult<Array2<bool>> {
-        if !self.is_roll_dependent() {
-            return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices);
-        }
-
-        let n_times = match time_indices {
-            Some(idx) => idx.len(),
-            None => ephemeris.get_times()?.len(),
-        };
-        let n_targets = target_ras.len();
-
-        let (indep_children, dep_children): (Vec<_>, Vec<_>) = self
-            .constraints
-            .iter()
-            .partition(|c| !c.is_roll_dependent());
-
-        // V_indep_and — AND over all roll-independent children, computed once.
-        let mut v_indep: Option<Array2<bool>> = None;
-        for c in &indep_children {
-            let r = c.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices)?;
-            match v_indep {
-                None => v_indep = Some(r),
-                Some(ref mut a) => a.zip_mut_with(&r, |x, &y| *x &= y),
-            }
-        }
-
-        if dep_children.is_empty() {
-            return Ok(
-                v_indep.unwrap_or_else(|| Array2::<bool>::from_elem((n_targets, n_times), true))
-            );
-        }
-
-        if dep_children.len() == 1 && indep_children.is_empty() {
-            return dep_children[0].in_constraint_batch_constrained_at_every_roll(
-                ephemeris,
-                target_ras,
-                target_decs,
-                time_indices,
-                n_roll_samples,
-            );
-        }
-
-        // AND_step (AND over dep_children of in_constraint_batch_at_roll).
-        let roll_step = 360.0 / n_roll_samples as f64;
-        let mut acc: Option<Array2<bool>> = None;
-        for step in 0..n_roll_samples {
-            if let Some(ref a) = acc {
-                if a.iter().all(|&b| !b) {
-                    break;
-                }
-            }
-            let roll_deg = step as f64 * roll_step;
-            let mut step_and: Option<Array2<bool>> = None;
-            for c in &dep_children {
-                let r = c.in_constraint_batch_at_roll(
-                    ephemeris,
-                    target_ras,
-                    target_decs,
-                    time_indices,
-                    roll_deg,
-                )?;
-                match step_and {
-                    None => step_and = Some(r),
-                    Some(ref mut a) => a.zip_mut_with(&r, |x, &y| *x &= y),
-                }
-            }
-            let step_and =
-                step_and.unwrap_or_else(|| Array2::<bool>::from_elem((n_targets, n_times), true));
-            match acc {
-                None => acc = Some(step_and),
-                Some(ref mut a) => a.zip_mut_with(&step_and, |x, &y| *x &= y),
-            }
-        }
-
-        let mut result =
-            acc.unwrap_or_else(|| Array2::<bool>::from_elem((n_targets, n_times), false));
-        if let Some(v) = v_indep {
-            result.zip_mut_with(&v, |x, &y| *x &= y);
-        }
-        Ok(result)
+        sweep_combination(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            n_roll_samples,
+            true,
+        )
     }
 
     fn field_of_regard_violated_at_roll(
@@ -768,26 +838,24 @@ impl ConstraintEvaluator for AndEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<HashMap<String, Array2<f64>>> {
+        self.compute_named_values_at_roll(ephemeris, target_ras, target_decs, time_indices, None)
+    }
+
+    fn compute_named_values_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        target_roll: Option<f64>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
         merge_children_named_values(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
-        )
-    }
-
-    fn compute_named_booleans_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<HashMap<String, Vec<bool>>> {
-        merge_children_named_booleans_diagonal(
-            &self.constraints,
-            ephemeris,
-            target_ras,
-            target_decs,
+            target_roll,
         )
     }
 
@@ -817,7 +885,7 @@ impl ConstraintEvaluator for AndEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: Option<f64>,
+        roll_deg: Option<EvaluationRoll>,
     ) -> PyResult<BatchWithCauses> {
         combinator_batch_with_causes(
             &self.constraints,
@@ -843,11 +911,15 @@ impl ConstraintEvaluator for AndEvaluator {
     }
 
     fn name(&self) -> String {
+        self.name_at_roll(None)
+    }
+
+    fn name_at_roll(&self, target_roll: Option<f64>) -> String {
         format!(
             "AND({})",
             self.constraints
                 .iter()
-                .map(|c| c.name())
+                .map(|c| c.name_at_roll(target_roll))
                 .collect::<Vec<_>>()
                 .join(", ")
         )
@@ -863,6 +935,37 @@ pub(super) struct OrEvaluator {
 }
 
 impl ConstraintEvaluator for OrEvaluator {
+    fn evaluate_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+    ) -> PyResult<DiagonalEvaluation> {
+        evaluate_children_diagonal(&self.constraints, ephemeris, ras, decs, indices, |count| {
+            count > 0
+        })
+    }
+
+    fn prepare_roll_sweep<'a>(
+        &'a self,
+        ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &'a [f64],
+        target_decs: &'a [f64],
+        time_indices: Option<&'a [usize]>,
+        cells: &[RollCell],
+    ) -> PyResult<Option<PreparedRollEvaluator<'a>>> {
+        Ok(Some(prepare_children(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            cells,
+            move |count| count > 0,
+        )?))
+    }
+
     fn evaluate(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -1030,43 +1133,13 @@ impl ConstraintEvaluator for OrEvaluator {
         Ok(Some(result))
     }
 
-    /// Optimized diagonal evaluation for OR - uses O(N) diagonal from each sub-constraint
-    fn in_constraint_batch_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<Vec<bool>> {
-        let n = target_ras.len();
-        if n == 0 {
-            return Ok(Vec::new());
-        }
-
-        // Get diagonal results from each sub-constraint
-        let sub_results: Result<Vec<_>, _> = self
-            .constraints
-            .iter()
-            .map(|c| c.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs))
-            .collect();
-        let sub_results = sub_results?;
-
-        // OR logic: violated if ANY sub-constraint is violated at each time
-        let mut result = Vec::with_capacity(n);
-        for i in 0..n {
-            let any_violated = sub_results.iter().any(|r| r[i]);
-            result.push(any_violated);
-        }
-
-        Ok(result)
-    }
-
     fn in_constraint_batch_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
+        roll_deg: EvaluationRoll,
     ) -> pyo3::PyResult<Array2<bool>> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1119,76 +1192,15 @@ impl ConstraintEvaluator for OrEvaluator {
         time_indices: Option<&[usize]>,
         n_roll_samples: usize,
     ) -> PyResult<Array2<bool>> {
-        if !self.is_roll_dependent() {
-            return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices);
-        }
-
-        let n_times = match time_indices {
-            Some(idx) => idx.len(),
-            None => ephemeris.get_times()?.len(),
-        };
-        let n_targets = target_ras.len();
-
-        let (indep_children, dep_children): (Vec<_>, Vec<_>) = self
-            .constraints
-            .iter()
-            .partition(|c| !c.is_roll_dependent());
-
-        // V_indep_or — OR of all roll-independent children, computed once.
-        let mut v_indep = Array2::<bool>::from_elem((n_targets, n_times), false);
-        for c in &indep_children {
-            let r = c.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices)?;
-            v_indep.zip_mut_with(&r, |x, &y| *x |= y);
-        }
-
-        if dep_children.is_empty() {
-            return Ok(v_indep);
-        }
-
-        // For roll-dependent children, recurse into their swept method when possible —
-        // BUT only when there's a single dep child, since we need per-step values to OR
-        // across siblings.  With multiple dep children we must loop step-by-step.
-        if dep_children.len() == 1 && indep_children.is_empty() {
-            return dep_children[0].in_constraint_batch_constrained_at_every_roll(
-                ephemeris,
-                target_ras,
-                target_decs,
-                time_indices,
-                n_roll_samples,
-            );
-        }
-
-        // AND_step (OR over dep_children of in_constraint_batch_at_roll).
-        let roll_step = 360.0 / n_roll_samples as f64;
-        let mut acc: Option<Array2<bool>> = None;
-        for step in 0..n_roll_samples {
-            if let Some(ref a) = acc {
-                if a.iter().all(|&b| !b) {
-                    break;
-                }
-            }
-            let roll_deg = step as f64 * roll_step;
-            let mut step_or = Array2::<bool>::from_elem((n_targets, n_times), false);
-            for c in &dep_children {
-                let r = c.in_constraint_batch_at_roll(
-                    ephemeris,
-                    target_ras,
-                    target_decs,
-                    time_indices,
-                    roll_deg,
-                )?;
-                step_or.zip_mut_with(&r, |x, &y| *x |= y);
-            }
-            match acc {
-                None => acc = Some(step_or),
-                Some(ref mut a) => a.zip_mut_with(&step_or, |x, &y| *x &= y),
-            }
-        }
-
-        let mut result =
-            acc.unwrap_or_else(|| Array2::<bool>::from_elem((n_targets, n_times), false));
-        result.zip_mut_with(&v_indep, |x, &y| *x |= y);
-        Ok(result)
+        sweep_combination(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            n_roll_samples,
+            false,
+        )
     }
 
     fn field_of_regard_violated_at_roll(
@@ -1247,6 +1259,22 @@ impl ConstraintEvaluator for OrEvaluator {
             .iter()
             .partition(|c| !c.is_roll_dependent());
 
+        if dep_children.len() > 1 {
+            // Multiple children need the same sampled roll. Reuse the prepared
+            // batch sweep, including its pruning of independently blocked cells.
+            let (ras, decs) = unit_vectors_to_radec_batch(target_unit_vectors);
+            let result = sweep_combination(
+                &self.constraints,
+                ephemeris,
+                &ras,
+                &decs,
+                Some(&[time_index]),
+                n_roll_samples,
+                false,
+            )?;
+            return Ok(result.column(0).to_vec());
+        }
+
         // V_indep_or — OR of all roll-independent children, evaluated once each.
         let mut v_indep = vec![false; n_targets];
         for c in &indep_children {
@@ -1265,50 +1293,23 @@ impl ConstraintEvaluator for OrEvaluator {
             return Ok(v_indep);
         }
 
-        // Singleton dep-child: result[i] = V_indep_or[i] || dep_for_violated[i].
-        if dep_children.len() == 1 {
-            let dep_for = dep_children[0].field_of_regard_violated_batch(
-                ephemeris,
-                target_unit_vectors,
-                time_index,
-                n_roll_samples,
-            )?;
-            return Ok((0..n_targets).map(|i| v_indep[i] || dep_for[i]).collect());
+        // Preserve the child's specialized sweep, excluding directions already
+        // blocked by an independent sibling.
+        let active: Vec<_> = (0..n_targets).filter(|&i| !v_indep[i]).collect();
+        if active.is_empty() {
+            return Ok(v_indep);
         }
-
-        // Multiple dep children: must couple at each θ.
-        // accessible[i] = ∃θ: every dep child not violated at θ; targets with v_indep[i]
-        // are excluded from this — they're already FoR-violated.
-        let roll_step_deg = 360.0 / n_roll_samples as f64;
-        let mut accessible = vec![false; n_targets];
-        for step in 0..n_roll_samples {
-            // Early-exit when every non-pre-violated target has found a clear roll.
-            if (0..n_targets).all(|i| v_indep[i] || accessible[i]) {
-                break;
-            }
-            let roll_deg = step as f64 * roll_step_deg;
-            let mut step_or_violated = vec![false; n_targets];
-            for c in &dep_children {
-                let r = c.field_of_regard_violated_at_roll(
-                    ephemeris,
-                    target_unit_vectors,
-                    time_index,
-                    roll_deg,
-                )?;
-                for i in 0..n_targets {
-                    step_or_violated[i] = step_or_violated[i] || r[i];
-                }
-            }
-            for i in 0..n_targets {
-                if !accessible[i] && !v_indep[i] && !step_or_violated[i] {
-                    accessible[i] = true;
-                }
-            }
+        let units = target_unit_vectors.select(ndarray::Axis(0), &active);
+        let dep_for = dep_children[0].field_of_regard_violated_batch(
+            ephemeris,
+            &units,
+            time_index,
+            n_roll_samples,
+        )?;
+        for (i, value) in active.into_iter().zip(dep_for) {
+            v_indep[i] = value;
         }
-
-        Ok((0..n_targets)
-            .map(|i| v_indep[i] || !accessible[i])
-            .collect())
+        Ok(v_indep)
     }
 
     fn compute_named_values(
@@ -1318,26 +1319,24 @@ impl ConstraintEvaluator for OrEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<HashMap<String, Array2<f64>>> {
+        self.compute_named_values_at_roll(ephemeris, target_ras, target_decs, time_indices, None)
+    }
+
+    fn compute_named_values_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        target_roll: Option<f64>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
         merge_children_named_values(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
-        )
-    }
-
-    fn compute_named_booleans_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<HashMap<String, Vec<bool>>> {
-        merge_children_named_booleans_diagonal(
-            &self.constraints,
-            ephemeris,
-            target_ras,
-            target_decs,
+            target_roll,
         )
     }
 
@@ -1365,7 +1364,7 @@ impl ConstraintEvaluator for OrEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: Option<f64>,
+        roll_deg: Option<EvaluationRoll>,
     ) -> PyResult<BatchWithCauses> {
         combinator_batch_with_causes(
             &self.constraints,
@@ -1386,11 +1385,15 @@ impl ConstraintEvaluator for OrEvaluator {
     }
 
     fn name(&self) -> String {
+        self.name_at_roll(None)
+    }
+
+    fn name_at_roll(&self, target_roll: Option<f64>) -> String {
         format!(
             "OR({})",
             self.constraints
                 .iter()
-                .map(|c| c.name())
+                .map(|c| c.name_at_roll(target_roll))
                 .collect::<Vec<_>>()
                 .join(", ")
         )
@@ -1406,6 +1409,57 @@ pub(super) struct NotEvaluator {
 }
 
 impl ConstraintEvaluator for NotEvaluator {
+    fn evaluate_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+    ) -> PyResult<DiagonalEvaluation> {
+        let mut result = self
+            .constraint
+            .evaluate_diagonal(ephemeris, ras, decs, indices)?;
+        for value in &mut result.violated {
+            *value = !*value;
+        }
+        result.named = result
+            .named
+            .into_iter()
+            .map(|(key, values)| (format!("not.{key}"), values))
+            .collect();
+        result.cause_value_keys = result
+            .cause_value_keys
+            .into_iter()
+            .map(|(key, values)| (format!("not.{key}"), values))
+            .collect();
+        Ok(result)
+    }
+
+    fn prepare_roll_sweep<'a>(
+        &'a self,
+        ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &'a [f64],
+        target_decs: &'a [f64],
+        time_indices: Option<&'a [usize]>,
+        cells: &[RollCell],
+    ) -> PyResult<Option<PreparedRollEvaluator<'a>>> {
+        let child = roll_sweep::prepare(
+            &*self.constraint,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            cells,
+        )?;
+        Ok(Some(PreparedRollEvaluator::new(move |cells, roll| {
+            Ok(child
+                .evaluate(cells, roll)?
+                .into_iter()
+                .map(|v| !v)
+                .collect())
+        })))
+    }
+
     fn evaluate(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -1544,28 +1598,13 @@ impl ConstraintEvaluator for NotEvaluator {
         Ok(Some(result))
     }
 
-    /// Optimized diagonal evaluation for NOT - uses O(N) diagonal from sub-constraint
-    fn in_constraint_batch_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<Vec<bool>> {
-        let sub_result =
-            self.constraint
-                .in_constraint_batch_diagonal(ephemeris, target_ras, target_decs)?;
-
-        // NOT logic: invert all values
-        Ok(sub_result.into_iter().map(|v| !v).collect())
-    }
-
     fn in_constraint_batch_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
+        roll_deg: EvaluationRoll,
     ) -> pyo3::PyResult<Array2<bool>> {
         let times = ephemeris.get_times()?;
         let sub_result = self.constraint.in_constraint_batch_at_roll(
@@ -1614,26 +1653,25 @@ impl ConstraintEvaluator for NotEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<HashMap<String, Array2<f64>>> {
-        // Single child, no collision risk - pass its values straight through unprefixed.
-        self.constraint
-            .compute_named_values(ephemeris, target_ras, target_decs, time_indices)
+        self.compute_named_values_at_roll(ephemeris, target_ras, target_decs, time_indices, None)
     }
 
-    fn compute_named_booleans_diagonal(
+    fn compute_named_values_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-    ) -> PyResult<HashMap<String, Vec<bool>>> {
-        // See `in_constraint_batch_with_causes`: values are uninverted, keys prefixed
-        // with "not.".
-        let child_booleans =
-            self.constraint
-                .compute_named_booleans_diagonal(ephemeris, target_ras, target_decs)?;
-        Ok(child_booleans
-            .into_iter()
-            .map(|(key, arr)| (format!("not.{key}"), arr))
-            .collect())
+        time_indices: Option<&[usize]>,
+        target_roll: Option<f64>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
+        // Single child, no collision risk - pass its values straight through unprefixed.
+        self.constraint.compute_named_values_at_roll(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            target_roll,
+        )
     }
 
     fn compute_cause_value_keys(
@@ -1673,7 +1711,7 @@ impl ConstraintEvaluator for NotEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: Option<f64>,
+        roll_deg: Option<EvaluationRoll>,
     ) -> PyResult<BatchWithCauses> {
         let inner = self.constraint.in_constraint_batch_with_causes(
             ephemeris,
@@ -1693,7 +1731,11 @@ impl ConstraintEvaluator for NotEvaluator {
     }
 
     fn name(&self) -> String {
-        format!("NOT({})", self.constraint.name())
+        self.name_at_roll(None)
+    }
+
+    fn name_at_roll(&self, target_roll: Option<f64>) -> String {
+        format!("NOT({})", self.constraint.name_at_roll(target_roll))
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -1706,6 +1748,37 @@ pub(super) struct XorEvaluator {
 }
 
 impl ConstraintEvaluator for XorEvaluator {
+    fn evaluate_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+    ) -> PyResult<DiagonalEvaluation> {
+        evaluate_children_diagonal(&self.constraints, ephemeris, ras, decs, indices, |count| {
+            count == 1
+        })
+    }
+
+    fn prepare_roll_sweep<'a>(
+        &'a self,
+        ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &'a [f64],
+        target_decs: &'a [f64],
+        time_indices: Option<&'a [usize]>,
+        cells: &[RollCell],
+    ) -> PyResult<Option<PreparedRollEvaluator<'a>>> {
+        Ok(Some(prepare_children(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            cells,
+            move |count| count == 1,
+        )?))
+    }
+
     fn evaluate(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -1867,43 +1940,13 @@ impl ConstraintEvaluator for XorEvaluator {
         Ok(Some(result))
     }
 
-    /// Optimized diagonal evaluation for XOR - uses O(N) diagonal from each sub-constraint
-    fn in_constraint_batch_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<Vec<bool>> {
-        let n = target_ras.len();
-        if n == 0 {
-            return Ok(Vec::new());
-        }
-
-        // Get diagonal results from each sub-constraint
-        let sub_results: Result<Vec<_>, _> = self
-            .constraints
-            .iter()
-            .map(|c| c.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs))
-            .collect();
-        let sub_results = sub_results?;
-
-        // XOR logic: violated when EXACTLY ONE sub-constraint is violated at each time
-        let mut result = Vec::with_capacity(n);
-        for i in 0..n {
-            let violation_count = sub_results.iter().filter(|r| r[i]).count();
-            result.push(violation_count == 1);
-        }
-
-        Ok(result)
-    }
-
     fn in_constraint_batch_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
+        roll_deg: EvaluationRoll,
     ) -> pyo3::PyResult<Array2<bool>> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1977,26 +2020,24 @@ impl ConstraintEvaluator for XorEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<HashMap<String, Array2<f64>>> {
+        self.compute_named_values_at_roll(ephemeris, target_ras, target_decs, time_indices, None)
+    }
+
+    fn compute_named_values_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        target_roll: Option<f64>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
         merge_children_named_values(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
-        )
-    }
-
-    fn compute_named_booleans_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<HashMap<String, Vec<bool>>> {
-        merge_children_named_booleans_diagonal(
-            &self.constraints,
-            ephemeris,
-            target_ras,
-            target_decs,
+            target_roll,
         )
     }
 
@@ -2024,7 +2065,7 @@ impl ConstraintEvaluator for XorEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: Option<f64>,
+        roll_deg: Option<EvaluationRoll>,
     ) -> PyResult<BatchWithCauses> {
         combinator_batch_with_causes(
             &self.constraints,
@@ -2040,11 +2081,15 @@ impl ConstraintEvaluator for XorEvaluator {
     }
 
     fn name(&self) -> String {
+        self.name_at_roll(None)
+    }
+
+    fn name_at_roll(&self, target_roll: Option<f64>) -> String {
         format!(
             "XOR({})",
             self.constraints
                 .iter()
-                .map(|c| c.name())
+                .map(|c| c.name_at_roll(target_roll))
                 .collect::<Vec<_>>()
                 .join(", ")
         )
@@ -2061,6 +2106,37 @@ pub(super) struct AtLeastEvaluator {
 }
 
 impl ConstraintEvaluator for AtLeastEvaluator {
+    fn evaluate_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+    ) -> PyResult<DiagonalEvaluation> {
+        evaluate_children_diagonal(&self.constraints, ephemeris, ras, decs, indices, |count| {
+            count >= self.min_violated
+        })
+    }
+
+    fn prepare_roll_sweep<'a>(
+        &'a self,
+        ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &'a [f64],
+        target_decs: &'a [f64],
+        time_indices: Option<&'a [usize]>,
+        cells: &[RollCell],
+    ) -> PyResult<Option<PreparedRollEvaluator<'a>>> {
+        Ok(Some(prepare_children(
+            &self.constraints,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            cells,
+            move |count| count >= self.min_violated,
+        )?))
+    }
+
     fn evaluate(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -2220,40 +2296,13 @@ impl ConstraintEvaluator for AtLeastEvaluator {
         Ok(Some(result))
     }
 
-    fn in_constraint_batch_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<Vec<bool>> {
-        let n = target_ras.len();
-        if n == 0 {
-            return Ok(Vec::new());
-        }
-
-        let sub_results: Result<Vec<_>, _> = self
-            .constraints
-            .iter()
-            .map(|c| c.in_constraint_batch_diagonal(ephemeris, target_ras, target_decs))
-            .collect();
-        let sub_results = sub_results?;
-
-        let mut result = Vec::with_capacity(n);
-        for i in 0..n {
-            let violation_count = sub_results.iter().filter(|r| r[i]).count();
-            result.push(violation_count >= self.min_violated);
-        }
-
-        Ok(result)
-    }
-
     fn in_constraint_batch_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
+        roll_deg: EvaluationRoll,
     ) -> pyo3::PyResult<Array2<bool>> {
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -2335,26 +2384,24 @@ impl ConstraintEvaluator for AtLeastEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<HashMap<String, Array2<f64>>> {
+        self.compute_named_values_at_roll(ephemeris, target_ras, target_decs, time_indices, None)
+    }
+
+    fn compute_named_values_at_roll(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        target_roll: Option<f64>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
         merge_children_named_values(
             &self.constraints,
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
-        )
-    }
-
-    fn compute_named_booleans_diagonal(
-        &self,
-        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
-        target_ras: &[f64],
-        target_decs: &[f64],
-    ) -> PyResult<HashMap<String, Vec<bool>>> {
-        merge_children_named_booleans_diagonal(
-            &self.constraints,
-            ephemeris,
-            target_ras,
-            target_decs,
+            target_roll,
         )
     }
 
@@ -2382,7 +2429,7 @@ impl ConstraintEvaluator for AtLeastEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: Option<f64>,
+        roll_deg: Option<EvaluationRoll>,
     ) -> PyResult<BatchWithCauses> {
         combinator_batch_with_causes(
             &self.constraints,
@@ -2400,12 +2447,16 @@ impl ConstraintEvaluator for AtLeastEvaluator {
     }
 
     fn name(&self) -> String {
+        self.name_at_roll(None)
+    }
+
+    fn name_at_roll(&self, target_roll: Option<f64>) -> String {
         format!(
             "AT_LEAST(k={}, {})",
             self.min_violated,
             self.constraints
                 .iter()
-                .map(|c| c.name())
+                .map(|c| c.name_at_roll(target_roll))
                 .collect::<Vec<_>>()
                 .join(", ")
         )

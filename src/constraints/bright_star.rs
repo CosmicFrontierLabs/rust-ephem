@@ -1,3 +1,4 @@
+use super::core::EvaluationRoll;
 /// Bright star avoidance constraint
 ///
 /// Violated when any catalog star falls within the telescope field of view.
@@ -315,29 +316,87 @@ impl BrightStarEvaluator {
     }
 
     fn format_name(&self) -> String {
+        self.format_name_at_roll(None)
+    }
+
+    fn format_name_at_roll(&self, target_roll: Option<f64>) -> String {
         match &self.fov {
             FovDefinition::Circle { cos_radius } => {
                 let r = cos_radius.acos().to_degrees();
                 format!("BrightStar(fov_radius={r:.3}°, {} stars)", self.stars.len())
             }
-            FovDefinition::Polygon { vertices, roll_rad } => match roll_rad {
-                Some(r) => format!(
-                    "BrightStar(fov_polygon={} vertices, roll={:.1}°, {} stars)",
-                    vertices.len(),
-                    r.to_degrees(),
-                    self.stars.len()
-                ),
-                None => format!(
-                    "BrightStar(fov_polygon={} vertices, any_roll, {} stars)",
-                    vertices.len(),
-                    self.stars.len()
-                ),
-            },
+            FovDefinition::Polygon { vertices, roll_rad } => {
+                match target_roll.map(f64::to_radians).or(*roll_rad) {
+                    Some(r) => format!(
+                        "BrightStar(fov_polygon={} vertices, roll={:.1}°, {} stars)",
+                        vertices.len(),
+                        r.to_degrees(),
+                        self.stars.len()
+                    ),
+                    None => format!(
+                        "BrightStar(fov_polygon={} vertices, any_roll, {} stars)",
+                        vertices.len(),
+                        self.stars.len()
+                    ),
+                }
+            }
         }
     }
 }
 
 impl ConstraintEvaluator for BrightStarEvaluator {
+    fn name_at_roll(&self, target_roll: Option<f64>) -> String {
+        self.format_name_at_roll(target_roll)
+    }
+
+    fn prepare_roll_sweep<'a>(
+        &'a self,
+        _ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &'a [f64],
+        target_decs: &'a [f64],
+        _time_indices: Option<&'a [usize]>,
+        cells: &[super::roll_sweep::RollCell],
+    ) -> PyResult<Option<super::roll_sweep::PreparedRollEvaluator<'a>>> {
+        let vertices = match &self.fov {
+            FovDefinition::Polygon {
+                vertices,
+                roll_rad: None,
+            } => vertices,
+            _ => return Ok(None),
+        };
+        let first = cells.iter().map(|&(i, _)| i).min().unwrap_or(0);
+        let end = cells.iter().map(|&(i, _)| i + 1).max().unwrap_or(first);
+        // A star's projection depends on the target, but neither time nor roll.
+        // Keep only this chunk's rows, rather than allocating for every target.
+        let offsets: Vec<_> = (first..end)
+            .into_par_iter()
+            .map(|i| {
+                let ra = target_ras[i].to_radians();
+                let (sd, cd) = target_decs[i].to_radians().sin_cos();
+                let (sr, cr) = ra.sin_cos();
+                self.nearby_tangent_offsets([cd * cr, cd * sr, sd], ra, sd, cd)
+            })
+            .collect();
+        Ok(Some(super::roll_sweep::PreparedRollEvaluator::new(
+            move |cells, roll| {
+                let (sr, cr) = roll.to_radians().sin_cos();
+                // Reuse each target's polygon result across all timestamps at
+                // this candidate roll, even as other children prune cells.
+                Ok(super::roll_sweep::evaluate_per_target(
+                    cells,
+                    first,
+                    offsets.len(),
+                    |i| {
+                        offsets[i - first].iter().any(|&(east, north)| {
+                            let (u, v) = Self::to_instrument(east, north, sr, cr);
+                            Self::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
+                        })
+                    },
+                ))
+            },
+        )))
+    }
+
     fn evaluate(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -475,21 +534,23 @@ impl ConstraintEvaluator for BrightStarEvaluator {
         Ok(result)
     }
 
-    /// Hot path for coordinated roll sweep: evaluate polygon at `roll_deg` without
-    /// JSON round-trips.  Circle mode and fixed-roll polygon delegate unchanged.
+    /// Evaluate polygon geometry without rebuilding the evaluator. Explicit fixed
+    /// rolls override configured rolls; sweep candidates preserve them. Circles
+    /// ignore roll and delegate to the ordinary batch implementation.
     fn in_constraint_batch_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
+        roll_deg: EvaluationRoll,
     ) -> PyResult<Array2<bool>> {
         let vertices = match &self.fov {
-            FovDefinition::Polygon {
-                vertices,
-                roll_rad: None,
-            } => vertices,
+            FovDefinition::Polygon { vertices, roll_rad }
+                if roll_deg.is_fixed() || roll_rad.is_none() =>
+            {
+                vertices
+            }
             _ => return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices),
         };
 
@@ -499,7 +560,7 @@ impl ConstraintEvaluator for BrightStarEvaluator {
             None => all_times.len(),
         };
         let n_targets = target_ras.len();
-        let (sin_roll, cos_roll) = roll_deg.to_radians().sin_cos();
+        let (sin_roll, cos_roll) = roll_deg.degrees().to_radians().sin_cos();
 
         // Bright-star violation is time-invariant; evaluate once per target, parallelise.
         let violated: Vec<bool> = target_ras

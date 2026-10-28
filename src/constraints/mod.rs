@@ -8,7 +8,12 @@
 pub mod core;
 
 // Shared FoV geometry
+pub mod diagonal;
 pub mod fov_polygon;
+pub mod roll_sweep;
+
+#[cfg(test)]
+pub(crate) mod test_support;
 
 // Constraint implementations
 pub mod airmass;

@@ -139,6 +139,39 @@ impl EclipseEvaluator {
 }
 
 impl ConstraintEvaluator for EclipseEvaluator {
+    fn evaluate_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<super::diagonal::DiagonalEvaluation> {
+        let indices =
+            super::diagonal::time_indices(ephemeris, target_ras, target_decs, time_indices)?;
+        let observer = ephemeris.data().gcrs.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("No GCRS positions available")
+        })?;
+        let sun =
+            ephemeris.data().sun_gcrs.as_ref().ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("No Sun positions available")
+            })?;
+        let mut violated = Vec::with_capacity(indices.len());
+        let mut depths = Vec::with_capacity(indices.len());
+        for t in indices {
+            let obs = [observer[[t, 0]], observer[[t, 1]], observer[[t, 2]]];
+            let sun = [sun[[t, 0]], sun[[t, 1]], sun[[t, 2]]];
+            let (blocked, _) = self.shadow_status(obs, sun);
+            let depth = Self::shadow_depth_frac(obs, sun);
+            violated.push(blocked);
+            depths.push(depth);
+        }
+        Ok(super::diagonal::DiagonalEvaluation::leaf(
+            &self.name(),
+            violated,
+            HashMap::from([("eclipse_depth_frac".to_string(), depths)]),
+        ))
+    }
+
     fn evaluate(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,

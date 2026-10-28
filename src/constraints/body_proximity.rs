@@ -1,21 +1,17 @@
+use super::core::EvaluationRoll;
 /// Generic solar system body proximity constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
 use crate::constraints::fov_polygon;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex};
 
-/// Content-derived fingerprint identifying an ephemeris's time grid and observer
-/// trajectory.
+/// Full-input fingerprint: matching endpoints do not establish that the
+/// intermediate time grid, observer, or precomputed Sun/Moon positions match.
 #[derive(Clone, PartialEq, Eq)]
-struct EphemerisFingerprint {
-    n_times: usize,
-    first_time: DateTime<Utc>,
-    last_time: DateTime<Utc>,
-    first_obs_bits: [u64; 3],
-    last_obs_bits: [u64; 3],
-}
+struct EphemerisFingerprint(u64);
 
 /// Configuration for generic solar system body proximity constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,15 +67,14 @@ pub struct BodyProximityEvaluator {
     /// Fixed roll in radians; None means sweep all rolls (polygon mode only)
     pub roll_rad: Option<f64>,
     /// Cached body/observer slices for repeated roll-step evaluation.
-    roll_sweep_cache: Mutex<Option<RollSweepCacheEntry>>,
+    roll_sweep_cache: Mutex<Option<Arc<RollSweepCacheEntry>>>,
 }
 
 impl_proximity_evaluator!(BodyProximityEvaluator, "Body", "body", sun_positions);
 
 impl BodyProximityEvaluator {
-    /// Build a content-derived fingerprint for an ephemeris.  Reads endpoints
-    /// directly out of `data()` without cloning the underlying arrays.
     fn ephemeris_fingerprint(
+        &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
     ) -> pyo3::PyResult<EphemerisFingerprint> {
         let data = ephemeris.data();
@@ -87,90 +82,70 @@ impl BodyProximityEvaluator {
             .times
             .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available"))?;
-        let n_times = times.len();
-        if n_times == 0 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "Ephemeris has no times",
-            ));
-        }
-        let gcrs = data.gcrs.as_ref().ok_or_else(|| {
+        let observer = data.gcrs.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err("No GCRS positions available")
         })?;
-        if gcrs.nrows() != n_times || gcrs.ncols() < 3 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "GCRS positions shape does not match times",
-            ));
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        self.body.hash(&mut hash);
+        crate::ephemeris::spice_manager::planetary_ephemeris_generation().hash(&mut hash);
+        times.hash(&mut hash);
+        let body = match self.body.to_ascii_lowercase().as_str() {
+            "sun" => data.sun_gcrs.as_ref(),
+            "moon" => data.moon_gcrs.as_ref(),
+            _ => None,
+        };
+        for array in [Some(observer), body].into_iter().flatten() {
+            array.shape().hash(&mut hash);
+            for row in array.rows() {
+                for value in row.iter().take(3) {
+                    value.to_bits().hash(&mut hash);
+                }
+            }
         }
-        let first_obs_bits = [
-            gcrs[[0, 0]].to_bits(),
-            gcrs[[0, 1]].to_bits(),
-            gcrs[[0, 2]].to_bits(),
-        ];
-        let last_obs_bits = [
-            gcrs[[n_times - 1, 0]].to_bits(),
-            gcrs[[n_times - 1, 1]].to_bits(),
-            gcrs[[n_times - 1, 2]].to_bits(),
-        ];
-        Ok(EphemerisFingerprint {
-            n_times,
-            first_time: times[0],
-            last_time: times[n_times - 1],
-            first_obs_bits,
-            last_obs_bits,
-        })
+        Ok(EphemerisFingerprint(hash.finish()))
     }
 
-    fn ensure_roll_sweep_cache(
+    fn roll_geometry(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         time_indices: Option<&[usize]>,
-    ) -> pyo3::PyResult<()> {
-        let fingerprint = Self::ephemeris_fingerprint(ephemeris)?;
+    ) -> pyo3::PyResult<Arc<RollSweepCacheEntry>> {
+        let fingerprint = self.ephemeris_fingerprint(ephemeris)?;
         let indices_key = time_indices.map(|idx| idx.to_vec());
-
-        let needs_refresh = {
+        {
             let cache = self.roll_sweep_cache.lock().map_err(|_| {
                 pyo3::exceptions::PyRuntimeError::new_err("roll_sweep_cache mutex was poisoned")
             })?;
-            match cache.as_ref() {
-                Some(entry) => {
-                    entry.fingerprint != fingerprint || entry.time_indices != indices_key
+            if let Some(entry) = cache.as_ref() {
+                if entry.fingerprint == fingerprint && entry.time_indices == indices_key {
+                    return Ok(Arc::clone(entry));
                 }
-                None => true,
             }
-        };
-
-        if needs_refresh {
-            let (body_positions, observer_positions, n_times) = if let Some(indices) = time_indices
-            {
-                (
-                    self.body_positions(ephemeris)?
-                        .select(ndarray::Axis(0), indices),
-                    ephemeris
-                        .get_gcrs_positions()?
-                        .select(ndarray::Axis(0), indices),
-                    indices.len(),
-                )
-            } else {
-                let body_positions = self.body_positions(ephemeris)?;
-                let observer_positions = ephemeris.get_gcrs_positions()?;
-                let n_times = body_positions.nrows();
-                (body_positions, observer_positions, n_times)
-            };
-
-            let mut cache = self.roll_sweep_cache.lock().map_err(|_| {
-                pyo3::exceptions::PyRuntimeError::new_err("roll_sweep_cache mutex was poisoned")
-            })?;
-            *cache = Some(RollSweepCacheEntry {
-                fingerprint,
-                time_indices: indices_key,
-                body_positions,
-                observer_positions,
-                n_times,
-            });
         }
-
-        Ok(())
+        let body = self.body_positions(ephemeris)?;
+        let observer = ephemeris.get_gcrs_positions()?;
+        let (body_positions, observer_positions) = match time_indices {
+            Some(indices) => (
+                body.select(ndarray::Axis(0), indices),
+                observer.select(ndarray::Axis(0), indices),
+            ),
+            None => (body, observer),
+        };
+        let n_times = body_positions.nrows();
+        let entry = Arc::new(RollSweepCacheEntry {
+            fingerprint,
+            time_indices: indices_key,
+            body_positions,
+            observer_positions,
+            n_times,
+        });
+        let mut cache = self.roll_sweep_cache.lock().map_err(|_| {
+            pyo3::exceptions::PyRuntimeError::new_err("roll_sweep_cache mutex was poisoned")
+        })?;
+        *cache = Some(Arc::clone(&entry));
+        // Own this entry throughout evaluation; concurrent calls may replace the
+        // cached entry without changing the geometry used by this call.
+        Ok(entry)
     }
 
     /// Return body positions in GCRS (km) for the correct body.
@@ -212,8 +187,12 @@ impl BodyProximityEvaluator {
     }
 
     fn format_name(&self) -> String {
+        self.format_name_at_roll(None)
+    }
+
+    fn format_name_at_roll(&self, target_roll: Option<f64>) -> String {
         if let Some(ref vertices) = self.fov_polygon {
-            match self.roll_rad {
+            match target_roll.map(f64::to_radians).or(self.roll_rad) {
                 Some(r) => format!(
                     "BodyProximity(body='{}', fov_polygon={} vertices, roll={:.1}°)",
                     self.body,
@@ -263,6 +242,58 @@ impl BodyProximityEvaluator {
 }
 
 impl ConstraintEvaluator for BodyProximityEvaluator {
+    fn name_at_roll(&self, target_roll: Option<f64>) -> String {
+        self.format_name_at_roll(target_roll)
+    }
+
+    fn prepare_roll_sweep<'a>(
+        &'a self,
+        ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &'a [f64],
+        target_decs: &'a [f64],
+        time_indices: Option<&'a [usize]>,
+        cells: &[super::roll_sweep::RollCell],
+    ) -> pyo3::PyResult<Option<super::roll_sweep::PreparedRollEvaluator<'a>>> {
+        let vertices = match &self.fov_polygon {
+            Some(vertices) if self.roll_rad.is_none() => vertices,
+            _ => return Ok(None),
+        };
+        let entry = self.roll_geometry(ephemeris, time_indices)?;
+        let n_times = entry.n_times;
+        let mut columns: Vec<_> = cells.iter().map(|&(_, j)| j).collect();
+        columns.sort_unstable();
+        columns.dedup();
+        let body_radec: Vec<_> = columns
+            .iter()
+            .map(|&j| Self::body_radec_at(&entry.body_positions, &entry.observer_positions, j))
+            .collect();
+        let mut offsets = super::roll_sweep::PreparedGrid::new(n_times, cells, None);
+        for &(i, j) in cells {
+            if let Some((ra, dec)) = body_radec[columns.binary_search(&j).unwrap()] {
+                offsets[(i, j)] = fov_polygon::gnomonic_project(
+                    target_ras[i].to_radians(),
+                    target_decs[i].to_radians(),
+                    ra,
+                    dec,
+                );
+            }
+        }
+        Ok(Some(super::roll_sweep::PreparedRollEvaluator::new(
+            move |cells, roll| {
+                let (sr, cr) = roll.to_radians().sin_cos();
+                Ok(cells
+                    .iter()
+                    .map(|&(i, j)| {
+                        offsets[(i, j)].is_some_and(|(east, north)| {
+                            let (u, v) = fov_polygon::to_instrument(east, north, sr, cr);
+                            fov_polygon::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
+                        })
+                    })
+                    .collect())
+            },
+        )))
+    }
+
     fn evaluate(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -548,35 +579,32 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
         Ok(Some(result))
     }
 
-    /// Hot path for coordinated roll sweep: evaluate polygon at `roll_deg` without
-    /// JSON round-trips.  Circle mode and fixed-roll polygon delegate unchanged.
+    /// Evaluate polygon geometry without rebuilding the evaluator. Explicit fixed
+    /// rolls override configured rolls; sweep candidates preserve them. Circles
+    /// ignore roll and delegate to the ordinary batch implementation.
     fn in_constraint_batch_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        roll_deg: f64,
+        roll_deg: EvaluationRoll,
     ) -> pyo3::PyResult<Array2<bool>> {
         let vertices = match &self.fov_polygon {
-            Some(v) if self.roll_rad.is_none() => v,
+            Some(v) if roll_deg.is_fixed() || self.roll_rad.is_none() => v,
             _ => return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices),
         };
 
-        self.ensure_roll_sweep_cache(ephemeris, time_indices)?;
-        let cached = self.roll_sweep_cache.lock().map_err(|_| {
-            pyo3::exceptions::PyRuntimeError::new_err("roll_sweep_cache mutex was poisoned")
-        })?;
-        let entry = cached
-            .as_ref()
-            .expect("roll_sweep_cache must be initialized");
-        let body_positions_slice = &entry.body_positions;
-        let observer_positions_slice = &entry.observer_positions;
-        let n_times = entry.n_times;
+        let entry = self.roll_geometry(ephemeris, time_indices)?;
+        let (body_positions_slice, observer_positions_slice, n_times) = (
+            &entry.body_positions,
+            &entry.observer_positions,
+            entry.n_times,
+        );
 
         let n_targets = target_ras.len();
         let mut result = Array2::from_elem((n_targets, n_times), false);
-        let (sin_roll, cos_roll) = roll_deg.to_radians().sin_cos();
+        let (sin_roll, cos_roll) = roll_deg.degrees().to_radians().sin_cos();
 
         for (i, (&ra, &dec)) in target_ras.iter().zip(target_decs.iter()).enumerate() {
             let target_ra_rad = ra.to_radians();
@@ -636,16 +664,8 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
             }
         };
 
-        self.ensure_roll_sweep_cache(ephemeris, Some(&[time_index]))?;
-        let cached = self.roll_sweep_cache.lock().map_err(|_| {
-            pyo3::exceptions::PyRuntimeError::new_err("roll_sweep_cache mutex was poisoned")
-        })?;
-        let entry = cached
-            .as_ref()
-            .expect("roll_sweep_cache must be initialized");
-
-        let body_radec =
-            Self::body_radec_at(&entry.body_positions, &entry.observer_positions, time_index);
+        let entry = self.roll_geometry(ephemeris, Some(&[time_index]))?;
+        let body_radec = Self::body_radec_at(&entry.body_positions, &entry.observer_positions, 0);
 
         let (sin_roll, cos_roll) = roll_deg.to_radians().sin_cos();
         let mut result = Vec::with_capacity(n_targets);
@@ -712,5 +732,97 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+    use crate::constraints::test_support::TestEphemeris;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn chunks_and_fixed_roll_groups_reuse_body_queries_but_refresh_on_interior_changes() {
+        let mut eph = TestEphemeris::new(3);
+        let evaluator = BodyProximityConfig {
+            body: "Venus".to_owned(),
+            min_angle: None,
+            max_angle: None,
+            fov_polygon: Some(vec![
+                [-10.0, -10.0],
+                [10.0, -10.0],
+                [10.0, 10.0],
+                [-10.0, 10.0],
+            ]),
+            roll_deg: None,
+        }
+        .to_evaluator();
+        let ras = [0.0, 30.0];
+        let decs = [0.0, 10.0];
+        for cells in [&[(0, 0), (0, 1)][..], &[(1, 1), (1, 2)][..]] {
+            evaluator
+                .prepare_roll_sweep(&eph, &ras, &decs, None, cells)
+                .unwrap();
+        }
+        for roll in [0.0, 45.0, 90.0] {
+            evaluator
+                .in_constraint_batch_at_roll(&eph, &ras, &decs, None, EvaluationRoll::Fixed(roll))
+                .unwrap();
+        }
+        assert_eq!(eph.body_queries.load(Ordering::Relaxed), 1);
+        eph.data.gcrs.as_mut().unwrap()[[1, 0]] += 1000.0;
+        evaluator
+            .in_constraint_batch_at_roll(&eph, &ras, &decs, None, EvaluationRoll::Fixed(0.0))
+            .unwrap();
+        assert_eq!(eph.body_queries.load(Ordering::Relaxed), 2);
+        eph.data.times.as_mut().unwrap()[1] += chrono::Duration::milliseconds(1);
+        evaluator
+            .in_constraint_batch_at_roll(&eph, &ras, &decs, None, EvaluationRoll::Fixed(0.0))
+            .unwrap();
+        assert_eq!(eph.body_queries.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn cached_geometry_keeps_its_own_sample_and_body_data() {
+        let mut eph = TestEphemeris::new(3);
+        let evaluator = BodyProximityConfig {
+            body: "Moon".to_owned(),
+            min_angle: None,
+            max_angle: None,
+            fov_polygon: Some(vec![
+                [-10.0, -10.0],
+                [10.0, -10.0],
+                [10.0, 10.0],
+                [-10.0, 10.0],
+            ]),
+            roll_deg: None,
+        }
+        .to_evaluator();
+        let leaf = evaluator
+            .as_any()
+            .downcast_ref::<BodyProximityEvaluator>()
+            .unwrap();
+        let first = leaf.roll_geometry(&eph, Some(&[1])).unwrap();
+        eph.data.moon_gcrs.as_mut().unwrap()[[1, 1]] += 1000.0;
+        let changed = leaf.roll_geometry(&eph, Some(&[1])).unwrap();
+        assert!(!Arc::ptr_eq(&first, &changed));
+        assert_ne!(first.body_positions[[0, 1]], changed.body_positions[[0, 1]]);
+        let other = leaf.roll_geometry(&eph, Some(&[2])).unwrap();
+        assert_eq!(first.time_indices.as_deref(), Some(&[1][..]));
+        assert_eq!(other.time_indices.as_deref(), Some(&[2][..]));
+        let directions = ndarray::arr2(&[[1.0, 0.0, 0.0]]);
+        let at_sample = leaf
+            .field_of_regard_violated_at_roll(&eph, &directions, 2, 0.0)
+            .unwrap();
+        let reference = leaf
+            .in_constraint_batch_at_roll(
+                &eph,
+                &[0.0],
+                &[0.0],
+                Some(&[2]),
+                EvaluationRoll::Sweep(0.0),
+            )
+            .unwrap();
+        assert_eq!(at_sample, reference.column(0).to_vec());
     }
 }

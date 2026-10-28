@@ -1333,21 +1333,21 @@ impl PyConstraint {
         n_roll_samples: usize,
     ) -> PyResult<ConstraintResult> {
         Self::validate_n_roll_samples(n_roll_samples)?;
-        // Parse time filtering options
+        if let Some(roll) = target_roll {
+            Self::validate_target_roll(roll)?;
+        }
         let bound = ephemeris.bind(py);
         let time_indices = self.resolve_time_indices(bound, times, indices)?;
-
-        self.with_effective_evaluator(target_roll, |evaluator| {
-            self.with_ephemeris(bound, |ephem_ref| {
-                self.eval_with_ephemeris(
-                    evaluator,
-                    ephem_ref,
-                    target_ra,
-                    target_dec,
-                    time_indices.clone(),
-                    n_roll_samples,
-                )
-            })
+        self.with_ephemeris(bound, |ephem_ref| {
+            self.eval_with_ephemeris(
+                &*self.evaluator,
+                ephem_ref,
+                target_ra,
+                target_dec,
+                time_indices.clone(),
+                n_roll_samples,
+                target_roll,
+            )
         })
     }
 
@@ -1375,97 +1375,68 @@ impl PyConstraint {
                 "target_ras and target_decs must have the same length",
             ));
         }
-
-        // Validate target_rolls if provided
-        if let Some(ref rolls) = target_rolls {
-            if rolls.len() != target_ras.len() {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "target_rolls must have the same length as target_ras and target_decs",
-                ));
-            }
+        if target_rolls
+            .as_ref()
+            .is_some_and(|rolls| rolls.len() != target_ras.len())
+        {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_rolls must have the same length as target_ras and target_decs",
+            ));
         }
-
         let bound = ephemeris.bind(py);
         let time_indices = self.resolve_time_indices(bound, times, indices)?;
-
-        // If no per-target rolls, use uniform None roll for all targets
-        if target_rolls.is_none() {
-            return self.with_effective_evaluator(None, |evaluator| {
-                self.with_ephemeris(bound, |ephem_ref| {
-                    self.eval_batch_with_ephemeris(
-                        evaluator,
-                        ephem_ref,
-                        &target_ras,
-                        &target_decs,
-                        time_indices.clone(),
-                        n_roll_samples,
-                    )
-                })
+        let Some(rolls) = target_rolls else {
+            return self.with_ephemeris(bound, |ephem_ref| {
+                self.eval_batch_with_ephemeris(
+                    &*self.evaluator,
+                    ephem_ref,
+                    &target_ras,
+                    &target_decs,
+                    time_indices.clone(),
+                    n_roll_samples,
+                    None,
+                )
             });
-        }
-
-        // Group targets by roll value for efficient evaluation
-        let rolls = target_rolls.unwrap();
-        let roll_map = Self::build_roll_groups(&rolls);
-
-        // Create a result vector with capacity for all targets
-        let mut results: Vec<Option<ConstraintResult>> = Vec::with_capacity(target_ras.len());
-        for _ in 0..target_ras.len() {
-            results.push(None);
-        }
-
-        // Evaluate each roll group
-        for (_, group_indices) in roll_map {
-            // Get the roll value from the first index in the group
-            let target_roll = rolls[group_indices[0]];
-
-            // Extract targets for this group
-            let (group_ras, group_decs) =
-                Self::extract_group_targets(&target_ras, &target_decs, &group_indices);
-
-            let group_results = self.with_effective_evaluator(Some(target_roll), |evaluator| {
-                self.with_ephemeris(bound, |ephem_ref| {
-                    self.eval_batch_with_ephemeris(
-                        evaluator,
-                        ephem_ref,
-                        &group_ras,
-                        &group_decs,
-                        time_indices.clone(),
-                        n_roll_samples,
-                    )
-                })
-            })?;
-
-            if group_results.len() != group_indices.len() {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "Batch evaluation returned {} results for {} targets",
-                    group_results.len(),
-                    group_indices.len()
-                )));
+        };
+        let groups = Self::build_roll_groups(&rolls)?;
+        self.with_ephemeris(bound, |ephem_ref| {
+            let mut results: Vec<Option<ConstraintResult>> =
+                (0..target_ras.len()).map(|_| None).collect();
+            for group_indices in groups.values() {
+                let roll = rolls[group_indices[0]];
+                let (ras, decs) =
+                    Self::extract_group_targets(&target_ras, &target_decs, group_indices);
+                let group_results = self.eval_batch_with_ephemeris(
+                    &*self.evaluator,
+                    ephem_ref,
+                    &ras,
+                    &decs,
+                    time_indices.clone(),
+                    n_roll_samples,
+                    Some(roll),
+                )?;
+                if group_results.len() != group_indices.len() {
+                    return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                        "Batch evaluation returned an incorrect number of results",
+                    ));
+                }
+                for (result, &idx) in group_results.into_iter().zip(group_indices) {
+                    results[idx] = Some(result);
+                }
             }
-
-            // Place results back in original order
-            // Convert group_results into an iterator and zip with group_indices
-            for (result, &original_idx) in group_results.into_iter().zip(group_indices.iter()) {
-                results[original_idx] = Some(result);
-            }
-        }
-
-        // Convert Option results to owned results, preserving the invariant that
-        // every input target produces exactly one result.
-        let final_results: Vec<ConstraintResult> = results
-            .into_iter()
-            .enumerate()
-            .map(|(index, result)| {
-                result.ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "Batch evaluation did not produce a result for target index {}",
-                        index
-                    ))
+            results
+                .into_iter()
+                .enumerate()
+                .map(|(idx, result)| {
+                    result.ok_or_else(|| {
+                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "Batch evaluation did not produce a result for target index {}",
+                            idx
+                        ))
+                    })
                 })
-            })
-            .collect::<PyResult<Vec<_>>>()?;
-        Ok(final_results)
+                .collect()
+        })
     }
 
     /// Check if targets are in-constraint for multiple RA/Dec positions (vectorized)
@@ -1511,29 +1482,42 @@ impl PyConstraint {
                 "target_ras and target_decs must have the same length",
             ));
         }
-
-        // Validate target_rolls if provided
-        if let Some(ref rolls) = target_rolls {
-            if rolls.len() != target_ras.len() {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "target_rolls must have the same length as target_ras and target_decs",
-                ));
-            }
+        if target_rolls
+            .as_ref()
+            .is_some_and(|rolls| rolls.len() != target_ras.len())
+        {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_rolls must have the same length as target_ras and target_decs",
+            ));
         }
-
-        // Parse time filtering options
         let bound = ephemeris.bind(py);
         let time_indices = self.resolve_time_indices(bound, times, indices)?;
-
-        // target_rolls=None means "evaluate at all rolls and report targets constrained at every
-        // roll" (i.e., no valid roll exists).  For roll-dependent constraints the sweep must be
-        // coordinated: the same roll angle is injected into every sub-constraint simultaneously
-        // so that, e.g., SolarRollConstraint and BodyConstraint share the same roll value.
-        if target_rolls.is_none() {
-            // Single dispatch: evaluators that aren't roll-dependent take the fast path
-            // inside the trait method; combinators hoist roll-independent children; leaves
-            // like BrightStar reuse cached projections across the sweep.
-            let result_array = self.with_ephemeris(bound, |ephem_ref| {
+        let result = if let Some(rolls) = target_rolls {
+            let groups = Self::build_roll_groups(&rolls)?;
+            self.with_ephemeris(bound, |ephem_ref| {
+                let n_times = match &time_indices {
+                    Some(idx) => idx.len(),
+                    None => ephem_ref.get_times()?.len(),
+                };
+                let mut result = ndarray::Array2::from_elem((target_ras.len(), n_times), false);
+                for group_indices in groups.values() {
+                    let (ras, decs) =
+                        Self::extract_group_targets(&target_ras, &target_decs, group_indices);
+                    let mask = self.evaluator.in_constraint_batch_at_roll(
+                        ephem_ref,
+                        &ras,
+                        &decs,
+                        time_indices.as_deref(),
+                        EvaluationRoll::Fixed(rolls[group_indices[0]]),
+                    )?;
+                    for (local, &idx) in group_indices.iter().enumerate() {
+                        result.row_mut(idx).assign(&mask.row(local));
+                    }
+                }
+                Ok(result)
+            })?
+        } else {
+            self.with_ephemeris(bound, |ephem_ref| {
                 self.evaluator
                     .in_constraint_batch_constrained_at_every_roll(
                         ephem_ref,
@@ -1542,48 +1526,10 @@ impl PyConstraint {
                         time_indices.as_deref(),
                         n_roll_samples,
                     )
-            })?;
-
-            use numpy::IntoPyArray;
-            return Ok(result_array.into_pyarray(py).into());
-        }
-
-        // Handle per-target rolls: group targets by roll and stack results
-        let rolls = target_rolls.unwrap();
-        let roll_map = Self::build_roll_groups(&rolls);
-
-        // First pass: get dimensions and collect results
-        let mut all_groups: Vec<(Vec<usize>, numpy::ndarray::Array2<bool>)> = Vec::new();
-        let mut n_times = 0;
-
-        for (_, group_indices) in roll_map {
-            let target_roll = rolls[group_indices[0]];
-            let (group_ras, group_decs) =
-                Self::extract_group_targets(&target_ras, &target_decs, &group_indices);
-
-            let group_array = self.with_effective_evaluator(Some(target_roll), |evaluator| {
-                self.with_ephemeris(bound, |ephem_ref| {
-                    evaluator.in_constraint_batch(
-                        ephem_ref,
-                        &group_ras,
-                        &group_decs,
-                        time_indices.as_deref(),
-                    )
-                })
-            })?;
-
-            if n_times == 0 {
-                n_times = group_array.len_of(ndarray::Axis(1));
-            }
-
-            all_groups.push((group_indices, group_array));
-        }
-
-        let arr = Self::reassemble_grouped_batch_results(target_ras.len(), n_times, all_groups)?;
-
-        // Convert to numpy array
+            })?
+        };
         use numpy::IntoPyArray;
-        Ok(arr.into_pyarray(py).into())
+        Ok(result.into_pyarray(py).into())
     }
 
     /// Compute instantaneous field of regard for this constraint in steradians.
@@ -1690,43 +1636,7 @@ impl PyConstraint {
             }
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times in ephemeris"))?;
 
-        // Parse input times (single datetime or iterable of datetimes)
-        let input_times: Vec<DateTime<Utc>> =
-            if let Ok(iter) = pyo3::types::PyIterator::from_object(times_arg) {
-                // Handle any iterable (list, numpy array, etc.)
-                iter.map(|item| {
-                    let item = item?;
-                    let year: i32 = item.getattr("year")?.extract()?;
-                    let month: u32 = item.getattr("month")?.extract()?;
-                    let day: u32 = item.getattr("day")?.extract()?;
-                    let hour: u32 = item.getattr("hour")?.extract()?;
-                    let minute: u32 = item.getattr("minute")?.extract()?;
-                    let second: u32 = item.getattr("second")?.extract()?;
-                    let microsecond: u32 = item.getattr("microsecond")?.extract()?;
-
-                    chrono::NaiveDate::from_ymd_opt(year, month, day)
-                        .and_then(|d| d.and_hms_micro_opt(hour, minute, second, microsecond))
-                        .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
-                        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid datetime"))
-                })
-                .collect::<PyResult<_>>()?
-            } else {
-                // Single datetime
-                let year: i32 = times_arg.getattr("year")?.extract()?;
-                let month: u32 = times_arg.getattr("month")?.extract()?;
-                let day: u32 = times_arg.getattr("day")?.extract()?;
-                let hour: u32 = times_arg.getattr("hour")?.extract()?;
-                let minute: u32 = times_arg.getattr("minute")?.extract()?;
-                let second: u32 = times_arg.getattr("second")?.extract()?;
-                let microsecond: u32 = times_arg.getattr("microsecond")?.extract()?;
-
-                let dt = chrono::NaiveDate::from_ymd_opt(year, month, day)
-                    .and_then(|d| d.and_hms_micro_opt(hour, minute, second, microsecond))
-                    .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
-                    .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid datetime"))?;
-
-                vec![dt]
-            };
+        let input_times = Self::parse_datetime_input(times_arg)?;
 
         // Build HashMap for O(1) lookup when multiple times are requested
         let mut indices = Vec::with_capacity(input_times.len());
@@ -1835,7 +1745,7 @@ impl PyConstraint {
 
         // Call the batch method with the time parameter as is
         // Convert target_roll to target_rolls (per-target list with single element)
-        let target_rolls = target_roll.map(|roll| vec![roll]);
+        let target_rolls = target_roll.map(|roll| vec![roll; num_times]);
         let result_array = self.in_constraint_batch(
             py,
             ephemeris,
@@ -1966,6 +1876,10 @@ impl PyConstraint {
     /// 1. Explicit coordinates: Provide `target_ras`, `target_decs`, and optionally `times`
     /// 2. Body lookup: Provide `body` name/ID and optionally `use_horizons` to query positions
     ///
+    /// Exact explicit times select matching ephemeris rows. Off-grid tracks
+    /// retain positional pairing with the first N rows and the supplied
+    /// timestamps; no geometry is interpolated.
+    ///
     /// Args:
     ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
     ///     target_ras (list[float], optional): Array of right ascensions in degrees (ICRS/J2000)
@@ -2004,194 +1918,85 @@ impl PyConstraint {
         use_horizons: bool,
         spice_kernel: Option<&str>,
     ) -> PyResult<MovingBodyResult> {
-        use crate::constraints::core::MovingBodyResult;
-
         let bound = ephemeris.bind(py);
-
-        // Determine ras, decs, and timestamps based on input mode
-        let (ras, decs, timestamps): (Vec<f64>, Vec<f64>, Vec<DateTime<Utc>>) =
-            if let Some(body_id) = body {
-                // Body lookup mode: get positions from ephemeris.get_body()
-                // Build kwargs dict with use_horizons and optional spice_kernel
-                let kwargs = pyo3::types::PyDict::new(py);
-                kwargs.set_item("use_horizons", use_horizons)?;
-                if let Some(ks) = spice_kernel {
-                    kwargs.set_item("spice_kernel", ks)?;
+        let all_times = self.with_ephemeris(bound, |ephem| ephem.get_times())?;
+        let mut track_times = None;
+        let (ras, decs, indices) = if let Some(body_id) = body {
+            let kwargs = pyo3::types::PyDict::new(py);
+            kwargs.set_item("use_horizons", use_horizons)?;
+            if let Some(kernel) = spice_kernel {
+                kwargs.set_item("spice_kernel", kernel)?;
+            }
+            let skycoord = bound.call_method("get_body", (body_id,), Some(&kwargs))?;
+            let ras: Vec<f64> = skycoord.getattr("ra")?.getattr("deg")?.extract()?;
+            let decs: Vec<f64> = skycoord.getattr("dec")?.getattr("deg")?.extract()?;
+            (ras, decs, (0..all_times.len()).collect::<Vec<_>>())
+        } else {
+            let ras = target_ras.ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "Either 'body' or 'target_ras'/'target_decs' must be provided",
+                )
+            })?;
+            let decs = target_decs.ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "target_decs must be provided when target_ras is specified",
+                )
+            })?;
+            if ras.len() != decs.len() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "target_ras and target_decs must have the same length",
+                ));
+            }
+            let indices = match times {
+                Some(times) => {
+                    let supplied_times = Self::parse_datetime_input(times)?;
+                    // Preserve off-grid tracks: historically these
+                    // were paired with ephemeris rows by position. Exact subsets
+                    // continue to select the matching ephemeris samples.
+                    let exact: Option<Vec<_>> = supplied_times
+                        .iter()
+                        .map(|time| all_times.binary_search(time).ok())
+                        .collect();
+                    let indices = match exact {
+                        Some(indices) => indices,
+                        None if supplied_times.len() <= all_times.len() => {
+                            (0..supplied_times.len()).collect()
+                        }
+                        None => {
+                            return Err(pyo3::exceptions::PyValueError::new_err(
+                                "Off-grid tracks cannot exceed the ephemeris length",
+                            ))
+                        }
+                    };
+                    track_times = Some(supplied_times);
+                    indices
                 }
-                let skycoord = bound.call_method("get_body", (body_id,), Some(&kwargs))?;
-
-                // Extract RA/Dec from SkyCoord
-                let ra_attr = skycoord.getattr("ra")?;
-                let dec_attr = skycoord.getattr("dec")?;
-                let ra_deg = ra_attr.getattr("deg")?;
-                let dec_deg = dec_attr.getattr("deg")?;
-
-                // Convert to Vec<f64>
-                let ras: Vec<f64> = ra_deg.extract()?;
-                let decs: Vec<f64> = dec_deg.extract()?;
-
-                // Get timestamps from ephemeris
-                let ts_attr = bound.getattr("timestamp")?;
-                let ts_list: Vec<DateTime<Utc>> = if let Ok(iter) =
-                    pyo3::types::PyIterator::from_object(&ts_attr)
-                {
-                    iter.map(|item| {
-                        let item = item?;
-                        let year: i32 = item.getattr("year")?.extract()?;
-                        let month: u32 = item.getattr("month")?.extract()?;
-                        let day: u32 = item.getattr("day")?.extract()?;
-                        let hour: u32 = item.getattr("hour")?.extract()?;
-                        let minute: u32 = item.getattr("minute")?.extract()?;
-                        let second: u32 = item.getattr("second")?.extract()?;
-                        let microsecond: u32 = item.getattr("microsecond")?.extract()?;
-
-                        chrono::NaiveDate::from_ymd_opt(year, month, day)
-                            .and_then(|d| d.and_hms_micro_opt(hour, minute, second, microsecond))
-                            .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
-                            .ok_or_else(|| {
-                                pyo3::exceptions::PyValueError::new_err("Invalid datetime")
-                            })
-                    })
-                    .collect::<PyResult<_>>()?
-                } else {
-                    return Err(pyo3::exceptions::PyValueError::new_err(
-                        "Could not iterate ephemeris timestamps",
-                    ));
-                };
-
-                (ras, decs, ts_list)
-            } else {
-                // Explicit coordinates mode
-                let ras = target_ras.ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err(
-                        "Either 'body' or 'target_ras'/'target_decs' must be provided",
-                    )
-                })?;
-                let decs = target_decs.ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err(
-                        "target_decs must be provided when target_ras is specified",
-                    )
-                })?;
-
-                if ras.len() != decs.len() {
-                    return Err(pyo3::exceptions::PyValueError::new_err(
-                        "target_ras and target_decs must have the same length",
-                    ));
-                }
-
-                // Get timestamps - either from 'times' parameter or from ephemeris
-                let ts_list: Vec<DateTime<Utc>> = if let Some(times_arg) = times {
-                    // Parse times parameter
-                    if let Ok(iter) = pyo3::types::PyIterator::from_object(times_arg) {
-                        iter.map(|item| {
-                            let item = item?;
-                            let year: i32 = item.getattr("year")?.extract()?;
-                            let month: u32 = item.getattr("month")?.extract()?;
-                            let day: u32 = item.getattr("day")?.extract()?;
-                            let hour: u32 = item.getattr("hour")?.extract()?;
-                            let minute: u32 = item.getattr("minute")?.extract()?;
-                            let second: u32 = item.getattr("second")?.extract()?;
-                            let microsecond: u32 = item.getattr("microsecond")?.extract()?;
-
-                            chrono::NaiveDate::from_ymd_opt(year, month, day)
-                                .and_then(|d| {
-                                    d.and_hms_micro_opt(hour, minute, second, microsecond)
-                                })
-                                .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
-                                .ok_or_else(|| {
-                                    pyo3::exceptions::PyValueError::new_err("Invalid datetime")
-                                })
-                        })
-                        .collect::<PyResult<_>>()?
-                    } else {
-                        // Single datetime
-                        let year: i32 = times_arg.getattr("year")?.extract()?;
-                        let month: u32 = times_arg.getattr("month")?.extract()?;
-                        let day: u32 = times_arg.getattr("day")?.extract()?;
-                        let hour: u32 = times_arg.getattr("hour")?.extract()?;
-                        let minute: u32 = times_arg.getattr("minute")?.extract()?;
-                        let second: u32 = times_arg.getattr("second")?.extract()?;
-                        let microsecond: u32 = times_arg.getattr("microsecond")?.extract()?;
-
-                        let dt = chrono::NaiveDate::from_ymd_opt(year, month, day)
-                            .and_then(|d| d.and_hms_micro_opt(hour, minute, second, microsecond))
-                            .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
-                            .ok_or_else(|| {
-                                pyo3::exceptions::PyValueError::new_err("Invalid datetime")
-                            })?;
-
-                        vec![dt]
-                    }
-                } else {
-                    // Use ephemeris timestamps
-                    let ts_attr = bound.getattr("timestamp")?;
-                    if let Ok(iter) = pyo3::types::PyIterator::from_object(&ts_attr) {
-                        iter.map(|item| {
-                            let item = item?;
-                            let year: i32 = item.getattr("year")?.extract()?;
-                            let month: u32 = item.getattr("month")?.extract()?;
-                            let day: u32 = item.getattr("day")?.extract()?;
-                            let hour: u32 = item.getattr("hour")?.extract()?;
-                            let minute: u32 = item.getattr("minute")?.extract()?;
-                            let second: u32 = item.getattr("second")?.extract()?;
-                            let microsecond: u32 = item.getattr("microsecond")?.extract()?;
-
-                            chrono::NaiveDate::from_ymd_opt(year, month, day)
-                                .and_then(|d| {
-                                    d.and_hms_micro_opt(hour, minute, second, microsecond)
-                                })
-                                .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
-                                .ok_or_else(|| {
-                                    pyo3::exceptions::PyValueError::new_err("Invalid datetime")
-                                })
-                        })
-                        .collect::<PyResult<_>>()?
-                    } else {
-                        return Err(pyo3::exceptions::PyValueError::new_err(
-                            "Could not iterate ephemeris timestamps",
-                        ));
-                    }
-                };
-
-                if ts_list.len() != ras.len() {
-                    return Err(pyo3::exceptions::PyValueError::new_err(
-                        "timestamps length must match target_ras/target_decs length",
-                    ));
-                }
-
-                (ras, decs, ts_list)
+                None => (0..all_times.len()).collect(),
             };
-
-        // Evaluate constraint at each timestamp with corresponding RA/Dec
-        // VECTORIZED: Use batch evaluation with diagonal extraction for speed
-        let constraint_vec = self.eval_moving_body_batch_diagonal(py, &ephemeris, &ras, &decs)?;
-
-        // Build violation windows from constraint_vec
+            (ras, decs, indices)
+        };
+        if ras.len() != decs.len() || ras.len() != indices.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "timestamps length must match target_ras/target_decs length",
+            ));
+        }
+        let timestamps =
+            track_times.unwrap_or_else(|| indices.iter().map(|&i| all_times[i]).collect());
+        let evaluation = self.with_ephemeris(bound, |ephem| {
+            self.evaluator
+                .evaluate_diagonal(ephem, &ras, &decs, Some(&indices))
+        })?;
         let violations = track_violations(
             &timestamps,
-            |i| (constraint_vec[i], if constraint_vec[i] { 1.0 } else { 0.0 }),
+            |i| {
+                (
+                    evaluation.violated[i],
+                    if evaluation.violated[i] { 1.0 } else { 0.0 },
+                )
+            },
             |_i, _is_open| self.evaluator.name(),
         );
-
-        let all_satisfied = !constraint_vec.iter().any(|&v| v);
-
-        // Compute named continuous values (diagonal: target_i paired with time_i).
-        let values = self.with_ephemeris(bound, |ephem_ref| {
-            self.evaluator
-                .compute_named_values_diagonal(ephem_ref, &ras, &decs)
-        })?;
-
-        // Compute per-leaf-constraint violation masks (diagonal), used to attribute
-        // VisibilityWindow.start_cause/end_cause.
-        let component_violated = self.with_ephemeris(bound, |ephem_ref| {
-            self.evaluator
-                .compute_named_booleans_diagonal(ephem_ref, &ras, &decs)
-        })?;
-
-        let cause_value_keys = self.with_ephemeris(bound, |ephem_ref| {
-            Self::cause_value_keys_for(self.evaluator.as_ref(), ephem_ref)
-        })?;
-
+        let all_satisfied = !evaluation.violated.iter().any(|&v| v);
         Ok(MovingBodyResult::new(
             violations,
             all_satisfied,
@@ -2199,11 +2004,11 @@ impl PyConstraint {
             timestamps,
             ras,
             decs,
-            constraint_vec,
+            evaluation.violated,
         )
-        .with_constraint_values(values)
-        .with_component_violated(component_violated)
-        .with_cause_value_keys(cause_value_keys))
+        .with_constraint_values(evaluation.values)
+        .with_component_violated(evaluation.named)
+        .with_cause_value_keys(evaluation.cause_value_keys))
     }
 
     /// Get constraint configuration as JSON string

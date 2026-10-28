@@ -8,6 +8,7 @@ to configure the Rust constraint evaluators.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -64,6 +65,8 @@ class VisibilityWindowResult(BaseModel):
     start_time: datetime
     end_time: datetime
     duration_seconds: float
+    start_cause: list[str] | None = None
+    end_cause: list[str] | None = None
 
 class MovingVisibilityResult(BaseModel):
     timestamps: list[datetime]
@@ -74,6 +77,8 @@ class MovingVisibilityResult(BaseModel):
     visibility: list[VisibilityWindowResult]
     all_satisfied: bool
     constraint_name: str
+    constraint_values: dict[str, list[float]] = ...
+    cause_value_keys: dict[str, list[str]] = ...
 
 class RustConstraintMixin(BaseModel):
     """Base class for Rust constraint configurations"""
@@ -97,7 +102,7 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-        target_rolls: list[float] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> list[ConstraintResult]: ...
     def in_constraint_batch(
@@ -107,7 +112,7 @@ class RustConstraintMixin(BaseModel):
         target_decs: list[float],
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
-        target_rolls: list[float] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> npt.NDArray[np.bool_]: ...
     def in_constraint(

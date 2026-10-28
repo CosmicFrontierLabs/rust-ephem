@@ -61,6 +61,27 @@ impl DaytimeEvaluator {
 }
 
 impl ConstraintEvaluator for DaytimeEvaluator {
+    fn evaluate_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+    ) -> PyResult<super::diagonal::DiagonalEvaluation> {
+        let indices = super::diagonal::time_indices(ephemeris, ras, decs, indices)?;
+        let altitudes =
+            crate::utils::celestial::calculate_sun_altitudes_batch_fast(ephemeris, Some(&indices));
+        let mask = altitudes
+            .iter()
+            .map(|&alt| alt > self.twilight_angle())
+            .collect();
+        Ok(super::diagonal::DiagonalEvaluation::leaf(
+            &self.name(),
+            mask,
+            HashMap::from([("sun_altitude_deg".to_string(), altitudes.to_vec())]),
+        ))
+    }
+
     fn evaluate(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
