@@ -296,6 +296,10 @@ impl MoonPhaseEvaluator {
 }
 
 impl ConstraintEvaluator for MoonPhaseEvaluator {
+    fn is_target_dependent(&self) -> bool {
+        self.min_distance.is_some() || self.max_distance.is_some()
+    }
+
     fn evaluate(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,

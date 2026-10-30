@@ -50,6 +50,27 @@ pub fn dot_product(a: &[f64; 3], b: &[f64; 3]) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
+/// Cross product of two 3D vectors.
+pub fn cross_product(a: &[f64; 3], b: &[f64; 3]) -> [f64; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+/// Convert an arbitrary direction to ICRS RA/Dec degrees. Normalize first so
+/// small interpolation errors do not alter declination. A zero vector maps to
+/// (0, 0), matching normalize_vector's guarded zero-vector convention.
+pub fn vector_to_radec(v: &[f64; 3]) -> (f64, f64) {
+    let unit = normalize_vector(v);
+    let ra = unit[1].atan2(unit[0]).to_degrees().rem_euclid(360.0);
+    (
+        if ra >= 360.0 { 0.0 } else { ra },
+        unit[2].clamp(-1.0, 1.0).asin().to_degrees(),
+    )
+}
+
 /// Calculate the magnitude (length) of a 3D vector
 ///
 /// # Arguments

@@ -11,7 +11,8 @@ pub use ephemeris::{
 
 // Re-export constraint types
 pub use constraints::{
-    ConstraintResult, ConstraintViolation, MovingBodyResult, PyConstraint, VisibilityWindow,
+    ConstraintResult, ConstraintViolation, MovingBodyResult, PyConstraint, RouteResult,
+    VisibilityWindow,
 };
 
 // Make certain utils modules public for external access
@@ -356,6 +357,7 @@ fn _rust_ephem(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ParquetEphemeris>()?;
     m.add_class::<PositionVelocityData>()?;
     m.add_class::<PyConstraint>()?;
+    m.add_class::<RouteResult>()?;
     m.add_class::<ConstraintResult>()?;
     m.add_class::<ConstraintViolation>()?;
     m.add_class::<VisibilityWindow>()?;

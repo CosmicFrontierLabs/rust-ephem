@@ -139,6 +139,10 @@ impl EclipseEvaluator {
 }
 
 impl ConstraintEvaluator for EclipseEvaluator {
+    fn is_target_dependent(&self) -> bool {
+        false
+    }
+
     fn evaluate_diagonal(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,

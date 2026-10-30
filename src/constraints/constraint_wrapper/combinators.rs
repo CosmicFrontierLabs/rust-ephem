@@ -734,6 +734,10 @@ impl ConstraintEvaluator for AndEvaluator {
         Ok(result)
     }
 
+    fn is_target_dependent(&self) -> bool {
+        self.constraints.iter().any(|c| c.is_target_dependent())
+    }
+
     fn is_roll_dependent(&self) -> bool {
         self.constraints.iter().any(|c| c.is_roll_dependent())
     }
@@ -1175,6 +1179,10 @@ impl ConstraintEvaluator for OrEvaluator {
             }
         }
         Ok(result)
+    }
+
+    fn is_target_dependent(&self) -> bool {
+        self.constraints.iter().any(|c| c.is_target_dependent())
     }
 
     fn is_roll_dependent(&self) -> bool {
@@ -1625,6 +1633,10 @@ impl ConstraintEvaluator for NotEvaluator {
         Ok(result)
     }
 
+    fn is_target_dependent(&self) -> bool {
+        self.constraint.is_target_dependent()
+    }
+
     fn is_roll_dependent(&self) -> bool {
         self.constraint.is_roll_dependent()
     }
@@ -1978,6 +1990,10 @@ impl ConstraintEvaluator for XorEvaluator {
             }
         }
         Ok(result)
+    }
+
+    fn is_target_dependent(&self) -> bool {
+        self.constraints.iter().any(|c| c.is_target_dependent())
     }
 
     fn is_roll_dependent(&self) -> bool {
@@ -2342,6 +2358,10 @@ impl ConstraintEvaluator for AtLeastEvaluator {
             }
         }
         Ok(result)
+    }
+
+    fn is_target_dependent(&self) -> bool {
+        self.constraints.iter().any(|c| c.is_target_dependent())
     }
 
     fn is_roll_dependent(&self) -> bool {

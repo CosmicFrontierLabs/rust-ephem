@@ -74,7 +74,7 @@ pub fn datetime_to_mjd(dt: &DateTime<Utc>) -> f64 {
 // Python datetime interop
 // ============================================================================
 
-/// Convert Python datetime to chrono DateTime<Utc>
+/// Convert Python datetime to UTC, respecting its offset. Naive values mean UTC.
 pub fn python_datetime_to_utc(py_dt: &Bound<PyAny>) -> PyResult<DateTime<Utc>> {
     let date = chrono::NaiveDate::from_ymd_opt(
         py_dt.getattr("year")?.extract()?,
@@ -91,10 +91,21 @@ pub fn python_datetime_to_utc(py_dt: &Bound<PyAny>) -> PyResult<DateTime<Utc>> {
     )
     .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid time"))?;
 
-    Ok(DateTime::from_naive_utc_and_offset(
-        chrono::NaiveDateTime::new(date, time),
-        Utc,
-    ))
+    let wall_time =
+        DateTime::from_naive_utc_and_offset(chrono::NaiveDateTime::new(date, time), Utc);
+    let offset = py_dt.call_method0("utcoffset")?;
+    if offset.is_none() {
+        return Ok(wall_time);
+    }
+    let days: i64 = offset.getattr("days")?.extract()?;
+    let seconds: i64 = offset.getattr("seconds")?.extract()?;
+    let micros: i64 = offset.getattr("microseconds")?.extract()?;
+    let delta = chrono::Duration::days(days)
+        + chrono::Duration::seconds(seconds)
+        + chrono::Duration::microseconds(micros);
+    wall_time
+        .checked_sub_signed(delta)
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("UTC datetime is out of range"))
 }
 
 /// Convert chrono DateTime<Utc> to Python datetime (UTC timezone-aware)

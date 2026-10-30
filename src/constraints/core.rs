@@ -750,6 +750,12 @@ impl EvaluationRoll {
 
 /// Evaluate constraints against observer ephemerides and target coordinates.
 pub trait ConstraintEvaluator: Send + Sync {
+    /// Whether changing the pointing can change the violation mask. The router
+    /// evaluates time-only trees once because a waypoint cannot clear them.
+    fn is_target_dependent(&self) -> bool {
+        true
+    }
+
     /// Evaluate target_i at its selected time_i, returning masks, values, and
     /// attribution together. The default bounds all leaf work to one sample;
     /// common leaves and combinators override it with vectorized paired kernels.
