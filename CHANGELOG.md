@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.16.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.15.1...v0.16.0) (2026-10-30)
+
+
+### Features
+
+* add route_around method to constraints, for constraint avoidance ([#204](https://github.com/CosmicFrontierLabs/rust-ephem/issues/204)) ([c333355](https://github.com/CosmicFrontierLabs/rust-ephem/commit/c3333551d95cefa52afd173c0abc6fe5b771f397))
+* add support for abberation correction for solar system bodies ([#206](https://github.com/CosmicFrontierLabs/rust-ephem/issues/206)) ([24e949b](https://github.com/CosmicFrontierLabs/rust-ephem/commit/24e949bebcdbf63e92a8c15b87742b453c7fa780))
+
+
+### Bug Fixes
+
+* evaluate constraints at fractional ephemeris times ([#208](https://github.com/CosmicFrontierLabs/rust-ephem/issues/208)) ([62aa62b](https://github.com/CosmicFrontierLabs/rust-ephem/commit/62aa62b9176b8e47dbdf5360d635951c6bb3aaf6))
+
+
+### Performance Improvements
+
+* Accelerate roll sweeps and moving body constraint evaluation ([#203](https://github.com/CosmicFrontierLabs/rust-ephem/issues/203)) ([02a49b3](https://github.com/CosmicFrontierLabs/rust-ephem/commit/02a49b3af42bff0054fdcab699955112e8dfb1f6))
+
 ## [0.15.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.15.0...v0.15.1) (2026-10-21)
 
 
