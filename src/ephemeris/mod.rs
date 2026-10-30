@@ -9,6 +9,7 @@ pub mod file_ephemeris;
 pub mod ground_ephemeris;
 pub mod parquet_ephemeris;
 pub mod position_velocity;
+pub(crate) mod sampled_ephemeris;
 pub mod spice_ephemeris;
 pub mod spice_manager;
 pub mod tle_ephemeris;

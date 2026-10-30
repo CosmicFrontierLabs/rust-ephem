@@ -501,7 +501,8 @@ class RustConstraintMixin(BaseModel):
             ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
             target_ra: Target right ascension in degrees (ICRS/J2000)
             target_dec: Target declination in degrees (ICRS/J2000)
-            times: Optional specific time(s) to evaluate
+            times: Optional time(s) within the ephemeris range; between stored
+                samples, geometry is interpolated at the requested time.
             indices: Optional specific time index/indices to evaluate
             target_roll: Spacecraft roll angle (degrees).  When ``None`` (default) and
                 the constraint has a boresight offset with non-zero pitch/yaw, sweeps
@@ -550,6 +551,8 @@ class RustConstraintMixin(BaseModel):
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> list[ConstraintResult]:
         """Evaluate the constraint for multiple targets and return one result per target.
+
+        Requested times use the same bounded interpolation as :meth:`in_constraint`.
 
         Args:
             target_rolls: Optional per-target spacecraft roll angles (degrees). Must have
@@ -633,7 +636,8 @@ class RustConstraintMixin(BaseModel):
             ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
             target_ras: List of target right ascensions in degrees (ICRS/J2000)
             target_decs: List of target declinations in degrees (ICRS/J2000)
-            times: Optional specific time(s) to evaluate
+            times: Optional time(s) within the ephemeris range; between stored
+                samples, geometry is interpolated at the requested time.
             indices: Optional specific time index/indices to evaluate
             target_rolls: Optional per-target spacecraft roll angles (degrees), one
                 value per target. Each entry may be ``None`` to evaluate that target
@@ -722,6 +726,12 @@ class RustConstraintMixin(BaseModel):
 
         This method performs full constraint evaluation for the given times.
         Use this to check constraint status without pre-computing evaluate().
+        Between stored samples, Cartesian position/velocity states use cubic
+        Hermite interpolation, then angles and constraint results are recomputed.
+        Exact timestamps use the original samples. Times outside the sampled
+        range raise ValueError; there is no extrapolation. Accuracy depends on
+        the source sample spacing and state-vector accuracy; interpolation does
+        not add orbit information or detect unsampled constraint crossings.
 
         **API Note:** This differs from ConstraintResult.in_constraint() which
         operates on pre-evaluated timestamps. Use this method when you need
@@ -729,7 +739,7 @@ class RustConstraintMixin(BaseModel):
         only for times already evaluated via evaluate().
 
         Args:
-            time: The time(s) to check (must exist in ephemeris). Can be a single datetime,
+            time: The time(s) to check, within the ephemeris range. Can be a single datetime,
                   list of datetimes, or numpy array of datetimes.
             ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
             target_ra: Target right ascension in degrees (ICRS/J2000)
@@ -781,7 +791,7 @@ class RustConstraintMixin(BaseModel):
         adjacent valid samples into ``(min_deg, max_deg)`` intervals.
 
         Args:
-            time: A single datetime to evaluate (must exist in ephemeris).
+            time: A single datetime within the ephemeris range (inclusive).
             ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
             target_ra: Target right ascension in degrees (ICRS/J2000)
             target_dec: Target declination in degrees (ICRS/J2000)

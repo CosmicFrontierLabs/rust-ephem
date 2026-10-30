@@ -3,6 +3,7 @@ use crate::constraints::core::{
     EvaluationRoll,
 };
 use crate::ephemeris::ephemeris_common::EphemerisBase;
+use crate::ephemeris::sampled_ephemeris::{locate_times, SampledEphemeris};
 use crate::ephemeris::FileEphemeris;
 use crate::ephemeris::GroundEphemeris;
 use crate::ephemeris::OEMEphemeris;
@@ -25,24 +26,39 @@ impl PyConstraint {
         }
     }
 
-    pub(super) fn resolve_time_indices(
+    /// Keep exact-grid queries on the original ephemeris. Off-grid queries use
+    /// a small interpolated view at the requested times, in the supplied order.
+    pub(super) fn with_evaluation_ephemeris<T, F>(
         &self,
         bound: &Bound<'_, PyAny>,
         times: Option<&Bound<'_, PyAny>>,
         indices: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Option<Vec<usize>>> {
-        if let Some(times_arg) = times {
-            if indices.is_some() {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "Cannot specify both 'times' and 'indices' parameters",
-                ));
-            }
-            Ok(Some(self.parse_times_to_indices(bound, times_arg)?))
-        } else if let Some(indices_arg) = indices {
-            Ok(Some(self.parse_indices(indices_arg)?))
-        } else {
-            Ok(None)
+        mut f: F,
+    ) -> PyResult<T>
+    where
+        F: FnMut(&dyn EphemerisBase, Option<Vec<usize>>) -> PyResult<T>,
+    {
+        if times.is_some() && indices.is_some() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Cannot specify both 'times' and 'indices' parameters",
+            ));
         }
+        let requested = times.map(Self::parse_datetime_input).transpose()?;
+        let indices = indices.map(|arg| self.parse_indices(arg)).transpose()?;
+        self.with_ephemeris(bound, |source| {
+            let Some(ref times) = requested else {
+                return f(source, indices.clone());
+            };
+            let source_times = source.data().times.as_deref().ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("No ephemeris timestamps available")
+            })?;
+            let locations = locate_times(source_times, times)?;
+            if let Ok(exact) = locations.iter().copied().collect::<Result<Vec<_>, _>>() {
+                return f(source, Some(exact));
+            }
+            let sampled = SampledEphemeris::new(source, times, &locations)?;
+            f(&sampled, None)
+        })
     }
 
     pub(super) fn validate_target_roll(roll: f64) -> PyResult<()> {

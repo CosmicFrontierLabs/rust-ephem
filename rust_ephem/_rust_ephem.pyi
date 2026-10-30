@@ -858,7 +858,7 @@ class Constraint:
         Check if the target is in-constraint at given time(s).
 
         Args:
-            time: The time(s) to check (must exist in ephemeris timestamps).
+            time: Time(s) within the ephemeris range; intermediate geometry is interpolated.
                   Can be a single datetime, list of datetimes, or numpy array of datetimes.
             ephemeris: One of TLEEphemeris, SPICEEphemeris, or GroundEphemeris
             target_ra: Target right ascension in degrees (ICRS/J2000)
@@ -899,7 +899,7 @@ class Constraint:
         values returned here.
 
         Args:
-            time: Timestamp to evaluate (must exist in ephemeris).
+            time: Timestamp within the ephemeris range; intermediate geometry is interpolated.
             ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, or OEMEphemeris
             target_ra: Target right ascension in degrees (ICRS/J2000)
             target_dec: Target declination in degrees (ICRS/J2000)

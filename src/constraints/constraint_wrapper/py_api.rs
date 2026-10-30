@@ -1385,8 +1385,7 @@ impl PyConstraint {
             Self::validate_target_roll(roll)?;
         }
         let bound = ephemeris.bind(py);
-        let time_indices = self.resolve_time_indices(bound, times, indices)?;
-        self.with_ephemeris(bound, |ephem_ref| {
+        self.with_evaluation_ephemeris(bound, times, indices, |ephem_ref, time_indices| {
             self.eval_with_ephemeris(
                 &*self.evaluator,
                 ephem_ref,
@@ -1432,22 +1431,26 @@ impl PyConstraint {
             ));
         }
         let bound = ephemeris.bind(py);
-        let time_indices = self.resolve_time_indices(bound, times, indices)?;
         let Some(rolls) = target_rolls else {
-            return self.with_ephemeris(bound, |ephem_ref| {
-                self.eval_batch_with_ephemeris(
-                    &*self.evaluator,
-                    ephem_ref,
-                    &target_ras,
-                    &target_decs,
-                    time_indices.clone(),
-                    n_roll_samples,
-                    None,
-                )
-            });
+            return self.with_evaluation_ephemeris(
+                bound,
+                times,
+                indices,
+                |ephem_ref, time_indices| {
+                    self.eval_batch_with_ephemeris(
+                        &*self.evaluator,
+                        ephem_ref,
+                        &target_ras,
+                        &target_decs,
+                        time_indices.clone(),
+                        n_roll_samples,
+                        None,
+                    )
+                },
+            );
         };
         let groups = Self::build_roll_groups(&rolls)?;
-        self.with_ephemeris(bound, |ephem_ref| {
+        self.with_evaluation_ephemeris(bound, times, indices, |ephem_ref, time_indices| {
             let mut results: Vec<Option<ConstraintResult>> =
                 (0..target_ras.len()).map(|_| None).collect();
             for group_indices in groups.values() {
@@ -1539,10 +1542,9 @@ impl PyConstraint {
             ));
         }
         let bound = ephemeris.bind(py);
-        let time_indices = self.resolve_time_indices(bound, times, indices)?;
         let result = if let Some(rolls) = target_rolls {
             let groups = Self::build_roll_groups(&rolls)?;
-            self.with_ephemeris(bound, |ephem_ref| {
+            self.with_evaluation_ephemeris(bound, times, indices, |ephem_ref, time_indices| {
                 let n_times = match &time_indices {
                     Some(idx) => idx.len(),
                     None => ephem_ref.get_times()?.len(),
@@ -1565,7 +1567,7 @@ impl PyConstraint {
                 Ok(result)
             })?
         } else {
-            self.with_ephemeris(bound, |ephem_ref| {
+            self.with_evaluation_ephemeris(bound, times, indices, |ephem_ref, time_indices| {
                 self.evaluator
                     .in_constraint_batch_constrained_at_every_roll(
                         ephem_ref,
@@ -1648,7 +1650,7 @@ impl PyConstraint {
     /// For multiple times, it efficiently uses the batch evaluation internally.
     ///
     /// Args:
-    ///     time (datetime or list[datetime] or numpy.ndarray): Time(s) to check (must exist in ephemeris).
+    ///     time (datetime or list[datetime] or numpy.ndarray): Time(s) to check within the ephemeris range (interpolated between samples).
     ///           Can be a single datetime, list of datetimes, or numpy array of datetimes.
     ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
     ///     target_ra (float): Target right ascension in degrees (ICRS/J2000)
@@ -1741,7 +1743,7 @@ impl PyConstraint {
     /// Check if the target violates the constraint at a given time
     ///
     /// Args:
-    ///     time (datetime): The time to check (must exist in ephemeris)
+    ///     time (datetime): Time within the ephemeris range; geometry is interpolated between samples.
     ///     ephemeris: One of `TLEEphemeris`, `SPICEEphemeris`, `GroundEphemeris`, `OEMEphemeris`, `FileEphemeris`, or `ParquetEphemeris`
     ///     target_ra (float): Target right ascension in degrees (ICRS/J2000)
     ///     target_dec (float): Target declination in degrees (ICRS/J2000)
@@ -1836,7 +1838,7 @@ impl PyConstraint {
     /// spacecraft roll; it does not change the convention of the roll values returned here.
     ///
     /// Args:
-    ///     time (datetime): Timestamp to evaluate (must exist in ephemeris).
+    ///     time (datetime): Time within the ephemeris range; geometry is interpolated between samples.
     ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
     ///     target_ra (float): Target right ascension in degrees (ICRS/J2000)
     ///     target_dec (float): Target declination in degrees (ICRS/J2000)
@@ -1848,7 +1850,7 @@ impl PyConstraint {
     ///     roll angles. Empty list if no roll is valid.
     ///
     /// Raises:
-    ///     ValueError: If time is not found in the ephemeris or n_roll_samples is 0.
+    ///     ValueError: If time is outside the sampled ephemeris range.
     ///     TypeError: If ephemeris type is not supported.
     #[pyo3(signature = (time, ephemeris, target_ra, target_dec, n_roll_samples=360))]
     fn roll_range(
@@ -1865,11 +1867,6 @@ impl PyConstraint {
         }
 
         let bound = ephemeris.bind(py);
-        let time_indices = self.parse_times_to_indices(bound, time)?;
-        let time_idx = *time_indices.first().ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err("time not found in ephemeris")
-        })?;
-
         let base_config: serde_json::Value = serde_json::from_str(&self.config_json)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
@@ -1883,16 +1880,23 @@ impl PyConstraint {
         // Dispatch to a typed ephemeris reference, then run the vectorized sweep.
         // roll_sweep_vec calls in_constraint_batch once per leaf constraint with all N
         // pre-rotated targets, reducing O(N × leaves) calls to O(leaves).
-        let violated: Vec<bool> = self.with_ephemeris(bound, |ephem_ref| {
-            run_roll_sweep(
-                &base_config,
-                &target_ras,
-                &target_decs,
-                &rolls,
-                ephem_ref,
-                time_idx,
-            )
-        })?;
+        let violated: Vec<bool> =
+            self.with_evaluation_ephemeris(bound, Some(time), None, |ephem_ref, indices| {
+                let time_idx = match indices {
+                    Some(indices) => *indices.first().ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err("No time provided")
+                    })?,
+                    None => 0,
+                };
+                run_roll_sweep(
+                    &base_config,
+                    &target_ras,
+                    &target_decs,
+                    &rolls,
+                    ephem_ref,
+                    time_idx,
+                )
+            })?;
 
         // Collapse contiguous valid (not-violated) samples into (lo, hi) intervals.
         let mut intervals: Vec<(f64, f64)> = Vec::new();
