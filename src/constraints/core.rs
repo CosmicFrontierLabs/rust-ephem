@@ -320,16 +320,29 @@ impl ConstraintResult {
                 return violated;
             }
 
-            // Mark violated times - violations are already sorted by time
-            for (i, t) in self.times.iter().enumerate() {
-                // Binary search could be used here, but violation count is typically small
-                for v in &self.violations {
-                    if t < &v.start_time_internal {
-                        break; // Violations are sorted, no need to check further
+            if self.times.windows(2).all(|pair| pair[0] <= pair[1]) {
+                // Windows and timestamps are sorted. Advance past expired
+                // windows once, instead of rescanning them for every sample.
+                let mut windows = self.violations.iter().peekable();
+                for (i, time) in self.times.iter().enumerate() {
+                    while windows.peek().is_some_and(|v| v.end_time_internal < *time) {
+                        windows.next();
                     }
-                    if &v.start_time_internal <= t && t <= &v.end_time_internal {
-                        violated[i] = true;
-                        break;
+                    violated[i] = windows.peek().is_some_and(|v| {
+                        v.start_time_internal <= *time && *time <= v.end_time_internal
+                    });
+                }
+            } else {
+                // Selected timestamps may be reordered; preserve their order.
+                for (i, time) in self.times.iter().enumerate() {
+                    for window in &self.violations {
+                        if *time < window.start_time_internal {
+                            break;
+                        }
+                        if *time <= window.end_time_internal {
+                            violated[i] = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -1569,6 +1582,119 @@ macro_rules! extract_latlon_data {
 mod tests {
     use super::{flipped_causes, value_key_prefix};
     use std::collections::HashMap;
+
+    #[test]
+    #[ignore = "manual performance measurement"]
+    fn benchmark_result_mask() {
+        use super::{ConstraintResult, ConstraintViolation};
+        use chrono::{Duration, TimeZone, Utc};
+        use std::{hint::black_box, sync::OnceLock, time::Instant};
+        let epoch = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let n_times = 100_000;
+        eprintln!("Result mask construction, median of 5 runs, release build, uncached masks");
+        eprintln!("timestamps,windows,before_ms,after_ms,speedup");
+        for n_windows in [1, 100, 1000] {
+            let stride = n_times / n_windows;
+            let times = (0..n_times)
+                .map(|i| epoch + Duration::seconds(i as i64))
+                .collect();
+            let violations = (0..n_windows)
+                .map(|i| ConstraintViolation {
+                    start_time_internal: epoch + Duration::seconds((i * stride) as i64),
+                    end_time_internal: epoch + Duration::seconds((i * stride + stride / 2) as i64),
+                    max_severity: 1.0,
+                    description: String::new(),
+                })
+                .collect();
+            let mut result = ConstraintResult::new(violations, false, String::new(), times);
+            // Exact previous algorithm, including early exits on sorted windows.
+            let previous = |result: &ConstraintResult| {
+                let mut mask = vec![false; result.times.len()];
+                for (i, time) in result.times.iter().enumerate() {
+                    for window in &result.violations {
+                        if time < &window.start_time_internal {
+                            break;
+                        }
+                        if &window.start_time_internal <= time && time <= &window.end_time_internal
+                        {
+                            mask[i] = true;
+                            break;
+                        }
+                    }
+                }
+                mask
+            };
+            assert_eq!(result._get_constraint_vec(), &previous(&result));
+            let mut before = Vec::new();
+            let mut after = Vec::new();
+            for iteration in 0..5 {
+                for old in [iteration % 2 == 0, iteration % 2 != 0] {
+                    // Reset outside timing: measure initial construction, not cache reads.
+                    result.constraint_vec_cache = OnceLock::new();
+                    let start = Instant::now();
+                    if old {
+                        let mask = previous(black_box(&result));
+                        black_box(&mask);
+                        before.push(start.elapsed().as_secs_f64() * 1000.0);
+                    } else {
+                        black_box(black_box(&result)._get_constraint_vec());
+                        after.push(start.elapsed().as_secs_f64() * 1000.0);
+                    }
+                }
+            }
+            before.sort_by(f64::total_cmp);
+            after.sort_by(f64::total_cmp);
+            eprintln!(
+                "{n_times},{n_windows},{:.3},{:.3},{:.1}x",
+                before[2],
+                after[2],
+                before[2] / after[2]
+            );
+        }
+    }
+
+    #[test]
+    fn result_mask_matches_window_membership() {
+        use super::{ConstraintResult, ConstraintViolation};
+        use chrono::{Duration, TimeZone, Utc};
+        let epoch = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        for offsets in [
+            vec![],
+            vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+            vec![9, 2, 3, 0, 8, 2],
+        ] {
+            for ranges in [
+                vec![],
+                vec![(1, 2), (4, 4), (6, 8)],
+                vec![(0, 9)],
+                vec![(1, 6), (3, 8)],
+            ] {
+                let times: Vec<_> = offsets
+                    .iter()
+                    .map(|&i| epoch + Duration::seconds(i))
+                    .collect();
+                let violations: Vec<_> = ranges
+                    .iter()
+                    .map(|&(start, end)| ConstraintViolation {
+                        start_time_internal: epoch + Duration::seconds(start),
+                        end_time_internal: epoch + Duration::seconds(end),
+                        max_severity: 1.0,
+                        description: String::new(),
+                    })
+                    .collect();
+                let expected: Vec<_> = times
+                    .iter()
+                    .map(|t| {
+                        violations
+                            .iter()
+                            .any(|v| v.start_time_internal <= *t && *t <= v.end_time_internal)
+                    })
+                    .collect();
+                let result = ConstraintResult::new(violations, false, String::new(), times);
+                assert_eq!(result._get_constraint_vec(), &expected);
+            }
+        }
+    }
 
     #[test]
     fn test_flipped_causes_detects_single_flip() {

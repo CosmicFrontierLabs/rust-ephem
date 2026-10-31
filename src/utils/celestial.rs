@@ -549,6 +549,93 @@ pub fn radec_to_altaz(
     Ok(result)
 }
 
+/// Full SOFA apparent Alt/Az for multiple targets. Observer frame conversion and
+/// star-independent astrometry are prepared once per timestamp, rather than once
+/// per target/time pair. Each returned array has shape (times, 2).
+pub(crate) fn radec_to_altaz_batch(
+    ras_deg: &[f64],
+    decs_deg: &[f64],
+    ephemeris: &dyn EphemerisBase,
+    time_indices: Option<&[usize]>,
+) -> PyResult<Vec<Array2<f64>>> {
+    use sofars::astro::{apco13, atciq, atioq, IauAstrom};
+
+    if ras_deg.len() != decs_deg.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "RA and Dec arrays must have same length",
+        ));
+    }
+    if ras_deg.is_empty() {
+        return Ok(Vec::new());
+    }
+    let times = ephemeris.get_times()?;
+    let gcrs = ephemeris
+        .data()
+        .gcrs
+        .as_ref()
+        .expect("Ephemeris must have GCRS data");
+    let (times, gcrs) = match time_indices {
+        Some(indices) => (
+            indices.iter().map(|&i| times[i]).collect::<Vec<_>>(),
+            gcrs.select(ndarray::Axis(0), indices),
+        ),
+        None => (times.to_vec(), gcrs.clone()),
+    };
+    let itrs = convert_frames(&gcrs, &times, Frame::GCRS, Frame::ITRS, true)?;
+    let (lats, lons, heights) = ecef_to_geodetic_deg(&itrs.slice(s![.., 0..3]).to_owned());
+    let mut astrometry = Vec::with_capacity(times.len());
+    for (i, time) in times.iter().enumerate() {
+        let (utc1, utc2) = datetime_to_jd_utc(time);
+        let dut1 = ut1_provider::get_ut1_utc_offset(time);
+        let (xp, yp) = eop_provider::get_polar_motion_rad(time);
+        let mut astrom = IauAstrom::default();
+        let mut eo = 0.0;
+        apco13(
+            utc1,
+            utc2,
+            dut1,
+            lons[i].to_radians(),
+            lats[i].to_radians(),
+            heights[i] * 1000.0,
+            xp,
+            yp,
+            0.0,
+            0.0,
+            0.0,
+            0.55,
+            &mut astrom,
+            &mut eo,
+        )
+        .map_err(|status| {
+            pyo3::exceptions::PyValueError::new_err(format!("SOFA apco13 failed: {status}"))
+        })?;
+        astrometry.push(astrom);
+    }
+    let mut results = Vec::with_capacity(ras_deg.len());
+    for (&ra, &dec) in ras_deg.iter().zip(decs_deg) {
+        let mut result = Array2::zeros((times.len(), 2));
+        for (i, astrom) in astrometry.iter_mut().enumerate() {
+            // This is exactly atco13's target-dependent portion (zero proper
+            // motion, parallax and radial velocity, matching the scalar path).
+            let (ri, di) = atciq(
+                ra.to_radians(),
+                dec.to_radians(),
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                astrom,
+            );
+            let (az, zd, _, _, _) = atioq(ri, di, astrom);
+            result[[i, 0]] = (std::f64::consts::FRAC_PI_2 - zd).to_degrees();
+            let az = az.to_degrees();
+            result[[i, 1]] = if az < 0.0 { az + 360.0 } else { az };
+        }
+        results.push(result);
+    }
+    Ok(results)
+}
+
 /// Calculate airmass using Kasten empirical formula (fast approximation)
 ///
 /// The Kasten formula is a simple empirical fit to airmass vs zenith angle:
@@ -1031,5 +1118,101 @@ mod sun_position_range_tests {
         let far_future = Utc.with_ymd_and_hms(2600, 1, 1, 0, 0, 0).unwrap();
         let err = calculate_sun_positions(&[far_future]).unwrap_err();
         assert!(err.contains("1900-2100"));
+    }
+}
+
+#[cfg(test)]
+mod altaz_batch_tests {
+    use super::*;
+    use crate::constraints::test_support::TestEphemeris;
+
+    #[test]
+    fn batch_matches_scalar_sofa_for_ground_and_orbit_observers() {
+        let ras = [0.0, 359.999, 73.4, 180.0, 290.0];
+        let decs = [-90.0, 89.999, -23.7, 0.0, 65.0];
+        for radius in [6378.137, 7000.0] {
+            let mut eph = TestEphemeris::new(5);
+            // Include motion in both hemispheres and nonzero velocities.
+            eph.data.gcrs = Some(Array2::from_shape_fn((5, 6), |(i, j)| {
+                let angle = i as f64 * 0.7;
+                match j {
+                    0 => radius * angle.cos(),
+                    1 => radius * angle.sin() * 0.8,
+                    2 => radius * angle.sin() * 0.6,
+                    3 => -5.0 * angle.sin(),
+                    4 => 4.0 * angle.cos(),
+                    _ => 3.0 * angle.cos(),
+                }
+            }));
+            for indices in [None, Some(vec![4, 1, 1, 0]), Some(vec![])] {
+                let batch = radec_to_altaz_batch(&ras, &decs, &eph, indices.as_deref()).unwrap();
+                for (j, actual) in batch.iter().enumerate() {
+                    let expected =
+                        radec_to_altaz(ras[j], decs[j], &eph, indices.as_deref()).unwrap();
+                    assert_eq!(actual, &expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn batch_handles_empty_targets() {
+        let eph = TestEphemeris::new(3);
+        assert!(radec_to_altaz_batch(&[], &[], &eph, None)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    #[ignore = "manual performance measurement"]
+    fn benchmark_altaz_batch() {
+        use std::hint::black_box;
+        use std::time::Instant;
+        eprintln!("Alt/Az conversion, median of 5 runs, release build, warm caches");
+        eprintln!("targets,timestamps,before_ms,after_ms,speedup");
+        for n_targets in [1, 10, 100, 1000] {
+            let eph = TestEphemeris::new(120);
+            let ras: Vec<_> = (0..n_targets)
+                .map(|i| i as f64 * 360.0 / n_targets as f64)
+                .collect();
+            let decs: Vec<_> = (0..n_targets)
+                .map(|i| i as f64 * 180.0 / n_targets as f64 - 90.0)
+                .collect();
+            let scalar = || {
+                ras.iter()
+                    .zip(&decs)
+                    .map(|(&ra, &dec)| radec_to_altaz(ra, dec, &eph, None).unwrap())
+                    .collect::<Vec<_>>()
+            };
+            let batch = || radec_to_altaz_batch(&ras, &decs, &eph, None).unwrap();
+            // Warm both paths and check every output before timing.
+            assert_eq!(scalar(), batch());
+            let mut before = Vec::new();
+            let mut after = Vec::new();
+            for iteration in 0..5 {
+                let mut measure = |old: bool| {
+                    let start = Instant::now();
+                    let output = if old { scalar() } else { batch() };
+                    black_box(&output);
+                    let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+                    // Drop output outside the timed region in both paths.
+                    if old {
+                        before.push(elapsed);
+                    } else {
+                        after.push(elapsed);
+                    }
+                };
+                measure(iteration % 2 == 0);
+                measure(iteration % 2 != 0);
+            }
+            before.sort_by(f64::total_cmp);
+            after.sort_by(f64::total_cmp);
+            eprintln!(
+                "{n_targets},120,{:.3},{:.3},{:.1}x",
+                before[2],
+                after[2],
+                before[2] / after[2]
+            );
+        }
     }
 }
