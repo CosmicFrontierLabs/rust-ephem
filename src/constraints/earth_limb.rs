@@ -4,7 +4,6 @@ use crate::utils::vector_math::{
     dot_product, normalize_vector, radec_to_unit_vector, radec_to_unit_vectors_batch,
     vector_magnitude,
 };
-use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};

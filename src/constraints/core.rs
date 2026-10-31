@@ -1503,24 +1503,14 @@ where
 }
 
 /// Macro to extract and filter ephemeris data with celestial body positions
-/// Usage: extract_body_ephemeris_data!(ephemeris, time_indices, get_body_positions)
+/// Usage: extract_body_ephemeris_data!(ephemeris, time_indices, get_body_positions_at_indices)
 /// Returns: (times_filtered, body_positions_filtered, observer_positions_filtered)
 macro_rules! extract_body_ephemeris_data {
     ($ephemeris:expr, $time_indices:expr, $body_getter:ident) => {{
-        let times = $ephemeris.get_times()?;
-        let body_positions = $ephemeris.$body_getter()?;
-        let observer_positions = $ephemeris.get_gcrs_positions()?;
-
-        if let Some(indices) = $time_indices {
-            let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
-            let body_filtered = body_positions.select(ndarray::Axis(0), indices);
-            let obs_filtered = observer_positions.select(ndarray::Axis(0), indices);
-            (filtered_times, body_filtered, obs_filtered)
-        } else {
-            // body_positions and observer_positions are already owned (from .to_owned() in getters)
-            // so no need to clone again
-            (times.to_vec(), body_positions, observer_positions)
-        }
+        let times = $ephemeris.get_times_at_indices($time_indices)?;
+        let body_positions = $ephemeris.$body_getter($time_indices)?;
+        let observer_positions = $ephemeris.get_gcrs_positions_at_indices($time_indices)?;
+        (times, body_positions, observer_positions)
     }};
 }
 
@@ -1529,24 +1519,16 @@ macro_rules! extract_body_ephemeris_data {
 /// Returns: (times_filtered, sun_positions_filtered, observer_positions_filtered)
 macro_rules! extract_standard_ephemeris_data {
     ($ephemeris:expr, $time_indices:expr) => {{
-        extract_body_ephemeris_data!($ephemeris, $time_indices, get_sun_positions)
+        extract_body_ephemeris_data!($ephemeris, $time_indices, get_sun_positions_at_indices)
     }};
 }
 
 /// Returns: (times_filtered, observer_positions_filtered)
 macro_rules! extract_observer_ephemeris_data {
     ($ephemeris:expr, $time_indices:expr) => {{
-        let times = $ephemeris.get_times()?;
-        let observer_positions = $ephemeris.get_gcrs_positions()?;
-
-        if let Some(indices) = $time_indices {
-            let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
-            let obs_filtered = observer_positions.select(ndarray::Axis(0), indices);
-            (filtered_times, obs_filtered)
-        } else {
-            // observer_positions is already owned (from .to_owned() in getter)
-            (times.to_vec(), observer_positions)
-        }
+        let times = $ephemeris.get_times_at_indices($time_indices)?;
+        let observer_positions = $ephemeris.get_gcrs_positions_at_indices($time_indices)?;
+        (times, observer_positions)
     }};
 }
 
@@ -1555,15 +1537,7 @@ macro_rules! extract_observer_ephemeris_data {
 /// Returns: (times_filtered,)
 macro_rules! extract_time_data {
     ($ephemeris:expr, $time_indices:expr) => {{
-        let times = $ephemeris.get_times()?;
-
-        let times_filtered = if let Some(indices) = $time_indices {
-            indices.iter().map(|&i| times[i]).collect()
-        } else {
-            times.to_vec()
-        };
-
-        (times_filtered,)
+        ($ephemeris.get_times_at_indices($time_indices)?,)
     }};
 }
 

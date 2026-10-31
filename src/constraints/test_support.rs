@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub struct TestEphemeris {
     pub data: EphemerisData,
     pub body_queries: AtomicUsize,
+    pub full_grid_rows_read: AtomicUsize,
 }
 
 impl TestEphemeris {
@@ -43,6 +44,7 @@ impl TestEphemeris {
         Self {
             data,
             body_queries: AtomicUsize::new(0),
+            full_grid_rows_read: AtomicUsize::new(0),
         }
     }
 }
@@ -65,6 +67,30 @@ impl EphemerisBase for TestEphemeris {
     }
     fn radec_to_altaz(&self, _: f64, _: f64, _: Option<&[usize]>) -> PyResult<Array2<f64>> {
         unreachable!("not used by these tests")
+    }
+    fn get_times(&self) -> PyResult<Vec<chrono::DateTime<Utc>>> {
+        self.full_grid_rows_read
+            .fetch_add(self.data.times.as_ref().unwrap().len(), Ordering::Relaxed);
+        self.get_times_at_indices(None)
+    }
+    fn get_sun_positions(&self) -> PyResult<Array2<f64>> {
+        self.full_grid_rows_read.fetch_add(
+            self.data.sun_gcrs.as_ref().unwrap().nrows(),
+            Ordering::Relaxed,
+        );
+        self.get_sun_positions_at_indices(None)
+    }
+    fn get_moon_positions(&self) -> PyResult<Array2<f64>> {
+        self.full_grid_rows_read.fetch_add(
+            self.data.moon_gcrs.as_ref().unwrap().nrows(),
+            Ordering::Relaxed,
+        );
+        self.get_moon_positions_at_indices(None)
+    }
+    fn get_gcrs_positions(&self) -> PyResult<Array2<f64>> {
+        self.full_grid_rows_read
+            .fetch_add(self.data.gcrs.as_ref().unwrap().nrows(), Ordering::Relaxed);
+        self.get_gcrs_positions_at_indices(None)
     }
     fn get_any_body_gcrs_positions(&self, _: &str) -> PyResult<Array2<f64>> {
         self.body_queries.fetch_add(1, Ordering::Relaxed);
