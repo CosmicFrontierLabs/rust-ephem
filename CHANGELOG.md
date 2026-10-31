@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.16.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.16.0...v0.16.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* add missing unit test ([3955555](https://github.com/CosmicFrontierLabs/rust-ephem/commit/395555525a322b8567e44cdb1c1c16576c0521cd))
+* add unit test ([3955555](https://github.com/CosmicFrontierLabs/rust-ephem/commit/395555525a322b8567e44cdb1c1c16576c0521cd))
+* add unit test ([3955555](https://github.com/CosmicFrontierLabs/rust-ephem/commit/395555525a322b8567e44cdb1c1c16576c0521cd))
+* fix for CI unit test failure ([3955555](https://github.com/CosmicFrontierLabs/rust-ephem/commit/395555525a322b8567e44cdb1c1c16576c0521cd))
+* out of range crash fix ([3955555](https://github.com/CosmicFrontierLabs/rust-ephem/commit/395555525a322b8567e44cdb1c1c16576c0521cd))
+* remove file ([3955555](https://github.com/CosmicFrontierLabs/rust-ephem/commit/395555525a322b8567e44cdb1c1c16576c0521cd))
+
+
+### Performance Improvements
+
+* speed up constraint evaluation and free-roll attribution ([#209](https://github.com/CosmicFrontierLabs/rust-ephem/issues/209)) ([3955555](https://github.com/CosmicFrontierLabs/rust-ephem/commit/395555525a322b8567e44cdb1c1c16576c0521cd))
+
 ## [0.16.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.15.1...v0.16.0) (2026-10-30)
 
 
