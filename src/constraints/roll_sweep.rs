@@ -6,6 +6,59 @@ use ndarray::Array2;
 use pyo3::PyResult;
 use std::ops::{Index, IndexMut};
 
+/// Prepared attributed sweep, owned by one evaluation only. Cached results are
+/// safe without fingerprints because the ephemeris and targets stay borrowed.
+pub struct PreparedAttributedRollEvaluator<'a>(
+    Box<dyn Fn(f64) -> PyResult<super::core::BatchWithCauses> + 'a>,
+);
+
+impl<'a> PreparedAttributedRollEvaluator<'a> {
+    pub fn new(f: impl Fn(f64) -> PyResult<super::core::BatchWithCauses> + 'a) -> Self {
+        Self(Box::new(f))
+    }
+
+    pub fn evaluate(&self, roll: f64) -> PyResult<super::core::BatchWithCauses> {
+        (self.0)(roll)
+    }
+}
+
+pub fn prepare_with_causes<'a, T: ConstraintEvaluator + ?Sized>(
+    evaluator: &'a T,
+    ephemeris: &'a dyn EphemerisBase,
+    ras: &'a [f64],
+    decs: &'a [f64],
+    indices: Option<&'a [usize]>,
+) -> PyResult<PreparedAttributedRollEvaluator<'a>> {
+    if !evaluator.is_roll_dependent() {
+        // Sweep candidates preserve configured fixed rolls, so these masks and
+        // their cause tags are identical for every candidate angle.
+        let result = evaluator.in_constraint_batch_with_causes(
+            ephemeris,
+            ras,
+            decs,
+            indices,
+            Some(EvaluationRoll::Sweep(0.0)),
+        )?;
+        return Ok(PreparedAttributedRollEvaluator::new(move |_| {
+            Ok(result.clone())
+        }));
+    }
+    if let Some(prepared) =
+        evaluator.prepare_attributed_roll_sweep(ephemeris, ras, decs, indices)?
+    {
+        return Ok(prepared);
+    }
+    Ok(PreparedAttributedRollEvaluator::new(move |roll| {
+        evaluator.in_constraint_batch_with_causes(
+            ephemeris,
+            ras,
+            decs,
+            indices,
+            Some(EvaluationRoll::Sweep(roll)),
+        )
+    }))
+}
+
 pub type RollCell = (usize, usize);
 
 /// Evaluate a time-invariant leaf once per active target at this roll. The

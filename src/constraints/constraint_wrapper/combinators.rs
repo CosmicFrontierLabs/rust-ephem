@@ -85,6 +85,45 @@ fn evaluate_children_diagonal(
     })
 }
 
+/// Cache independent subtrees once, preserving each child's original cause
+/// namespace and the same shared candidate roll for every dependent child.
+fn prepare_children_with_causes<'a>(
+    children: &'a [Box<dyn ConstraintEvaluator>],
+    ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    ras: &'a [f64],
+    decs: &'a [f64],
+    indices: Option<&'a [usize]>,
+    accept: impl Fn(usize) -> bool + 'a,
+) -> PyResult<roll_sweep::PreparedAttributedRollEvaluator<'a>> {
+    if ras.len() != decs.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "target_ras and target_decs must have the same length",
+        ));
+    }
+    let n_times = batch_n_times(ephemeris, indices)?;
+    let prepared = children
+        .iter()
+        .map(|child| roll_sweep::prepare_with_causes(&**child, ephemeris, ras, decs, indices))
+        .collect::<PyResult<Vec<_>>>()?;
+    Ok(roll_sweep::PreparedAttributedRollEvaluator::new(
+        move |roll| {
+            let mut counts = Array2::zeros((ras.len(), n_times));
+            let mut named = HashMap::new();
+            for child in &prepared {
+                let result = child.evaluate(roll)?;
+                counts.zip_mut_with(&result.violated, |count, &v| *count += usize::from(v));
+                for (key, mask) in sorted_entries(result.named) {
+                    insert_no_collision(&mut named, key, mask);
+                }
+            }
+            Ok(BatchWithCauses {
+                violated: counts.mapv(&accept),
+                named,
+            })
+        },
+    ))
+}
+
 fn prepare_children<'a>(
     children: &'a [Box<dyn ConstraintEvaluator>],
     ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -482,6 +521,23 @@ pub(super) struct AndEvaluator {
 }
 
 impl ConstraintEvaluator for AndEvaluator {
+    fn prepare_attributed_roll_sweep<'a>(
+        &'a self,
+        ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &'a [f64],
+        decs: &'a [f64],
+        indices: Option<&'a [usize]>,
+    ) -> PyResult<Option<roll_sweep::PreparedAttributedRollEvaluator<'a>>> {
+        Ok(Some(prepare_children_with_causes(
+            &self.constraints,
+            ephemeris,
+            ras,
+            decs,
+            indices,
+            move |count| count == self.constraints.len(),
+        )?))
+    }
+
     fn evaluate_diagonal(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -939,6 +995,23 @@ pub(super) struct OrEvaluator {
 }
 
 impl ConstraintEvaluator for OrEvaluator {
+    fn prepare_attributed_roll_sweep<'a>(
+        &'a self,
+        ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &'a [f64],
+        decs: &'a [f64],
+        indices: Option<&'a [usize]>,
+    ) -> PyResult<Option<roll_sweep::PreparedAttributedRollEvaluator<'a>>> {
+        Ok(Some(prepare_children_with_causes(
+            &self.constraints,
+            ephemeris,
+            ras,
+            decs,
+            indices,
+            move |count| count > 0,
+        )?))
+    }
+
     fn evaluate_diagonal(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -1417,6 +1490,30 @@ pub(super) struct NotEvaluator {
 }
 
 impl ConstraintEvaluator for NotEvaluator {
+    fn prepare_attributed_roll_sweep<'a>(
+        &'a self,
+        ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &'a [f64],
+        decs: &'a [f64],
+        indices: Option<&'a [usize]>,
+    ) -> PyResult<Option<roll_sweep::PreparedAttributedRollEvaluator<'a>>> {
+        let inner =
+            roll_sweep::prepare_with_causes(&*self.constraint, ephemeris, ras, decs, indices)?;
+        Ok(Some(roll_sweep::PreparedAttributedRollEvaluator::new(
+            move |roll| {
+                let inner = inner.evaluate(roll)?;
+                Ok(BatchWithCauses {
+                    violated: inner.violated.mapv(|v| !v),
+                    named: inner
+                        .named
+                        .into_iter()
+                        .map(|(key, arr)| (format!("not.{key}"), arr))
+                        .collect(),
+                })
+            },
+        )))
+    }
+
     fn evaluate_diagonal(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -1760,6 +1857,23 @@ pub(super) struct XorEvaluator {
 }
 
 impl ConstraintEvaluator for XorEvaluator {
+    fn prepare_attributed_roll_sweep<'a>(
+        &'a self,
+        ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &'a [f64],
+        decs: &'a [f64],
+        indices: Option<&'a [usize]>,
+    ) -> PyResult<Option<roll_sweep::PreparedAttributedRollEvaluator<'a>>> {
+        Ok(Some(prepare_children_with_causes(
+            &self.constraints,
+            ephemeris,
+            ras,
+            decs,
+            indices,
+            move |count| count == 1,
+        )?))
+    }
+
     fn evaluate_diagonal(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -2122,6 +2236,23 @@ pub(super) struct AtLeastEvaluator {
 }
 
 impl ConstraintEvaluator for AtLeastEvaluator {
+    fn prepare_attributed_roll_sweep<'a>(
+        &'a self,
+        ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &'a [f64],
+        decs: &'a [f64],
+        indices: Option<&'a [usize]>,
+    ) -> PyResult<Option<roll_sweep::PreparedAttributedRollEvaluator<'a>>> {
+        Ok(Some(prepare_children_with_causes(
+            &self.constraints,
+            ephemeris,
+            ras,
+            decs,
+            indices,
+            move |count| count >= self.min_violated,
+        )?))
+    }
+
     fn evaluate_diagonal(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -2484,5 +2615,148 @@ impl ConstraintEvaluator for AtLeastEvaluator {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod attributed_sweep_tests {
+    use super::*;
+    use crate::constraints::core::sweep_rolls_with_attribution;
+    use crate::constraints::test_support::TestEphemeris;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    struct CountingLeaf {
+        calls: Arc<AtomicUsize>,
+        dependent: bool,
+    }
+
+    impl ConstraintEvaluator for CountingLeaf {
+        fn evaluate(
+            &self,
+            _: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+            _: f64,
+            _: f64,
+            _: Option<&[usize]>,
+        ) -> PyResult<ConstraintResult> {
+            unreachable!()
+        }
+        fn in_constraint_batch(
+            &self,
+            eph: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+            ras: &[f64],
+            decs: &[f64],
+            indices: Option<&[usize]>,
+        ) -> PyResult<Array2<bool>> {
+            self.in_constraint_batch_at_roll(eph, ras, decs, indices, EvaluationRoll::Sweep(0.0))
+        }
+        fn in_constraint_batch_at_roll(
+            &self,
+            eph: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+            ras: &[f64],
+            _: &[f64],
+            indices: Option<&[usize]>,
+            roll: EvaluationRoll,
+        ) -> PyResult<Array2<bool>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            let n_times = batch_n_times(eph, indices)?;
+            Ok(Array2::from_shape_fn((ras.len(), n_times), |(i, j)| {
+                if self.dependent {
+                    (roll.degrees() as usize / 15 + i + indices.map_or(j, |idx| idx[j])) % 3 == 0
+                } else {
+                    eph.data().gcrs.as_ref().unwrap()[[0, 0]] < 0.0
+                }
+            }))
+        }
+        fn is_roll_dependent(&self) -> bool {
+            self.dependent
+        }
+        fn name(&self) -> String {
+            "SunProximity(test)".into()
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    fn leaf(dependent: bool) -> Box<dyn ConstraintEvaluator> {
+        Box::new(CountingLeaf {
+            calls: Arc::new(AtomicUsize::new(0)),
+            dependent,
+        })
+    }
+
+    #[test]
+    fn independent_causes_run_once_per_sweep_and_refresh_between_calls() {
+        let independent = Arc::new(AtomicUsize::new(0));
+        let dependent = Arc::new(AtomicUsize::new(0));
+        let evaluator = OrEvaluator {
+            constraints: vec![
+                Box::new(CountingLeaf {
+                    calls: independent.clone(),
+                    dependent: false,
+                }),
+                Box::new(CountingLeaf {
+                    calls: dependent.clone(),
+                    dependent: true,
+                }),
+            ],
+        };
+        let mut eph = TestEphemeris::new(5);
+        let result =
+            sweep_rolls_with_attribution(&evaluator, &eph, &[0.0, 40.0], &[0.0; 2], None, 24)
+                .unwrap();
+        assert!(result.violated.iter().all(|&v| v));
+        assert_eq!(independent.load(Ordering::Relaxed), 1);
+        assert_eq!(dependent.load(Ordering::Relaxed), 24);
+        assert!(result.named.contains_key("sun") && result.named.contains_key("sun_2"));
+        eph.data.gcrs.as_mut().unwrap()[[0, 0]] = 7000.0;
+        let refreshed =
+            sweep_rolls_with_attribution(&evaluator, &eph, &[0.0, 40.0], &[0.0; 2], None, 24)
+                .unwrap();
+        assert!(refreshed.violated.iter().all(|&v| !v));
+        assert_eq!(independent.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn prepared_nested_operators_match_unprepared_masks_and_cause_tags() {
+        let eph = TestEphemeris::new(5);
+        let evaluator = AtLeastEvaluator {
+            min_violated: 2,
+            constraints: vec![
+                Box::new(OrEvaluator {
+                    constraints: vec![leaf(false), leaf(true)],
+                }),
+                Box::new(NotEvaluator {
+                    constraint: Box::new(AndEvaluator {
+                        constraints: vec![leaf(false), leaf(true)],
+                    }),
+                }),
+                Box::new(XorEvaluator {
+                    constraints: vec![leaf(true), leaf(false), leaf(true)],
+                }),
+            ],
+        };
+        let ras = [10.0, 90.0];
+        let decs = [0.0; 2];
+        let indices = [4, 1, 1, 0];
+        let prepared =
+            roll_sweep::prepare_with_causes(&evaluator, &eph, &ras, &decs, Some(&indices)).unwrap();
+        for roll in [0.0, 15.0, 45.0, 180.0, 345.0] {
+            let expected = evaluator
+                .in_constraint_batch_with_causes(
+                    &eph,
+                    &ras,
+                    &decs,
+                    Some(&indices),
+                    Some(EvaluationRoll::Sweep(roll)),
+                )
+                .unwrap();
+            let actual = prepared.evaluate(roll).unwrap();
+            assert_eq!(actual.violated, expected.violated);
+            assert_eq!(actual.named, expected.named);
+        }
     }
 }

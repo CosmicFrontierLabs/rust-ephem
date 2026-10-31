@@ -814,6 +814,19 @@ pub trait ConstraintEvaluator: Send + Sync {
         Ok(None)
     }
 
+    /// Prepare a free-roll evaluation that also preserves per-leaf causes.
+    /// Combinators override this to prepare their children recursively. The
+    /// default retains the existing per-roll traversal for dependent leaves.
+    fn prepare_attributed_roll_sweep<'a>(
+        &'a self,
+        _ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        _target_ras: &'a [f64],
+        _target_decs: &'a [f64],
+        _time_indices: Option<&'a [usize]>,
+    ) -> PyResult<Option<super::roll_sweep::PreparedAttributedRollEvaluator<'a>>> {
+        Ok(None)
+    }
+
     /// Evaluate the constraint with full ephemeris access
     ///
     /// # Arguments
@@ -1133,6 +1146,7 @@ pub trait ConstraintEvaluator: Send + Sync {
 
 /// Combined violation mask plus per-leaf cause masks, produced by a single traversal
 /// of the constraint tree — see `ConstraintEvaluator::in_constraint_batch_with_causes`.
+#[derive(Clone)]
 pub struct BatchWithCauses {
     /// (M x N) targets x times, `true` where the whole tree is violated. Identical
     /// semantics to `in_constraint_batch` (or `in_constraint_batch_at_roll`, when the
@@ -1195,6 +1209,17 @@ pub fn sweep_rolls_with_attribution(
         );
     }
 
+    let prepared = if n_roll_samples > 0 {
+        Some(super::roll_sweep::prepare_with_causes(
+            evaluator,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+        )?)
+    } else {
+        None
+    };
     let roll_step = 360.0 / n_roll_samples as f64;
     let mut violated: Option<Array2<bool>> = None;
     let mut named: HashMap<String, Array2<bool>> = HashMap::new();
@@ -1203,6 +1228,8 @@ pub fn sweep_rolls_with_attribution(
     // roll can improve on it and the cell is settled).
     let mut best_violated_tags: Array2<usize> = Array2::from_elem((0, 0), 0);
     let mut settled: Array2<bool> = Array2::from_elem((0, 0), false);
+    let mut step_counts = Array2::<usize>::zeros((0, 0));
+    let mut update = Array2::from_elem((0, 0), false);
 
     for step in 0..n_roll_samples {
         if settled.iter().all(|&s| s) && step > 0 {
@@ -1215,18 +1242,14 @@ pub fn sweep_rolls_with_attribution(
         let BatchWithCauses {
             violated: combined_step,
             named: named_step,
-        } = evaluator.in_constraint_batch_with_causes(
-            ephemeris,
-            target_ras,
-            target_decs,
-            time_indices,
-            Some(EvaluationRoll::Sweep(roll_deg)),
-        )?;
+        } = prepared.as_ref().unwrap().evaluate(roll_deg)?;
 
         let (n_targets, n_times) = combined_step.dim();
         if step == 0 {
             best_violated_tags = Array2::from_elem((n_targets, n_times), usize::MAX);
             settled = Array2::from_elem((n_targets, n_times), false);
+            step_counts = Array2::zeros((n_targets, n_times));
+            update = Array2::from_elem((n_targets, n_times), false);
             named = named_step
                 .keys()
                 .map(|key| (key.clone(), Array2::from_elem((n_targets, n_times), false)))
@@ -1238,26 +1261,35 @@ pub fn sweep_rolls_with_attribution(
             Some(ref mut acc) => acc.zip_mut_with(&combined_step, |x, &y| *x &= y),
         }
 
-        for row in 0..n_targets {
-            for col in 0..n_times {
-                if settled[[row, col]] {
-                    continue;
+        // Traverse contiguous masks once per leaf. Looking up every leaf tag
+        // inside the target/time loop otherwise performs millions of hash-map
+        // lookups per sweep, even when most witness rolls never improve.
+        step_counts.fill(0);
+        for mask in named_step.values() {
+            step_counts.zip_mut_with(mask, |count, &v| *count += usize::from(v));
+        }
+        ndarray::Zip::from(&mut settled)
+            .and(&combined_step)
+            .and(&step_counts)
+            .and(&mut best_violated_tags)
+            .and(&mut update)
+            .for_each(|settled, &violated, &count, best, update| {
+                let satisfied = !violated;
+                *update = !*settled && (satisfied || count < *best);
+                if *update {
+                    *best = count;
+                    *settled = satisfied;
                 }
-                let satisfied = !combined_step[[row, col]];
-                let violated_tags = named_step.values().filter(|arr| arr[[row, col]]).count();
-                if !satisfied && violated_tags >= best_violated_tags[[row, col]] {
-                    continue;
-                }
-                for (key, arr) in named.iter_mut() {
-                    // `named_step` is produced by the same evaluator tree as the map
-                    // `named` was seeded from, so its key set is identical every step;
-                    // the lookup is defensive rather than load-bearing.
-                    if let Some(step_arr) = named_step.get(key) {
-                        arr[[row, col]] = step_arr[[row, col]];
-                    }
-                }
-                best_violated_tags[[row, col]] = violated_tags;
-                settled[[row, col]] = satisfied;
+            });
+        for (key, arr) in &mut named {
+            if let Some(step_arr) = named_step.get(key) {
+                ndarray::Zip::from(arr).and(step_arr).and(&update).for_each(
+                    |value, &candidate, &replace| {
+                        if replace {
+                            *value = candidate;
+                        }
+                    },
+                );
             }
         }
     }
