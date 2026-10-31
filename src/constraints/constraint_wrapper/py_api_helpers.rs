@@ -47,6 +47,25 @@ impl PyConstraint {
         let indices = indices.map(|arg| self.parse_indices(arg)).transpose()?;
         self.with_ephemeris(bound, |source| {
             let Some(ref times) = requested else {
+                // Validate once before any leaf, cached sweep, or empty-target
+                // shortcut can use user-supplied indices for unchecked indexing.
+                if let Some(ref selected) = indices {
+                    let n_times = source
+                        .data()
+                        .times
+                        .as_ref()
+                        .ok_or_else(|| {
+                            pyo3::exceptions::PyValueError::new_err(
+                                "No ephemeris timestamps available",
+                            )
+                        })?
+                        .len();
+                    if let Some(index) = selected.iter().find(|&&index| index >= n_times) {
+                        return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                            "index {index} out of bounds for ephemeris with {n_times} timestamps"
+                        )));
+                    }
+                }
                 return f(source, indices.clone());
             };
             let source_times = source.data().times.as_deref().ok_or_else(|| {

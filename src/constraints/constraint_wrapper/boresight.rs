@@ -1256,6 +1256,59 @@ mod tests {
     use super::*;
     use crate::constraints::core::ConstraintResult;
 
+    #[test]
+    fn sun_referenced_columns_do_not_copy_the_full_grid_per_child() {
+        use crate::constraints::constraint_wrapper::combinators::OrEvaluator;
+        use crate::constraints::{
+            core::ConstraintConfig, earth_limb::EarthLimbConfig,
+            moon_proximity::MoonProximityConfig, sun_proximity::SunProximityConfig,
+            test_support::TestEphemeris,
+        };
+        use std::sync::atomic::Ordering;
+        let eph = TestEphemeris::new(32);
+        let evaluator = BoresightOffsetEvaluator {
+            constraint: Box::new(OrEvaluator {
+                constraints: vec![
+                    SunProximityConfig {
+                        min_angle: 47.0,
+                        max_angle: None,
+                    }
+                    .to_evaluator(),
+                    MoonProximityConfig {
+                        min_angle: 23.0,
+                        max_angle: None,
+                    }
+                    .to_evaluator(),
+                    EarthLimbConfig {
+                        min_angle: 33.0,
+                        max_angle: None,
+                        include_refraction: false,
+                        horizon_dip: false,
+                    }
+                    .to_evaluator(),
+                ],
+            }),
+            roll_deg: Some(15.0),
+            roll_free: false,
+            pitch_deg: 20.0,
+            yaw_deg: 10.0,
+            roll_clockwise: false,
+            roll_reference: RollReference::Sun,
+        };
+        evaluator
+            .in_constraint_batch_with_causes(&eph, &[66.0], &[-29.0], None, None)
+            .unwrap();
+        assert_eq!(eph.full_grid_rows_read.swap(0, Ordering::Relaxed), 3 * 32);
+        evaluator
+            .compute_named_values(&eph, &[66.0], &[-29.0], None)
+            .unwrap();
+        assert_eq!(eph.full_grid_rows_read.swap(0, Ordering::Relaxed), 3 * 32);
+        evaluator
+            .in_constraint_batch(&eph, &[66.0], &[-29.0], None)
+            .unwrap();
+        assert_eq!(eph.full_grid_rows_read.load(Ordering::Relaxed), 3 * 32);
+    }
+
     struct DummyLeaf;
 
     impl ConstraintEvaluator for DummyLeaf {

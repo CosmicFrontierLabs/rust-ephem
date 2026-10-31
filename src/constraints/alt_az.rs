@@ -1,7 +1,6 @@
 /// Altitude/Azimuth constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
 use crate::utils::polygon;
-use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
@@ -180,13 +179,17 @@ impl ConstraintEvaluator for AltAzEvaluator {
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
         let n_targets = target_ras.len();
-        let altaz_list: Vec<_> = target_ras
-            .iter()
-            .zip(target_decs.iter())
-            .map(|(&ra, &dec)| ephemeris.radec_to_altaz(ra, dec, time_indices))
-            .collect::<PyResult<_>>()?;
+        let altaz_list = crate::utils::celestial::radec_to_altaz_batch(
+            target_ras,
+            target_decs,
+            ephemeris,
+            time_indices,
+        )?;
 
-        let n_times = altaz_list.first().map(|a| a.nrows()).unwrap_or(0);
+        // Empty target batches still share the ephemeris time axis with other
+        // constraint masks (including cached masks in attributed roll sweeps).
+        let n_times =
+            time_indices.map_or_else(|| ephemeris.get_times().map(|t| t.len()), |i| Ok(i.len()))?;
 
         let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
 
@@ -253,13 +256,15 @@ impl ConstraintEvaluator for AltAzEvaluator {
         time_indices: Option<&[usize]>,
     ) -> PyResult<HashMap<String, Array2<f64>>> {
         let n_targets = target_ras.len();
-        let altaz_list: Vec<_> = target_ras
-            .iter()
-            .zip(target_decs.iter())
-            .map(|(&ra, &dec)| ephemeris.radec_to_altaz(ra, dec, time_indices))
-            .collect::<PyResult<_>>()?;
+        let altaz_list = crate::utils::celestial::radec_to_altaz_batch(
+            target_ras,
+            target_decs,
+            ephemeris,
+            time_indices,
+        )?;
 
-        let n_times = altaz_list.first().map(|a| a.nrows()).unwrap_or(0);
+        let n_times =
+            time_indices.map_or_else(|| ephemeris.get_times().map(|t| t.len()), |i| Ok(i.len()))?;
 
         let mut altitude_deg = Array2::<f64>::zeros((n_targets, n_times));
         let mut azimuth_deg = Array2::<f64>::zeros((n_targets, n_times));

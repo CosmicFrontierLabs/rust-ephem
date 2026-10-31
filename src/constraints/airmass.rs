@@ -1,7 +1,6 @@
 /// Airmass constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
 use crate::utils::celestial::calculate_airmass_batch_fast;
-use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};

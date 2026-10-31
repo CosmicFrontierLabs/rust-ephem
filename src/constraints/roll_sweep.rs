@@ -6,6 +6,122 @@ use ndarray::Array2;
 use pyo3::PyResult;
 use std::ops::{Index, IndexMut};
 
+/// Prepared attributed sweep, owned by one evaluation only. Cached results are
+/// safe without fingerprints because the ephemeris and targets stay borrowed.
+pub struct PreparedAttributedRollEvaluator<'a>(
+    Box<dyn Fn(f64) -> PyResult<super::core::BatchWithCauses> + 'a>,
+);
+
+impl<'a> PreparedAttributedRollEvaluator<'a> {
+    pub fn new(f: impl Fn(f64) -> PyResult<super::core::BatchWithCauses> + 'a) -> Self {
+        Self(Box::new(f))
+    }
+
+    pub fn evaluate(&self, roll: f64) -> PyResult<super::core::BatchWithCauses> {
+        (self.0)(roll)
+    }
+}
+
+pub fn prepare_with_causes<'a, T: ConstraintEvaluator + ?Sized>(
+    evaluator: &'a T,
+    ephemeris: &'a dyn EphemerisBase,
+    ras: &'a [f64],
+    decs: &'a [f64],
+    indices: Option<&'a [usize]>,
+) -> PyResult<PreparedAttributedRollEvaluator<'a>> {
+    if !evaluator.is_roll_dependent() {
+        // Sweep candidates preserve configured fixed rolls, so these masks and
+        // their cause tags are identical for every candidate angle.
+        let result = evaluator.in_constraint_batch_with_causes(
+            ephemeris,
+            ras,
+            decs,
+            indices,
+            Some(EvaluationRoll::Sweep(0.0)),
+        )?;
+        return Ok(PreparedAttributedRollEvaluator::new(move |_| {
+            Ok(result.clone())
+        }));
+    }
+    if let Some(prepared) =
+        evaluator.prepare_attributed_roll_sweep(ephemeris, ras, decs, indices)?
+    {
+        return Ok(prepared);
+    }
+    Ok(PreparedAttributedRollEvaluator::new(move |roll| {
+        evaluator.in_constraint_batch_with_causes(
+            ephemeris,
+            ras,
+            decs,
+            indices,
+            Some(EvaluationRoll::Sweep(roll)),
+        )
+    }))
+}
+
+/// Adapt an existing prepared boolean kernel for a leaf's attributed sweep.
+/// Geometry is retained per chunk; cell coordinates are regenerated in bounded
+/// scratch space rather than stored for the entire target/time grid. Only leaves
+/// use this adapter because their cause mask equals their combined mask.
+pub fn prepare_attributed_leaf<'a, T: ConstraintEvaluator + ?Sized>(
+    evaluator: &'a T,
+    ephemeris: &'a dyn EphemerisBase,
+    ras: &'a [f64],
+    decs: &'a [f64],
+    indices: Option<&'a [usize]>,
+    time_invariant: bool,
+) -> PyResult<Option<PreparedAttributedRollEvaluator<'a>>> {
+    if ras.len() != decs.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "target_ras and target_decs must have the same length",
+        ));
+    }
+    let n_times = indices.map_or_else(
+        || ephemeris.get_times().map(|times| times.len()),
+        |idx| Ok(idx.len()),
+    )?;
+    let n_targets = ras.len();
+    // Catalog-star projections are time-invariant: retain one cell per target
+    // and broadcast the resulting row states only after evaluating a roll.
+    let n_columns = if time_invariant { 1 } else { n_times };
+    let len = n_targets * n_columns;
+    if n_times == 0 || len == 0 || !evaluator.is_roll_dependent() {
+        return Ok(None);
+    }
+    let mut chunks = Vec::new();
+    for start in (0..len).step_by(MAX_PREPARED_CELLS) {
+        let end = (start + MAX_PREPARED_CELLS).min(len);
+        let cells: Vec<_> = (start..end)
+            .map(|index| (index / n_columns, index % n_columns))
+            .collect();
+        let Some(prepared) = evaluator.prepare_roll_sweep(ephemeris, ras, decs, indices, &cells)?
+        else {
+            return Ok(None);
+        };
+        chunks.push((start, end, prepared));
+    }
+    let tag = super::core::value_key_prefix(&evaluator.name());
+    Ok(Some(PreparedAttributedRollEvaluator::new(move |roll| {
+        let mut values = vec![false; len];
+        for (start, end, prepared) in &chunks {
+            let cells: Vec<_> = (*start..*end)
+                .map(|index| (index / n_columns, index % n_columns))
+                .collect();
+            let chunk = prepared.evaluate(&cells, roll)?;
+            values[*start..*end].copy_from_slice(&chunk);
+        }
+        let violated = if time_invariant {
+            Array2::from_shape_fn((n_targets, n_times), |(i, _)| values[i])
+        } else {
+            Array2::from_shape_vec((n_targets, n_times), values).unwrap()
+        };
+        Ok(super::core::BatchWithCauses {
+            named: std::collections::HashMap::from([(tag.clone(), violated.clone())]),
+            violated,
+        })
+    })))
+}
+
 pub type RollCell = (usize, usize);
 
 /// Evaluate a time-invariant leaf once per active target at this roll. The
@@ -258,6 +374,177 @@ mod tests {
         }
         fn as_any(&self) -> &dyn std::any::Any {
             self
+        }
+    }
+
+    #[test]
+    fn attributed_leaf_kernels_match_ordinary_masks_and_causes() {
+        use crate::constraints::core::ConstraintConfig;
+        use crate::constraints::{
+            body_proximity::BodyProximityConfig, bright_star::BrightStarConfig,
+            solar_roll::SolarRollConfig,
+        };
+        let eph = TestEphemeris::new(5);
+        let polygon = vec![[-10.0, -5.0], [10.0, -5.0], [10.0, 5.0], [-10.0, 5.0]];
+        let mut leaves = vec![
+            (
+                BodyProximityConfig {
+                    body: "sun".into(),
+                    min_angle: None,
+                    max_angle: None,
+                    fov_polygon: Some(polygon.clone()),
+                    roll_deg: None,
+                }
+                .to_evaluator(),
+                false,
+            ),
+            (
+                BrightStarConfig {
+                    stars: vec![[0.0, 0.0], [90.0, 80.0], [359.0, -2.0]],
+                    fov_radius: None,
+                    fov_polygon: Some(polygon),
+                    roll_deg: None,
+                }
+                .to_evaluator(),
+                true,
+            ),
+        ];
+        for panel in [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.5, 0.5]] {
+            leaves.push((
+                SolarRollConfig {
+                    tolerance_deg: 20.0,
+                    roll_deg: None,
+                    panel_normal: panel,
+                }
+                .to_evaluator(),
+                false,
+            ));
+        }
+        let ras = [0.0, 5.0, 90.0, 180.0, 359.0];
+        let decs = [0.0, 2.0, 89.999, -89.999, -3.0];
+        for (leaf, time_invariant) in leaves {
+            for indices in [None, Some(vec![4, 1, 1, 0])] {
+                let prepared = prepare_attributed_leaf(
+                    &*leaf,
+                    &eph,
+                    &ras,
+                    &decs,
+                    indices.as_deref(),
+                    time_invariant,
+                )
+                .unwrap()
+                .unwrap();
+                for roll in [0.0, 15.0, 90.0, 180.0, 345.0] {
+                    let expected = leaf
+                        .in_constraint_batch_with_causes(
+                            &eph,
+                            &ras,
+                            &decs,
+                            indices.as_deref(),
+                            Some(EvaluationRoll::Sweep(roll)),
+                        )
+                        .unwrap();
+                    let actual = prepared.evaluate(roll).unwrap();
+                    assert_eq!(
+                        actual.violated,
+                        expected.violated,
+                        "{} at {roll}",
+                        leaf.name()
+                    );
+                    assert_eq!(actual.named, expected.named, "{} at {roll}", leaf.name());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn attributed_leaf_adapter_handles_multiple_chunks_and_empty_grids() {
+        use crate::constraints::{core::ConstraintConfig, solar_roll::SolarRollConfig};
+        let eph = TestEphemeris::new(13);
+        let ras = vec![90.0; 5042];
+        let decs = vec![30.0; ras.len()];
+        let leaf = SolarRollConfig {
+            tolerance_deg: 20.0,
+            roll_deg: None,
+            panel_normal: [0.0, 1.0, 0.0],
+        }
+        .to_evaluator();
+        let prepared = prepare_attributed_leaf(&*leaf, &eph, &ras, &decs, None, false)
+            .unwrap()
+            .unwrap();
+        for roll in [0.0, 90.0] {
+            let expected = leaf
+                .in_constraint_batch_with_causes(
+                    &eph,
+                    &ras,
+                    &decs,
+                    None,
+                    Some(EvaluationRoll::Sweep(roll)),
+                )
+                .unwrap();
+            let actual = prepared.evaluate(roll).unwrap();
+            assert_eq!(actual.violated, expected.violated);
+            assert_eq!(actual.named, expected.named);
+        }
+        assert!(prepare_attributed_leaf(&*leaf, &eph, &[], &[], None, false)
+            .unwrap()
+            .is_none());
+        assert!(
+            prepare_attributed_leaf(&*leaf, &eph, &ras, &decs, Some(&[]), false)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn attributed_body_and_time_invariant_leaves_cross_chunk_boundaries() {
+        use crate::constraints::{
+            body_proximity::BodyProximityConfig, bright_star::BrightStarConfig,
+            core::ConstraintConfig,
+        };
+        let eph = TestEphemeris::new(13);
+        let polygon = vec![[-10.0, -5.0], [10.0, -5.0], [10.0, 5.0], [-10.0, 5.0]];
+        for (leaf, n_targets) in [
+            (
+                BrightStarConfig {
+                    stars: vec![[90.0, 30.0], [91.0, 31.0]],
+                    fov_radius: None,
+                    fov_polygon: Some(polygon.clone()),
+                    roll_deg: None,
+                }
+                .to_evaluator(),
+                // Time-invariant preparation chunks targets, rather than cells.
+                MAX_PREPARED_CELLS + 1,
+            ),
+            (
+                BodyProximityConfig {
+                    body: "sun".into(),
+                    min_angle: None,
+                    max_angle: None,
+                    fov_polygon: Some(polygon),
+                    roll_deg: None,
+                }
+                .to_evaluator(),
+                MAX_PREPARED_CELLS / 13 + 1,
+            ),
+        ] {
+            let ras: Vec<_> = (0..n_targets).map(|i| (i % 360) as f64).collect();
+            let decs = vec![30.0; n_targets];
+            let prepared = prepare_with_causes(&*leaf, &eph, &ras, &decs, None).unwrap();
+            for roll in [0.0, 90.0] {
+                let actual = prepared.evaluate(roll).unwrap();
+                let expected = leaf
+                    .in_constraint_batch_with_causes(
+                        &eph,
+                        &ras,
+                        &decs,
+                        None,
+                        Some(EvaluationRoll::Sweep(roll)),
+                    )
+                    .unwrap();
+                assert_eq!(actual.violated, expected.violated, "{}", leaf.name());
+                assert_eq!(actual.named, expected.named, "{}", leaf.name());
+            }
         }
     }
 

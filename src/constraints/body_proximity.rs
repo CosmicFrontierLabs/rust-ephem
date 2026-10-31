@@ -242,6 +242,16 @@ impl BodyProximityEvaluator {
 }
 
 impl ConstraintEvaluator for BodyProximityEvaluator {
+    fn prepare_attributed_roll_sweep<'a>(
+        &'a self,
+        ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &'a [f64],
+        decs: &'a [f64],
+        indices: Option<&'a [usize]>,
+    ) -> pyo3::PyResult<Option<super::roll_sweep::PreparedAttributedRollEvaluator<'a>>> {
+        super::roll_sweep::prepare_attributed_leaf(self, ephemeris, ras, decs, indices, false)
+    }
+
     fn name_at_roll(&self, target_roll: Option<f64>) -> String {
         self.format_name_at_roll(target_roll)
     }

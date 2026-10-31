@@ -14,6 +14,23 @@ use crate::utils::time_utils::{python_datetime_to_utc, utc_to_python_datetime};
 use crate::utils::to_skycoord::{to_skycoord, AstropyModules, SkyCoordConfig};
 use ndarray::Array1;
 
+/// Select rows from the borrowed position columns before allocating. Preserves
+/// duplicate/reordered indices and returns only x/y/z, including for N x 6 data.
+fn selected_positions(
+    data: &Option<Array2<f64>>,
+    indices: Option<&[usize]>,
+    missing: &str,
+) -> PyResult<Array2<f64>> {
+    let data = data
+        .as_ref()
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(missing.to_owned()))?;
+    let positions = data.slice(s![.., 0..3]);
+    Ok(match indices {
+        Some(indices) => positions.select(ndarray::Axis(0), indices),
+        None => positions.to_owned(),
+    })
+}
+
 /// Helper function for getting begin time from ephemeris common data
 #[inline]
 pub fn get_begin_time(times: &Option<Vec<DateTime<Utc>>>, py: Python) -> PyResult<Py<PyAny>> {
@@ -492,32 +509,43 @@ pub trait EphemerisBase {
 
     /// Get times as Vec<DateTime<Utc>> for constraint evaluation
     fn get_times(&self) -> PyResult<Vec<DateTime<Utc>>> {
-        self.data()
+        self.get_times_at_indices(None)
+    }
+
+    /// Copy only selected timestamps. A single-column evaluation must not clone
+    /// the full timeline before selecting one sample.
+    fn get_times_at_indices(&self, indices: Option<&[usize]>) -> PyResult<Vec<DateTime<Utc>>> {
+        let times = self
+            .data()
             .times
             .as_ref()
-            .cloned()
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available"))
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available"))?;
+        Ok(match indices {
+            Some(indices) => indices.iter().map(|&i| times[i]).collect(),
+            None => times.clone(),
+        })
     }
 
-    /// Get Sun positions in GCRS (N x 3 array, km) for constraint evaluation
+    /// Get Sun positions in GCRS (N x 3 array, km) for constraint evaluation.
     fn get_sun_positions(&self) -> PyResult<Array2<f64>> {
-        let sun_data =
-            self.data().sun_gcrs.as_ref().ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err("No Sun positions available")
-            })?;
-
-        // Extract only positions (first 3 columns)
-        Ok(sun_data.slice(s![.., 0..3]).to_owned())
+        self.get_sun_positions_at_indices(None)
     }
 
-    /// Get Moon positions in GCRS (N x 3 array, km) for constraint evaluation
-    fn get_moon_positions(&self) -> PyResult<Array2<f64>> {
-        let moon_data = self.data().moon_gcrs.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err("No Moon positions available")
-        })?;
+    fn get_sun_positions_at_indices(&self, indices: Option<&[usize]>) -> PyResult<Array2<f64>> {
+        selected_positions(&self.data().sun_gcrs, indices, "No Sun positions available")
+    }
 
-        // Extract only positions (first 3 columns)
-        Ok(moon_data.slice(s![.., 0..3]).to_owned())
+    /// Get Moon positions in GCRS (N x 3 array, km) for constraint evaluation.
+    fn get_moon_positions(&self) -> PyResult<Array2<f64>> {
+        self.get_moon_positions_at_indices(None)
+    }
+
+    fn get_moon_positions_at_indices(&self, indices: Option<&[usize]>) -> PyResult<Array2<f64>> {
+        selected_positions(
+            &self.data().moon_gcrs,
+            indices,
+            "No Moon positions available",
+        )
     }
 
     /// Get geocentric GCRS positions (N x 3, km) for any body supported by the
@@ -609,12 +637,11 @@ pub trait EphemerisBase {
 
     /// Get observer (spacecraft/satellite) positions in GCRS (N x 3 array, km) for constraint evaluation
     fn get_gcrs_positions(&self) -> PyResult<Array2<f64>> {
-        let gcrs_data = self.data().gcrs.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err("No GCRS positions available")
-        })?;
+        self.get_gcrs_positions_at_indices(None)
+    }
 
-        // Extract only positions (first 3 columns)
-        Ok(gcrs_data.slice(s![.., 0..3]).to_owned())
+    fn get_gcrs_positions_at_indices(&self, indices: Option<&[usize]>) -> PyResult<Array2<f64>> {
+        selected_positions(&self.data().gcrs, indices, "No GCRS positions available")
     }
 
     // ========== End constraint helper methods ==========
@@ -1734,6 +1761,56 @@ pub trait EphemerisBase {
                         Ok(idx)
                     }
                 }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod selected_data_tests {
+    use super::*;
+    use crate::constraints::test_support::TestEphemeris;
+
+    #[test]
+    fn selected_data_preserves_rows_order_duplicates_and_position_columns() {
+        let mut eph = TestEphemeris::new(5);
+        for data in [
+            Array2::from_shape_fn((5, 6), |(i, j)| (i * 10 + j) as f64),
+            Array2::from_shape_fn((6, 5), |(j, i)| (i * 10 + j) as f64).reversed_axes(),
+        ] {
+            eph.data.gcrs = Some(data.clone());
+            eph.data.sun_gcrs = Some(data.clone());
+            eph.data.moon_gcrs = Some(data.clone());
+            for indices in [None, Some(vec![4, 1, 1, 0]), Some(vec![]), Some(vec![2])] {
+                let positions = data.slice(s![.., 0..3]).to_owned();
+                let expected = match indices.as_deref() {
+                    Some(idx) => positions.select(ndarray::Axis(0), idx),
+                    None => positions,
+                };
+                assert_eq!(
+                    eph.get_gcrs_positions_at_indices(indices.as_deref())
+                        .unwrap(),
+                    expected
+                );
+                assert_eq!(
+                    eph.get_sun_positions_at_indices(indices.as_deref())
+                        .unwrap(),
+                    expected
+                );
+                assert_eq!(
+                    eph.get_moon_positions_at_indices(indices.as_deref())
+                        .unwrap(),
+                    expected
+                );
+                let times = eph.data.times.as_ref().unwrap();
+                let expected_times = indices.as_ref().map_or_else(
+                    || times.clone(),
+                    |idx| idx.iter().map(|&i| times[i]).collect(),
+                );
+                assert_eq!(
+                    eph.get_times_at_indices(indices.as_deref()).unwrap(),
+                    expected_times
+                );
             }
         }
     }

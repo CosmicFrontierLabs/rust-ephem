@@ -320,16 +320,29 @@ impl ConstraintResult {
                 return violated;
             }
 
-            // Mark violated times - violations are already sorted by time
-            for (i, t) in self.times.iter().enumerate() {
-                // Binary search could be used here, but violation count is typically small
-                for v in &self.violations {
-                    if t < &v.start_time_internal {
-                        break; // Violations are sorted, no need to check further
+            if self.times.windows(2).all(|pair| pair[0] <= pair[1]) {
+                // Windows and timestamps are sorted. Advance past expired
+                // windows once, instead of rescanning them for every sample.
+                let mut windows = self.violations.iter().peekable();
+                for (i, time) in self.times.iter().enumerate() {
+                    while windows.peek().is_some_and(|v| v.end_time_internal < *time) {
+                        windows.next();
                     }
-                    if &v.start_time_internal <= t && t <= &v.end_time_internal {
-                        violated[i] = true;
-                        break;
+                    violated[i] = windows.peek().is_some_and(|v| {
+                        v.start_time_internal <= *time && *time <= v.end_time_internal
+                    });
+                }
+            } else {
+                // Selected timestamps may be reordered; preserve their order.
+                for (i, time) in self.times.iter().enumerate() {
+                    for window in &self.violations {
+                        if *time < window.start_time_internal {
+                            break;
+                        }
+                        if *time <= window.end_time_internal {
+                            violated[i] = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -801,6 +814,19 @@ pub trait ConstraintEvaluator: Send + Sync {
         Ok(None)
     }
 
+    /// Prepare a free-roll evaluation that also preserves per-leaf causes.
+    /// Combinators override this to prepare their children recursively. The
+    /// default retains the existing per-roll traversal for dependent leaves.
+    fn prepare_attributed_roll_sweep<'a>(
+        &'a self,
+        _ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        _target_ras: &'a [f64],
+        _target_decs: &'a [f64],
+        _time_indices: Option<&'a [usize]>,
+    ) -> PyResult<Option<super::roll_sweep::PreparedAttributedRollEvaluator<'a>>> {
+        Ok(None)
+    }
+
     /// Evaluate the constraint with full ephemeris access
     ///
     /// # Arguments
@@ -1120,6 +1146,7 @@ pub trait ConstraintEvaluator: Send + Sync {
 
 /// Combined violation mask plus per-leaf cause masks, produced by a single traversal
 /// of the constraint tree — see `ConstraintEvaluator::in_constraint_batch_with_causes`.
+#[derive(Clone)]
 pub struct BatchWithCauses {
     /// (M x N) targets x times, `true` where the whole tree is violated. Identical
     /// semantics to `in_constraint_batch` (or `in_constraint_batch_at_roll`, when the
@@ -1182,6 +1209,17 @@ pub fn sweep_rolls_with_attribution(
         );
     }
 
+    let prepared = if n_roll_samples > 0 {
+        Some(super::roll_sweep::prepare_with_causes(
+            evaluator,
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+        )?)
+    } else {
+        None
+    };
     let roll_step = 360.0 / n_roll_samples as f64;
     let mut violated: Option<Array2<bool>> = None;
     let mut named: HashMap<String, Array2<bool>> = HashMap::new();
@@ -1190,6 +1228,8 @@ pub fn sweep_rolls_with_attribution(
     // roll can improve on it and the cell is settled).
     let mut best_violated_tags: Array2<usize> = Array2::from_elem((0, 0), 0);
     let mut settled: Array2<bool> = Array2::from_elem((0, 0), false);
+    let mut step_counts = Array2::<usize>::zeros((0, 0));
+    let mut update = Array2::from_elem((0, 0), false);
 
     for step in 0..n_roll_samples {
         if settled.iter().all(|&s| s) && step > 0 {
@@ -1202,18 +1242,14 @@ pub fn sweep_rolls_with_attribution(
         let BatchWithCauses {
             violated: combined_step,
             named: named_step,
-        } = evaluator.in_constraint_batch_with_causes(
-            ephemeris,
-            target_ras,
-            target_decs,
-            time_indices,
-            Some(EvaluationRoll::Sweep(roll_deg)),
-        )?;
+        } = prepared.as_ref().unwrap().evaluate(roll_deg)?;
 
         let (n_targets, n_times) = combined_step.dim();
         if step == 0 {
             best_violated_tags = Array2::from_elem((n_targets, n_times), usize::MAX);
             settled = Array2::from_elem((n_targets, n_times), false);
+            step_counts = Array2::zeros((n_targets, n_times));
+            update = Array2::from_elem((n_targets, n_times), false);
             named = named_step
                 .keys()
                 .map(|key| (key.clone(), Array2::from_elem((n_targets, n_times), false)))
@@ -1225,26 +1261,35 @@ pub fn sweep_rolls_with_attribution(
             Some(ref mut acc) => acc.zip_mut_with(&combined_step, |x, &y| *x &= y),
         }
 
-        for row in 0..n_targets {
-            for col in 0..n_times {
-                if settled[[row, col]] {
-                    continue;
+        // Traverse contiguous masks once per leaf. Looking up every leaf tag
+        // inside the target/time loop otherwise performs millions of hash-map
+        // lookups per sweep, even when most witness rolls never improve.
+        step_counts.fill(0);
+        for mask in named_step.values() {
+            step_counts.zip_mut_with(mask, |count, &v| *count += usize::from(v));
+        }
+        ndarray::Zip::from(&mut settled)
+            .and(&combined_step)
+            .and(&step_counts)
+            .and(&mut best_violated_tags)
+            .and(&mut update)
+            .for_each(|settled, &violated, &count, best, update| {
+                let satisfied = !violated;
+                *update = !*settled && (satisfied || count < *best);
+                if *update {
+                    *best = count;
+                    *settled = satisfied;
                 }
-                let satisfied = !combined_step[[row, col]];
-                let violated_tags = named_step.values().filter(|arr| arr[[row, col]]).count();
-                if !satisfied && violated_tags >= best_violated_tags[[row, col]] {
-                    continue;
-                }
-                for (key, arr) in named.iter_mut() {
-                    // `named_step` is produced by the same evaluator tree as the map
-                    // `named` was seeded from, so its key set is identical every step;
-                    // the lookup is defensive rather than load-bearing.
-                    if let Some(step_arr) = named_step.get(key) {
-                        arr[[row, col]] = step_arr[[row, col]];
-                    }
-                }
-                best_violated_tags[[row, col]] = violated_tags;
-                settled[[row, col]] = satisfied;
+            });
+        for (key, arr) in &mut named {
+            if let Some(step_arr) = named_step.get(key) {
+                ndarray::Zip::from(arr).and(step_arr).and(&update).for_each(
+                    |value, &candidate, &replace| {
+                        if replace {
+                            *value = candidate;
+                        }
+                    },
+                );
             }
         }
     }
@@ -1458,24 +1503,14 @@ where
 }
 
 /// Macro to extract and filter ephemeris data with celestial body positions
-/// Usage: extract_body_ephemeris_data!(ephemeris, time_indices, get_body_positions)
+/// Usage: extract_body_ephemeris_data!(ephemeris, time_indices, get_body_positions_at_indices)
 /// Returns: (times_filtered, body_positions_filtered, observer_positions_filtered)
 macro_rules! extract_body_ephemeris_data {
     ($ephemeris:expr, $time_indices:expr, $body_getter:ident) => {{
-        let times = $ephemeris.get_times()?;
-        let body_positions = $ephemeris.$body_getter()?;
-        let observer_positions = $ephemeris.get_gcrs_positions()?;
-
-        if let Some(indices) = $time_indices {
-            let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
-            let body_filtered = body_positions.select(ndarray::Axis(0), indices);
-            let obs_filtered = observer_positions.select(ndarray::Axis(0), indices);
-            (filtered_times, body_filtered, obs_filtered)
-        } else {
-            // body_positions and observer_positions are already owned (from .to_owned() in getters)
-            // so no need to clone again
-            (times.to_vec(), body_positions, observer_positions)
-        }
+        let times = $ephemeris.get_times_at_indices($time_indices)?;
+        let body_positions = $ephemeris.$body_getter($time_indices)?;
+        let observer_positions = $ephemeris.get_gcrs_positions_at_indices($time_indices)?;
+        (times, body_positions, observer_positions)
     }};
 }
 
@@ -1484,24 +1519,16 @@ macro_rules! extract_body_ephemeris_data {
 /// Returns: (times_filtered, sun_positions_filtered, observer_positions_filtered)
 macro_rules! extract_standard_ephemeris_data {
     ($ephemeris:expr, $time_indices:expr) => {{
-        extract_body_ephemeris_data!($ephemeris, $time_indices, get_sun_positions)
+        extract_body_ephemeris_data!($ephemeris, $time_indices, get_sun_positions_at_indices)
     }};
 }
 
 /// Returns: (times_filtered, observer_positions_filtered)
 macro_rules! extract_observer_ephemeris_data {
     ($ephemeris:expr, $time_indices:expr) => {{
-        let times = $ephemeris.get_times()?;
-        let observer_positions = $ephemeris.get_gcrs_positions()?;
-
-        if let Some(indices) = $time_indices {
-            let filtered_times: Vec<DateTime<Utc>> = indices.iter().map(|&i| times[i]).collect();
-            let obs_filtered = observer_positions.select(ndarray::Axis(0), indices);
-            (filtered_times, obs_filtered)
-        } else {
-            // observer_positions is already owned (from .to_owned() in getter)
-            (times.to_vec(), observer_positions)
-        }
+        let times = $ephemeris.get_times_at_indices($time_indices)?;
+        let observer_positions = $ephemeris.get_gcrs_positions_at_indices($time_indices)?;
+        (times, observer_positions)
     }};
 }
 
@@ -1510,15 +1537,7 @@ macro_rules! extract_observer_ephemeris_data {
 /// Returns: (times_filtered,)
 macro_rules! extract_time_data {
     ($ephemeris:expr, $time_indices:expr) => {{
-        let times = $ephemeris.get_times()?;
-
-        let times_filtered = if let Some(indices) = $time_indices {
-            indices.iter().map(|&i| times[i]).collect()
-        } else {
-            times.to_vec()
-        };
-
-        (times_filtered,)
+        ($ephemeris.get_times_at_indices($time_indices)?,)
     }};
 }
 
@@ -1569,6 +1588,119 @@ macro_rules! extract_latlon_data {
 mod tests {
     use super::{flipped_causes, value_key_prefix};
     use std::collections::HashMap;
+
+    #[test]
+    #[ignore = "manual performance measurement"]
+    fn benchmark_result_mask() {
+        use super::{ConstraintResult, ConstraintViolation};
+        use chrono::{Duration, TimeZone, Utc};
+        use std::{hint::black_box, sync::OnceLock, time::Instant};
+        let epoch = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let n_times = 100_000;
+        eprintln!("Result mask construction, median of 5 runs, release build, uncached masks");
+        eprintln!("timestamps,windows,before_ms,after_ms,speedup");
+        for n_windows in [1, 100, 1000] {
+            let stride = n_times / n_windows;
+            let times = (0..n_times)
+                .map(|i| epoch + Duration::seconds(i as i64))
+                .collect();
+            let violations = (0..n_windows)
+                .map(|i| ConstraintViolation {
+                    start_time_internal: epoch + Duration::seconds((i * stride) as i64),
+                    end_time_internal: epoch + Duration::seconds((i * stride + stride / 2) as i64),
+                    max_severity: 1.0,
+                    description: String::new(),
+                })
+                .collect();
+            let mut result = ConstraintResult::new(violations, false, String::new(), times);
+            // Exact previous algorithm, including early exits on sorted windows.
+            let previous = |result: &ConstraintResult| {
+                let mut mask = vec![false; result.times.len()];
+                for (i, time) in result.times.iter().enumerate() {
+                    for window in &result.violations {
+                        if time < &window.start_time_internal {
+                            break;
+                        }
+                        if &window.start_time_internal <= time && time <= &window.end_time_internal
+                        {
+                            mask[i] = true;
+                            break;
+                        }
+                    }
+                }
+                mask
+            };
+            assert_eq!(result._get_constraint_vec(), &previous(&result));
+            let mut before = Vec::new();
+            let mut after = Vec::new();
+            for iteration in 0..5 {
+                for old in [iteration % 2 == 0, iteration % 2 != 0] {
+                    // Reset outside timing: measure initial construction, not cache reads.
+                    result.constraint_vec_cache = OnceLock::new();
+                    let start = Instant::now();
+                    if old {
+                        let mask = previous(black_box(&result));
+                        black_box(&mask);
+                        before.push(start.elapsed().as_secs_f64() * 1000.0);
+                    } else {
+                        black_box(black_box(&result)._get_constraint_vec());
+                        after.push(start.elapsed().as_secs_f64() * 1000.0);
+                    }
+                }
+            }
+            before.sort_by(f64::total_cmp);
+            after.sort_by(f64::total_cmp);
+            eprintln!(
+                "{n_times},{n_windows},{:.3},{:.3},{:.1}x",
+                before[2],
+                after[2],
+                before[2] / after[2]
+            );
+        }
+    }
+
+    #[test]
+    fn result_mask_matches_window_membership() {
+        use super::{ConstraintResult, ConstraintViolation};
+        use chrono::{Duration, TimeZone, Utc};
+        let epoch = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        for offsets in [
+            vec![],
+            vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+            vec![9, 2, 3, 0, 8, 2],
+        ] {
+            for ranges in [
+                vec![],
+                vec![(1, 2), (4, 4), (6, 8)],
+                vec![(0, 9)],
+                vec![(1, 6), (3, 8)],
+            ] {
+                let times: Vec<_> = offsets
+                    .iter()
+                    .map(|&i| epoch + Duration::seconds(i))
+                    .collect();
+                let violations: Vec<_> = ranges
+                    .iter()
+                    .map(|&(start, end)| ConstraintViolation {
+                        start_time_internal: epoch + Duration::seconds(start),
+                        end_time_internal: epoch + Duration::seconds(end),
+                        max_severity: 1.0,
+                        description: String::new(),
+                    })
+                    .collect();
+                let expected: Vec<_> = times
+                    .iter()
+                    .map(|t| {
+                        violations
+                            .iter()
+                            .any(|v| v.start_time_internal <= *t && *t <= v.end_time_internal)
+                    })
+                    .collect();
+                let result = ConstraintResult::new(violations, false, String::new(), times);
+                assert_eq!(result._get_constraint_vec(), &expected);
+            }
+        }
+    }
 
     #[test]
     fn test_flipped_causes_detects_single_flip() {
