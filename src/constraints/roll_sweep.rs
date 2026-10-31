@@ -497,6 +497,58 @@ mod tests {
     }
 
     #[test]
+    fn attributed_body_and_time_invariant_leaves_cross_chunk_boundaries() {
+        use crate::constraints::{
+            body_proximity::BodyProximityConfig, bright_star::BrightStarConfig,
+            core::ConstraintConfig,
+        };
+        let eph = TestEphemeris::new(13);
+        let polygon = vec![[-10.0, -5.0], [10.0, -5.0], [10.0, 5.0], [-10.0, 5.0]];
+        for (leaf, n_targets) in [
+            (
+                BrightStarConfig {
+                    stars: vec![[90.0, 30.0], [91.0, 31.0]],
+                    fov_radius: None,
+                    fov_polygon: Some(polygon.clone()),
+                    roll_deg: None,
+                }
+                .to_evaluator(),
+                // Time-invariant preparation chunks targets, rather than cells.
+                MAX_PREPARED_CELLS + 1,
+            ),
+            (
+                BodyProximityConfig {
+                    body: "sun".into(),
+                    min_angle: None,
+                    max_angle: None,
+                    fov_polygon: Some(polygon),
+                    roll_deg: None,
+                }
+                .to_evaluator(),
+                MAX_PREPARED_CELLS / 13 + 1,
+            ),
+        ] {
+            let ras: Vec<_> = (0..n_targets).map(|i| (i % 360) as f64).collect();
+            let decs = vec![30.0; n_targets];
+            let prepared = prepare_with_causes(&*leaf, &eph, &ras, &decs, None).unwrap();
+            for roll in [0.0, 90.0] {
+                let actual = prepared.evaluate(roll).unwrap();
+                let expected = leaf
+                    .in_constraint_batch_with_causes(
+                        &eph,
+                        &ras,
+                        &decs,
+                        None,
+                        Some(EvaluationRoll::Sweep(roll)),
+                    )
+                    .unwrap();
+                assert_eq!(actual.violated, expected.violated, "{}", leaf.name());
+                assert_eq!(actual.named, expected.named, "{}", leaf.name());
+            }
+        }
+    }
+
+    #[test]
     fn nested_independent_children_prepare_only_the_chunk_grid() {
         let eph = TestEphemeris::new(13);
         let ras = vec![20.0; 10_084];

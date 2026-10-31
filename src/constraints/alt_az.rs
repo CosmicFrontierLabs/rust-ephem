@@ -186,7 +186,10 @@ impl ConstraintEvaluator for AltAzEvaluator {
             time_indices,
         )?;
 
-        let n_times = altaz_list.first().map(|a| a.nrows()).unwrap_or(0);
+        // Empty target batches still share the ephemeris time axis with other
+        // constraint masks (including cached masks in attributed roll sweeps).
+        let n_times =
+            time_indices.map_or_else(|| ephemeris.get_times().map(|t| t.len()), |i| Ok(i.len()))?;
 
         let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
 
@@ -260,7 +263,8 @@ impl ConstraintEvaluator for AltAzEvaluator {
             time_indices,
         )?;
 
-        let n_times = altaz_list.first().map(|a| a.nrows()).unwrap_or(0);
+        let n_times =
+            time_indices.map_or_else(|| ephemeris.get_times().map(|t| t.len()), |i| Ok(i.len()))?;
 
         let mut altitude_deg = Array2::<f64>::zeros((n_targets, n_times));
         let mut azimuth_deg = Array2::<f64>::zeros((n_targets, n_times));

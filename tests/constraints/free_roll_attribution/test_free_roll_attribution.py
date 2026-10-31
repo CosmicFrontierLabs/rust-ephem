@@ -16,7 +16,11 @@ grid", which is the definition of "violated at every roll" spelled out directly.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
+from textwrap import dedent
 from typing import Any
 
 import numpy as np
@@ -37,6 +41,62 @@ _N_ROLL_SAMPLES = 24
 
 _TLE1 = "1 28485U 04047A   25317.24527149  .00068512  00000+0  12522-2 0  9999"
 _TLE2 = "2 28485  20.5556  25.5469 0004740 206.7882 153.2316 15.47667717153136"
+
+
+@pytest.mark.parametrize("combination", ["xor", "at_least"])
+@pytest.mark.parametrize("subset", [False, True])
+def test_empty_altaz_roll_combination(
+    ensure_planetary_data: Any, combination: str, subset: bool
+) -> None:
+    """Empty masks retain their time axis; release panics must not kill pytest."""
+    script = dedent("""
+        import sys
+        from datetime import datetime, timedelta, timezone
+        import rust_ephem
+        from rust_ephem.constraints import (
+            AltAzConstraint, AtLeastConstraint, SolarRollConstraint,
+        )
+
+        rust_ephem.ensure_planetary_ephemeris(
+            py_path=sys.argv[1], download_if_missing=False,
+        )
+        begin = datetime(2025, 9, 23, tzinfo=timezone.utc)
+        ephem = rust_ephem.GroundEphemeris(
+            latitude=34, longitude=-118, height=100,
+            begin=begin, end=begin + timedelta(minutes=10), step_size=300,
+        )
+        altaz = AltAzConstraint(min_altitude=20)
+        roll = SolarRollConstraint(tolerance_deg=20)
+        constraint = (
+            altaz ^ roll if sys.argv[2] == "xor" else
+            AtLeastConstraint(min_violated=1, constraints=[altaz, roll])
+        )
+        kwargs = {"indices": [0, 2]} if sys.argv[3] == "True" else {}
+        n_times = 2 if kwargs else 3
+        assert constraint.evaluate_batch(
+            ephem, [], [], n_roll_samples=12, **kwargs,
+        ) == []
+        assert constraint.in_constraint_batch(
+            ephem, [], [], n_roll_samples=12, **kwargs,
+        ).shape == (0, n_times)
+        assert altaz.in_constraint_batch(ephem, [], [], **kwargs).shape == (0, n_times)
+    """)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(Path(__file__).resolve().parents[2] / "test_data" / "de440s.bsp"),
+            combination,
+            str(subset),
+        ],
+        # Match pytest's imported package; the checkout may lack the wheel's extension.
+        cwd=Path(rust_ephem.__file__).resolve().parent.parent,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 @pytest.fixture
