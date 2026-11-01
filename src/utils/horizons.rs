@@ -28,6 +28,21 @@ use crate::utils::time_utils::chrono_to_epoch;
 /// This function queries JPL Horizons API directly via HTTP to retrieve GCRS
 /// coordinates, which avoids frame conversion issues that can arise from
 /// converting heliocentric coordinates to observer-relative.
+/// Translate NAIF asteroid IDs into Horizons designation searches.
+///
+/// Users continue to pass numeric NAIF/SPK IDs. The original and extended
+/// asteroid ranges are documented by NAIF; the designation prefix prevents
+/// Horizons from treating an SPK ID as a permanent asteroid number.
+/// https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/FORTRAN/req/naif_ids.html
+fn horizons_command(body_id: i32) -> String {
+    match body_id {
+        2_000_001..=3_999_999 | 20_000_001..=99_999_999 => {
+            format!("DES%3D{}%3B", body_id)
+        }
+        _ => body_id.to_string(),
+    }
+}
+
 pub fn query_horizons_body(times: &[DateTime<Utc>], body_id: i32) -> Result<Array2<f64>, String> {
     if times.is_empty() {
         return Err("No times provided for Horizons query".to_string());
@@ -64,7 +79,7 @@ pub fn query_horizons_body(times: &[DateTime<Utc>], body_id: i32) -> Result<Arra
     // VEC_TABLE='2' = position and velocity
     let url = format!(
         "https://ssd.jpl.nasa.gov/api/horizons.api?format=text&COMMAND='{}'&MAKE_EPHEM='YES'&EPHEM_TYPE='VECTORS'&VEC_TABLE='2'&CENTER='@399'&REF_PLANE='FRAME'&START_TIME='{}'&STOP_TIME='{}'&STEP_SIZE='{}m'&OUT_UNITS='KM-S'&CSV_FORMAT='YES'",
-        body_id, start_str, end_str, step_minutes
+        horizons_command(body_id), start_str, end_str, step_minutes
     );
 
     // Query the API
@@ -288,6 +303,59 @@ mod tests {
     use crate::utils::time_utils::{chrono_to_epoch, get_tai_utc_offset};
     use chrono::Duration;
     use chrono::TimeZone;
+
+    #[test]
+    fn test_naif_asteroid_ids_use_horizons_designation_syntax() {
+        assert_eq!(horizons_command(20000624), "DES%3D20000624%3B");
+        assert_eq!(horizons_command(2000624), "DES%3D2000624%3B");
+        assert_eq!(horizons_command(20136108), "DES%3D20136108%3B");
+        assert_eq!(horizons_command(3000001), "DES%3D3000001%3B");
+        assert_eq!(horizons_command(50000001), "DES%3D50000001%3B");
+        for id in [624, 499, 301, 10, -82, 920065803, 120065803] {
+            assert_eq!(horizons_command(id), id.to_string());
+        }
+    }
+
+    #[test]
+    fn test_recorded_small_body_responses_preserve_identity_and_vectors() {
+        let responses = [
+            (
+                include_str!("../../tests/fixtures/horizons_moon.txt"),
+                "Kiviuq",
+            ),
+            (
+                include_str!("../../tests/fixtures/horizons_asteroid.txt"),
+                "Hektor",
+            ),
+            (
+                include_str!("../../tests/fixtures/horizons_dwarf_planet.txt"),
+                "Haumea",
+            ),
+        ];
+        let mut first_positions = Vec::new();
+        for (response, name) in responses {
+            assert!(response
+                .lines()
+                .any(|line| line.starts_with("Target body name:") && line.contains(name)));
+            let line = response
+                .split("$$SOE")
+                .nth(1)
+                .unwrap()
+                .lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap();
+            let columns: Vec<_> = line.split(',').collect();
+            let time = parse_horizons_datetime(columns[0].trim()).unwrap();
+            let vectors = parse_horizons_csv_response(response, &[time]).unwrap();
+            assert_eq!(vectors.shape(), &[1, 6]);
+            for k in 0..6 {
+                let expected: f64 = columns[k + 2].trim().parse().unwrap();
+                assert!((vectors[[0, k]] - expected).abs() < 1e-9);
+            }
+            first_positions.push(vectors[[0, 0]]);
+        }
+        assert!((first_positions[0] - first_positions[1]).abs() > 1e6);
+    }
 
     #[test]
     #[ignore] // Ignore by default since it requires network access
