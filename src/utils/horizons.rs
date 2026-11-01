@@ -10,6 +10,33 @@ use std::cmp::Ordering;
 
 use crate::utils::time_utils::chrono_to_epoch;
 
+/// Translate NAIF asteroid IDs into Horizons designation searches.
+///
+/// Users continue to pass numeric NAIF/SPK IDs. The original and extended
+/// asteroid ranges are documented by NAIF; the designation prefix prevents
+/// Horizons from treating an SPK ID as a permanent asteroid number.
+/// https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/FORTRAN/req/naif_ids.html
+fn horizons_command(body_id: i32) -> Result<String, String> {
+    match body_id {
+        // These Galileo-era IDs are exceptions to the ordinary asteroid scheme.
+        // DES=2431010/2431011 would select unrelated asteroids 431010/431011.
+        2_431_010 | 2_431_011 => {
+            let name = if body_id == 2_431_010 {
+                "Ida"
+            } else {
+                "Dactyl"
+            };
+            Err(format!(
+                "Horizons fallback does not support legacy NAIF ID {} ({}); \
+                 use a SPICE kernel containing this target",
+                body_id, name
+            ))
+        }
+        2_000_001..=3_999_999 | 20_000_001..=99_999_999 => Ok(format!("DES%3D{}%3B", body_id)),
+        _ => Ok(body_id.to_string()),
+    }
+}
+
 /// Query JPL Horizons for body ephemeris data by NAIF ID in GCRS frame
 ///
 /// Returns positions and velocities in GCRS (Geocentric Celestial Reference System)
@@ -28,26 +55,12 @@ use crate::utils::time_utils::chrono_to_epoch;
 /// This function queries JPL Horizons API directly via HTTP to retrieve GCRS
 /// coordinates, which avoids frame conversion issues that can arise from
 /// converting heliocentric coordinates to observer-relative.
-/// Translate NAIF asteroid IDs into Horizons designation searches.
-///
-/// Users continue to pass numeric NAIF/SPK IDs. The original and extended
-/// asteroid ranges are documented by NAIF; the designation prefix prevents
-/// Horizons from treating an SPK ID as a permanent asteroid number.
-/// https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/FORTRAN/req/naif_ids.html
-fn horizons_command(body_id: i32) -> String {
-    match body_id {
-        2_000_001..=3_999_999 | 20_000_001..=99_999_999 => {
-            format!("DES%3D{}%3B", body_id)
-        }
-        _ => body_id.to_string(),
-    }
-}
-
 pub fn query_horizons_body(times: &[DateTime<Utc>], body_id: i32) -> Result<Array2<f64>, String> {
     if times.is_empty() {
         return Err("No times provided for Horizons query".to_string());
     }
 
+    let command = horizons_command(body_id)?;
     let start_time = times[0];
     let end_time = times[times.len() - 1];
 
@@ -79,7 +92,7 @@ pub fn query_horizons_body(times: &[DateTime<Utc>], body_id: i32) -> Result<Arra
     // VEC_TABLE='2' = position and velocity
     let url = format!(
         "https://ssd.jpl.nasa.gov/api/horizons.api?format=text&COMMAND='{}'&MAKE_EPHEM='YES'&EPHEM_TYPE='VECTORS'&VEC_TABLE='2'&CENTER='@399'&REF_PLANE='FRAME'&START_TIME='{}'&STOP_TIME='{}'&STEP_SIZE='{}m'&OUT_UNITS='KM-S'&CSV_FORMAT='YES'",
-        horizons_command(body_id), start_str, end_str, step_minutes
+        command, start_str, end_str, step_minutes
     );
 
     // Query the API
@@ -306,13 +319,34 @@ mod tests {
 
     #[test]
     fn test_naif_asteroid_ids_use_horizons_designation_syntax() {
-        assert_eq!(horizons_command(20000624), "DES%3D20000624%3B");
-        assert_eq!(horizons_command(2000624), "DES%3D2000624%3B");
-        assert_eq!(horizons_command(20136108), "DES%3D20136108%3B");
-        assert_eq!(horizons_command(3000001), "DES%3D3000001%3B");
-        assert_eq!(horizons_command(50000001), "DES%3D50000001%3B");
+        assert_eq!(horizons_command(20000624).unwrap(), "DES%3D20000624%3B");
+        assert_eq!(horizons_command(2000624).unwrap(), "DES%3D2000624%3B");
+        assert_eq!(horizons_command(20136108).unwrap(), "DES%3D20136108%3B");
+        assert_eq!(horizons_command(3000001).unwrap(), "DES%3D3000001%3B");
+        assert_eq!(horizons_command(50000001).unwrap(), "DES%3D50000001%3B");
         for id in [624, 499, 301, 10, -82, 920065803, 120065803] {
-            assert_eq!(horizons_command(id), id.to_string());
+            assert_eq!(horizons_command(id).unwrap(), id.to_string());
+        }
+    }
+
+    #[test]
+    fn test_legacy_ida_dactyl_ids_fail_without_querying_unrelated_asteroids() {
+        let times: Vec<_> = (0..3)
+            .map(|minute| Utc.with_ymd_and_hms(2029, 3, 1, 0, minute, 0).unwrap())
+            .collect();
+        for (legacy_id, name, unrelated_id) in [
+            (2_431_010, "Ida", 20_431_010),
+            (2_431_011, "Dactyl", 20_431_011),
+        ] {
+            let error = horizons_command(legacy_id).unwrap_err();
+            assert!(error.contains(&format!("legacy NAIF ID {} ({})", legacy_id, name)));
+            assert!(error.contains("does not support"));
+            // The query must propagate the identity error before any HTTP request.
+            assert_eq!(query_horizons_body(&times, legacy_id).unwrap_err(), error);
+            assert_eq!(
+                horizons_command(unrelated_id).unwrap(),
+                format!("DES%3D{}%3B", unrelated_id)
+            );
         }
     }
 
