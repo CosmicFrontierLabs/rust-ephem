@@ -75,8 +75,10 @@ impl MoonProximityEvaluator {
     ///
     /// A minimum beyond 180° from the centre cannot be met by any direction, so
     /// it maps to `-inf` (always violated) rather than being clamped to 180°,
-    /// which would wrongly allow the antipodal direction. A maximum beyond 180°
-    /// can never be exceeded, so clamping it is correct.
+    /// which would wrongly allow the antipodal direction. A maximum at or beyond
+    /// 180° can never be exceeded, so it maps to `None` (no upper bound) rather
+    /// than `cos = -1`, which dot-product roundoff below -1 could falsely
+    /// violate for directions opposite the Moon.
     fn cos_thresholds(&self, offset_deg: f64) -> (f64, Option<f64>) {
         let min_total = self.min_angle_deg + offset_deg;
         let min_cos = if min_total > 180.0 {
@@ -86,7 +88,9 @@ impl MoonProximityEvaluator {
         };
         let max_cos = self
             .max_angle_deg
-            .map(|max| (max + offset_deg).min(180.0).to_radians().cos());
+            .map(|max| max + offset_deg)
+            .filter(|&max_total| max_total < 180.0)
+            .map(|max_total| max_total.to_radians().cos());
         (min_cos, max_cos)
     }
 
@@ -460,6 +464,52 @@ mod tests {
                 .in_constraint_batch(&eph, &[270.0], &[0.0], None)
                 .unwrap()[[0, 0]]
         );
+    }
+
+    #[test]
+    fn unattainable_limb_maximum_is_disabled() {
+        // Moon radius 10°: max 170° or more from the limb reaches 180° from the
+        // centre, so it can never be exceeded and must not be checked at all
+        // (cos = -1 would be falsely violated by dot products rounding below -1).
+        let c = MoonProximityEvaluator {
+            min_angle_deg: 10.0,
+            max_angle_deg: Some(170.0),
+            from_limb: true,
+        };
+        assert_eq!(c.cos_thresholds(10.0).1, None);
+        assert!(!MoonProximityEvaluator::is_violated(
+            -1.0 - f64::EPSILON,
+            c.cos_thresholds(10.0)
+        ));
+        // Still enforced while it is attainable.
+        assert!(c.cos_thresholds(9.0).1.is_some());
+    }
+
+    #[test]
+    fn unattainable_limb_maximum_allows_antipodal_directions() {
+        // Moon radius 10°, max 175° from the limb = 185° from the centre: no
+        // upper bound, so the antipode (RA 270°, Dec 0°) and its neighbours pass.
+        let eph = close_moon_ephemeris();
+        let c = evaluator(10.0, Some(175.0), true);
+        let ras = [270.0, 268.0, 272.0];
+        let decs = [0.0, 1.0, -1.0];
+
+        let batch = c.in_constraint_batch(&eph, &ras, &decs, None).unwrap();
+        assert!(batch.iter().all(|&v| !v), "batch: {batch:?}");
+        let unit = c
+            .in_constraint_batch_unit_vectors(&eph, &radec_to_unit_vectors_batch(&ras, &decs), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(unit, batch);
+        for (&ra, &dec) in ras.iter().zip(&decs) {
+            assert!(c.evaluate(&eph, ra, dec, None).unwrap().all_satisfied);
+        }
+        let diag = c.evaluate_diagonal(&eph, &ras, &decs, None).unwrap();
+        assert_eq!(diag.violated, vec![false; 3]);
+        let values = c
+            .compute_named_values(&eph, &[270.0], &[0.0], None)
+            .unwrap();
+        assert!((values["moon_limb_angle_deg"][[0, 0]] - 170.0).abs() < 1e-9);
     }
 
     #[test]
