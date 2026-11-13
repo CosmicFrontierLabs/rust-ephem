@@ -132,7 +132,15 @@ pub fn generate_timestamps(
     // Convert Python datetime objects to Rust DateTime<Utc>
     let begin_dt = python_datetime_to_utc(begin)?;
     let end_dt = python_datetime_to_utc(end)?;
+    generate_timestamps_utc(begin_dt, end_dt, step_size)
+}
 
+/// Same as [`generate_timestamps`], for bounds that are already `DateTime<Utc>`.
+pub fn generate_timestamps_utc(
+    begin_dt: DateTime<Utc>,
+    end_dt: DateTime<Utc>,
+    step_size: i64,
+) -> PyResult<Vec<DateTime<Utc>>> {
     // Validate inputs
     if begin_dt > end_dt {
         return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1894,5 +1902,28 @@ mod selected_data_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate_timestamps_utc;
+    use chrono::{Duration, TimeZone, Utc};
+
+    #[test]
+    fn generate_timestamps_utc_inclusive_grid() {
+        let begin = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let end = begin + Duration::seconds(3600);
+        let times = generate_timestamps_utc(begin, end, 600).unwrap();
+        assert_eq!(times.len(), 7);
+        assert_eq!(times[0], begin);
+        assert_eq!(times[6], end);
+    }
+
+    #[test]
+    fn generate_timestamps_utc_rejects_bad_input() {
+        let begin = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        assert!(generate_timestamps_utc(begin, begin - Duration::seconds(1), 60).is_err());
+        assert!(generate_timestamps_utc(begin, begin, 0).is_err());
     }
 }

@@ -1,6 +1,6 @@
 """Type stubs for the Rust extension module _rust_ephem"""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, runtime_checkable
 
@@ -2960,9 +2960,59 @@ class FileEphemeris(Ephemeris):
         """
         ...
 
+    @staticmethod
+    def from_arrays(
+        times: Sequence[datetime] | npt.NDArray[np.datetime64],
+        positions: npt.ArrayLike,
+        velocities: npt.ArrayLike,
+        begin: datetime | None = None,
+        end: datetime | None = None,
+        step_size: int = 60,
+        *,
+        polar_motion: bool = False,
+        position_unit: str = "km",
+        velocity_unit: str = "km/s",
+        frame: str = "J2000",
+    ) -> FileEphemeris:
+        """
+        Build a FileEphemeris from in-memory state vectors instead of a file.
+
+        The samples go through the same pipeline as the file constructor:
+        unit conversion, range validation, Hermite resampling onto the
+        ``begin``/``end``/``step_size`` grid, frame transforms and Sun/Moon
+        positions.  :attr:`file_path` is ``None`` for the result.
+
+        Args:
+            times: Sample times, strictly increasing.  A sequence of
+                ``datetime`` (naive values are UTC) or a NumPy ``datetime64``
+                array (interpreted as UTC, microsecond resolution).
+            positions: ``(N, 3)`` array-like of positions in ``position_unit``.
+            velocities: ``(N, 3)`` array-like of velocities in
+                ``velocity_unit``.  Required: Hermite interpolation uses them.
+            begin: Start of the output time grid (default: ``times[0]``).
+            end: End of the output time grid (default: ``times[-1]``).
+            step_size: Output time step in seconds (default 60).
+            polar_motion: Apply polar motion correction (default False).
+            position_unit: ``"km"`` (default), ``"m"`` or ``"cm"``.
+            velocity_unit: ``"km/s"`` (default), ``"m/s"`` or ``"cm/s"``.
+            frame: Frame of the input vectors.  GCRS-compatible: ``"J2000"``
+                (default), ``"EME2000"``, ``"GCRF"``, ``"GCRS"``, ``"ICRF"``.
+                Earth-fixed: ``"ITRS"``, ``"ECEF"``, ``"ECF"``, ``"FIXED"``,
+                ``"TERRESTRIAL"``.
+
+        Raises:
+            TypeError: If ``times`` is not a sequence of datetimes or a
+                ``datetime64`` array.
+            ValueError: If shapes are not ``(N, 3)``, lengths differ, fewer than
+                two samples are given, values are non-finite, times are not
+                strictly increasing, the requested range lies outside the
+                samples, or a unit/frame is unrecognised.
+        """
+        ...
+
     @property
-    def file_path(self) -> str:
-        """Path to the source file."""
+    def file_path(self) -> str | None:
+        """Path to the source file, or ``None`` if built with :meth:`from_arrays`."""
         ...
 
     @property

@@ -288,6 +288,17 @@ class TestErrors:
         with pytest.raises(ValueError):
             FileEphemeris(str(p), begin=BEGIN, end=END, step_size=STEP)
 
+    def test_single_row_raises_value_error(self, tmp_path: Any) -> None:
+        """One state vector cannot be interpolated; must raise, not panic."""
+        lines = [
+            "ScenarioEpoch  2024-01-01T00:00:00",
+            "0.0    7000.0  0.0  0.0  0.0  7.5  0.0",
+        ]
+        p = tmp_path / "single_row.txt"
+        p.write_text("\n".join(lines))
+        with pytest.raises(ValueError, match="At least 2"):
+            FileEphemeris(str(p), begin=BEGIN, end=BEGIN, step_size=STEP)
+
     def test_unknown_frame_raises(self, tmp_path: Any) -> None:
         lines = [
             "ScenarioEpoch  2024-01-01T00:00:00",
