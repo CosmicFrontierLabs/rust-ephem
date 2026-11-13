@@ -941,6 +941,17 @@ The following Pydantic models are used to configure constraints. These can be se
     * ``max_angle`` — Maximum angular separation from Moon in degrees (0-180), optional
     * ``from_limb`` — If True, measure angles from the Moon's limb (adds its apparent angular radius) instead of its centre; default False
 
+**MoonLimbConstraint**
+  Moon limb avoidance constraint (equivalent to ``MoonConstraint(..., from_limb=True)``).
+
+  **Constructor:**
+    ``MoonLimbConstraint(min_angle=10.0)``
+
+  **Attributes:**
+    * ``type`` — Always "moon_limb"
+    * ``min_angle`` — Minimum angular separation from the Moon's limb in degrees (0-180)
+    * ``max_angle`` — Maximum angular separation from the Moon's limb in degrees (0-180), optional
+
 **EarthLimbConstraint**
   Earth limb avoidance constraint.
 
@@ -1066,7 +1077,7 @@ Usage examples are provided in the examples section of the docs.
   Union type for all constraint configuration classes::
 
     ConstraintConfig = (
-        SunConstraint | MoonConstraint | EclipseConstraint |
+        SunConstraint | MoonConstraint | MoonLimbConstraint | EclipseConstraint |
         EarthLimbConstraint | BodyConstraint | AndConstraint |
       OrConstraint | XorConstraint | AtLeastConstraint | NotConstraint
     )

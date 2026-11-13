@@ -831,6 +831,7 @@ Import all constraint models:
    from rust_ephem.constraints import (
        SunConstraint,
        MoonConstraint,
+       MoonLimbConstraint,
        EarthLimbConstraint,
        BodyConstraint,
        EclipseConstraint,
@@ -907,7 +908,39 @@ Moon proximity constraint ensuring target maintains minimum angular separation f
       moon = MoonConstraint(min_angle=10.0)
 
       # Keep the boresight at least 10° from the Moon's limb
+      # (equivalent to MoonLimbConstraint(min_angle=10.0))
       moon_limb = MoonConstraint(min_angle=10.0, from_limb=True)
+
+MoonLimbConstraint
+^^^^^^^^^^^^^^^^^^
+
+Moon limb avoidance constraint ensuring target maintains minimum angular separation
+from the Moon's limb. Equivalent to ``MoonConstraint(..., from_limb=True)``, provided
+for consistency with :py:class:`EarthLimbConstraint`.
+
+.. py:class:: MoonLimbConstraint(min_angle, max_angle=None)
+
+   :param float min_angle: Minimum allowed angular separation from the Moon's limb in degrees (0-180, required)
+   :param float max_angle: Maximum allowed angular separation from the Moon's limb in degrees (0-180, optional)
+
+   **Attributes:**
+
+   - ``type``: Always ``"moon_limb"`` (Literal)
+   - ``min_angle``: Minimum angle from the Moon's limb in degrees
+   - ``max_angle``: Maximum angle from the Moon's limb in degrees (or None)
+
+   The Moon's apparent angular radius, ``asin(R_moon / d)`` where ``d`` is the
+   observer–Moon distance at each time step, is added to ``min_angle`` and
+   ``max_angle``. Reported values are ``moon_angle_deg`` (from centre) and
+   ``moon_limb_angle_deg`` (from limb).
+
+   **Example:**
+
+   .. code-block:: python
+
+      from rust_ephem.constraints import MoonLimbConstraint
+
+      moon_limb = MoonLimbConstraint(min_angle=10.0)
 
 EarthLimbConstraint
 ^^^^^^^^^^^^^^^^^^^
@@ -1933,6 +1966,9 @@ by :py:meth:`evaluate`, :py:meth:`evaluate_batch`, and
      - ``moon_angle_deg``, ``moon_limb_angle_deg``
      - ``moon_angle_deg`` is measured from the Moon's centre;
        ``moon_limb_angle_deg`` (``from_limb=True`` only) is measured from its limb
+   * - ``MoonLimbConstraint``
+     - ``moon_angle_deg``, ``moon_limb_angle_deg``
+     - Same as ``MoonConstraint(from_limb=True)``
    * - ``BodyConstraint``
      - ``body_angle_deg``
      - Circle mode only (``min_angle``); omitted in ``fov_polygon`` mode
