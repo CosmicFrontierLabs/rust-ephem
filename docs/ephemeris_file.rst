@@ -211,6 +211,45 @@ The raw (uninterpolated) state vectors and timestamps are accessible via
     print(f"First file timestamp : {ts[0]}")
     print(f"Last  file timestamp : {ts[-1]}")
 
+Building from in-memory arrays
+------------------------------
+
+When the state vectors are already in memory (from a propagator, a NumPy
+archive, a database query, ...) there is no need to write a temporary file.
+:meth:`FileEphemeris.from_arrays <rust_ephem.FileEphemeris.from_arrays>` takes
+the samples directly and runs them through exactly the same pipeline as the file
+constructor (unit conversion, range validation, Hermite resampling, frame
+transforms, Sun/Moon):
+
+.. code-block:: python
+
+    from datetime import datetime, timedelta, timezone
+
+    import numpy as np
+    import rust_ephem as re
+
+    t0 = datetime(2028, 10, 15, tzinfo=timezone.utc)
+    times = [t0 + timedelta(seconds=60 * i) for i in range(len(r_km))]
+
+    eph = re.FileEphemeris.from_arrays(
+        times,            # strictly increasing; naive datetimes are UTC
+        r_km,             # (N, 3) positions
+        v_km_s,           # (N, 3) velocities
+        step_size=60,     # begin/end default to times[0] / times[-1]
+    )
+
+    assert eph.file_path is None
+
+``times`` may also be a NumPy ``datetime64`` array (interpreted as UTC). Units
+and frame are given with the same keywords as the file constructor's overrides,
+e.g. ``position_unit="m", velocity_unit="m/s"`` or ``frame="ECEF"``; the defaults
+are km, km/s and J2000.
+
+Velocities are required: Hermite interpolation uses them together with the
+positions. ``ValueError`` is raised for arrays that are not ``(N, 3)``,
+mismatched lengths, fewer than two samples, non-finite values, times that are
+not strictly increasing, or a ``begin``/``end`` outside the sample range.
+
 Constraint evaluation
 ---------------------
 

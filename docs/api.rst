@@ -410,8 +410,18 @@ Classes
     * ``ValueError`` — If no state vectors are found, the requested time range exceeds the file data range,
       units are unrecognised, or the frame is unsupported
 
+  **Alternate constructor (in-memory data):**
+    ``FileEphemeris.from_arrays(times, positions, velocities, begin=None, end=None, step_size=60, *, polar_motion=False, position_unit="km", velocity_unit="km/s", frame="J2000")``
+
+    * ``times`` — Strictly increasing sample times: sequence of datetimes (naive = UTC) or NumPy ``datetime64`` array
+    * ``positions``, ``velocities`` — ``(N, 3)`` array-likes in ``position_unit`` / ``velocity_unit``
+    * ``begin``, ``end`` — Output grid bounds (default: first / last sample time)
+    * Remaining arguments as for the file constructor; ``file_path`` is ``None`` on the result
+    * Raises ``ValueError`` for wrong shapes, mismatched lengths, fewer than two samples,
+      non-finite values, non-increasing times, or a range outside the samples
+
   **Attributes (read-only):**
-    * ``file_path`` — Path to the source file
+    * ``file_path`` — Path to the source file (``None`` when built with ``from_arrays``)
     * ``source_frame`` — Coordinate frame as detected/specified
     * ``source_position_unit`` — Position unit as detected/specified (before km conversion)
     * ``source_velocity_unit`` — Velocity unit as detected/specified (before km/s conversion)

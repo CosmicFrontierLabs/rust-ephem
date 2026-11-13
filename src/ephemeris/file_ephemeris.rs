@@ -28,8 +28,8 @@
 //! and may be overridden via constructor parameters.
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use ndarray::Array2;
-use numpy::IntoPyArray;
+use ndarray::{s, Array2};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayMethods};
 use pyo3::{prelude::*, types::PyDateTime};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -37,7 +37,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use crate::ephemeris::ephemeris_common::{
-    generate_timestamps, split_pos_vel, EphemerisBase, EphemerisData,
+    generate_timestamps_utc, split_pos_vel, EphemerisBase, EphemerisData,
 };
 use crate::ephemeris::position_velocity::PositionVelocityData;
 use crate::utils::conversions::{self, Frame};
@@ -47,20 +47,23 @@ use crate::utils::to_skycoord::AstropyModules;
 
 // ─── Internal parsing result ──────────────────────────────────────────────────
 
-struct ParsedFileData {
+/// State vectors as read from their source (file or in-memory arrays), before
+/// unit conversion, range validation, resampling and frame transforms.
+struct ParsedStates {
     times: Vec<DateTime<Utc>>,
-    /// Raw state vectors (N × 6), still in the file's original units.
+    /// Raw state vectors (N × 6), still in the source's original units.
     states: Array2<f64>,
-    detected_frame: String,
-    detected_position_unit: String,
-    detected_velocity_unit: String,
+    frame: String,
+    position_unit: String,
+    velocity_unit: String,
 }
 
 // ─── Public struct ────────────────────────────────────────────────────────────
 
 #[pyclass]
 pub struct FileEphemeris {
-    file_path: String,
+    /// Source file path; `None` when built from in-memory arrays.
+    file_path: Option<String>,
     itrs: Option<Array2<f64>>,
     itrs_skycoord: OnceLock<Py<PyAny>>,
     polar_motion: bool,
@@ -103,85 +106,114 @@ impl FileEphemeris {
         let time_fmt = time_format.as_deref().unwrap_or("auto");
 
         // ── Parse the file ──────────────────────────────────────────────────
-        let parsed = Self::parse_file(path, override_epoch.as_ref(), time_fmt)?;
+        let mut parsed = Self::parse_file(path, override_epoch.as_ref(), time_fmt)?;
 
-        if parsed.times.is_empty() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "File contains no state vectors",
-            ));
+        // ── Explicit overrides win over header-detected values ──────────────
+        if let Some(unit) = position_unit {
+            parsed.position_unit = unit;
+        }
+        if let Some(unit) = velocity_unit {
+            parsed.velocity_unit = unit;
+        }
+        if let Some(f) = frame {
+            parsed.frame = f;
         }
 
-        // ── Resolve effective units and frame ───────────────────────────────
-        let eff_pos_unit = position_unit.unwrap_or_else(|| parsed.detected_position_unit.clone());
-        let eff_vel_unit = velocity_unit.unwrap_or_else(|| parsed.detected_velocity_unit.clone());
-        let eff_frame = frame.unwrap_or_else(|| parsed.detected_frame.clone());
-
-        // ── Convert units to km / km/s ─────────────────────────────────────
-        let file_states =
-            Self::apply_unit_conversion(&parsed.states, &eff_pos_unit, &eff_vel_unit)?;
-
-        // ── Validate requested time range ───────────────────────────────────
         let begin_dt = python_datetime_to_utc(begin)?;
         let end_dt = python_datetime_to_utc(end)?;
-        let n_file = parsed.times.len();
 
-        if begin_dt < parsed.times[0] || end_dt > parsed.times[n_file - 1] {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "Requested time range [{}, {}] exceeds file data range [{}, {}]",
-                begin_dt,
-                end_dt,
-                parsed.times[0],
-                parsed.times[n_file - 1]
-            )));
-        }
-
-        // ── Build query time grid ───────────────────────────────────────────
-        let times = generate_timestamps(begin, end, step_size)?;
-
-        let mut ephemeris = FileEphemeris {
-            file_path,
-            itrs: None,
-            itrs_skycoord: OnceLock::new(),
+        Self::from_parsed(
+            Some(file_path),
+            parsed,
+            begin_dt,
+            end_dt,
+            step_size,
             polar_motion,
-            common_data: {
-                let mut data = EphemerisData::new();
-                data.times = Some(times);
-                data
-            },
-            file_times: parsed.times,
-            file_states,
-            source_position_unit: eff_pos_unit,
-            source_velocity_unit: eff_vel_unit,
-            source_frame: eff_frame.clone(),
-        };
+        )
+    }
 
-        // ── Interpolate and transform frames ────────────────────────────────
-        let frame_upper = eff_frame.to_uppercase();
-        if Self::is_gcrs_compatible(&frame_upper) {
-            ephemeris.interpolate_gcrs()?;
-            ephemeris.gcrs_to_itrs()?;
-        } else if Self::is_itrs_compatible(&frame_upper) {
-            ephemeris.interpolate_itrs()?;
-            ephemeris.itrs_to_gcrs()?;
-        } else {
+    /// Build a FileEphemeris from in-memory state vectors instead of a file.
+    ///
+    /// Shares the post-parse pipeline of the file constructor (unit
+    /// conversion, range validation, Hermite resampling onto the
+    /// ``begin``/``end``/``step_size`` grid, frame transforms, Sun/Moon).
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (times, positions, velocities, begin=None, end=None, step_size=60, *, polar_motion=false, position_unit="km".to_string(), velocity_unit="km/s".to_string(), frame="J2000".to_string()))]
+    fn from_arrays(
+        py: Python,
+        times: &Bound<'_, PyAny>,
+        positions: &Bound<'_, PyAny>,
+        velocities: &Bound<'_, PyAny>,
+        begin: Option<&Bound<'_, PyDateTime>>,
+        end: Option<&Bound<'_, PyDateTime>>,
+        step_size: i64,
+        polar_motion: bool,
+        position_unit: String,
+        velocity_unit: String,
+        frame: String,
+    ) -> PyResult<Self> {
+        let times = extract_utc_times(py, times)?;
+        let pos = extract_vectors(py, positions, "positions")?;
+        let vel = extract_vectors(py, velocities, "velocities")?;
+
+        let n = times.len();
+        if pos.nrows() != n || vel.nrows() != n {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "Unsupported coordinate frame '{eff_frame}'. \
-                GCRS-compatible: J2000, EME2000, GCRF, GCRS, ICRF. \
-                Earth-fixed: ITRS, ECEF, ECF, FIXED, TERRESTRIAL."
+                "Length mismatch: {n} times, {} positions, {} velocities",
+                pos.nrows(),
+                vel.nrows()
+            )));
+        }
+        if n < 2 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "At least 2 samples are required for interpolation, got {n}"
+            )));
+        }
+        if let Some(i) = (1..n).find(|&i| times[i] <= times[i - 1]) {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "times must be strictly increasing: times[{i}] = {} is not after times[{}] = {}",
+                times[i].to_rfc3339(),
+                i - 1,
+                times[i - 1].to_rfc3339()
             )));
         }
 
-        ephemeris.calculate_sun_moon()?;
+        let mut states = Array2::<f64>::zeros((n, 6));
+        states.slice_mut(s![.., 0..3]).assign(&pos);
+        states.slice_mut(s![.., 3..6]).assign(&vel);
 
-        Ok(ephemeris)
+        let begin_dt = begin
+            .map(|b| python_datetime_to_utc(b))
+            .transpose()?
+            .unwrap_or(times[0]);
+        let end_dt = end
+            .map(|e| python_datetime_to_utc(e))
+            .transpose()?
+            .unwrap_or(times[n - 1]);
+
+        Self::from_parsed(
+            None,
+            ParsedStates {
+                times,
+                states,
+                frame,
+                position_unit,
+                velocity_unit,
+            },
+            begin_dt,
+            end_dt,
+            step_size,
+            polar_motion,
+        )
     }
 
     // ── Type-specific properties ─────────────────────────────────────────────
 
-    /// Path to the source file.
+    /// Path to the source file, or ``None`` when built with ``from_arrays``.
     #[getter]
-    fn file_path(&self) -> &str {
-        &self.file_path
+    fn file_path(&self) -> Option<&str> {
+        self.file_path.as_deref()
     }
 
     /// Whether polar motion correction is applied.
@@ -561,6 +593,91 @@ impl FileEphemeris {
 // ─── Private implementation ───────────────────────────────────────────────────
 
 impl FileEphemeris {
+    // ── Shared post-parse pipeline ───────────────────────────────────────────
+
+    /// Common construction path for the file and in-memory constructors:
+    /// unit conversion, range validation, query-grid generation, Hermite
+    /// resampling, frame transforms and Sun/Moon positions.
+    fn from_parsed(
+        file_path: Option<String>,
+        parsed: ParsedStates,
+        begin_dt: DateTime<Utc>,
+        end_dt: DateTime<Utc>,
+        step_size: i64,
+        polar_motion: bool,
+    ) -> PyResult<Self> {
+        let ParsedStates {
+            times: source_times,
+            states,
+            frame,
+            position_unit,
+            velocity_unit,
+        } = parsed;
+
+        let source_desc = if file_path.is_some() { "file" } else { "input" };
+        let n_source = source_times.len();
+        if n_source < 2 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "At least 2 state vectors are required for interpolation; \
+                {source_desc} data contains {n_source}"
+            )));
+        }
+
+        // ── Convert units to km / km/s ─────────────────────────────────────
+        let source_states = Self::apply_unit_conversion(&states, &position_unit, &velocity_unit)?;
+
+        // ── Validate requested time range ───────────────────────────────────
+        if begin_dt < source_times[0] || end_dt > source_times[n_source - 1] {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Requested time range [{}, {}] exceeds {source_desc} data range [{}, {}]",
+                begin_dt,
+                end_dt,
+                source_times[0],
+                source_times[n_source - 1]
+            )));
+        }
+
+        // ── Build query time grid ───────────────────────────────────────────
+        let times = generate_timestamps_utc(begin_dt, end_dt, step_size)?;
+
+        let mut ephemeris = FileEphemeris {
+            file_path,
+            itrs: None,
+            itrs_skycoord: OnceLock::new(),
+            polar_motion,
+            common_data: {
+                let mut data = EphemerisData::new();
+                data.times = Some(times);
+                data
+            },
+            file_times: source_times,
+            file_states: source_states,
+            source_position_unit: position_unit,
+            source_velocity_unit: velocity_unit,
+            source_frame: frame.clone(),
+        };
+
+        // ── Interpolate and transform frames ────────────────────────────────
+        let frame_upper = frame.to_uppercase();
+        if Self::is_gcrs_compatible(&frame_upper) {
+            ephemeris.interpolate_gcrs()?;
+            ephemeris.gcrs_to_itrs()?;
+        } else if Self::is_itrs_compatible(&frame_upper) {
+            ephemeris.interpolate_itrs()?;
+            ephemeris.itrs_to_gcrs()?;
+        } else {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Unsupported coordinate frame '{frame}'. \
+                GCRS-compatible: J2000, EME2000, GCRF, GCRS, ICRF. \
+                Earth-fixed: ITRS, ECEF, ECF, FIXED, TERRESTRIAL."
+            )));
+        }
+
+        ephemeris.calculate_sun_moon()?;
+
+        Ok(ephemeris)
+    }
+
     // ── Frame classification ─────────────────────────────────────────────────
 
     fn is_gcrs_compatible(frame_upper: &str) -> bool {
@@ -706,7 +823,7 @@ impl FileEphemeris {
         path: &Path,
         override_epoch: Option<&DateTime<Utc>>,
         time_format: &str,
-    ) -> PyResult<ParsedFileData> {
+    ) -> PyResult<ParsedStates> {
         let file = File::open(path).map_err(|e| {
             pyo3::exceptions::PyIOError::new_err(format!(
                 "Failed to open '{}': {e}",
@@ -882,12 +999,12 @@ impl FileEphemeris {
             }
         }
 
-        Ok(ParsedFileData {
+        Ok(ParsedStates {
             times: data_times,
             states,
-            detected_frame,
-            detected_position_unit,
-            detected_velocity_unit,
+            frame: detected_frame,
+            position_unit: detected_position_unit,
+            velocity_unit: detected_velocity_unit,
         })
     }
 
@@ -1013,6 +1130,86 @@ impl FileEphemeris {
 
         None
     }
+}
+
+// ─── In-memory input helpers ──────────────────────────────────────────────────
+
+/// Convert a sequence of datetimes (naive = UTC) or a NumPy ``datetime64``
+/// array to UTC timestamps.
+fn extract_utc_times(py: Python, obj: &Bound<'_, PyAny>) -> PyResult<Vec<DateTime<Utc>>> {
+    let is_datetime64 = obj
+        .getattr("dtype")
+        .and_then(|dt| dt.getattr("kind"))
+        .and_then(|k| k.extract::<String>())
+        .map(|k| k == "M")
+        .unwrap_or(false);
+
+    if is_datetime64 {
+        let np = py.import("numpy")?;
+        let micros = np
+            .call_method1("asarray", (obj,))?
+            .call_method1("astype", ("datetime64[us]",))?
+            .call_method1("astype", ("int64",))?
+            .call_method1("ravel", ())?;
+        let arr = micros.cast::<PyArray1<i64>>().map_err(|_| {
+            pyo3::exceptions::PyTypeError::new_err("Could not convert datetime64 times to int64")
+        })?;
+        return arr
+            .readonly()
+            .as_array()
+            .iter()
+            .enumerate()
+            .map(|(i, &us)| {
+                if us == i64::MIN {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "times[{i}] is NaT"
+                    )));
+                }
+                DateTime::<Utc>::from_timestamp_micros(us).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(format!("times[{i}] is out of range"))
+                })
+            })
+            .collect();
+    }
+
+    let iter = pyo3::types::PyIterator::from_object(obj).map_err(|_| {
+        pyo3::exceptions::PyTypeError::new_err(
+            "times must be a sequence of datetime objects or a numpy datetime64 array",
+        )
+    })?;
+    iter.enumerate()
+        .map(|(i, item)| {
+            python_datetime_to_utc(&item?).map_err(|e| {
+                pyo3::exceptions::PyTypeError::new_err(format!("times[{i}] is not a datetime: {e}"))
+            })
+        })
+        .collect()
+}
+
+/// Convert an (N, 3) array-like to a finite float64 array.
+fn extract_vectors(py: Python, obj: &Bound<'_, PyAny>, name: &str) -> PyResult<Array2<f64>> {
+    let np = py.import("numpy")?;
+    let arr = np.call_method1("asarray", (obj, "float64")).map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "{name} could not be converted to a float array: {e}"
+        ))
+    })?;
+    let shape: Vec<usize> = arr.getattr("shape")?.extract()?;
+    if shape.len() != 2 || shape[1] != 3 {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{name} must have shape (N, 3), got {shape:?}"
+        )));
+    }
+    let arr = arr.cast::<PyArray2<f64>>().map_err(|_| {
+        pyo3::exceptions::PyTypeError::new_err(format!("{name} is not a float64 array"))
+    })?;
+    let values = arr.readonly().as_array().to_owned();
+    if let Some(((i, j), v)) = values.indexed_iter().find(|(_, v)| !v.is_finite()) {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{name} contains a non-finite value ({v}) at [{i}, {j}]"
+        )));
+    }
+    Ok(values)
 }
 
 // ─── EphemerisBase trait implementation ───────────────────────────────────────
