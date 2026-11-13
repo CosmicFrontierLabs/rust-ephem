@@ -62,7 +62,7 @@ def reference(
     target = SkyCoord(ras * u.deg, decs * u.deg, frame="icrs").transform_to(frame)
     out = {}
     with solar_system_ephemeris.set(str(KERNEL)):
-        for body in ("sun", "moon", "earth"):
+        for body in ("sun", "moon", "earth", "jupiter"):
             emitted = _get_apparent_body_position(body, times, str(KERNEL), position)
             apparent = SkyCoord(ICRS(emitted).transform_to(frame))
             out[body] = target.separation(apparent).deg
@@ -195,3 +195,162 @@ def test_apparent_defaults_to_geometric(spacecraft: Any) -> None:
         spacecraft, [10.0], [20.0], times=[spacecraft.timestamp[0]], apparent=False
     )
     np.testing.assert_array_equal(default, explicit)
+
+
+def test_apparent_batch_kernels_match_astropy(spacecraft: Any) -> None:
+    """The grid path corrects targets inside the Sun, Moon and Earth-limb
+    kernels; check each against Astropy's apparent angle directly."""
+    ras, decs = targets(60, seed=21)
+    rows = np.arange(0, N, 7)
+    times = list(spacecraft.timestamp[rows])
+    margin = 5e-3 / 3600  # cells within 5 mas of a limit may fall either side
+    cases = {
+        "sun": (re.SunConstraint(min_angle=70, max_angle=115), 70.0, 115.0),
+        "moon": (re.MoonConstraint(min_angle=40, max_angle=140), 40.0, 140.0),
+        "earth": (re.EarthLimbConstraint(min_angle=30, max_angle=120), 30.0, 120.0),
+    }
+    for body, (constraint, low, high) in cases.items():
+        grid = constraint.in_constraint_batch(
+            spacecraft, list(ras), list(decs), times=times, apparent=True
+        )
+        geometric = constraint.in_constraint_batch(
+            spacecraft, list(ras), list(decs), times=times
+        )
+        for i in range(len(ras)):
+            expected = reference(
+                spacecraft,
+                np.full(len(rows), ras[i]),
+                np.full(len(rows), decs[i]),
+                rows,
+            )
+            angle = expected[body]
+            if body == "earth":
+                angle = angle - np.degrees(
+                    np.arcsin(6378.137 / expected["earth_distance"])
+                )
+            decided = (np.abs(angle - low) > margin) & (np.abs(angle - high) > margin)
+            violated = (angle < low) | (angle > high)
+            np.testing.assert_array_equal(grid[i][decided], violated[decided])
+        # The correction is the only difference from the geometric grid.
+        assert grid.shape == geometric.shape
+
+
+def test_apparent_evaluate_matches_astropy_and_elementwise(spacecraft: Any) -> None:
+    ra, dec = 123.4, -21.0
+    rows = np.arange(len(spacecraft.timestamp))
+    n = len(rows)
+    constraint = re.SunConstraint(min_angle=80) | re.MoonConstraint(min_angle=30)
+    result = constraint.evaluate(spacecraft, ra, dec, apparent=True)
+    expected = reference(spacecraft, np.full(n, ra), np.full(n, dec), rows)
+    values = result.constraint_values
+    np.testing.assert_allclose(
+        values["sun.sun_angle_deg"], expected["sun"], atol=1e-3 / 3600, rtol=0
+    )
+    np.testing.assert_allclose(
+        values["moon.moon_angle_deg"], expected["moon"], atol=1e-3 / 3600, rtol=0
+    )
+    paired = constraint.evaluate_elementwise(
+        spacecraft,
+        np.full(n, ra),
+        np.full(n, dec),
+        times=spacecraft.timestamp,
+        apparent=True,
+    )
+    np.testing.assert_array_equal(result.constraint_array, paired.constraint_array)
+    assert len(result.timestamps) == n
+    # The default still reports the geometric angles.
+    geometric = constraint.evaluate(spacecraft, ra, dec).constraint_values
+    assert np.abs(geometric["sun.sun_angle_deg"] - expected["sun"]).max() > 1 / 3600
+
+
+@pytest.mark.parametrize("fixed_roll", [False, True])
+def test_apparent_evaluate_batch_equals_evaluate(
+    spacecraft: Any, fixed_roll: bool
+) -> None:
+    ras, decs = targets(6, seed=4)
+    times = list(spacecraft.timestamp[::25])
+    constraint = re.SunConstraint(min_angle=80) | re.EarthLimbConstraint(min_angle=25)
+    rolls = [20.0] * len(ras) if fixed_roll else None
+    batch = constraint.evaluate_batch(
+        spacecraft,
+        list(ras),
+        list(decs),
+        times=times,
+        target_rolls=rolls,
+        apparent=True,
+    )
+    assert len(batch) == len(ras)
+    for i, result in enumerate(batch):
+        single = constraint.evaluate(
+            spacecraft,
+            float(ras[i]),
+            float(decs[i]),
+            times=times,
+            target_roll=20.0 if fixed_roll else None,
+            apparent=True,
+        )
+        np.testing.assert_array_equal(result.constraint_array, single.constraint_array)
+        for key, value in single.constraint_values.items():
+            np.testing.assert_allclose(result.constraint_values[key], value, rtol=0)
+        assert len(result.visibility) == len(single.visibility)
+
+
+def test_apparent_body_constraint_matches_astropy(spacecraft: Any) -> None:
+    """A body other than the Sun and Moon is placed where its light arrives from."""
+    ras, decs = targets(N, seed=8)
+    rows = np.arange(N)
+    constraint = re.BodyConstraint(body="Jupiter barycenter", min_angle=30)
+    expected = reference(spacecraft, ras, decs, rows)["jupiter"]
+    apparent = constraint.evaluate_elementwise(
+        spacecraft, ras, decs, times=spacecraft.timestamp[:N], apparent=True
+    )
+    (key,) = apparent.constraint_values
+    np.testing.assert_allclose(
+        apparent.constraint_values[key], expected, atol=1e-3 / 3600, rtol=0
+    )
+    geometric = constraint.evaluate_elementwise(
+        spacecraft, ras, decs, times=spacecraft.timestamp[:N]
+    ).constraint_values[key]
+    assert np.abs(geometric - expected).max() > 5 / 3600
+
+    # In a tree, the grid falls back to correcting targets per time and agrees.
+    tree = constraint | re.SunConstraint(min_angle=60)
+    times = list(spacecraft.timestamp[::40])
+    grid = tree.in_constraint_batch(
+        spacecraft, list(ras[:30]), list(decs[:30]), times=times, apparent=True
+    )
+    for column, time in enumerate(times):
+        paired = tree.in_constraint_elementwise(
+            spacecraft, ras[:30], decs[:30], times=[time] * 30, apparent=True
+        )
+        np.testing.assert_array_equal(grid[:, column], paired)
+
+
+@pytest.mark.skipif(
+    not hasattr(re, "MoonLimbConstraint"), reason="needs MoonLimbConstraint"
+)
+def test_apparent_moon_limb(spacecraft: Any) -> None:
+    """The Moon's limb is measured from its apparent centre and light-time distance."""
+    ras, decs = targets(N, seed=13)
+    rows = np.arange(N)
+    constraint = re.MoonLimbConstraint(min_angle=10)
+    expected = reference(spacecraft, ras, decs, rows)
+    radius = np.degrees(np.arcsin(1737.4 / expected["moon_distance"]))
+    apparent = constraint.evaluate_elementwise(
+        spacecraft, ras, decs, times=spacecraft.timestamp[:N], apparent=True
+    )
+    np.testing.assert_allclose(
+        apparent.constraint_values["moon_limb_angle_deg"],
+        expected["moon"] - radius,
+        atol=1e-3 / 3600,
+        rtol=0,
+    )
+    times = list(spacecraft.timestamp[::40])
+    grid = constraint.in_constraint_batch(
+        spacecraft, list(ras[:30]), list(decs[:30]), times=times, apparent=True
+    )
+    for column, time in enumerate(times):
+        paired = constraint.in_constraint_elementwise(
+            spacecraft, ras[:30], decs[:30], times=[time] * 30, apparent=True
+        )
+        np.testing.assert_array_equal(grid[:, column], paired)

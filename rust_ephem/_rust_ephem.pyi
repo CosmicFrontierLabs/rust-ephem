@@ -793,6 +793,7 @@ class Constraint:
         indices: int | list[int] | None = None,
         target_roll: float | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> ConstraintResult:
         """
         Evaluate constraint against ephemeris data.
@@ -837,6 +838,7 @@ class Constraint:
         indices: int | list[int] | None = None,
         target_rolls: list[float] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> list[ConstraintResult]:
         """
         Evaluate constraint against multiple targets and return one result per target.

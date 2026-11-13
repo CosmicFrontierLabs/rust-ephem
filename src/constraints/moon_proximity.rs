@@ -123,6 +123,16 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
+        // An apparent view asks the kernel to correct the targets: one path does that.
+        if ephemeris.target_corrections().is_some() {
+            let vectors =
+                crate::utils::vector_math::radec_to_unit_vectors_batch(target_ras, target_decs);
+            if let Some(result) =
+                self.in_constraint_batch_unit_vectors(ephemeris, &vectors, time_indices)?
+            {
+                return Ok(result);
+            }
+        }
         // Extract data from ephemeris
         let (times, moon_positions_slice, observer_positions_slice) =
             extract_body_ephemeris_data!(ephemeris, time_indices, get_moon_positions_at_indices);
@@ -200,6 +210,10 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
         Ok(result)
     }
 
+    fn applies_target_corrections(&self) -> bool {
+        true
+    }
+
     fn in_constraint_batch_unit_vectors(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -221,6 +235,26 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
 
         let min_cos_threshold = self.min_angle_deg.to_radians().cos();
         let max_cos_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
+
+        // On an apparent view the catalogue cosine becomes the apparent one.
+        if let Some(corrections) = super::core::target_corrections_at(ephemeris, time_indices) {
+            let bodies: Vec<[f64; 3]> = (0..n_times)
+                .map(|t| {
+                    crate::utils::vector_math::normalize_vector(&std::array::from_fn(|j| {
+                        moon_positions_slice[[t, j]] - observer_positions_slice[[t, j]]
+                    }))
+                })
+                .collect();
+            return Ok(Some(super::core::apparent_cosine_grid(
+                target_unit_vectors,
+                &bodies,
+                &corrections,
+                |_, cos_angle| {
+                    cos_angle > min_cos_threshold
+                        || max_cos_threshold.is_some_and(|max| cos_angle < max)
+                },
+            )));
+        }
 
         for t in 0..n_times {
             let moon_pos = [
