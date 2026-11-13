@@ -295,6 +295,26 @@ impl FileEphemeris {
         self.get_moon_pv(py)
     }
 
+    /// Observer position/velocity (GCRS, km, km/s) at arbitrary time(s), interpolated like constraint evaluation
+    fn gcrs_pv_at(&self, py: Python, times: &Bound<PyAny>) -> PyResult<Py<PositionVelocityData>> {
+        self.get_gcrs_pv_at(py, times)
+    }
+
+    /// Observer position/velocity (ITRS, km, km/s) at arbitrary time(s), interpolated like constraint evaluation
+    fn itrs_pv_at(&self, py: Python, times: &Bound<PyAny>) -> PyResult<Py<PositionVelocityData>> {
+        self.get_itrs_pv_at(py, times)
+    }
+
+    /// Sun position/velocity (GCRS, km, km/s) at arbitrary time(s), interpolated like constraint evaluation
+    fn sun_pv_at(&self, py: Python, times: &Bound<PyAny>) -> PyResult<Py<PositionVelocityData>> {
+        self.get_sun_pv_at(py, times)
+    }
+
+    /// Moon position/velocity (GCRS, km, km/s) at arbitrary time(s), interpolated like constraint evaluation
+    fn moon_pv_at(&self, py: Python, times: &Bound<PyAny>) -> PyResult<Py<PositionVelocityData>> {
+        self.get_moon_pv_at(py, times)
+    }
+
     #[getter]
     fn obsgeoloc(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         self.get_obsgeoloc(py)

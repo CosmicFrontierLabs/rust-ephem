@@ -84,6 +84,30 @@ pub(crate) fn split_pos_vel(arr: &Array2<f64>) -> PositionVelocityData {
     PositionVelocityData { position, velocity }
 }
 
+/// Sample an N x 6 state table at arbitrary Python datetime(s), returning
+/// `PositionVelocityData` in input order. Grid times return the stored rows
+/// unchanged; off-grid times use the same Hermite interpolation as constraint
+/// evaluation (`sampled_ephemeris::sample_states`). Times outside the
+/// ephemeris span raise `ValueError`.
+pub(crate) fn pv_at(
+    py: Python,
+    source_times: Option<&[DateTime<Utc>]>,
+    states: Option<&Array2<f64>>,
+    times: &Bound<PyAny>,
+    what: &str,
+) -> PyResult<Py<PositionVelocityData>> {
+    let source_times = source_times.ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err("No ephemeris timestamps available")
+    })?;
+    let states = states.ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!("No {what} data available"))
+    })?;
+    let requested = crate::utils::time_utils::python_datetimes_to_utc(times)?;
+    let sampled =
+        crate::ephemeris::sampled_ephemeris::sample_states_at(states, source_times, &requested)?;
+    Py::new(py, split_pos_vel(&sampled))
+}
+
 /// Generate a vector of timestamps from begin to end (inclusive) with step_size in seconds
 /// This is common logic shared between TLEEphemeris and SPICEEphemeris constructors.
 ///
@@ -503,6 +527,63 @@ pub trait EphemerisBase {
             .moon_gcrs
             .as_ref()
             .map(|arr| Py::new(py, split_pos_vel(arr)).unwrap())
+    }
+
+    /// Observer position and velocity in GCRS at arbitrary time(s)
+    fn get_gcrs_pv_at(
+        &self,
+        py: Python,
+        times: &Bound<PyAny>,
+    ) -> PyResult<Py<PositionVelocityData>> {
+        let data = self.data();
+        pv_at(py, data.times.as_deref(), data.gcrs.as_ref(), times, "GCRS")
+    }
+
+    /// Observer position and velocity in ITRS at arbitrary time(s)
+    fn get_itrs_pv_at(
+        &self,
+        py: Python,
+        times: &Bound<PyAny>,
+    ) -> PyResult<Py<PositionVelocityData>> {
+        pv_at(
+            py,
+            self.data().times.as_deref(),
+            self.get_itrs_data(),
+            times,
+            "ITRS",
+        )
+    }
+
+    /// Sun position and velocity in GCRS at arbitrary time(s)
+    fn get_sun_pv_at(
+        &self,
+        py: Python,
+        times: &Bound<PyAny>,
+    ) -> PyResult<Py<PositionVelocityData>> {
+        let data = self.data();
+        pv_at(
+            py,
+            data.times.as_deref(),
+            data.sun_gcrs.as_ref(),
+            times,
+            "Sun",
+        )
+    }
+
+    /// Moon position and velocity in GCRS at arbitrary time(s)
+    fn get_moon_pv_at(
+        &self,
+        py: Python,
+        times: &Bound<PyAny>,
+    ) -> PyResult<Py<PositionVelocityData>> {
+        let data = self.data();
+        pv_at(
+            py,
+            data.times.as_deref(),
+            data.moon_gcrs.as_ref(),
+            times,
+            "Moon",
+        )
     }
 
     // ========== Constraint helper methods ==========

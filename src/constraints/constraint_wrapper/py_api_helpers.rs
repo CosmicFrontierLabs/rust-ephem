@@ -18,12 +18,7 @@ use super::PyConstraint;
 
 impl PyConstraint {
     pub(super) fn parse_datetime_input(times: &Bound<PyAny>) -> PyResult<Vec<DateTime<Utc>>> {
-        let parse = crate::utils::time_utils::python_datetime_to_utc;
-        if let Ok(iter) = pyo3::types::PyIterator::from_object(times) {
-            iter.map(|item| parse(&item?)).collect()
-        } else {
-            Ok(vec![parse(times)?])
-        }
+        crate::utils::time_utils::python_datetimes_to_utc(times)
     }
 
     /// Keep exact-grid queries on the original ephemeris. Off-grid queries use

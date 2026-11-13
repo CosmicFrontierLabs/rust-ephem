@@ -89,6 +89,25 @@ products can record the actual implementation rather than duplicating labels.
     print("Longitude (deg):", sat.longitude_deg[0])
     print("Height (m):", sat.height_m[0])
 
+States at arbitrary times
+-------------------------
+
+``gcrs_pv``, ``sun_pv`` and ``moon_pv`` hold states on the ephemeris grid. To get
+states between grid points, every ephemeris type provides ``gcrs_pv_at``,
+``itrs_pv_at``, ``sun_pv_at`` and ``moon_pv_at``. Grid times return the stored
+rows unchanged; other times use the same cubic Hermite interpolation (position
+and velocity over the bracketing pair) that constraint evaluation uses for
+``times=``, so geometry computed from these states matches what constraints see.
+No extrapolation is done: times outside the span raise ``ValueError``.
+
+.. code-block:: python
+
+    t = [begin + dt.timedelta(seconds=90), begin]   # any order, duplicates allowed
+    sc = sat.gcrs_pv_at(t)       # PositionVelocityData, rows follow ``t``
+    sun = sat.sun_pv_at(t)
+    moon = sat.moon_pv_at(t)
+    sun_from_sc = sun.position - sc.position   # km, GCRS
+
 TLEEphemeris Notes
 ------------------
 - Position magnitudes should be in LEO range (6500–8000 km); velocity around
