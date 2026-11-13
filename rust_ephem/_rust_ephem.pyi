@@ -1,8 +1,6 @@
 """Type stubs for the Rust extension module _rust_ephem"""
 
-
 from collections.abc import Iterable, Sequence
-from collections.abc import 
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, runtime_checkable
 
