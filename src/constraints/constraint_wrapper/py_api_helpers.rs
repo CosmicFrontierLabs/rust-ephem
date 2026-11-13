@@ -2,6 +2,8 @@ use crate::constraints::core::{
     sweep_rolls_with_attribution, track_violations, ConstraintEvaluator, ConstraintResult,
     EvaluationRoll,
 };
+use crate::constraints::diagonal::DiagonalEvaluation;
+use crate::constraints::elementwise::evaluate_elements;
 use crate::ephemeris::ephemeris_common::EphemerisBase;
 use crate::ephemeris::sampled_ephemeris::{locate_times, SampledEphemeris};
 use crate::ephemeris::FileEphemeris;
@@ -78,6 +80,122 @@ impl PyConstraint {
             let sampled = SampledEphemeris::new(source, times, &locations)?;
             f(&sampled, None)
         })
+    }
+
+    /// Resolve per-element times to ONE evaluation ephemeris plus, for each
+    /// element, the row of that ephemeris holding its time.
+    ///
+    /// `times = None` pairs element `i` with ephemeris timestamp `i`. Otherwise
+    /// the requested times (any order, duplicates allowed) are deduplicated; if
+    /// every unique time is an ephemeris sample the original ephemeris is used
+    /// directly, else a `SampledEphemeris` is interpolated at the unique times
+    /// (exact samples copied, off-grid ones Hermite-interpolated from their
+    /// bracketing samples). Each element is evaluated at its own time — never
+    /// paired with an ephemeris row by position.
+    pub(super) fn with_elementwise_ephemeris<T, F>(
+        &self,
+        bound: &Bound<'_, PyAny>,
+        n_elements: usize,
+        times: Option<&Bound<'_, PyAny>>,
+        mut f: F,
+    ) -> PyResult<T>
+    where
+        F: FnMut(&dyn EphemerisBase, &[usize], Vec<DateTime<Utc>>) -> PyResult<T>,
+    {
+        let requested = times.map(Self::parse_datetime_input).transpose()?;
+        if let Some(ref requested) = requested {
+            if requested.len() != n_elements {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "times must have the same length as target_ras and target_decs \
+                     (got {} times for {} targets)",
+                    requested.len(),
+                    n_elements
+                )));
+            }
+        }
+        self.with_ephemeris(bound, |source| {
+            let source_times = source.data().times.as_deref().ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("No ephemeris timestamps available")
+            })?;
+            let Some(ref requested) = requested else {
+                if n_elements != source_times.len() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "times=None pairs element i with ephemeris timestamp i, so \
+                         target_ras/target_decs must have one entry per ephemeris \
+                         timestamp (got {} targets, ephemeris has {} timestamps)",
+                        n_elements,
+                        source_times.len()
+                    )));
+                }
+                let indices: Vec<usize> = (0..n_elements).collect();
+                return f(source, &indices, source_times.to_vec());
+            };
+            let mut unique = requested.clone();
+            unique.sort_unstable();
+            unique.dedup();
+            let locations = locate_times(source_times, &unique)?;
+            let element_rows: Vec<usize> = requested
+                .iter()
+                .map(|time| unique.binary_search(time).unwrap_or_else(|i| i))
+                .collect();
+            if let Ok(exact) = locations.iter().copied().collect::<Result<Vec<_>, _>>() {
+                let indices: Vec<usize> = element_rows.iter().map(|&u| exact[u]).collect();
+                return f(source, &indices, requested.clone());
+            }
+            let sampled = SampledEphemeris::new(source, &unique, &locations)?;
+            f(&sampled, &element_rows, requested.clone())
+        })
+    }
+
+    /// Shared body of `in_constraint_elementwise` / `evaluate_elementwise`.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn elementwise(
+        &self,
+        py: Python,
+        ephemeris: &Py<PyAny>,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        times: Option<&Bound<PyAny>>,
+        target_rolls: Option<&[Option<f64>]>,
+        n_roll_samples: usize,
+        with_values: bool,
+    ) -> PyResult<(Vec<DateTime<Utc>>, DiagonalEvaluation)> {
+        Self::validate_n_roll_samples(n_roll_samples)?;
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+        if let Some(rolls) = target_rolls {
+            if rolls.len() != target_ras.len() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "target_rolls must have the same length as target_ras and target_decs",
+                ));
+            }
+            rolls
+                .iter()
+                .flatten()
+                .try_for_each(|&roll| Self::validate_target_roll(roll))?;
+        }
+        let bound = ephemeris.bind(py);
+        self.with_elementwise_ephemeris(
+            bound,
+            target_ras.len(),
+            times,
+            |ephem, indices, element_times| {
+                let evaluation = evaluate_elements(
+                    &*self.evaluator,
+                    ephem,
+                    target_ras,
+                    target_decs,
+                    indices,
+                    target_rolls,
+                    n_roll_samples,
+                    with_values,
+                )?;
+                Ok((element_times, evaluation))
+            },
+        )
     }
 
     pub(super) fn validate_target_roll(roll: f64) -> PyResult<()> {

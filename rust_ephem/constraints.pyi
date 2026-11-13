@@ -18,6 +18,7 @@ import numpy as np
 import numpy.typing as npt
 from pydantic import BaseModel, TypeAdapter
 
+from ._rust_ephem import ElementwiseResult as ElementwiseResult
 from ._rust_ephem import RouteResult as RouteResult
 from .ephemeris import Ephemeris
 
@@ -131,6 +132,24 @@ class RustConstraintMixin(BaseModel):
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
     ) -> npt.NDArray[np.bool_]: ...
+    def in_constraint_elementwise(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: Sequence[float] | npt.ArrayLike,
+        target_decs: Sequence[float] | npt.ArrayLike,
+        times: datetime | Sequence[datetime] | npt.NDArray[np.datetime64] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+    ) -> npt.NDArray[np.bool_]: ...
+    def evaluate_elementwise(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: Sequence[float] | npt.ArrayLike,
+        target_decs: Sequence[float] | npt.ArrayLike,
+        times: datetime | Sequence[datetime] | npt.NDArray[np.datetime64] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+    ) -> ElementwiseResult: ...
     def in_constraint(
         self,
         time: datetime | list[datetime] | npt.NDArray[np.datetime64],

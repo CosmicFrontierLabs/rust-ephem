@@ -1,5 +1,6 @@
 from ._rust_ephem import (
     Constraint,
+    ElementwiseResult,
     FileEphemeris,
     GroundEphemeris,
     MovingBodyResult,
@@ -109,6 +110,7 @@ __all__ = [
     "Constraint",
     "ConstraintResult",
     "ConstraintViolation",
+    "ElementwiseResult",
     "MovingBodyResult",
     "VisibilityWindow",
     "init_planetary_ephemeris",

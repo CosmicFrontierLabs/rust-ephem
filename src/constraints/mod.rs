@@ -9,6 +9,7 @@ pub mod core;
 
 // Shared FoV geometry
 pub mod diagonal;
+pub mod elementwise;
 pub mod fov_polygon;
 pub mod roll_sweep;
 
@@ -37,3 +38,4 @@ pub mod constraint_wrapper;
 // Re-export main types for public API
 pub use constraint_wrapper::{PyConstraint, RouteResult};
 pub use core::{ConstraintResult, ConstraintViolation, MovingBodyResult, VisibilityWindow};
+pub use elementwise::ElementwiseResult;
