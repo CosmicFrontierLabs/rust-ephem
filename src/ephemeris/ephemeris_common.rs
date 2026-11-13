@@ -269,10 +269,65 @@ impl Default for EphemerisData {
     }
 }
 
+/// Geometric geocentric GCRS positions (N x 3, km) of a body at the times of
+/// `ephemeris`: the default of `EphemerisBase::get_any_body_gcrs_positions`.
+pub(crate) fn geometric_body_gcrs_positions<E: EphemerisBase + ?Sized>(
+    ephemeris: &E,
+    body_identifier: &str,
+) -> PyResult<Array2<f64>> {
+    use crate::utils::celestial::calculate_body_by_id_or_name;
+    use crate::utils::config::EARTH_NAIF_ID;
+
+    let times = ephemeris
+        .data()
+        .times
+        .as_ref()
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available."))?;
+
+    let pv = calculate_body_by_id_or_name(times, body_identifier, EARTH_NAIF_ID, None, false)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+
+    // First 3 columns are positions (km); velocities are not needed here.
+    Ok(pv.slice(s![.., 0..3]).to_owned())
+}
+
+/// Positions (N x 3, km) of a body on an apparent view, placed like the
+/// view's Sun and Moon: its apparent position from the true observer, relative
+/// to the view's shifted observer. Geometric if `ephemeris` is not such a view.
+pub(crate) fn apparent_view_body_gcrs_positions<E: EphemerisBase + ?Sized>(
+    ephemeris: &E,
+    body_identifier: &str,
+) -> PyResult<Array2<f64>> {
+    let (Some(observer), Some(shifted), Some(times)) = (
+        ephemeris.apparent_observer(),
+        ephemeris.data().gcrs.as_ref(),
+        ephemeris.data().times.as_deref(),
+    ) else {
+        return geometric_body_gcrs_positions(ephemeris, body_identifier);
+    };
+    let apparent =
+        crate::utils::apparent::apparent_body_positions(times, observer, body_identifier, None)
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    Ok(apparent + shifted.slice(s![.., 0..3]))
+}
+
 /// Trait defining common behavior for ephemeris objects
 pub trait EphemerisBase {
     /// Get a reference to the common ephemeris data
     fn data(&self) -> &EphemerisData;
+
+    /// One target correction per row when this is an apparent view that asks
+    /// the batch kernels to correct catalogue targets themselves (see
+    /// `SampledEphemeris::apparent`); `None` for every ordinary ephemeris.
+    fn target_corrections(&self) -> Option<&[crate::utils::apparent::ObserverAberration]> {
+        None
+    }
+
+    /// The true observer states (N x 6) when this is an apparent view, whose
+    /// `data().gcrs` holds shifted positions instead; `None` otherwise.
+    fn apparent_observer(&self) -> Option<&Array2<f64>> {
+        None
+    }
 
     /// Get a mutable reference to the common ephemeris data
     fn data_mut(&mut self) -> &mut EphemerisData;
@@ -640,21 +695,15 @@ pub trait EphemerisBase {
     /// Get geocentric GCRS positions (N x 3, km) for any body supported by the
     /// loaded DE440 almanac or SPICE kernels.  Body can be a name ("Jupiter",
     /// "Mars") or a NAIF ID string ("599", "499").
+    ///
+    /// On an apparent view (`apparent_observer`) the body is placed like the
+    /// view's Sun and Moon: its apparent position from the true observer,
+    /// relative to the view's shifted observer.
     fn get_any_body_gcrs_positions(&self, body_identifier: &str) -> PyResult<Array2<f64>> {
-        use crate::utils::celestial::calculate_body_by_id_or_name;
-        use crate::utils::config::EARTH_NAIF_ID;
-
-        let times = self
-            .data()
-            .times
-            .as_ref()
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available."))?;
-
-        let pv = calculate_body_by_id_or_name(times, body_identifier, EARTH_NAIF_ID, None, false)
-            .map_err(pyo3::exceptions::PyValueError::new_err)?;
-
-        // First 3 columns are positions (km); velocities are not needed here.
-        Ok(pv.slice(s![.., 0..3]).to_owned())
+        if self.apparent_observer().is_some() {
+            return apparent_view_body_gcrs_positions(self, body_identifier);
+        }
+        geometric_body_gcrs_positions(self, body_identifier)
     }
 
     /// Calculate Moon illumination fraction for all ephemeris times

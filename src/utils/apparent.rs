@@ -50,6 +50,23 @@ impl ObserverAberration {
         )
     }
 
+    /// Constants for the apparent cosine between distant targets and a body
+    /// in the apparent direction `body` (a unit vector) at this observer state.
+    pub fn toward(&self, body: [f64; 3]) -> ApparentCosine {
+        let dot = |a: &[f64; 3], b: &[f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        ApparentCosine {
+            beta: self.beta,
+            lorentz_inverse: self.lorentz_inverse,
+            sun_to_observer: self.sun_to_observer,
+            deflection: SCHWARZSCHILD_RADIUS_SUN_AU / self.sun_distance_au,
+            deflection_limit: 1e-6 / (self.sun_distance_au * self.sun_distance_au).max(1.0),
+            beta_dot_body: dot(&self.beta, &body),
+            sun_dot_body: dot(&self.sun_to_observer, &body),
+            sun_dot_beta: dot(&self.sun_to_observer, &self.beta),
+            beta_squared: dot(&self.beta, &self.beta),
+        }
+    }
+
     /// Correct a catalogue (RA, Dec) in degrees; RA is returned in [0, 360).
     pub fn apply_radec_deg(&self, ra_deg: f64, dec_deg: f64) -> (f64, f64) {
         let (ra, dec) = (ra_deg.to_radians(), dec_deg.to_radians());
@@ -65,6 +82,53 @@ impl ObserverAberration {
 /// by under a millimetre per second in a day, so linear interpolation between
 /// samples is good to a microarcsecond of aberration.
 const SUN_VELOCITY_KNOT_SECONDS: f64 = 86_400.0;
+
+/// Schwarzschild radius of the Sun in au (the SOFA `SRS` constant).
+const SCHWARZSCHILD_RADIUS_SUN_AU: f64 = 1.974_125_743_36e-8;
+
+/// The cosine of the apparent angle between a distant target and a body, from
+/// the catalogue direction of the target alone: `ObserverAberration::apply`
+/// followed by a dot product with the body, written out so a batch kernel
+/// spends three dot products per target and time instead of correcting and
+/// renormalising every target vector.
+///
+/// With `n` the target after solar deflection, the aberrated direction is a
+/// normalised combination of `n` and the velocity, so its cosine with the body
+/// needs only `n.body`, `n.beta` and `|n|`. All three follow from the target's
+/// dot products with the body, the velocity and the Sun.
+#[derive(Clone, Copy, Debug)]
+pub struct ApparentCosine {
+    beta: [f64; 3],
+    lorentz_inverse: f64,
+    sun_to_observer: [f64; 3],
+    deflection: f64,
+    deflection_limit: f64,
+    beta_dot_body: f64,
+    sun_dot_body: f64,
+    sun_dot_beta: f64,
+    beta_squared: f64,
+}
+
+impl ApparentCosine {
+    /// `geometric` is the dot product of the catalogue unit vector `target`
+    /// with the (apparent) body direction given to `ObserverAberration::toward`.
+    #[inline(always)]
+    pub fn cosine(&self, target: [f64; 3], geometric: f64) -> f64 {
+        let dot = |a: &[f64; 3]| target[0] * a[0] + target[1] * a[1] + target[2] * a[2];
+        let (to_sun, along) = (dot(&self.sun_to_observer), dot(&self.beta));
+        // Deflection: n = target + w (e - (target.e) target), e from the Sun to the observer.
+        let w = self.deflection / (1.0 + to_sun).max(self.deflection_limit);
+        let keep = 1.0 - w * to_sun;
+        let n_dot_body = geometric * keep + w * self.sun_dot_body;
+        let n_dot_beta = along * keep + w * self.sun_dot_beta;
+        let n_squared = 1.0 + w * w * (1.0 - to_sun * to_sun);
+        // Aberration, term for term as SOFA `ab`: p = a n + b beta, normalised.
+        let a = self.lorentz_inverse - self.deflection * n_dot_beta;
+        let b = 1.0 + n_dot_beta / (1.0 + self.lorentz_inverse) + self.deflection;
+        (a * n_dot_body + b * self.beta_dot_body)
+            / (a * a * n_squared + 2.0 * a * b * n_dot_beta + b * b * self.beta_squared).sqrt()
+    }
+}
 
 /// Barycentric velocity of the Earth (km/s), one row per time: the one
 /// quantity the apparent place of the Earth, Sun and Moon needs beyond the
@@ -334,4 +398,52 @@ pub fn apparent_body_positions(
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unit(v: [f64; 3]) -> [f64; 3] {
+        let r = norm(&v);
+        v.map(|x| x / r)
+    }
+
+    #[test]
+    fn apparent_cosine_matches_corrected_dot_product() {
+        // An observer at 1 au moving at 33 km/s: the Earth plus a fast spacecraft.
+        let beta = [0.4e-4, -0.9e-4, 0.5e-4];
+        let correction = ObserverAberration {
+            beta,
+            lorentz_inverse: (1.0 - beta.iter().map(|x| x * x).sum::<f64>()).sqrt(),
+            sun_to_observer: unit([0.3, 0.8, -0.5]),
+            sun_distance_au: 1.01,
+        };
+        // A deterministic spread of targets and bodies over the sphere, including
+        // targets within a degree of the Sun, where the deflection is largest.
+        let direction = |k: usize| {
+            let z = -1.0 + 2.0 * (k as f64 + 0.5) / 400.0;
+            let phi = k as f64 * 2.399_963_229_728_653;
+            let r = (1.0 - z * z).sqrt();
+            [r * phi.cos(), r * phi.sin(), z]
+        };
+        let sunward = correction.sun_to_observer.map(|x| -x);
+        let mut worst: f64 = 0.0;
+        for b in (0..400).step_by(37) {
+            let body = direction(b);
+            let apparent = correction.toward(body);
+            let near_sun = (0..20).map(|k| {
+                let d = direction(k * 20);
+                unit(std::array::from_fn(|j| sunward[j] + 0.01 * d[j]))
+            });
+            for target in (0..400).map(direction).chain(near_sun) {
+                let proper = correction.apply(target);
+                let expected: f64 = (0..3).map(|j| proper[j] * body[j]).sum();
+                let geometric: f64 = (0..3).map(|j| target[j] * body[j]).sum();
+                worst = worst.max((apparent.cosine(target, geometric) - expected).abs());
+            }
+        }
+        // 1e-12 in the cosine is under a microarcsecond away from 0 and 180 degrees.
+        assert!(worst < 1e-12, "worst cosine difference {worst:e}");
+    }
 }

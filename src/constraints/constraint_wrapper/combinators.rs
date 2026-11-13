@@ -794,6 +794,12 @@ impl ConstraintEvaluator for AndEvaluator {
         self.constraints.iter().any(|c| c.is_target_dependent())
     }
 
+    fn applies_target_corrections(&self) -> bool {
+        self.constraints
+            .iter()
+            .all(|c| c.applies_target_corrections())
+    }
+
     fn is_roll_dependent(&self) -> bool {
         self.constraints.iter().any(|c| c.is_roll_dependent())
     }
@@ -1256,6 +1262,12 @@ impl ConstraintEvaluator for OrEvaluator {
 
     fn is_target_dependent(&self) -> bool {
         self.constraints.iter().any(|c| c.is_target_dependent())
+    }
+
+    fn applies_target_corrections(&self) -> bool {
+        self.constraints
+            .iter()
+            .all(|c| c.applies_target_corrections())
     }
 
     fn is_roll_dependent(&self) -> bool {
@@ -1734,6 +1746,10 @@ impl ConstraintEvaluator for NotEvaluator {
         self.constraint.is_target_dependent()
     }
 
+    fn applies_target_corrections(&self) -> bool {
+        self.constraint.applies_target_corrections()
+    }
+
     fn is_roll_dependent(&self) -> bool {
         self.constraint.is_roll_dependent()
     }
@@ -2108,6 +2124,12 @@ impl ConstraintEvaluator for XorEvaluator {
 
     fn is_target_dependent(&self) -> bool {
         self.constraints.iter().any(|c| c.is_target_dependent())
+    }
+
+    fn applies_target_corrections(&self) -> bool {
+        self.constraints
+            .iter()
+            .all(|c| c.applies_target_corrections())
     }
 
     fn is_roll_dependent(&self) -> bool {
@@ -2493,6 +2515,12 @@ impl ConstraintEvaluator for AtLeastEvaluator {
 
     fn is_target_dependent(&self) -> bool {
         self.constraints.iter().any(|c| c.is_target_dependent())
+    }
+
+    fn applies_target_corrections(&self) -> bool {
+        self.constraints
+            .iter()
+            .all(|c| c.applies_target_corrections())
     }
 
     fn is_roll_dependent(&self) -> bool {
