@@ -90,12 +90,14 @@ Factory Methods
       # Target must be between 30° and 120° from Sun
       constraint = Constraint.sun_proximity(30.0, 120.0)
 
-.. py:staticmethod:: Constraint.moon_proximity(min_angle, max_angle=None)
+.. py:staticmethod:: Constraint.moon_proximity(min_angle, max_angle=None, from_limb=False)
 
    Create a Moon proximity constraint.
 
    :param float min_angle: Minimum allowed angular separation from Moon in degrees (0-180)
    :param float max_angle: Maximum allowed angular separation from Moon in degrees (optional)
+   :param bool from_limb: Measure angles from the Moon's limb rather than its centre
+       (adds the Moon's apparent angular radius at each time step; default False)
    :returns: A new Constraint instance
    :rtype: Constraint
    :raises ValueError: If angles are out of valid range
@@ -106,6 +108,9 @@ Factory Methods
 
       # Target must be at least 10° from Moon
       constraint = Constraint.moon_proximity(10.0)
+
+      # Target must be at least 10° from the Moon's limb
+      constraint = Constraint.moon_proximity(10.0, from_limb=True)
 
 .. py:staticmethod:: Constraint.earth_limb(min_angle, max_angle=None)
 
@@ -875,16 +880,23 @@ MoonConstraint
 
 Moon proximity constraint ensuring target maintains minimum angular separation from Moon.
 
-.. py:class:: MoonConstraint(min_angle, max_angle=None)
+.. py:class:: MoonConstraint(min_angle, max_angle=None, from_limb=False)
 
    :param float min_angle: Minimum allowed angular separation in degrees (0-180, required)
    :param float max_angle: Maximum allowed angular separation in degrees (0-180, optional)
+   :param bool from_limb: Measure angles from the Moon's limb rather than its centre (default False)
 
    **Attributes:**
 
    - ``type``: Always ``"moon"`` (Literal)
    - ``min_angle``: Minimum angle from Moon in degrees
    - ``max_angle``: Maximum angle from Moon in degrees (or None)
+   - ``from_limb``: If True, angles are measured from the Moon's limb
+
+   **Moon limb avoidance:** with ``from_limb=True`` the Moon's apparent angular
+   radius, ``asin(R_moon / d)`` where ``d`` is the observer–Moon distance at each
+   time step, is added to ``min_angle`` and ``max_angle``. From low Earth orbit
+   this is ~0.25°, but it grows substantially for cislunar observers.
 
    **Example:**
 
@@ -893,6 +905,9 @@ Moon proximity constraint ensuring target maintains minimum angular separation f
       from rust_ephem.constraints import MoonConstraint
 
       moon = MoonConstraint(min_angle=10.0)
+
+      # Keep the boresight at least 10° from the Moon's limb
+      moon_limb = MoonConstraint(min_angle=10.0, from_limb=True)
 
 EarthLimbConstraint
 ^^^^^^^^^^^^^^^^^^^
@@ -1915,8 +1930,9 @@ by :py:meth:`evaluate`, :py:meth:`evaluate_batch`, and
      - ``sun_angle_deg``
      -
    * - ``MoonConstraint``
-     - ``moon_angle_deg``
-     -
+     - ``moon_angle_deg``, ``moon_limb_angle_deg``
+     - ``moon_angle_deg`` is measured from the Moon's centre;
+       ``moon_limb_angle_deg`` (``from_limb=True`` only) is measured from its limb
    * - ``BodyConstraint``
      - ``body_angle_deg``
      - Circle mode only (``min_angle``); omitted in ``fov_polygon`` mode

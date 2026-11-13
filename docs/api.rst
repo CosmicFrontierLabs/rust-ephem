@@ -521,7 +521,7 @@ Classes
 
   **Static Methods:**
     * ``Constraint.sun_proximity(min_angle, max_angle=None)`` — Create Sun proximity constraint
-    * ``Constraint.moon_proximity(min_angle, max_angle=None)`` — Create Moon proximity constraint
+    * ``Constraint.moon_proximity(min_angle, max_angle=None, from_limb=False)`` — Create Moon proximity constraint (``from_limb=True`` measures from the Moon's limb)
     * ``Constraint.earth_limb(min_angle, max_angle=None)`` — Create Earth limb avoidance constraint
       * ``Constraint.earth_limb(min_angle, max_angle=None, include_refraction=False, horizon_dip=False)`` — Create Earth limb avoidance constraint
     * ``Constraint.body_proximity(body, min_angle, max_angle=None)`` — Create solar system body proximity constraint
@@ -939,6 +939,7 @@ The following Pydantic models are used to configure constraints. These can be se
     * ``type`` — Always "moon"
     * ``min_angle`` — Minimum angular separation from Moon in degrees (0-180)
     * ``max_angle`` — Maximum angular separation from Moon in degrees (0-180), optional
+    * ``from_limb`` — If True, measure angles from the Moon's limb (adds its apparent angular radius) instead of its centre; default False
 
 **EarthLimbConstraint**
   Earth limb avoidance constraint.

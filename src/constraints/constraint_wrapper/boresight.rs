@@ -1277,6 +1277,7 @@ mod tests {
                     MoonProximityConfig {
                         min_angle: 23.0,
                         max_angle: None,
+                        from_limb: false,
                     }
                     .to_evaluator(),
                     EarthLimbConfig {

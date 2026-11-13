@@ -386,13 +386,18 @@ class Constraint:
         ...
 
     @staticmethod
-    def moon_proximity(min_angle: float, max_angle: float | None = None) -> Constraint:
+    def moon_proximity(
+        min_angle: float, max_angle: float | None = None, from_limb: bool = False
+    ) -> Constraint:
         """
         Create a Moon proximity constraint.
 
         Args:
             min_angle: Minimum allowed angular separation from Moon in degrees (0-180)
             max_angle: Maximum allowed angular separation from Moon in degrees (optional)
+            from_limb: Measure angles from the Moon's limb rather than its centre, i.e.
+                add the Moon's apparent angular radius at each time step to
+                min_angle/max_angle (default: False)
 
         Returns:
             A new Constraint instance

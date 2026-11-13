@@ -3,8 +3,8 @@ use super::core::{
     compute_angle_deg_batch, track_violations, ConstraintConfig, ConstraintEvaluator,
     ConstraintResult,
 };
-use crate::utils::vector_math::radec_to_unit_vectors_batch;
-use chrono::{DateTime, Utc};
+use crate::utils::config::MOON_RADIUS_KM;
+use crate::utils::vector_math::{dot_product, radec_to_unit_vector, radec_to_unit_vectors_batch};
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,11 @@ pub struct MoonProximityConfig {
     /// Maximum allowed angular separation from Moon in degrees (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_angle: Option<f64>,
+    /// Measure separations from the Moon's limb instead of its centre. The
+    /// Moon's apparent angular radius (from the observer's distance to it at
+    /// each time step) is added to `min_angle`/`max_angle`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub from_limb: bool,
 }
 
 impl ConstraintConfig for MoonProximityConfig {
@@ -25,6 +30,7 @@ impl ConstraintConfig for MoonProximityConfig {
         Box::new(MoonProximityEvaluator {
             min_angle_deg: self.min_angle,
             max_angle_deg: self.max_angle,
+            from_limb: self.from_limb,
         })
     }
 }
@@ -33,35 +39,104 @@ impl ConstraintConfig for MoonProximityConfig {
 struct MoonProximityEvaluator {
     min_angle_deg: f64,
     max_angle_deg: Option<f64>,
+    from_limb: bool,
 }
 
-impl_proximity_evaluator!(MoonProximityEvaluator, "Moon", "Moon", moon_positions);
+/// Observer→Moon unit vector and distance (km) at row `t`.
+fn moon_direction(moon: &Array2<f64>, observer: &Array2<f64>, t: usize) -> ([f64; 3], f64) {
+    let rel = [
+        moon[[t, 0]] - observer[[t, 0]],
+        moon[[t, 1]] - observer[[t, 1]],
+        moon[[t, 2]] - observer[[t, 2]],
+    ];
+    let dist = (rel[0] * rel[0] + rel[1] * rel[1] + rel[2] * rel[2]).sqrt();
+    if dist > 0.0 {
+        ([rel[0] / dist, rel[1] / dist, rel[2] / dist], dist)
+    } else {
+        ([1.0, 0.0, 0.0], dist)
+    }
+}
 
 impl MoonProximityEvaluator {
-    #[allow(dead_code)]
+    /// Apparent angular radius of the Moon (degrees) at `dist_km`, or 0 when
+    /// separations are measured from the Moon's centre.
+    fn limb_offset_deg(&self, dist_km: f64) -> f64 {
+        if !self.from_limb {
+            return 0.0;
+        }
+        if dist_km <= MOON_RADIUS_KM {
+            return 90.0;
+        }
+        (MOON_RADIUS_KM / dist_km).asin().to_degrees()
+    }
+
+    /// Cosine thresholds on the centre separation for a given limb offset.
+    /// `angle < min` ⟺ `cos(angle) > min_cos`; `angle > max` ⟺ `cos(angle) < max_cos`.
+    fn cos_thresholds(&self, offset_deg: f64) -> (f64, Option<f64>) {
+        let min_cos = (self.min_angle_deg + offset_deg)
+            .min(180.0)
+            .to_radians()
+            .cos();
+        let max_cos = self
+            .max_angle_deg
+            .map(|max| (max + offset_deg).min(180.0).to_radians().cos());
+        (min_cos, max_cos)
+    }
+
+    fn is_violated(cos_angle: f64, (min_cos, max_cos): (f64, Option<f64>)) -> bool {
+        cos_angle > min_cos || max_cos.is_some_and(|max| cos_angle < max)
+    }
+
     fn default_final_violation_description(&self) -> String {
+        let reference = if self.from_limb { "Moon limb" } else { "Moon" };
         match self.max_angle_deg {
             Some(max) => format!(
-                "Target too close to Moon (min: {:.1}°) or too far (max: {:.1}°)",
+                "Target too close to {reference} (min: {:.1}°) or too far (max: {:.1}°)",
                 self.min_angle_deg, max
             ),
             None => format!(
-                "Target too close to Moon (min allowed: {:.1}°)",
+                "Target too close to {reference} (min allowed: {:.1}°)",
                 self.min_angle_deg
             ),
         }
     }
 
-    #[allow(dead_code)]
     fn default_intermediate_violation_description(&self) -> String {
         "Target violates Moon proximity constraint".to_string()
     }
 
     fn format_name(&self) -> String {
+        let limb = if self.from_limb { ", from_limb" } else { "" };
         match self.max_angle_deg {
-            Some(max) => format!("MoonProximity(min={}°, max={}°)", self.min_angle_deg, max),
-            None => format!("MoonProximity(min={}°)", self.min_angle_deg),
+            Some(max) => format!(
+                "MoonProximity(min={}°, max={}°{limb})",
+                self.min_angle_deg, max
+            ),
+            None => format!("MoonProximity(min={}°{limb})", self.min_angle_deg),
         }
+    }
+
+    /// Shared (targets x times) kernel over precomputed target unit vectors.
+    fn violation_mask(
+        &self,
+        target_vectors: &Array2<f64>,
+        moon: &Array2<f64>,
+        observer: &Array2<f64>,
+    ) -> Array2<bool> {
+        let n_targets = target_vectors.nrows();
+        let n_times = moon.nrows();
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+        for t in 0..n_times {
+            let (unit, dist) = moon_direction(moon, observer, t);
+            let thresholds = self.cos_thresholds(self.limb_offset_deg(dist));
+            for i in 0..n_targets {
+                let cos_angle = target_vectors[[i, 0]] * unit[0]
+                    + target_vectors[[i, 1]] * unit[1]
+                    + target_vectors[[i, 2]] * unit[2];
+                result[[i, t]] = Self::is_violated(cos_angle, thresholds);
+            }
+        }
+        result
     }
 }
 
@@ -81,16 +156,40 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
         let observer = ephemeris.data().gcrs.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err("No GCRS positions available")
         })?;
-        Ok(super::diagonal::proximity(
+        if !self.from_limb {
+            return Ok(super::diagonal::proximity(
+                &self.name(),
+                "moon_angle_deg",
+                target_ras,
+                target_decs,
+                &indices,
+                body,
+                observer,
+                self.min_angle_deg,
+                self.max_angle_deg,
+            ));
+        }
+        let n = indices.len();
+        let mut violated = Vec::with_capacity(n);
+        let mut centre = Vec::with_capacity(n);
+        let mut limb = Vec::with_capacity(n);
+        for (i, &t) in indices.iter().enumerate() {
+            let target = radec_to_unit_vector(target_ras[i], target_decs[i]);
+            let (unit, dist) = moon_direction(body, observer, t);
+            let offset = self.limb_offset_deg(dist);
+            let cos_angle = dot_product(&target, &unit);
+            violated.push(Self::is_violated(cos_angle, self.cos_thresholds(offset)));
+            let angle = cos_angle.clamp(-1.0, 1.0).acos().to_degrees();
+            centre.push(angle);
+            limb.push(angle - offset);
+        }
+        Ok(super::diagonal::DiagonalEvaluation::leaf(
             &self.name(),
-            "moon_angle_deg",
-            target_ras,
-            target_decs,
-            &indices,
-            body,
-            observer,
-            self.min_angle_deg,
-            self.max_angle_deg,
+            violated,
+            HashMap::from([
+                ("moon_angle_deg".to_string(), centre),
+                ("moon_limb_angle_deg".to_string(), limb),
+            ]),
         ))
     }
 
@@ -101,17 +200,50 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
         target_dec: f64,
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
-        // Extract data from ephemeris
-        let (times_slice, moon_positions_slice, observer_positions_slice) =
+        let (times, moon, observer) =
             extract_body_ephemeris_data!(ephemeris, time_indices, get_moon_positions_at_indices);
+        let target = radec_to_unit_vector(target_ra, target_dec);
 
-        Ok(self.evaluate_common(
-            &times_slice,
-            (target_ra, target_dec),
-            &moon_positions_slice,
-            &observer_positions_slice,
-            || self.default_final_violation_description(),
-            || self.default_intermediate_violation_description(),
+        let violations = track_violations(
+            &times,
+            |t| {
+                let (unit, dist) = moon_direction(&moon, &observer, t);
+                let offset = self.limb_offset_deg(dist);
+                let cos_angle = dot_product(&target, &unit);
+                if !Self::is_violated(cos_angle, self.cos_thresholds(offset)) {
+                    return (false, 0.0);
+                }
+                // Severity is expressed relative to the configured angles, measured
+                // from the same reference (centre or limb) as the thresholds.
+                let angle_deg = cos_angle.clamp(-1.0, 1.0).acos().to_degrees() - offset;
+                let severity = if angle_deg < self.min_angle_deg {
+                    if self.min_angle_deg > 0.0 {
+                        (self.min_angle_deg - angle_deg) / self.min_angle_deg
+                    } else {
+                        0.0
+                    }
+                } else if let Some(max) = self.max_angle_deg {
+                    (angle_deg - max) / max
+                } else {
+                    0.0
+                };
+                (true, severity)
+            },
+            |_, is_final| {
+                if is_final {
+                    self.default_final_violation_description()
+                } else {
+                    self.default_intermediate_violation_description()
+                }
+            },
+        );
+
+        let all_satisfied = violations.is_empty();
+        Ok(ConstraintResult::new(
+            violations,
+            all_satisfied,
+            self.name(),
+            times.to_vec(),
         ))
     }
 
@@ -123,81 +255,15 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
-        // Extract data from ephemeris
-        let (times, moon_positions_slice, observer_positions_slice) =
+        let (_times, moon, observer) =
             extract_body_ephemeris_data!(ephemeris, time_indices, get_moon_positions_at_indices);
-        let n_times = times.len();
-        // Validate inputs
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "target_ras and target_decs must have the same length",
             ));
         }
-
-        let n_targets = target_ras.len();
-
-        // Convert all target RA/Dec to unit vectors at once
         let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
-
-        // Initialize result array: false = not violated (constraint satisfied)
-        let mut result = Array2::from_elem((n_targets, n_times), false);
-
-        // Pre-compute cosine thresholds (avoids acos() in inner loop)
-        // For angle comparison: angle < threshold ⟺ cos(angle) > cos(threshold)
-        let min_cos_threshold = self.min_angle_deg.to_radians().cos();
-        let max_cos_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
-
-        // For each time, check all targets
-        for t in 0..n_times {
-            let moon_pos = [
-                moon_positions_slice[[t, 0]],
-                moon_positions_slice[[t, 1]],
-                moon_positions_slice[[t, 2]],
-            ];
-            let obs_pos = [
-                observer_positions_slice[[t, 0]],
-                observer_positions_slice[[t, 1]],
-                observer_positions_slice[[t, 2]],
-            ];
-
-            // Compute relative moon position from observer
-            let moon_rel = [
-                moon_pos[0] - obs_pos[0],
-                moon_pos[1] - obs_pos[1],
-                moon_pos[2] - obs_pos[2],
-            ];
-            let moon_dist =
-                (moon_rel[0] * moon_rel[0] + moon_rel[1] * moon_rel[1] + moon_rel[2] * moon_rel[2])
-                    .sqrt();
-            let moon_unit = [
-                moon_rel[0] / moon_dist,
-                moon_rel[1] / moon_dist,
-                moon_rel[2] / moon_dist,
-            ];
-
-            // Check all targets at this time
-            for target_idx in 0..n_targets {
-                let target_vec = [
-                    target_vectors[[target_idx, 0]],
-                    target_vectors[[target_idx, 1]],
-                    target_vectors[[target_idx, 2]],
-                ];
-
-                // Calculate cosine of angle between target and moon
-                let cos_angle = target_vec[0] * moon_unit[0]
-                    + target_vec[1] * moon_unit[1]
-                    + target_vec[2] * moon_unit[2];
-
-                // Check constraints using cosine comparison (avoids acos)
-                // too_close: angle < min_angle ⟺ cos(angle) > cos(min_angle)
-                let too_close = cos_angle > min_cos_threshold;
-                let too_far = max_cos_threshold.is_some_and(|max_thresh| cos_angle < max_thresh);
-
-                result[[target_idx, t]] = too_close || too_far;
-            }
-        }
-
-        Ok(result)
+        Ok(self.violation_mask(&target_vectors, &moon, &observer))
     }
 
     fn in_constraint_batch_unit_vectors(
@@ -211,55 +277,13 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
                 "target_unit_vectors must have shape (N, 3)",
             ));
         }
-
-        let (times, moon_positions_slice, observer_positions_slice) =
+        let (_times, moon, observer) =
             extract_body_ephemeris_data!(ephemeris, time_indices, get_moon_positions_at_indices);
-        let n_times = times.len();
-
-        let n_targets = target_unit_vectors.nrows();
-        let mut result = Array2::from_elem((n_targets, n_times), false);
-
-        let min_cos_threshold = self.min_angle_deg.to_radians().cos();
-        let max_cos_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
-
-        for t in 0..n_times {
-            let moon_pos = [
-                moon_positions_slice[[t, 0]],
-                moon_positions_slice[[t, 1]],
-                moon_positions_slice[[t, 2]],
-            ];
-            let obs_pos = [
-                observer_positions_slice[[t, 0]],
-                observer_positions_slice[[t, 1]],
-                observer_positions_slice[[t, 2]],
-            ];
-
-            let moon_rel = [
-                moon_pos[0] - obs_pos[0],
-                moon_pos[1] - obs_pos[1],
-                moon_pos[2] - obs_pos[2],
-            ];
-            let moon_dist =
-                (moon_rel[0] * moon_rel[0] + moon_rel[1] * moon_rel[1] + moon_rel[2] * moon_rel[2])
-                    .sqrt();
-            let moon_unit = [
-                moon_rel[0] / moon_dist,
-                moon_rel[1] / moon_dist,
-                moon_rel[2] / moon_dist,
-            ];
-
-            for target_idx in 0..n_targets {
-                let cos_angle = target_unit_vectors[[target_idx, 0]] * moon_unit[0]
-                    + target_unit_vectors[[target_idx, 1]] * moon_unit[1]
-                    + target_unit_vectors[[target_idx, 2]] * moon_unit[2];
-
-                let too_close = cos_angle > min_cos_threshold;
-                let too_far = max_cos_threshold.is_some_and(|max_thresh| cos_angle < max_thresh);
-                result[[target_idx, t]] = too_close || too_far;
-            }
-        }
-
-        Ok(Some(result))
+        Ok(Some(self.violation_mask(
+            target_unit_vectors,
+            &moon,
+            &observer,
+        )))
     }
 
     fn compute_named_values(
@@ -278,6 +302,15 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
             &observer_positions_slice,
         );
         let mut values = HashMap::new();
+        if self.from_limb {
+            let mut limb_angle_deg = angle_deg.clone();
+            for t in 0..moon_positions_slice.nrows() {
+                let (_, dist) = moon_direction(&moon_positions_slice, &observer_positions_slice, t);
+                let offset = self.limb_offset_deg(dist);
+                limb_angle_deg.column_mut(t).mapv_inplace(|a| a - offset);
+            }
+            values.insert("moon_limb_angle_deg".to_string(), limb_angle_deg);
+        }
         values.insert("moon_angle_deg".to_string(), angle_deg);
         Ok(values)
     }
@@ -288,5 +321,121 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::constraints::test_support::TestEphemeris;
+
+    /// Ephemeris where the Moon sits along +Y from the observer at a distance
+    /// giving it an apparent angular radius of exactly 10°.
+    fn close_moon_ephemeris() -> TestEphemeris {
+        let mut eph = TestEphemeris::new(3);
+        let dist = MOON_RADIUS_KM / 10f64.to_radians().sin();
+        let moon = eph.data.moon_gcrs.as_mut().unwrap();
+        for t in 0..3 {
+            moon[[t, 0]] = -7000.0;
+            moon[[t, 1]] = dist;
+            moon[[t, 2]] = 0.0;
+        }
+        eph
+    }
+
+    fn evaluator(min: f64, max: Option<f64>, from_limb: bool) -> Box<dyn ConstraintEvaluator> {
+        MoonProximityConfig {
+            min_angle: min,
+            max_angle: max,
+            from_limb,
+        }
+        .to_evaluator()
+    }
+
+    #[test]
+    fn limb_mode_adds_apparent_radius_to_min_angle() {
+        let eph = close_moon_ephemeris();
+        // Target 12° from Moon centre = 2° from its limb.
+        let (ra, dec) = ([102.0], [0.0]);
+
+        let centre = evaluator(5.0, None, false);
+        let limb = evaluator(5.0, None, true);
+        assert!(!centre.in_constraint_batch(&eph, &ra, &dec, None).unwrap()[[0, 0]]);
+        assert!(limb.in_constraint_batch(&eph, &ra, &dec, None).unwrap()[[0, 0]]);
+        assert!(
+            !limb
+                .evaluate(&eph, ra[0], dec[0], None)
+                .unwrap()
+                .all_satisfied
+        );
+        assert!(
+            centre
+                .evaluate(&eph, ra[0], dec[0], None)
+                .unwrap()
+                .all_satisfied
+        );
+
+        // 16° from centre = 6° from the limb: clear of a 5° limb avoidance.
+        assert!(
+            !limb
+                .in_constraint_batch(&eph, &[106.0], &dec, None)
+                .unwrap()[[0, 0]]
+        );
+    }
+
+    #[test]
+    fn limb_mode_applies_to_max_angle() {
+        let eph = close_moon_ephemeris();
+        // 25° from centre = 15° from limb; max 20° from limb is satisfied,
+        // but max 20° from centre is not.
+        let (ra, dec) = ([115.0], [0.0]);
+        assert!(
+            !evaluator(0.0, Some(20.0), true)
+                .in_constraint_batch(&eph, &ra, &dec, None)
+                .unwrap()[[0, 0]]
+        );
+        assert!(
+            evaluator(0.0, Some(20.0), false)
+                .in_constraint_batch(&eph, &ra, &dec, None)
+                .unwrap()[[0, 0]]
+        );
+    }
+
+    #[test]
+    fn limb_mode_reports_limb_angle_values_and_matches_diagonal() {
+        let eph = close_moon_ephemeris();
+        let limb = evaluator(5.0, None, true);
+        let values = limb
+            .compute_named_values(&eph, &[102.0], &[0.0], None)
+            .unwrap();
+        assert!((values["moon_angle_deg"][[0, 0]] - 12.0).abs() < 1e-9);
+        assert!((values["moon_limb_angle_deg"][[0, 0]] - 2.0).abs() < 1e-9);
+
+        let ras = [102.0, 106.0, 102.0];
+        let decs = [0.0, 0.0, 0.0];
+        let diag = limb.evaluate_diagonal(&eph, &ras, &decs, None).unwrap();
+        assert_eq!(diag.violated, vec![true, false, true]);
+        assert!((diag.values["moon_limb_angle_deg"][1] - 6.0).abs() < 1e-9);
+
+        let centre_values = evaluator(5.0, None, false)
+            .compute_named_values(&eph, &[102.0], &[0.0], None)
+            .unwrap();
+        assert!(!centre_values.contains_key("moon_limb_angle_deg"));
+    }
+
+    #[test]
+    fn from_limb_round_trips_through_serde_and_name() {
+        let cfg: MoonProximityConfig =
+            serde_json::from_str(r#"{"min_angle": 5.0, "from_limb": true}"#).unwrap();
+        assert!(cfg.from_limb);
+        assert_eq!(
+            cfg.to_evaluator().name(),
+            "MoonProximity(min=5°, from_limb)"
+        );
+        let legacy: MoonProximityConfig = serde_json::from_str(r#"{"min_angle": 5.0}"#).unwrap();
+        assert!(!legacy.from_limb);
+        assert!(!serde_json::to_string(&legacy)
+            .unwrap()
+            .contains("from_limb"));
     }
 }
