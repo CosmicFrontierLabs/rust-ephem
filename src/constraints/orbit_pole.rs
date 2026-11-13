@@ -1,5 +1,6 @@
 /// Orbit pole direction constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
+use crate::utils::config::EARTH_RADIUS_KM;
 use crate::utils::vector_math::radec_to_unit_vectors_batch;
 use ndarray::Array2;
 use pyo3::PyResult;
@@ -142,7 +143,7 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
                         + position[1] * position[1]
                         + position[2] * position[2])
                         .sqrt();
-                    let ratio = (6378.137 / distance).min(1.0); // EARTH_RADIUS_KM = 6378.137
+                    let ratio = (EARTH_RADIUS_KM / distance).min(1.0);
                     let earth_radius_deg = ratio.asin().to_degrees();
                     earth_radius_deg + self.min_angle_deg - 90.0
                 } else {
@@ -207,7 +208,7 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
                         + position[1] * position[1]
                         + position[2] * position[2])
                         .sqrt();
-                    let ratio = (6378.137 / distance).min(1.0);
+                    let ratio = (EARTH_RADIUS_KM / distance).min(1.0);
                     let earth_radius_deg = ratio.asin().to_degrees();
                     earth_radius_deg + self.min_angle_deg - 90.0
                 } else {
@@ -318,7 +319,7 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
                     + position[1] * position[1]
                     + position[2] * position[2])
                     .sqrt();
-                let ratio = (6378.137 / distance).min(1.0);
+                let ratio = (EARTH_RADIUS_KM / distance).min(1.0);
                 let earth_radius_deg = ratio.asin().to_degrees();
                 earth_radius_deg + self.min_angle_deg - 90.0
             } else {
@@ -462,7 +463,7 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
                     + position[1] * position[1]
                     + position[2] * position[2])
                     .sqrt();
-                let ratio = (6378.137 / distance).min(1.0);
+                let ratio = (EARTH_RADIUS_KM / distance).min(1.0);
                 let earth_radius_deg = ratio.asin().to_degrees();
                 earth_radius_deg + self.min_angle_deg - 90.0
             } else {

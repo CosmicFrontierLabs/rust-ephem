@@ -1879,7 +1879,9 @@ by :py:meth:`evaluate`, :py:meth:`evaluate_batch`, and
      -
    * - ``EarthLimbConstraint``
      - ``earth_limb_angle_deg``
-     -
+     - Measured from the Earth's limb (angle from the centre minus the apparent
+       radius, ``earth_radius_deg``, plus horizon dip/refraction when enabled),
+       so the target is violated when it is below ``min_angle`` or above ``max_angle``
    * - ``BrightStarConstraint``
      - ``nearest_bright_star_angle_deg``
      - Circle mode only (``fov_radius``); omitted in ``fov_polygon`` mode

@@ -1,12 +1,14 @@
 from datetime import datetime, timezone
 from typing import Any
 
+import astropy.units as u  # type:ignore[import-untyped]
 import numpy as np
 import pytest
 from astropy.coordinates import SkyCoord  # type:ignore[import-untyped]
 
 import rust_ephem
 from rust_ephem.constraints import (
+    EarthLimbConstraint,
     EclipseConstraint,
     MoonConstraint,
     SunConstraint,
@@ -200,6 +202,55 @@ class TestEarthLimbConstraints:
         )
         in_earth_cons = earth_angle < tle_ephem.earth_radius_deg[0] + EARTH_CONSTRAINT
         assert in_earth_cons == not_vis, f"Earth is at {earth_angle:.1f} degrees"
+
+
+class TestEarthLimbAngleValues:
+    """``earth_limb_angle_deg`` and ``max_angle`` are measured from the limb."""
+
+    def test_value_is_centre_angle_minus_earth_radius(
+        self, tle_ephem: Any, timestamp: Any, earth: Any
+    ) -> None:
+        result = EarthLimbConstraint(min_angle=EARTH_CONSTRAINT).evaluate(
+            ephemeris=tle_ephem, times=[timestamp], target_ra=250.0, target_dec=-23.0
+        )
+        centre_deg = earth.separation(SkyCoord(250.0, -23.0, unit="deg")).deg
+        # Same Earth radius as the earth_radius_deg property, so this is exact
+        # up to the astropy-vs-geometric separation difference.
+        assert result.constraint_values["earth_limb_angle_deg"][0] == pytest.approx(
+            centre_deg - tle_ephem.earth_radius_deg[183], abs=0.01
+        )
+
+    @pytest.mark.parametrize("offset", range(0, 181, 15))
+    def test_violation_agrees_with_limb_angle(
+        self, tle_ephem: Any, timestamp: Any, earth: Any, offset: int
+    ) -> None:
+        constraint = EarthLimbConstraint(min_angle=10.0, max_angle=60.0)
+        ra, dec = (earth.ra.deg + offset) % 360, earth.dec.deg
+        result = constraint.evaluate(
+            ephemeris=tle_ephem, times=[timestamp], target_ra=ra, target_dec=dec
+        )
+        limb = result.constraint_values["earth_limb_angle_deg"][0]
+        assert result.constraint_array[0] == (not 10.0 <= limb <= 60.0)
+
+    def test_max_angle_is_measured_from_the_limb(
+        self, tle_ephem: Any, timestamp: Any, earth: Any
+    ) -> None:
+        radius = float(tle_ephem.earth_radius_deg[183])
+        # 40 degrees from the limb: inside max_angle=60 measured from the limb,
+        # but beyond 60 degrees from the centre for a LEO observer (radius ~70 deg).
+        target = SkyCoord(earth.ra, earth.dec).directional_offset_by(
+            90 * u.deg, (radius + 40.0) * u.deg
+        )
+        assert radius + 40.0 > 60.0
+        assert (
+            EarthLimbConstraint(min_angle=10.0, max_angle=60.0).in_constraint(
+                ephemeris=tle_ephem,
+                time=timestamp,
+                target_ra=target.ra.deg,
+                target_dec=target.dec.deg,
+            )
+            is False
+        )
 
 
 class TestEclipseConstraints:
