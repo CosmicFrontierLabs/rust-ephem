@@ -250,6 +250,7 @@ class RustConstraintMixin(BaseModel):
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> list[ConstraintResult]:
         """Evaluate a batch where all targets share the same roll semantics."""
         rust_constraint = self._resolve_evaluation_constraint(None)
@@ -261,6 +262,7 @@ class RustConstraintMixin(BaseModel):
             times,
             indices,
             n_roll_samples=n_roll_samples,
+            apparent=apparent,
         )
         return [
             ConstraintResult._from_rust_result(rust_result)
@@ -492,6 +494,7 @@ class RustConstraintMixin(BaseModel):
         indices: int | list[int] | None = None,
         target_roll: float | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> ConstraintResult:
         """
         Evaluate the constraint using the Rust backend.
@@ -515,6 +518,8 @@ class RustConstraintMixin(BaseModel):
             n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
                 and the constraint is roll-dependent.  Uniformly spaced over [0°, 360°).
                 Default :data:`DEFAULT_N_ROLL_SAMPLES` (360 ≈ 1° resolution).
+            apparent: Measure angles as the observer sees them (see
+                :meth:`in_constraint_elementwise`). Default ``False``.
 
         Returns:
             ConstraintResult containing violation windows
@@ -536,6 +541,7 @@ class RustConstraintMixin(BaseModel):
             times,
             indices,
             n_roll_samples=n_roll_samples,
+            apparent=apparent,
             **roll_kwargs,
         )
 
@@ -551,6 +557,7 @@ class RustConstraintMixin(BaseModel):
         indices: int | list[int] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> list[ConstraintResult]:
         """Evaluate the constraint for multiple targets and return one result per target.
 
@@ -578,6 +585,7 @@ class RustConstraintMixin(BaseModel):
                 times=times,
                 indices=indices,
                 n_roll_samples=n_roll_samples,
+                apparent=apparent,
             )
 
         if any(roll is None for roll in normalized_target_rolls):
@@ -592,6 +600,7 @@ class RustConstraintMixin(BaseModel):
                 times=times,
                 indices=indices,
                 n_roll_samples=n_roll_samples,
+                apparent=apparent,
             )
             if not fixed:
                 return free_results
@@ -603,6 +612,7 @@ class RustConstraintMixin(BaseModel):
                 indices=indices,
                 target_rolls=[normalized_target_rolls[i] for i in fixed],
                 n_roll_samples=n_roll_samples,
+                apparent=apparent,
             )
             ordered = dict(zip(free + fixed, free_results + fixed_results, strict=True))
             return [ordered[i] for i in range(len(target_ras))]
@@ -615,6 +625,7 @@ class RustConstraintMixin(BaseModel):
             indices,
             target_rolls=cast(list[float], normalized_target_rolls),
             n_roll_samples=n_roll_samples,
+            apparent=apparent,
         )
         return [ConstraintResult._from_rust_result(result) for result in rust_results]
 

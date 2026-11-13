@@ -256,6 +256,20 @@ impl PyConstraint {
         let (view, aberrations) = SampledEphemeris::apparent(ephemeris, &rows)?;
         let catalogue =
             crate::utils::vector_math::radec_to_unit_vectors_batch(target_ras, target_decs);
+        // Trees whose kernels correct the targets themselves keep the grid in
+        // one call, vectorised across times.
+        if unit_vectors && self.evaluator.applies_target_corrections() {
+            let view = view.with_target_corrections(aberrations);
+            return match self
+                .evaluator
+                .in_constraint_batch_unit_vectors(&view, &catalogue, None)?
+            {
+                Some(mask) => Ok(mask),
+                None => self
+                    .evaluator
+                    .in_constraint_batch(&view, target_ras, target_decs, None),
+            };
+        }
         let catalogue = catalogue
             .as_slice()
             .expect("unit vectors are built in standard layout");
@@ -315,6 +329,66 @@ impl PyConstraint {
             }
         }
         Ok(result)
+    }
+
+    /// `evaluate` / `evaluate_batch` with apparent geometry: one result per
+    /// target, each the paired evaluation of that target, corrected for every
+    /// time, against the apparent view of those times.
+    pub(super) fn eval_batch_apparent(
+        &self,
+        ephemeris: &dyn EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        n_roll_samples: usize,
+        target_roll: Option<f64>,
+    ) -> PyResult<Vec<ConstraintResult>> {
+        let rows: Vec<usize> = match time_indices {
+            Some(indices) => indices.to_vec(),
+            None => (0..ephemeris.get_times()?.len()).collect(),
+        };
+        let (view, aberrations) = SampledEphemeris::apparent(ephemeris, &rows)?;
+        let times = view.get_times()?;
+        let local: Vec<usize> = (0..rows.len()).collect();
+        let rolls = target_roll.map(|roll| vec![Some(roll); rows.len()]);
+        let name = self.evaluator.name_at_roll(target_roll);
+        target_ras
+            .iter()
+            .zip(target_decs)
+            .map(|(&ra, &dec)| {
+                let (ras, decs): (Vec<f64>, Vec<f64>) = aberrations
+                    .iter()
+                    .map(|aberration| aberration.apply_radec_deg(ra, dec))
+                    .unzip();
+                let evaluation = evaluate_elements(
+                    &*self.evaluator,
+                    &view,
+                    &ras,
+                    &decs,
+                    &local,
+                    rolls.as_deref(),
+                    n_roll_samples,
+                    true,
+                )?;
+                let violations = track_violations(
+                    &times,
+                    |i| {
+                        (
+                            evaluation.violated[i],
+                            if evaluation.violated[i] { 1.0 } else { 0.0 },
+                        )
+                    },
+                    |_i, _is_open| name.clone(),
+                );
+                let all_satisfied = violations.is_empty();
+                Ok(
+                    ConstraintResult::new(violations, all_satisfied, name.clone(), times.clone())
+                        .with_constraint_values(evaluation.values)
+                        .with_component_violated(evaluation.named)
+                        .with_cause_value_keys(evaluation.cause_value_keys),
+                )
+            })
+            .collect()
     }
 
     pub(super) fn validate_target_roll(roll: f64) -> PyResult<()> {

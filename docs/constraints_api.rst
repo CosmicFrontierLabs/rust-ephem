@@ -526,7 +526,7 @@ Logical Combinators
 Evaluation Methods
 ^^^^^^^^^^^^^^^^^^
 
-.. py:method:: Constraint.evaluate(ephemeris, target_ra, target_dec, times=None, indices=None, target_roll=None)
+.. py:method:: Constraint.evaluate(ephemeris, target_ra, target_dec, times=None, indices=None, target_roll=None, apparent=False)
 
    Evaluate constraint against ephemeris data.
 
@@ -612,7 +612,7 @@ Evaluation Methods
       # Find targets that never violate
       always_visible = np.where(violation_counts == 0)[0]
 
-.. py:method:: Constraint.evaluate_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None)
+.. py:method:: Constraint.evaluate_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, apparent=False)
 
    Evaluate a constraint for multiple targets and return one :class:`ConstraintResult`
    per target.
@@ -1571,7 +1571,7 @@ Common Methods (RustConstraintMixin)
 
 All Pydantic constraint models inherit these methods:
 
-.. py:method:: evaluate(ephemeris, target_ra, target_dec, times=None, indices=None, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+.. py:method:: evaluate(ephemeris, target_ra, target_dec, times=None, indices=None, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
 
    Evaluate the constraint using the Rust backend.
 
@@ -1596,7 +1596,7 @@ All Pydantic constraint models inherit these methods:
       :ref:`constraint_values <constraint-values>`
    :rtype: ConstraintResult
 
-.. py:method:: evaluate_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+.. py:method:: evaluate_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
 
    Evaluate the constraint for multiple targets and return one ``ConstraintResult`` per target.
 
@@ -1999,9 +1999,9 @@ angle differs from the one a moving observer sees by the difference of the
 two aberrations: up to about 41 arcseconds for a body and target on opposite
 sides of the observer's direction of motion.
 
-``in_constraint_batch()``, ``in_constraint_elementwise()`` and
-``evaluate_elementwise()`` accept ``apparent=True`` to measure the angle as
-the observer sees it:
+``evaluate()``, ``evaluate_batch()``, ``in_constraint_batch()``,
+``in_constraint_elementwise()`` and ``evaluate_elementwise()`` accept
+``apparent=True`` to measure the angle as the observer sees it:
 
 .. code-block:: python
 
@@ -2013,17 +2013,18 @@ the observer sees it:
 
 With this option:
 
-* The Earth, Sun and Moon are placed where their light arrives from: converged
-  reception light time, solar light deflection, and aberration from the
-  observer's barycentric velocity (the Earth's plus the observer's own). This
-  is the correction of ``get_body(..., apparent=True)``; see
-  :doc:`ephemeris_get_body`.
+* The Earth, Sun and Moon, and the body of a ``BodyConstraint``, are placed
+  where their light arrives from: reception light time, solar light deflection,
+  and aberration from the observer's barycentric velocity (the Earth's plus the
+  observer's own). This is the correction of ``get_body(..., apparent=True)``;
+  see :doc:`ephemeris_get_body`.
 * Each target is corrected for solar light deflection and for the same
   aberration, at the time it is evaluated.
 
-The resulting Sun, Moon and Earth-limb angles agree with Astropy (target and
-body both transformed to a ``GCRS`` frame at the observer's position and
-velocity) to better than a milliarcsecond.
+The resulting Sun, Moon, Earth-limb and body angles agree with Astropy (target
+and body both transformed to a ``GCRS`` frame at the observer's position and
+velocity) to better than a milliarcsecond. A limb-based Moon rule measures the
+limb from the Moon's apparent centre at its light-time distance.
 
 The option needs a planetary SPICE kernel, as apparent ``get_body()`` does, and
 raises ``ValueError`` without one. It applies at any time within the ephemeris
@@ -2032,16 +2033,21 @@ range: off-grid times interpolate the observer state first. ``ras`` and
 
 Limits of the option:
 
-* It costs more than geometric evaluation, because every target is corrected
-  at every time it is evaluated. On a one-year, 10-minute orbit:
-  ``in_constraint_elementwise()`` on 10,000 rows takes about 5% longer;
-  ``in_constraint_batch()`` takes about twice as long for 16,200 targets at
-  1,461 times and about three times as long for 50 targets at 8,761 times.
-* Bodies other than the Earth, Sun and Moon (``BodyConstraint``) and catalogue
-  stars (``BrightStarConstraint``) are not corrected, so with ``apparent=True``
-  their angles carry the target's aberration (up to 20.5 arcseconds).
-* ``evaluate()``, ``evaluate_batch()``, ``in_constraint()``, field-of-regard,
-  routing and moving-body evaluation keep the geometric convention.
+* It costs little. The Sun, Moon and Earth-limb batch kernels correct the
+  targets themselves, across the cores, so a grid of those rules takes about as
+  long as the geometric one. On a one-year, 10-minute orbit,
+  ``in_constraint_elementwise()`` on 10,000 rows takes about 5% longer, and
+  ``evaluate()`` over all 52,561 samples takes 8 ms instead of 2 ms.
+* A grid whose tree holds any other target-dependent rule (``BodyConstraint``,
+  ``BrightStarConstraint``, a boresight offset) or fixed rolls is evaluated one
+  time column at a time, with the targets corrected per column. That is about
+  as fast as the geometric grid for large target sets and slower for a few
+  targets at many times.
+* Catalogue stars (``BrightStarConstraint``) are not corrected, so with
+  ``apparent=True`` the angle between a star and the target is the catalogue
+  star against the apparent target (up to 20.5 arcseconds off).
+* ``in_constraint()``, field-of-regard, routing and moving-body evaluation keep
+  the geometric convention.
 
 .. _visibility-window-cause:
 

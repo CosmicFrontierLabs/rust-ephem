@@ -304,6 +304,16 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
+        // An apparent view asks the kernel to correct the targets: one path does that.
+        if ephemeris.target_corrections().is_some() {
+            let vectors =
+                crate::utils::vector_math::radec_to_unit_vectors_batch(target_ras, target_decs);
+            if let Some(result) =
+                self.in_constraint_batch_unit_vectors(ephemeris, &vectors, time_indices)?
+            {
+                return Ok(result);
+            }
+        }
         // Extract and filter ephemeris data
         let (times_filtered, obs_filtered) =
             extract_observer_ephemeris_data!(ephemeris, time_indices);
@@ -376,6 +386,10 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         Ok(result)
     }
 
+    fn applies_target_corrections(&self) -> bool {
+        true
+    }
+
     fn in_constraint_batch_unit_vectors(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -412,6 +426,19 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
             let r = vector_magnitude(&obs_pos);
             (cos_thresholds[t], cos_max_thresholds[t]) = self.cos_bounds(r);
             center_units[t] = normalize_vector(&[-obs_pos[0], -obs_pos[1], -obs_pos[2]]);
+        }
+
+        // On an apparent view the catalogue cosine becomes the apparent one.
+        if let Some(corrections) = super::core::target_corrections_at(ephemeris, time_indices) {
+            return Ok(Some(super::core::apparent_cosine_grid(
+                target_unit_vectors,
+                &center_units,
+                &corrections,
+                |t, cos_angle| {
+                    cos_angle > cos_thresholds[t]
+                        || cos_max_thresholds[t].is_some_and(|cos_max| cos_angle < cos_max)
+                },
+            )));
         }
 
         for i in 0..n_targets {

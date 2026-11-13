@@ -9,10 +9,18 @@ use crate::utils::interpolation::hermite_interpolate;
 use chrono::{DateTime, Utc};
 use ndarray::{s, Array2};
 use pyo3::{exceptions::PyValueError, prelude::*};
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 pub(crate) struct SampledEphemeris {
     data: EphemerisData,
+    target_corrections: Option<Vec<ObserverAberration>>,
+    /// The true observer states of an apparent view, whose `data.gcrs` holds
+    /// the shifted positions instead.
+    apparent_observer: Option<Array2<f64>>,
+    /// Apparent positions of other bodies on an apparent view, solved once per
+    /// body: a grid evaluated column by column asks for them at every column.
+    apparent_bodies: Mutex<HashMap<String, Array2<f64>>>,
     itrs: Option<Array2<f64>>,
     itrs_skycoord: OnceLock<Py<PyAny>>,
 }
@@ -99,6 +107,9 @@ impl SampledEphemeris {
         // Derived angles, radii and geodetic caches are recomputed from these states.
         Ok(Self {
             data,
+            target_corrections: None,
+            apparent_observer: None,
+            apparent_bodies: Mutex::new(HashMap::new()),
             itrs: source.get_itrs_data().map(sample),
             itrs_skycoord: OnceLock::new(),
         })
@@ -106,6 +117,16 @@ impl SampledEphemeris {
 }
 
 impl SampledEphemeris {
+    /// Ask the batch kernels to correct catalogue targets themselves, one
+    /// correction per row. Only evaluators that report
+    /// `ConstraintEvaluator::applies_target_corrections` honour this, and only
+    /// in their batch kernels: never hand such a view targets that are already
+    /// corrected, nor to an evaluation path other than the batch grid.
+    pub(crate) fn with_target_corrections(mut self, corrections: Vec<ObserverAberration>) -> Self {
+        self.target_corrections = Some(corrections);
+        self
+    }
+
     /// A view of `source` at the given rows in which the Earth, Sun and Moon
     /// lie in the directions their light arrives from (reception light time,
     /// solar deflection and the observer's aberration), with the aberration of
@@ -150,6 +171,7 @@ impl SampledEphemeris {
         )
         .map_err(PyValueError::new_err)?;
         let earth = apparent.remove(0);
+        view.apparent_observer = Some(observer.clone());
         let mut shifted = observer;
         shifted.slice_mut(s![.., 0..3]).assign(&(&earth * -1.0));
         view.data.gcrs = Some(shifted);
@@ -168,6 +190,28 @@ impl SampledEphemeris {
 impl EphemerisBase for SampledEphemeris {
     fn data(&self) -> &EphemerisData {
         &self.data
+    }
+    fn target_corrections(&self) -> Option<&[ObserverAberration]> {
+        self.target_corrections.as_deref()
+    }
+    fn apparent_observer(&self) -> Option<&Array2<f64>> {
+        self.apparent_observer.as_ref()
+    }
+    fn get_any_body_gcrs_positions(&self, body_identifier: &str) -> PyResult<Array2<f64>> {
+        if self.apparent_observer.is_none() {
+            return super::ephemeris_common::geometric_body_gcrs_positions(self, body_identifier);
+        }
+        let mut cache = self
+            .apparent_bodies
+            .lock()
+            .map_err(|_| PyValueError::new_err("apparent body cache was poisoned"))?;
+        if let Some(positions) = cache.get(body_identifier) {
+            return Ok(positions.clone());
+        }
+        let positions =
+            super::ephemeris_common::apparent_view_body_gcrs_positions(self, body_identifier)?;
+        cache.insert(body_identifier.to_string(), positions.clone());
+        Ok(positions)
     }
     fn data_mut(&mut self) -> &mut EphemerisData {
         &mut self.data
