@@ -2,6 +2,9 @@
 //! and their caches remain immutable. Interpolation never extrapolates.
 
 use super::ephemeris_common::{EphemerisBase, EphemerisData};
+use crate::utils::apparent::{
+    apparent_from_states, earth_barycentric_velocities, ObserverAberration,
+};
 use crate::utils::interpolation::hermite_interpolate;
 use chrono::{DateTime, Utc};
 use ndarray::{s, Array2};
@@ -99,6 +102,66 @@ impl SampledEphemeris {
             itrs: source.get_itrs_data().map(sample),
             itrs_skycoord: OnceLock::new(),
         })
+    }
+}
+
+impl SampledEphemeris {
+    /// A view of `source` at the given rows in which the Earth, Sun and Moon
+    /// lie in the directions their light arrives from (reception light time,
+    /// solar deflection and the observer's aberration), with the aberration of
+    /// each row for the targets. Constraints evaluated on this view with
+    /// targets aberrated the same way measure angles as the observer sees them.
+    ///
+    /// The observer position is replaced by minus the apparent geocentre and
+    /// the Sun and Moon are placed relative to it, so every leaf that subtracts
+    /// the observer from a body obtains the apparent vector unchanged.
+    pub(crate) fn apparent(
+        source: &dyn EphemerisBase,
+        rows: &[usize],
+    ) -> PyResult<(Self, Vec<ObserverAberration>)> {
+        let source_times = source
+            .data()
+            .times
+            .as_deref()
+            .ok_or_else(|| PyValueError::new_err("No ephemeris timestamps available"))?;
+        if let Some(row) = rows.iter().find(|&&row| row >= source_times.len()) {
+            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                "index {row} out of bounds for ephemeris with {} timestamps",
+                source_times.len()
+            )));
+        }
+        let times: Vec<DateTime<Utc>> = rows.iter().map(|&row| source_times[row]).collect();
+        let locations: Vec<Result<usize, usize>> = rows.iter().map(|&row| Ok(row)).collect();
+        let mut view = Self::new(source, &times, &locations)?;
+        let observer = view.data.gcrs.clone().ok_or_else(|| {
+            PyValueError::new_err("Apparent evaluation needs observer positions and velocities")
+        })?;
+        let sun = view.data.sun_gcrs.clone().ok_or_else(|| {
+            PyValueError::new_err("Apparent evaluation needs Sun positions and velocities")
+        })?;
+        let earth_velocity =
+            earth_barycentric_velocities(&times, &sun, None).map_err(PyValueError::new_err)?;
+        let moon = view.data.moon_gcrs.clone();
+        let (mut apparent, aberrations) = apparent_from_states(
+            &observer,
+            &sun,
+            &earth_velocity,
+            &[None, Some(&sun), moon.as_ref()],
+        )
+        .map_err(PyValueError::new_err)?;
+        let earth = apparent.remove(0);
+        let mut shifted = observer;
+        shifted.slice_mut(s![.., 0..3]).assign(&(&earth * -1.0));
+        view.data.gcrs = Some(shifted);
+        for (states, position) in [&mut view.data.sun_gcrs, &mut view.data.moon_gcrs]
+            .into_iter()
+            .zip(apparent)
+        {
+            if let Some(states) = states.as_mut() {
+                states.slice_mut(s![.., 0..3]).assign(&(position - &earth));
+            }
+        }
+        Ok((view, aberrations))
     }
 }
 

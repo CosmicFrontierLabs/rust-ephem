@@ -564,7 +564,7 @@ Evaluation Methods
       # Evaluate at specific indices
       result = constraint.evaluate(ephem, 83.63, 22.01, indices=[0, 10, 20])
 
-.. py:method:: Constraint.in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None)
+.. py:method:: Constraint.in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, apparent=False)
 
    Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
 
@@ -635,7 +635,7 @@ Evaluation Methods
       its own computed :ref:`constraint_values <constraint-values>`
    :rtype: list[ConstraintResult]
 
-.. py:method:: Constraint.in_constraint_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+.. py:method:: Constraint.in_constraint_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
 
    Evaluate targets paired elementwise with times. Element ``i`` is the target
    ``(target_ras[i], target_decs[i])`` at ``times[i]``. The result equals the
@@ -665,7 +665,7 @@ Evaluation Methods
       # One pointing per row, each at its own (possibly off-grid) time
       blocked = constraint.in_constraint_elementwise(ephem, ras, decs, times)
 
-.. py:method:: Constraint.evaluate_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+.. py:method:: Constraint.evaluate_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
 
    Same pairing, time handling, roll semantics and polarity as
    :py:meth:`Constraint.in_constraint_elementwise`, returning an ``ElementwiseResult``
@@ -1620,7 +1620,7 @@ All Pydantic constraint models inherit these methods:
       its own computed :ref:`constraint_values <constraint-values>`
    :rtype: list[ConstraintResult]
 
-.. py:method:: in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+.. py:method:: in_constraint_batch(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
 
    Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
 
@@ -1656,7 +1656,7 @@ All Pydantic constraint models inherit these methods:
       )
       print(violations.shape)  # (3, n_times)
 
-.. py:method:: in_constraint_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+.. py:method:: in_constraint_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
 
    Paired evaluation: element ``i`` is ``(target_ras[i], target_decs[i])`` at ``times[i]``.
    Equal to the diagonal of :py:meth:`in_constraint_batch` (same roll semantics and
@@ -1666,7 +1666,7 @@ All Pydantic constraint models inherit these methods:
    :returns: 1D numpy boolean array of shape (N,), ``True`` where violated
    :rtype: numpy.ndarray
 
-.. py:method:: evaluate_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+.. py:method:: evaluate_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
 
    Like :py:meth:`in_constraint_elementwise`, returning an ``ElementwiseResult`` whose
    ``constraint_values`` match the corresponding :py:meth:`evaluate_batch` entries.
@@ -1986,6 +1986,62 @@ roll-dependent, ``evaluate()``/``evaluate_batch()`` sweep spacecraft roll
 internally to decide violation, but ``constraint_values`` is always sourced
 from the roll = 0° evaluation - the geometric value itself doesn't depend on
 which discrete roll was swept for violation determination.
+
+.. _apparent-angles:
+
+Geometric and Apparent Angles
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+By default a constraint measures the angle between the catalogue (ICRS)
+direction of the target and the geometric direction of the body at the
+evaluation time. Neither is the direction the light arrives from, so the
+angle differs from the one a moving observer sees by the difference of the
+two aberrations: up to about 41 arcseconds for a body and target on opposite
+sides of the observer's direction of motion.
+
+``in_constraint_batch()``, ``in_constraint_elementwise()`` and
+``evaluate_elementwise()`` accept ``apparent=True`` to measure the angle as
+the observer sees it:
+
+.. code-block:: python
+
+    rust_ephem.ensure_planetary_ephemeris()
+    result = (sun | moon | earth_limb).evaluate_elementwise(
+        ephem, ras, decs, times, apparent=True
+    )
+    result.constraint_values["sun.sun_angle_deg"]  # apparent angles
+
+With this option:
+
+* The Earth, Sun and Moon are placed where their light arrives from: converged
+  reception light time, solar light deflection, and aberration from the
+  observer's barycentric velocity (the Earth's plus the observer's own). This
+  is the correction of ``get_body(..., apparent=True)``; see
+  :doc:`ephemeris_get_body`.
+* Each target is corrected for solar light deflection and for the same
+  aberration, at the time it is evaluated.
+
+The resulting Sun, Moon and Earth-limb angles agree with Astropy (target and
+body both transformed to a ``GCRS`` frame at the observer's position and
+velocity) to better than a milliarcsecond.
+
+The option needs a planetary SPICE kernel, as apparent ``get_body()`` does, and
+raises ``ValueError`` without one. It applies at any time within the ephemeris
+range: off-grid times interpolate the observer state first. ``ras`` and
+``decs`` on the result stay the catalogue coordinates passed in.
+
+Limits of the option:
+
+* It costs more than geometric evaluation, because every target is corrected
+  at every time it is evaluated. On a one-year, 10-minute orbit:
+  ``in_constraint_elementwise()`` on 10,000 rows takes about 5% longer;
+  ``in_constraint_batch()`` takes about twice as long for 16,200 targets at
+  1,461 times and about three times as long for 50 targets at 8,761 times.
+* Bodies other than the Earth, Sun and Moon (``BodyConstraint``) and catalogue
+  stars (``BrightStarConstraint``) are not corrected, so with ``apparent=True``
+  their angles carry the target's aberration (up to 20.5 arcseconds).
+* ``evaluate()``, ``evaluate_batch()``, ``in_constraint()``, field-of-regard,
+  routing and moving-body evaluation keep the geometric convention.
 
 .. _visibility-window-cause:
 
