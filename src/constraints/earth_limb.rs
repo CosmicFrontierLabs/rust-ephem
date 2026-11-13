@@ -81,8 +81,10 @@ impl EarthLimbEvaluator {
     ///
     /// A minimum beyond 180° from the centre cannot be met by any direction, so
     /// it maps to `-inf` (always violated) rather than being clamped to 180°,
-    /// which would wrongly allow the antipodal direction. A maximum beyond 180°
-    /// can never be exceeded, so clamping it is correct.
+    /// which would wrongly allow the antipodal direction. A maximum at or beyond
+    /// 180° can never be exceeded, so it maps to `None` (no upper bound) rather
+    /// than `cos = -1`, which dot-product roundoff below -1 could falsely
+    /// violate for directions opposite the Earth.
     fn cos_bounds(&self, distance_km: f64) -> (f64, Option<f64>) {
         let offset = self.limb_offset_deg(distance_km);
         let min_total = offset + self.min_angle_deg;
@@ -94,7 +96,9 @@ impl EarthLimbEvaluator {
         (
             min_cos,
             self.max_angle_deg
-                .map(|max| (offset + max).min(180.0).to_radians().cos()),
+                .map(|max| offset + max)
+                .filter(|&max_total| max_total < 180.0)
+                .map(|max_total| max_total.to_radians().cos()),
         )
     }
 }
@@ -525,5 +529,47 @@ mod tests {
             .evaluate_diagonal(&eph, &[180.0; 2], &[0.0; 2], None)
             .unwrap();
         assert_eq!(diag.violated, vec![true; 2]);
+    }
+
+    #[test]
+    fn unattainable_limb_maximum_is_disabled() {
+        let c = EarthLimbEvaluator {
+            min_angle_deg: 10.0,
+            max_angle_deg: Some(120.0),
+            include_refraction: false,
+            horizon_dip: false,
+        };
+        // offset ~65.7° + 120° > 180°: no upper bound, so roundoff in the dot
+        // product can never trip it.
+        assert_eq!(c.cos_bounds(7000.0).1, None);
+        let c = EarthLimbEvaluator {
+            max_angle_deg: Some(100.0),
+            ..c
+        };
+        assert!(c.cos_bounds(7000.0).1.is_some());
+    }
+
+    #[test]
+    fn unattainable_limb_maximum_allows_earth_opposite_directions() {
+        // Earth radius ~65.7° from 7000 km; max 120° from the limb is ~185.7°
+        // from the centre, so directions near the antipode must be allowed.
+        let eph = TestEphemeris::new(2);
+        let c = evaluator(10.0, Some(120.0));
+        let ras = [180.0, 178.0];
+        let decs = [0.0, 0.0];
+        let batch = c.in_constraint_batch(&eph, &ras, &decs, None).unwrap();
+        assert!(batch.iter().all(|&v| !v), "batch: {batch:?}");
+        let unit = c
+            .in_constraint_batch_unit_vectors(&eph, &radec_to_unit_vectors_batch(&ras, &decs), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(unit, batch);
+        for (&ra, &dec) in ras.iter().zip(&decs) {
+            assert!(c.evaluate(&eph, ra, dec, None).unwrap().all_satisfied);
+        }
+        let diag = c
+            .evaluate_diagonal(&eph, &[180.0; 2], &[0.0; 2], None)
+            .unwrap();
+        assert_eq!(diag.violated, vec![false; 2]);
     }
 }
