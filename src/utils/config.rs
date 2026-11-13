@@ -56,7 +56,7 @@ pub const SUN_NAIF_ID: i32 = 10;
 // Physical radii in kilometers
 pub const SUN_RADIUS_KM: f64 = 695700.0; // Sun mean radius (IAU 2015 Resolution B 3)
 pub const MOON_RADIUS_KM: f64 = 1737.4; // Moon mean radius
-pub const EARTH_RADIUS_KM: f64 = 6378.1; // Earth equatorial radius (IAU 2015 Resolution B 3)
+pub const EARTH_RADIUS_KM: f64 = 6378.137; // Earth equatorial radius (WGS84 / IERS 2010)
 
 // Limits
 pub const MAX_TIMESTAMPS: i64 = 100_000;
