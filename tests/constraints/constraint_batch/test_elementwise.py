@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pytest
 
 from rust_ephem import (
@@ -83,7 +84,7 @@ def ground_constraints() -> dict[str, RustConstraintMixin]:
 
 def random_elements(
     timestamps: Any, n: int, seed: int
-) -> tuple[list[float], list[float], np.ndarray]:
+) -> tuple[list[float], list[float], npt.NDArray[np.int64]]:
     rng = np.random.default_rng(seed)
     ras = rng.uniform(0, 360, n).tolist()
     decs = np.degrees(np.arcsin(rng.uniform(-1, 1, n))).tolist()
@@ -96,7 +97,7 @@ def assert_matches_grid(
     ephem: Any,
     ras: list[float],
     decs: list[float],
-    idx: np.ndarray,
+    idx: npt.NDArray[np.int64],
     target_rolls: Any = None,
 ) -> None:
     times = [ephem.timestamp[i] for i in idx]
