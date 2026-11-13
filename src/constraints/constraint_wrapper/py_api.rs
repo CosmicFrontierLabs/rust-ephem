@@ -34,6 +34,7 @@ use super::field_of_regard::DEFAULT_N_ROLL_SAMPLES;
 use super::json_parser::parse_constraint_json;
 use super::json_to_py::json_to_pyobject;
 use super::roll_range::run_roll_sweep;
+use crate::constraints::elementwise::ElementwiseResult;
 #[path = "py_api_helpers.rs"]
 mod py_api_helpers;
 
@@ -2061,6 +2062,102 @@ impl PyConstraint {
         .with_constraint_values(evaluation.values)
         .with_component_violated(evaluation.named)
         .with_cause_value_keys(evaluation.cause_value_keys))
+    }
+
+    /// Check targets paired elementwise with times (vectorized, no Cartesian grid)
+    ///
+    /// Element ``i`` is the target ``(target_ras[i], target_decs[i])`` at
+    /// ``times[i]``. The result equals the diagonal of
+    /// ``in_constraint_batch(ephemeris, target_ras, target_decs, times=times)``
+    /// but costs O(N) rather than O(N^2).
+    ///
+    /// Args:
+    ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
+    ///     target_ras (array-like): Right ascensions in degrees (ICRS/J2000), length N
+    ///     target_decs (array-like): Declinations in degrees (ICRS/J2000), length N
+    ///     times (list[datetime], optional): One time per element (length N). Times
+    ///         may be unsorted, duplicated, and between ephemeris samples (geometry is
+    ///         interpolated, as in ``in_constraint``), but must lie within the
+    ///         ephemeris range. ``None`` pairs element ``i`` with ephemeris timestamp
+    ///         ``i`` (N must equal the ephemeris length).
+    ///     target_rolls (list[float | None], optional): Per-element spacecraft roll in
+    ///         degrees; ``None`` entries (or ``target_rolls=None``) sweep
+    ///         ``n_roll_samples`` rolls for roll-dependent constraints, exactly as
+    ///         ``in_constraint_batch``.
+    ///     n_roll_samples (int, optional): Roll angles swept in the free-roll case.
+    ///
+    /// Returns:
+    ///     numpy.ndarray: 1D boolean array of shape (N,), True where the constraint
+    ///     is VIOLATED.
+    ///
+    /// Raises:
+    ///     ValueError: On length mismatches or times outside the ephemeris range.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES))]
+    fn in_constraint_elementwise(
+        &self,
+        py: Python,
+        ephemeris: Py<PyAny>,
+        target_ras: Vec<f64>,
+        target_decs: Vec<f64>,
+        times: Option<&Bound<PyAny>>,
+        target_rolls: Option<Vec<Option<f64>>>,
+        n_roll_samples: usize,
+    ) -> PyResult<Py<PyAny>> {
+        let (_, evaluation) = self.elementwise(
+            py,
+            &ephemeris,
+            &target_ras,
+            &target_decs,
+            times,
+            target_rolls.as_deref(),
+            n_roll_samples,
+            false,
+        )?;
+        use numpy::IntoPyArray;
+        Ok(evaluation.violated.into_pyarray(py).into_any().unbind())
+    }
+
+    /// Evaluate targets paired elementwise with times, with per-element values
+    ///
+    /// Same pairing, time handling and polarity as ``in_constraint_elementwise``.
+    /// ``constraint_values`` has exactly the keys ``evaluate`` / ``evaluate_batch``
+    /// report for this constraint (e.g. ``sun_angle_deg``, or ``sun.sun_angle_deg``
+    /// inside a combinator), each an (N,) float array.
+    ///
+    /// Returns:
+    ///     ElementwiseResult: with ``constraint_array`` (N,) bool (True = violated),
+    ///     ``visibility_flags``, ``constraint_values``, ``component_violated``,
+    ///     ``cause_value_keys``, ``timestamp``, ``ras`` and ``decs``.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES))]
+    fn evaluate_elementwise(
+        &self,
+        py: Python,
+        ephemeris: Py<PyAny>,
+        target_ras: Vec<f64>,
+        target_decs: Vec<f64>,
+        times: Option<&Bound<PyAny>>,
+        target_rolls: Option<Vec<Option<f64>>>,
+        n_roll_samples: usize,
+    ) -> PyResult<ElementwiseResult> {
+        let (element_times, evaluation) = self.elementwise(
+            py,
+            &ephemeris,
+            &target_ras,
+            &target_decs,
+            times,
+            target_rolls.as_deref(),
+            n_roll_samples,
+            true,
+        )?;
+        Ok(ElementwiseResult::new(
+            self.evaluator.name(),
+            element_times,
+            target_ras,
+            target_decs,
+            evaluation,
+        ))
     }
 
     /// Get constraint configuration as JSON string

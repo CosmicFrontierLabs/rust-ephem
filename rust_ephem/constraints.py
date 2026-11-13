@@ -29,7 +29,7 @@ from pydantic import (
 import rust_ephem
 
 from ._rust_ephem import ConstraintResult as _RustConstraintResult
-from ._rust_ephem import RouteResult
+from ._rust_ephem import ElementwiseResult, RouteResult
 from .ephemeris import Ephemeris
 
 #: Default number of roll-angle samples used when sweeping spacecraft roll in
@@ -709,6 +709,120 @@ class RustConstraintMixin(BaseModel):
                 times,
                 indices,
                 target_rolls=cast(list[float], normalized_target_rolls),
+                n_roll_samples=n_roll_samples,
+            ),
+        )
+
+    @staticmethod
+    def _elementwise_times(
+        times: datetime | Sequence[datetime] | npt.NDArray[Any] | None,
+    ) -> datetime | list[datetime] | None:
+        """Normalise elementwise ``times`` (datetime64 arrays -> UTC datetimes)."""
+        if isinstance(times, np.ndarray) and np.issubdtype(times.dtype, np.datetime64):
+            return cast(
+                list[datetime], times.astype("datetime64[us]").astype(object).tolist()
+            )
+        if times is None or isinstance(times, datetime):
+            return times
+        return list(times)
+
+    def _elementwise_backend(
+        self, target_rolls: Sequence[float | None] | None
+    ) -> tuple[Any, list[float | None] | None]:
+        """Pick the Rust constraint with the same roll semantics as the batch APIs.
+
+        Free-roll entries on a roll-dependent tree need the sweep backend; a fully
+        fixed-roll call uses the definition-only backend, as ``in_constraint_batch``
+        does. Fixed rolls evaluate identically on either backend.
+        """
+        rolls = None if target_rolls is None else list(target_rolls)
+        if rolls is not None and all(roll is not None for roll in rolls):
+            return self._get_cached_rust_constraint(), rolls
+        return self._resolve_evaluation_constraint(None), rolls
+
+    def in_constraint_elementwise(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: Sequence[float] | npt.ArrayLike,
+        target_decs: Sequence[float] | npt.ArrayLike,
+        times: datetime | Sequence[datetime] | npt.NDArray[Any] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+    ) -> npt.NDArray[np.bool_]:
+        """Check targets paired elementwise with times (no target x time grid).
+
+        Element ``i`` is the target ``(target_ras[i], target_decs[i])`` at
+        ``times[i]``. The result equals the diagonal of
+        :meth:`in_constraint_batch` evaluated over every target and time, but
+        costs O(N) instead of O(N^2).
+
+        Args:
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris,
+                OEMEphemeris, FileEphemeris, or ParquetEphemeris
+            target_ras: Right ascensions in degrees (ICRS/J2000), length N
+            target_decs: Declinations in degrees (ICRS/J2000), length N
+            times: One time per element (length N; a list of datetimes or a
+                ``datetime64`` array). Times may be unsorted, duplicated, and
+                between ephemeris samples (geometry is interpolated, as in
+                :meth:`in_constraint`), but must lie within the ephemeris range.
+                ``None`` pairs element ``i`` with ephemeris timestamp ``i`` (N must
+                equal the ephemeris length).
+            target_rolls: Optional per-element spacecraft roll (degrees); ``None``
+                entries sweep ``n_roll_samples`` rolls for roll-dependent
+                constraints, as in :meth:`in_constraint_batch`.
+            n_roll_samples: Roll angles swept in the free-roll case.
+
+        Returns:
+            1D boolean array of shape (N,), ``True`` where the constraint is
+            violated.
+
+        Raises:
+            ValueError: On length mismatches or times outside the ephemeris range.
+        """
+        backend, rolls = self._elementwise_backend(target_rolls)
+        return cast(
+            npt.NDArray[np.bool_],
+            backend.in_constraint_elementwise(
+                ephemeris,
+                np.asarray(target_ras, dtype=float).tolist(),
+                np.asarray(target_decs, dtype=float).tolist(),
+                self._elementwise_times(times),
+                target_rolls=rolls,
+                n_roll_samples=n_roll_samples,
+            ),
+        )
+
+    def evaluate_elementwise(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: Sequence[float] | npt.ArrayLike,
+        target_decs: Sequence[float] | npt.ArrayLike,
+        times: datetime | Sequence[datetime] | npt.NDArray[Any] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+    ) -> ElementwiseResult:
+        """Evaluate targets paired elementwise with times, with per-element values.
+
+        Same pairing, time handling, roll semantics and polarity as
+        :meth:`in_constraint_elementwise`.
+
+        Returns:
+            :class:`~rust_ephem.ElementwiseResult` with ``constraint_array``
+            (N,) bool (``True`` = violated), ``visibility_flags``,
+            ``constraint_values`` (dict of (N,) float arrays with the same keys
+            :meth:`evaluate_batch` reports, e.g. ``sun.sun_angle_deg`` inside a
+            combinator), ``component_violated``, ``cause_value_keys``,
+            ``timestamp``, ``ras`` and ``decs``.
+        """
+        backend, rolls = self._elementwise_backend(target_rolls)
+        return cast(
+            ElementwiseResult,
+            backend.evaluate_elementwise(
+                ephemeris,
+                np.asarray(target_ras, dtype=float).tolist(),
+                np.asarray(target_decs, dtype=float).tolist(),
+                self._elementwise_times(times),
+                target_rolls=rolls,
                 n_roll_samples=n_roll_samples,
             ),
         )

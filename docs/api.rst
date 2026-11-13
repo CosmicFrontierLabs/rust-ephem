@@ -560,6 +560,17 @@ Classes
       - **Optimized**: Uses vectorized operations for batch RA/Dec conversion and constraint evaluation
       - **All constraint types supported**: Sun/Moon proximity, Earth limb, Eclipse, Body proximity, boresight offsets, and logical combinators (AND, OR, XOR, AT_LEAST, NOT)
 
+    * ``in_constraint_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)`` — Paired evaluation: element ``i`` is target ``(target_ras[i], target_decs[i])`` at ``times[i]``
+
+      - Equals the diagonal of ``in_constraint_batch`` over all targets and times, at O(N) cost (no N x N grid)
+      - ``times`` — One datetime per element; may be unsorted, duplicated and between ephemeris samples (interpolated, as in ``in_constraint``), but must lie within the ephemeris range. ``None`` pairs element ``i`` with ephemeris timestamp ``i``
+      - ``target_rolls`` — Optional per-element roll (degrees); ``None`` entries sweep rolls for roll-dependent constraints, as in ``in_constraint_batch``
+      - Returns: 1D NumPy boolean array of shape (N,), True where the constraint is violated
+
+    * ``evaluate_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)`` — Same pairing as ``in_constraint_elementwise``, plus per-element values
+
+      - Returns: ``ElementwiseResult`` object
+
     * ``in_constraint(time, ephemeris, target_ra, target_dec)`` — Check if target is in-constraint at a single time
 
       - ``time`` — Python datetime object (must exist in ephemeris timestamps)
@@ -629,6 +640,22 @@ Classes
       ``ConstraintResult`` (see above)
     * ``ras`` — NumPy array of the body's right ascension in degrees at each timestamp
     * ``decs`` — NumPy array of the body's declination in degrees at each timestamp
+
+**ElementwiseResult**
+  Result of ``evaluate_elementwise()``: one entry per input element, in input order.
+
+  **Attributes (read-only):**
+    * ``constraint_array`` — (N,) NumPy bool array, True where the constraint is violated
+    * ``visibility_flags`` — (N,) NumPy bool array, the inverse of ``constraint_array``
+    * ``constraint_values`` — ``dict[str, numpy.ndarray]`` of (N,) float arrays with exactly the
+      keys ``evaluate()``/``evaluate_batch()`` report for the same constraint (including
+      combinator namespacing such as ``sun.sun_angle_deg``)
+    * ``component_violated`` — ``dict[str, numpy.ndarray]`` of (N,) per-leaf violation masks keyed
+      by cause tag (``sun``, ``not.moon``, ...)
+    * ``cause_value_keys`` — cause tag to ``constraint_values`` key(s), as on ``ConstraintResult``
+    * ``timestamp`` — (N,) NumPy object array of the UTC datetime each element was evaluated at
+    * ``ras``, ``decs`` — (N,) NumPy float arrays of the input coordinates
+    * ``constraint_name`` — String name/description of the constraint
 
 **ConstraintViolation**
   Information about a specific constraint violation time window.
