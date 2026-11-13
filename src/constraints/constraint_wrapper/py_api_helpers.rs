@@ -12,11 +12,18 @@ use crate::ephemeris::OEMEphemeris;
 use crate::ephemeris::ParquetEphemeris;
 use crate::ephemeris::SPICEEphemeris;
 use crate::ephemeris::TLEEphemeris;
+use crate::utils::apparent::ObserverAberration;
 use chrono::{DateTime, Utc};
 use pyo3::prelude::*;
+use rayon::prelude::*;
 use std::collections::HashMap;
 
 use super::PyConstraint;
+
+/// Target-vector components corrected per block of times (about 64 MB).
+const APPARENT_BLOCK_VALUES: usize = 8_000_000;
+/// Fewest target x time cells in a block worth spreading over the cores.
+const APPARENT_PARALLEL_MIN_CELLS: usize = 20_000;
 
 impl PyConstraint {
     pub(super) fn parse_datetime_input(times: &Bound<PyAny>) -> PyResult<Vec<DateTime<Utc>>> {
@@ -154,6 +161,7 @@ impl PyConstraint {
         target_rolls: Option<&[Option<f64>]>,
         n_roll_samples: usize,
         with_values: bool,
+        apparent: bool,
     ) -> PyResult<(Vec<DateTime<Utc>>, DiagonalEvaluation)> {
         Self::validate_n_roll_samples(n_roll_samples)?;
         if target_ras.len() != target_decs.len() {
@@ -178,6 +186,36 @@ impl PyConstraint {
             target_ras.len(),
             times,
             |ephem, indices, element_times| {
+                if apparent {
+                    // One apparent row per distinct time; each target is aberrated
+                    // for the observer state of its own time.
+                    let mut rows = indices.to_vec();
+                    rows.sort_unstable();
+                    rows.dedup();
+                    let (view, aberrations) = SampledEphemeris::apparent(ephem, &rows)?;
+                    let local: Vec<usize> = indices
+                        .iter()
+                        .map(|row| rows.binary_search(row).unwrap_or_else(|i| i))
+                        .collect();
+                    let (ras, decs): (Vec<f64>, Vec<f64>) = local
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &row)| {
+                            aberrations[row].apply_radec_deg(target_ras[i], target_decs[i])
+                        })
+                        .unzip();
+                    let evaluation = evaluate_elements(
+                        &*self.evaluator,
+                        &view,
+                        &ras,
+                        &decs,
+                        &local,
+                        target_rolls,
+                        n_roll_samples,
+                        with_values,
+                    )?;
+                    return Ok((element_times, evaluation));
+                }
                 let evaluation = evaluate_elements(
                     &*self.evaluator,
                     ephem,
@@ -191,6 +229,92 @@ impl PyConstraint {
                 Ok((element_times, evaluation))
             },
         )
+    }
+
+    /// Target x time violation grid with apparent geometry: the bodies of each
+    /// time are apparent (`SampledEphemeris::apparent`) and every target is
+    /// aberrated for that time's observer state, so each column is evaluated
+    /// with its own target directions. `kernel` evaluates one column from
+    /// RA/Dec; with `unit_vectors` the leaf's unit-vector kernel is tried first,
+    /// which avoids the trigonometry (roll-independent trees only).
+    pub(super) fn apparent_batch<K>(
+        &self,
+        ephemeris: &dyn EphemerisBase,
+        time_indices: Option<&[usize]>,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        unit_vectors: bool,
+        kernel: K,
+    ) -> PyResult<ndarray::Array2<bool>>
+    where
+        K: Fn(&dyn EphemerisBase, &[f64], &[f64], &[usize]) -> PyResult<ndarray::Array2<bool>>,
+    {
+        let rows: Vec<usize> = match time_indices {
+            Some(indices) => indices.to_vec(),
+            None => (0..ephemeris.get_times()?.len()).collect(),
+        };
+        let (view, aberrations) = SampledEphemeris::apparent(ephemeris, &rows)?;
+        let catalogue =
+            crate::utils::vector_math::radec_to_unit_vectors_batch(target_ras, target_decs);
+        let catalogue = catalogue
+            .as_slice()
+            .expect("unit vectors are built in standard layout");
+        let n_targets = target_ras.len();
+        let mut result = ndarray::Array2::from_elem((n_targets, rows.len()), false);
+        let (mut ras, mut decs) = (vec![0.0; n_targets], vec![0.0; n_targets]);
+        // Correcting every target for every time is the one per-cell cost of
+        // apparent evaluation. It is plain arithmetic, so a block of times is
+        // corrected across the cores before its columns are evaluated in turn
+        // (the evaluators themselves are not shared between threads).
+        let block = (APPARENT_BLOCK_VALUES / (3 * n_targets).max(1)).clamp(1, 4096);
+        let mut proper =
+            vec![ndarray::Array2::<f64>::zeros((n_targets, 3)); block.min(aberrations.len())];
+        for (start, corrections) in aberrations.chunks(block).enumerate() {
+            let start = start * block;
+            let correct = |(out, aberration): (&mut ndarray::Array2<f64>, &ObserverAberration)| {
+                let out = out.as_slice_mut().expect("standard layout");
+                for (out, p) in out
+                    .as_chunks_mut::<3>()
+                    .0
+                    .iter_mut()
+                    .zip(catalogue.as_chunks::<3>().0)
+                {
+                    *out = aberration.apply(*p);
+                }
+            };
+            if corrections.len() * n_targets >= APPARENT_PARALLEL_MIN_CELLS {
+                proper
+                    .par_iter_mut()
+                    .zip(corrections.par_iter())
+                    .for_each(correct);
+            } else {
+                proper.iter_mut().zip(corrections).for_each(correct);
+            }
+            for (offset, vectors) in proper.iter().take(corrections.len()).enumerate() {
+                let selected = [start + offset];
+                let fast = if unit_vectors {
+                    self.evaluator.in_constraint_batch_unit_vectors(
+                        &view,
+                        vectors,
+                        Some(&selected),
+                    )?
+                } else {
+                    None
+                };
+                let mask = match fast {
+                    Some(mask) => mask,
+                    None => {
+                        for (i, p) in vectors.rows().into_iter().enumerate() {
+                            ras[i] = p[1].atan2(p[0]).to_degrees().rem_euclid(360.0);
+                            decs[i] = p[2].atan2(p[0].hypot(p[1])).to_degrees();
+                        }
+                        kernel(&view, &ras, &decs, &selected)?
+                    }
+                };
+                result.column_mut(start + offset).assign(&mask.column(0));
+            }
+        }
+        Ok(result)
     }
 
     pub(super) fn validate_target_roll(roll: f64) -> PyResult<()> {

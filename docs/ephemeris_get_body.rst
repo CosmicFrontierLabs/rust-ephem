@@ -81,8 +81,9 @@ Use ``ensure_planetary_ephemeris()`` as above or pass
 approximate analytic Sun/Moon models or the Horizons fallback;
 ``apparent=True, use_horizons=True`` raises ``ValueError``.
 
-Existing ``sun``, ``moon``, ``sun_pv``, ``moon_pv``, RA/Dec properties, and
-constraint calculations retain their geometric convention. Calling
+Existing ``sun``, ``moon``, ``sun_pv``, ``moon_pv`` and RA/Dec properties
+retain their geometric convention, as do constraint calculations unless they
+are asked for apparent angles (see :ref:`apparent-angles`). Calling
 ``get_body(..., apparent=True)`` does not change those cached values.
 Astropy's ``get_body()`` defaults to an apparent position, so comparisons
 should select ``apparent=True`` and use the same planetary kernel and

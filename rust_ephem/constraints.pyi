@@ -131,6 +131,7 @@ class RustConstraintMixin(BaseModel):
         indices: int | list[int] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> npt.NDArray[np.bool_]: ...
     def in_constraint_elementwise(
         self,
@@ -140,6 +141,7 @@ class RustConstraintMixin(BaseModel):
         times: datetime | Sequence[datetime] | npt.NDArray[np.datetime64] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> npt.NDArray[np.bool_]: ...
     def evaluate_elementwise(
         self,
@@ -149,6 +151,7 @@ class RustConstraintMixin(BaseModel):
         times: datetime | Sequence[datetime] | npt.NDArray[np.datetime64] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> ElementwiseResult: ...
     def in_constraint(
         self,
