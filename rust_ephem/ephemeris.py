@@ -1,5 +1,6 @@
 # Create a type alias that supports isinstance checks
 import abc
+from collections.abc import Iterable
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -83,6 +84,32 @@ class Ephemeris(abc.ABC):
     @abc.abstractmethod
     def moon_pv(self) -> PositionVelocityData:
         """Moon position and velocity in GCRS frame."""
+        ...
+
+    @abc.abstractmethod
+    def gcrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Observer GCRS position/velocity at arbitrary time(s).
+
+        Grid times return the ``gcrs_pv`` rows unchanged; times between grid
+        points use the same cubic Hermite interpolation as constraint
+        evaluation. Rows follow input order. Raises ``ValueError`` for times
+        outside the ephemeris span.
+        """
+        ...
+
+    @abc.abstractmethod
+    def itrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Observer ITRS position/velocity at arbitrary time(s); see ``gcrs_pv_at``."""
+        ...
+
+    @abc.abstractmethod
+    def sun_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Sun GCRS position/velocity at arbitrary time(s); see ``gcrs_pv_at``."""
+        ...
+
+    @abc.abstractmethod
+    def moon_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Moon GCRS position/velocity at arbitrary time(s); see ``gcrs_pv_at``."""
         ...
 
     @property

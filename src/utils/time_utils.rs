@@ -74,6 +74,17 @@ pub fn datetime_to_mjd(dt: &DateTime<Utc>) -> f64 {
 // Python datetime interop
 // ============================================================================
 
+/// Convert a single Python datetime, or any iterable of them, to UTC instants,
+/// preserving input order. Shared by constraint `times=` arguments and the
+/// ephemeris `*_pv_at` methods.
+pub fn python_datetimes_to_utc(times: &Bound<PyAny>) -> PyResult<Vec<DateTime<Utc>>> {
+    if let Ok(iter) = pyo3::types::PyIterator::from_object(times) {
+        iter.map(|item| python_datetime_to_utc(&item?)).collect()
+    } else {
+        Ok(vec![python_datetime_to_utc(times)?])
+    }
+}
+
 /// Convert Python datetime to UTC, respecting its offset. Naive values mean UTC.
 pub fn python_datetime_to_utc(py_dt: &Bound<PyAny>) -> PyResult<DateTime<Utc>> {
     let date = chrono::NaiveDate::from_ymd_opt(
