@@ -78,12 +78,23 @@ impl EarthLimbEvaluator {
     /// Cosine bounds on the angle from the Earth's centre at `distance_km`:
     /// violated when `cos > min_cos` (too close to the limb) or `cos < max_cos`
     /// (too far from it).
+    ///
+    /// A minimum beyond 180° from the centre cannot be met by any direction, so
+    /// it maps to `-inf` (always violated) rather than being clamped to 180°,
+    /// which would wrongly allow the antipodal direction. A maximum beyond 180°
+    /// can never be exceeded, so clamping it is correct.
     fn cos_bounds(&self, distance_km: f64) -> (f64, Option<f64>) {
         let offset = self.limb_offset_deg(distance_km);
-        let to_cos = |deg: f64| deg.min(180.0).to_radians().cos();
+        let min_total = offset + self.min_angle_deg;
+        let min_cos = if min_total > 180.0 {
+            f64::NEG_INFINITY
+        } else {
+            min_total.to_radians().cos()
+        };
         (
-            to_cos(offset + self.min_angle_deg),
-            self.max_angle_deg.map(|max| to_cos(offset + max)),
+            min_cos,
+            self.max_angle_deg
+                .map(|max| (offset + max).min(180.0).to_radians().cos()),
         )
     }
 }
@@ -490,5 +501,29 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(unit, mask);
+    }
+
+    #[test]
+    fn impossible_limb_minimum_is_always_violated() {
+        // Earth radius ~65.7° from 7000 km; min 120° from the limb is ~185.7°
+        // from the centre, so even the antipode (RA 180°, Dec 0°) is violated.
+        let eph = TestEphemeris::new(2);
+        let c = evaluator(120.0, None);
+        let ras = [180.0, 178.0];
+        let decs = [0.0, 0.0];
+        let batch = c.in_constraint_batch(&eph, &ras, &decs, None).unwrap();
+        assert!(batch.iter().all(|&v| v), "batch: {batch:?}");
+        let unit = c
+            .in_constraint_batch_unit_vectors(&eph, &radec_to_unit_vectors_batch(&ras, &decs), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(unit, batch);
+        for (&ra, &dec) in ras.iter().zip(&decs) {
+            assert!(!c.evaluate(&eph, ra, dec, None).unwrap().all_satisfied);
+        }
+        let diag = c
+            .evaluate_diagonal(&eph, &[180.0; 2], &[0.0; 2], None)
+            .unwrap();
+        assert_eq!(diag.violated, vec![true; 2]);
     }
 }
