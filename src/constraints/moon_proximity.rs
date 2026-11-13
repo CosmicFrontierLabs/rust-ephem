@@ -72,11 +72,18 @@ impl MoonProximityEvaluator {
 
     /// Cosine thresholds on the centre separation for a given limb offset.
     /// `angle < min` ⟺ `cos(angle) > min_cos`; `angle > max` ⟺ `cos(angle) < max_cos`.
+    ///
+    /// A minimum beyond 180° from the centre cannot be met by any direction, so
+    /// it maps to `-inf` (always violated) rather than being clamped to 180°,
+    /// which would wrongly allow the antipodal direction. A maximum beyond 180°
+    /// can never be exceeded, so clamping it is correct.
     fn cos_thresholds(&self, offset_deg: f64) -> (f64, Option<f64>) {
-        let min_cos = (self.min_angle_deg + offset_deg)
-            .min(180.0)
-            .to_radians()
-            .cos();
+        let min_total = self.min_angle_deg + offset_deg;
+        let min_cos = if min_total > 180.0 {
+            f64::NEG_INFINITY
+        } else {
+            min_total.to_radians().cos()
+        };
         let max_cos = self
             .max_angle_deg
             .map(|max| (max + offset_deg).min(180.0).to_radians().cos());
@@ -421,6 +428,38 @@ mod tests {
             .compute_named_values(&eph, &[102.0], &[0.0], None)
             .unwrap();
         assert!(!centre_values.contains_key("moon_limb_angle_deg"));
+    }
+
+    #[test]
+    fn impossible_limb_minimum_is_always_violated() {
+        // Moon radius 10°, min 175° from the limb = 185° from the centre: no
+        // direction qualifies, including the exact antipode (RA 270°, Dec 0°).
+        let eph = close_moon_ephemeris();
+        let c = evaluator(175.0, None, true);
+        let ras = [270.0, 268.0, 90.0];
+        let decs = [0.0; 3];
+
+        let batch = c.in_constraint_batch(&eph, &ras, &decs, None).unwrap();
+        assert!(batch.iter().all(|&v| v), "batch: {batch:?}");
+        let unit = c
+            .in_constraint_batch_unit_vectors(&eph, &radec_to_unit_vectors_batch(&ras, &decs), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(unit, batch);
+        for (&ra, &dec) in ras.iter().zip(&decs) {
+            assert!(!c.evaluate(&eph, ra, dec, None).unwrap().all_satisfied);
+        }
+        let diag = c
+            .evaluate_diagonal(&eph, &[270.0; 3], &[0.0; 3], None)
+            .unwrap();
+        assert_eq!(diag.violated, vec![true; 3]);
+
+        // Centre mode with min_angle=180 is still satisfiable at the antipode.
+        assert!(
+            !evaluator(180.0, None, false)
+                .in_constraint_batch(&eph, &[270.0], &[0.0], None)
+                .unwrap()[[0, 0]]
+        );
     }
 
     #[test]
