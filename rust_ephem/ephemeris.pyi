@@ -1,4 +1,5 @@
 import abc
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
 
@@ -52,6 +53,22 @@ class Ephemeris(abc.ABC):
     @property
     @abc.abstractmethod
     def moon_pv(self) -> PositionVelocityData: ...
+    @abc.abstractmethod
+    def gcrs_pv_at(
+        self, times: datetime | Iterable[datetime]
+    ) -> PositionVelocityData: ...
+    @abc.abstractmethod
+    def itrs_pv_at(
+        self, times: datetime | Iterable[datetime]
+    ) -> PositionVelocityData: ...
+    @abc.abstractmethod
+    def sun_pv_at(
+        self, times: datetime | Iterable[datetime]
+    ) -> PositionVelocityData: ...
+    @abc.abstractmethod
+    def moon_pv_at(
+        self, times: datetime | Iterable[datetime]
+    ) -> PositionVelocityData: ...
     @property
     @abc.abstractmethod
     def obsgeoloc(self) -> npt.NDArray[np.float64]: ...

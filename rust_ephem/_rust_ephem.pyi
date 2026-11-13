@@ -1,6 +1,8 @@
 """Type stubs for the Rust extension module _rust_ephem"""
 
-from collections.abc import Sequence
+
+from collections.abc import Iterable, Sequence
+from collections.abc import 
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, runtime_checkable
 
@@ -288,6 +290,66 @@ class MovingBodyResult:
         """
         ...
 
+    def __repr__(self) -> str: ...
+
+class ElementwiseResult:
+    """Result of :meth:`Constraint.evaluate_elementwise`.
+
+    One entry per input element ``(target_ras[i], target_decs[i], times[i])``,
+    in input order.
+    """
+
+    @property
+    def constraint_name(self) -> str:
+        """Name/description of the constraint."""
+        ...
+
+    @property
+    def constraint_array(self) -> npt.NDArray[np.bool_]:
+        """(N,) bool array; True where the constraint is violated."""
+        ...
+
+    @property
+    def visibility_flags(self) -> npt.NDArray[np.bool_]:
+        """(N,) bool array; True where the target is visible (``~constraint_array``)."""
+        ...
+
+    @property
+    def constraint_values(self) -> dict[str, npt.NDArray[np.float64]]:
+        """Named continuous values, one (N,) float array per key.
+
+        Keys are exactly those ``evaluate`` / ``evaluate_batch`` report for this
+        constraint (e.g. ``sun_angle_deg``, or ``sun.sun_angle_deg`` inside a
+        combinator).
+        """
+        ...
+
+    @property
+    def component_violated(self) -> dict[str, npt.NDArray[np.bool_]]:
+        """Per-leaf violation masks, keyed by cause tag (e.g. ``sun``, ``not.moon``)."""
+        ...
+
+    @property
+    def cause_value_keys(self) -> dict[str, list[str]]:
+        """Map from a ``component_violated`` cause tag to its ``constraint_values`` key(s)."""
+        ...
+
+    @property
+    def timestamp(self) -> npt.NDArray[np.object_]:
+        """(N,) object array of the UTC datetime each element was evaluated at."""
+        ...
+
+    @property
+    def ras(self) -> npt.NDArray[np.float64]:
+        """(N,) target right ascensions in degrees."""
+        ...
+
+    @property
+    def decs(self) -> npt.NDArray[np.float64]:
+        """(N,) target declinations in degrees."""
+        ...
+
+    def __len__(self) -> int: ...
     def __repr__(self) -> str: ...
 
 class Constraint:
@@ -846,6 +908,53 @@ class Constraint:
         """
         ...
 
+    def in_constraint_elementwise(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: list[float],
+        target_decs: list[float],
+        times: datetime | list[datetime] | None = None,
+        target_rolls: list[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+    ) -> npt.NDArray[np.bool_]:
+        """Check targets paired elementwise with times (no target x time grid).
+
+        Element ``i`` is ``(target_ras[i], target_decs[i])`` at ``times[i]``; the
+        result equals the diagonal of ``in_constraint_batch`` over all targets and
+        times, at O(N) cost.
+
+        Args:
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris,
+                OEMEphemeris, FileEphemeris, or ParquetEphemeris
+            target_ras: Right ascensions in degrees (ICRS/J2000), length N
+            target_decs: Declinations in degrees (ICRS/J2000), length N
+            times: One time per element (length N). May be unsorted, duplicated
+                and off-grid (interpolated), but must lie within the ephemeris
+                range. ``None`` pairs element ``i`` with ephemeris timestamp ``i``.
+            target_rolls: Optional per-element spacecraft roll in degrees; ``None``
+                entries sweep rolls for roll-dependent constraints.
+            n_roll_samples: Roll angles swept in the free-roll case.
+
+        Returns:
+            (N,) bool array, True where the constraint is violated.
+
+        Raises:
+            ValueError: On length mismatches or times outside the ephemeris range.
+        """
+        ...
+
+    def evaluate_elementwise(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: list[float],
+        target_decs: list[float],
+        times: datetime | list[datetime] | None = None,
+        target_rolls: list[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+    ) -> ElementwiseResult:
+        """Like :meth:`in_constraint_elementwise`, plus per-element ``constraint_values``."""
+        ...
+
     def in_constraint(
         self,
         time: datetime | list[datetime] | npt.NDArray[np.datetime64],
@@ -1224,6 +1333,32 @@ class TLEEphemeris(Ephemeris):
     @property
     def moon_pv(self) -> PositionVelocityData:
         """Moon position and velocity in GCRS frame"""
+        ...
+
+    def gcrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
+
+        Times on the ephemeris grid return the ``gcrs_pv`` rows unchanged;
+        times between grid points use the same cubic Hermite interpolation
+        (position + velocity over the bracketing pair) as constraint
+        evaluation with ``times=``. Rows follow input order; unsorted and
+        duplicate times are allowed.
+
+        Raises:
+            ValueError: If any time is outside the ephemeris span.
+        """
+        ...
+
+    def itrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
+        ...
+
+    def sun_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
+        ...
+
+    def moon_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
         ...
 
     @property
@@ -1840,6 +1975,32 @@ class SPICEEphemeris(Ephemeris):
         """Moon position and velocity in GCRS frame"""
         ...
 
+    def gcrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
+
+        Times on the ephemeris grid return the ``gcrs_pv`` rows unchanged;
+        times between grid points use the same cubic Hermite interpolation
+        (position + velocity over the bracketing pair) as constraint
+        evaluation with ``times=``. Rows follow input order; unsorted and
+        duplicate times are allowed.
+
+        Raises:
+            ValueError: If any time is outside the ephemeris span.
+        """
+        ...
+
+    def itrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
+        ...
+
+    def sun_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
+        ...
+
+    def moon_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
+        ...
+
     @property
     def obsgeoloc(self) -> npt.NDArray[np.float64]:
         """
@@ -2358,6 +2519,32 @@ class OEMEphemeris(Ephemeris):
     @property
     def moon_pv(self) -> PositionVelocityData:
         """Moon position and velocity in GCRS frame"""
+        ...
+
+    def gcrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
+
+        Times on the ephemeris grid return the ``gcrs_pv`` rows unchanged;
+        times between grid points use the same cubic Hermite interpolation
+        (position + velocity over the bracketing pair) as constraint
+        evaluation with ``times=``. Rows follow input order; unsorted and
+        duplicate times are allowed.
+
+        Raises:
+            ValueError: If any time is outside the ephemeris span.
+        """
+        ...
+
+    def itrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
+        ...
+
+    def sun_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
+        ...
+
+    def moon_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
         ...
 
     @property
@@ -2925,6 +3112,32 @@ class FileEphemeris(Ephemeris):
         """Moon position/velocity in GCRS frame."""
         ...
 
+    def gcrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
+
+        Times on the ephemeris grid return the ``gcrs_pv`` rows unchanged;
+        times between grid points use the same cubic Hermite interpolation
+        (position + velocity over the bracketing pair) as constraint
+        evaluation with ``times=``. Rows follow input order; unsorted and
+        duplicate times are allowed.
+
+        Raises:
+            ValueError: If any time is outside the ephemeris span.
+        """
+        ...
+
+    def itrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
+        ...
+
+    def sun_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
+        ...
+
+    def moon_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
+        ...
+
     @property
     def obsgeoloc(self) -> Any:
         """Observer geocentric location."""
@@ -3349,6 +3562,18 @@ class ParquetEphemeris(Ephemeris):
     def sun_pv(self) -> PositionVelocityData: ...
     @property
     def moon_pv(self) -> PositionVelocityData: ...
+    def gcrs_pv_at(
+        self, times: datetime | Iterable[datetime]
+    ) -> PositionVelocityData: ...
+    def itrs_pv_at(
+        self, times: datetime | Iterable[datetime]
+    ) -> PositionVelocityData: ...
+    def sun_pv_at(
+        self, times: datetime | Iterable[datetime]
+    ) -> PositionVelocityData: ...
+    def moon_pv_at(
+        self, times: datetime | Iterable[datetime]
+    ) -> PositionVelocityData: ...
     @property
     def obsgeoloc(self) -> Any: ...
     @property
@@ -3581,6 +3806,32 @@ class GroundEphemeris(Ephemeris):
     @property
     def moon_pv(self) -> PositionVelocityData:
         """Position and velocity data for Moon"""
+        ...
+
+    def gcrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
+
+        Times on the ephemeris grid return the ``gcrs_pv`` rows unchanged;
+        times between grid points use the same cubic Hermite interpolation
+        (position + velocity over the bracketing pair) as constraint
+        evaluation with ``times=``. Rows follow input order; unsorted and
+        duplicate times are allowed.
+
+        Raises:
+            ValueError: If any time is outside the ephemeris span.
+        """
+        ...
+
+    def itrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
+        ...
+
+    def sun_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
+        ...
+
+    def moon_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+        """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
         ...
 
     @property

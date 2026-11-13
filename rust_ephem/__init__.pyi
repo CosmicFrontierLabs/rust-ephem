@@ -5,6 +5,9 @@ from rust_ephem._rust_ephem import (
     Constraint as Constraint,
 )
 from rust_ephem._rust_ephem import (
+    ElementwiseResult as ElementwiseResult,
+)
+from rust_ephem._rust_ephem import (
     FileEphemeris as FileEphemeris,
 )
 from rust_ephem._rust_ephem import (
@@ -229,6 +232,7 @@ __all__ = [
     "Constraint",
     "ConstraintResult",
     "ConstraintViolation",
+    "ElementwiseResult",
     "MovingBodyResult",
     "VisibilityWindow",
     "init_planetary_ephemeris",

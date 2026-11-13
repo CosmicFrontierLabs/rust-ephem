@@ -635,6 +635,54 @@ Evaluation Methods
       its own computed :ref:`constraint_values <constraint-values>`
    :rtype: list[ConstraintResult]
 
+.. py:method:: Constraint.in_constraint_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+
+   Evaluate targets paired elementwise with times. Element ``i`` is the target
+   ``(target_ras[i], target_decs[i])`` at ``times[i]``. The result equals the
+   diagonal of :py:meth:`Constraint.in_constraint_batch` over every target and time,
+   but costs O(N) rather than building an N x N grid. The Pydantic models expose
+   the same method via ``RustConstraintMixin.in_constraint_elementwise()``.
+
+   :param ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
+   :param list target_ras: Target right ascensions in degrees (ICRS/J2000), length N
+   :param list target_decs: Target declinations in degrees (ICRS/J2000), length N
+   :param times: One datetime per element (length N). Times may be unsorted, duplicated,
+      and between ephemeris samples; off-grid times are evaluated on geometry
+      interpolated at that exact time (the same interpolation as
+      :py:meth:`Constraint.in_constraint`). Times outside the ephemeris range raise
+      ``ValueError``. ``None`` pairs element ``i`` with ephemeris timestamp ``i``, so N
+      must equal the ephemeris length.
+   :param target_rolls: Optional per-element spacecraft roll in degrees. ``None`` entries
+      (or ``target_rolls=None``) sweep ``n_roll_samples`` rolls for roll-dependent
+      constraints, exactly as :py:meth:`Constraint.in_constraint_batch`.
+   :type target_rolls: list[float | None] or None
+   :returns: 1D numpy boolean array of shape (N,), ``True`` where the constraint is violated
+   :rtype: numpy.ndarray
+   :raises ValueError: on length mismatches or times outside the ephemeris range
+
+   .. code-block:: python
+
+      # One pointing per row, each at its own (possibly off-grid) time
+      blocked = constraint.in_constraint_elementwise(ephem, ras, decs, times)
+
+.. py:method:: Constraint.evaluate_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+
+   Same pairing, time handling, roll semantics and polarity as
+   :py:meth:`Constraint.in_constraint_elementwise`, returning an ``ElementwiseResult``
+   with per-element :ref:`constraint_values <constraint-values>`.
+
+   :returns: ``ElementwiseResult`` with ``constraint_array`` ((N,) bool, ``True`` =
+      violated), ``visibility_flags``, ``constraint_values`` (dict of (N,) float arrays
+      with exactly the keys :py:meth:`Constraint.evaluate_batch` reports, e.g.
+      ``sun.sun_angle_deg`` inside a combinator), ``component_violated`` (per-leaf
+      masks keyed by cause tag), ``cause_value_keys``, ``timestamp``, ``ras`` and ``decs``.
+
+   .. code-block:: python
+
+      result = (sun & moon).evaluate_elementwise(ephem, ras, decs, times)
+      blocked = result.constraint_array
+      sun_angle = result.constraint_values["sun.sun_angle_deg"]
+
 .. py:method:: Constraint.in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
 
    Check if the target satisfies the constraint at given time(s).
@@ -1608,6 +1656,23 @@ All Pydantic constraint models inherit these methods:
       )
       print(violations.shape)  # (3, n_times)
 
+.. py:method:: in_constraint_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+
+   Paired evaluation: element ``i`` is ``(target_ras[i], target_decs[i])`` at ``times[i]``.
+   Equal to the diagonal of :py:meth:`in_constraint_batch` (same roll semantics and
+   polarity), at O(N) cost. ``times`` may be a list of datetimes or a ``datetime64``
+   array; see :py:meth:`Constraint.in_constraint_elementwise` for the time rules.
+
+   :returns: 1D numpy boolean array of shape (N,), ``True`` where violated
+   :rtype: numpy.ndarray
+
+.. py:method:: evaluate_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+
+   Like :py:meth:`in_constraint_elementwise`, returning an ``ElementwiseResult`` whose
+   ``constraint_values`` match the corresponding :py:meth:`evaluate_batch` entries.
+
+   :rtype: ElementwiseResult
+
 .. py:method:: in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
 
    Check if target violates the constraint at given time(s).
@@ -1879,7 +1944,9 @@ by :py:meth:`evaluate`, :py:meth:`evaluate_batch`, and
      -
    * - ``EarthLimbConstraint``
      - ``earth_limb_angle_deg``
-     -
+     - Measured from the Earth's limb (angle from the centre minus the apparent
+       radius, ``earth_radius_deg``, plus horizon dip/refraction when enabled),
+       so the target is violated when it is below ``min_angle`` or above ``max_angle``
    * - ``BrightStarConstraint``
      - ``nearest_bright_star_angle_deg``
      - Circle mode only (``fov_radius``); omitted in ``fov_polygon`` mode

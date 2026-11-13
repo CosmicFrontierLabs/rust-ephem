@@ -11,8 +11,8 @@ pub use ephemeris::{
 
 // Re-export constraint types
 pub use constraints::{
-    ConstraintResult, ConstraintViolation, MovingBodyResult, PyConstraint, RouteResult,
-    VisibilityWindow,
+    ConstraintResult, ConstraintViolation, ElementwiseResult, MovingBodyResult, PyConstraint,
+    RouteResult, VisibilityWindow,
 };
 
 // Make certain utils modules public for external access
@@ -362,6 +362,7 @@ fn _rust_ephem(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ConstraintViolation>()?;
     m.add_class::<VisibilityWindow>()?;
     m.add_class::<MovingBodyResult>()?;
+    m.add_class::<ElementwiseResult>()?;
     m.add_function(wrap_pyfunction!(init_planetary_ephemeris, m)?)?;
     m.add_function(wrap_pyfunction!(download_planetary_ephemeris, m)?)?;
     m.add_function(wrap_pyfunction!(ensure_planetary_ephemeris, m)?)?;
