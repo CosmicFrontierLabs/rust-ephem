@@ -8,9 +8,11 @@ from astropy.coordinates import SkyCoord  # type:ignore[import-untyped]
 
 import rust_ephem
 from rust_ephem.constraints import (
+    CombinedConstraintConfig,
     EarthLimbConstraint,
     EclipseConstraint,
     MoonConstraint,
+    MoonLimbConstraint,
     SunConstraint,
 )
 
@@ -148,6 +150,114 @@ class TestMoonConstraints:
         )
         in_moon_cons = moon_angle <= MOON_CONSTRAINT
         assert in_moon_cons == not_vis, f"Moon is at {moon_angle:.1f} degrees"
+
+
+class TestMoonLimbConstraints:
+    """``from_limb=True`` measures the avoidance angle from the Moon's limb."""
+
+    @staticmethod
+    def _target_at(moon: Any, separation_deg: float) -> tuple[float, float]:
+        centre = SkyCoord(moon.ra.deg, moon.dec.deg, unit="deg")
+        target = centre.directional_offset_by(90 * u.deg, separation_deg * u.deg)
+        return float(target.ra.deg), float(target.dec.deg)
+
+    def test_target_inside_limb_margin_is_only_constrained_from_limb(
+        self, tle_ephem: Any, timestamp: Any, moon: Any
+    ) -> None:
+        radius = float(tle_ephem.moon_radius_deg[183])
+        assert 0.2 < radius < 0.3
+        # Clear of MOON_CONSTRAINT measured from centre, inside it measured from limb.
+        ra, dec = self._target_at(moon, MOON_CONSTRAINT + radius / 2)
+
+        centre = MoonConstraint(min_angle=MOON_CONSTRAINT)
+        limb = MoonConstraint(min_angle=MOON_CONSTRAINT, from_limb=True)
+        kwargs = dict(ephemeris=tle_ephem, time=timestamp, target_ra=ra, target_dec=dec)
+        assert centre.in_constraint(**kwargs) is False
+        assert limb.in_constraint(**kwargs) is True
+
+        # Comfortably outside the limb margin: satisfied either way.
+        ra, dec = self._target_at(moon, MOON_CONSTRAINT + 2 * radius)
+        kwargs = dict(ephemeris=tle_ephem, time=timestamp, target_ra=ra, target_dec=dec)
+        assert limb.in_constraint(**kwargs) is False
+
+    def test_limb_angle_value_is_centre_angle_minus_radius(
+        self, tle_ephem: Any, timestamp: Any
+    ) -> None:
+        limb = MoonConstraint(min_angle=MOON_CONSTRAINT, from_limb=True)
+        result = limb.evaluate(
+            ephemeris=tle_ephem, times=[timestamp], target_ra=250.0, target_dec=-23.0
+        )
+        values = result.constraint_values
+        assert set(values) == {"moon_angle_deg", "moon_limb_angle_deg"}
+        radius = float(tle_ephem.moon_radius_deg[183])
+        assert values["moon_limb_angle_deg"][0] == pytest.approx(
+            values["moon_angle_deg"][0] - radius, abs=1e-3
+        )
+
+    def test_from_limb_round_trips_through_json(self) -> None:
+        limb = MoonConstraint(min_angle=10.0, from_limb=True)
+        restored = rust_ephem.Constraint.from_json(limb.model_dump_json())
+        assert "from_limb" in str(restored)
+        assert MoonConstraint(min_angle=10.0).from_limb is False
+
+    def test_moon_limb_constraint_matches_from_limb(
+        self, tle_ephem: Any, timestamp: Any, moon: Any
+    ) -> None:
+        radius = float(tle_ephem.moon_radius_deg[183])
+        ra, dec = self._target_at(moon, MOON_CONSTRAINT + radius / 2)
+        kwargs = dict(ephemeris=tle_ephem, time=timestamp, target_ra=ra, target_dec=dec)
+
+        wrapper = MoonLimbConstraint(min_angle=MOON_CONSTRAINT)
+        assert wrapper.in_constraint(**kwargs) is True
+        assert (
+            MoonConstraint(min_angle=MOON_CONSTRAINT).in_constraint(**kwargs) is False
+        )
+
+        result = wrapper.evaluate(
+            ephemeris=tle_ephem, times=[timestamp], target_ra=ra, target_dec=dec
+        )
+        assert "moon_limb_angle_deg" in result.constraint_values
+
+    def test_moon_limb_constraint_max_angle(
+        self, tle_ephem: Any, timestamp: Any, moon: Any
+    ) -> None:
+        radius = float(tle_ephem.moon_radius_deg[183])
+        # Within 30° of the limb but beyond 30° of the centre.
+        ra, dec = self._target_at(moon, 30.0 + radius / 2)
+        kwargs = dict(ephemeris=tle_ephem, time=timestamp, target_ra=ra, target_dec=dec)
+        assert (
+            MoonLimbConstraint(min_angle=0.0, max_angle=30.0).in_constraint(**kwargs)
+            is False
+        )
+        assert (
+            MoonConstraint(min_angle=0.0, max_angle=30.0).in_constraint(**kwargs)
+            is True
+        )
+
+    def test_moon_limb_constraint_json_round_trip_keeps_class(self) -> None:
+        original = MoonLimbConstraint(min_angle=10.0, max_angle=40.0)
+        restored = CombinedConstraintConfig.validate_json(original.model_dump_json())
+        assert isinstance(restored, MoonLimbConstraint)
+        assert restored == original
+        plain = CombinedConstraintConfig.validate_json(
+            '{"type": "moon", "min_angle": 5}'
+        )
+        assert type(plain) is MoonConstraint
+        assert "from_limb" in str(
+            rust_ephem.Constraint.from_json(original.model_dump_json())
+        )
+
+    def test_rust_factory_accepts_from_limb(
+        self, tle_ephem: Any, timestamp: Any, moon: Any
+    ) -> None:
+        radius = float(tle_ephem.moon_radius_deg[183])
+        ra, dec = self._target_at(moon, MOON_CONSTRAINT + radius / 2)
+        constraint = rust_ephem.Constraint.moon_proximity(
+            MOON_CONSTRAINT, from_limb=True
+        )
+        assert constraint.in_constraint(
+            ephemeris=tle_ephem, time=timestamp, target_ra=ra, target_dec=dec
+        )
 
 
 class TestEarthLimbConstraints:

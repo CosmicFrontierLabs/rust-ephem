@@ -77,6 +77,14 @@ enum ConstraintSpec {
     Moon {
         min_angle: f64,
         max_angle: Option<f64>,
+        #[serde(default)]
+        from_limb: bool,
+    },
+    /// Moon limb avoidance: shorthand for `moon` with `from_limb: true`.
+    #[serde(rename = "moon_limb")]
+    MoonLimb {
+        min_angle: f64,
+        max_angle: Option<f64>,
     },
     #[serde(rename = "eclipse")]
     Eclipse {
@@ -259,9 +267,20 @@ impl ConstraintSpec {
             ConstraintSpec::Moon {
                 min_angle,
                 max_angle,
+                from_limb,
             } => Ok(MoonProximityConfig {
                 min_angle,
                 max_angle,
+                from_limb,
+            }
+            .to_evaluator()),
+            ConstraintSpec::MoonLimb {
+                min_angle,
+                max_angle,
+            } => Ok(MoonProximityConfig {
+                min_angle,
+                max_angle,
+                from_limb: true,
             }
             .to_evaluator()),
             ConstraintSpec::Eclipse { umbra_only } => {
