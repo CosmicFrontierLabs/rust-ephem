@@ -149,6 +149,7 @@ class DummyConstraintBackend:
         times: object,
         indices: object,
         n_roll_samples: object = None,
+        apparent: bool = False,
     ) -> DummyRustResult:
         self.evaluate_calls.append(
             (ephemeris, target_ra, target_dec, times, indices, n_roll_samples)
@@ -163,6 +164,7 @@ class DummyConstraintBackend:
         times: object,
         indices: object,
         n_roll_samples: object = None,
+        apparent: bool = False,
     ) -> list[DummyRustResult]:
         self.evaluate_batch_calls.append(
             (ephemeris, target_ras, target_decs, times, indices, n_roll_samples)
