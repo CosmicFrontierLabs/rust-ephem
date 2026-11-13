@@ -876,6 +876,7 @@ class Constraint:
         indices: int | list[int] | None = None,
         target_rolls: list[float] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> npt.NDArray[np.bool_]:
         """
         Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
@@ -919,6 +920,7 @@ class Constraint:
         times: datetime | list[datetime] | None = None,
         target_rolls: list[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> npt.NDArray[np.bool_]:
         """Check targets paired elementwise with times (no target x time grid).
 
@@ -954,6 +956,7 @@ class Constraint:
         times: datetime | list[datetime] | None = None,
         target_rolls: list[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> ElementwiseResult:
         """Like :meth:`in_constraint_elementwise`, plus per-element ``constraint_values``."""
         ...
