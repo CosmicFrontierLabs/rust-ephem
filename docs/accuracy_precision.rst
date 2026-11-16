@@ -122,8 +122,12 @@ IERS data is automatically cached locally:
 - **TTL**: 24 hours (configurable)
 - **Environment variables**:
 
-  - ``RUST_EPHEM_EOP_CACHE``: Custom cache directory
+  - ``RUST_EPHEM_EOP_CACHE``: Custom cache directory (the file is ``latest_eop2.short`` in it)
   - ``RUST_EPHEM_EOP_CACHE_TTL``: Cache time-to-live in seconds
+
+- **Pinning**: a run that must repeat exactly keeps the EOP2 file it was made
+  with in its own directory, names that directory in ``RUST_EPHEM_EOP_CACHE``
+  and sets ``RUST_EPHEM_EOP_CACHE_TTL`` long enough that it is never refreshed.
 
 - **Fallback**: Returns zero offset if data unavailable (graceful degradation)
 

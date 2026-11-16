@@ -95,7 +95,7 @@ fn try_read_stale_cache(path: &Path) -> Option<Eop2Data> {
 /// Falls back to stale cache if network fails.
 pub fn load_or_download_eop2_data() -> Result<Eop2Data, Box<dyn Error>> {
     let path = DEFAULT_EOP_PATH.clone();
-    let ttl = Duration::from_secs(DEFAULT_EOP_TTL);
+    let ttl = Duration::from_secs(*DEFAULT_EOP_TTL);
     if let Some(text) = try_read_fresh_cache(&path, ttl) {
         return Ok(text);
     }
