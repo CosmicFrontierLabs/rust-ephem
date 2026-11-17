@@ -26,6 +26,27 @@ const APPARENT_BLOCK_VALUES: usize = 8_000_000;
 const APPARENT_PARALLEL_MIN_CELLS: usize = 20_000;
 
 impl PyConstraint {
+    pub(super) fn validate_apparent(&self, apparent: bool) -> PyResult<()> {
+        if !apparent {
+            return Ok(());
+        }
+        fn contains_bright_star(config: &serde_json::Value) -> bool {
+            config["type"] == "bright_star"
+                || config.get("constraint").is_some_and(contains_bright_star)
+                || config["constraints"]
+                    .as_array()
+                    .is_some_and(|children| children.iter().any(contains_bright_star))
+        }
+        let config = serde_json::from_str(&self.config_json)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+        if contains_bright_star(&config) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "apparent=True is not supported for BrightStarConstraint or trees containing it: catalogue stars are not corrected",
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn parse_datetime_input(times: &Bound<PyAny>) -> PyResult<Vec<DateTime<Utc>>> {
         crate::utils::time_utils::python_datetimes_to_utc(times)
     }
@@ -163,6 +184,7 @@ impl PyConstraint {
         with_values: bool,
         apparent: bool,
     ) -> PyResult<(Vec<DateTime<Utc>>, DiagonalEvaluation)> {
+        self.validate_apparent(apparent)?;
         Self::validate_n_roll_samples(n_roll_samples)?;
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(

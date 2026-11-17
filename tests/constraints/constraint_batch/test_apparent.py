@@ -91,7 +91,9 @@ def test_apparent_angles_match_astropy(spacecraft: Any) -> None:
     np.testing.assert_allclose(
         values["moon.moon_angle_deg"], expected["moon"], atol=tolerance, rtol=0
     )
-    earth_radius = np.degrees(np.arcsin(6378.137 / expected["earth_distance"]))
+    earth_radius = np.degrees(
+        np.arcsin(6378.137 / np.linalg.norm(spacecraft.obsgeoloc[rows], axis=1))
+    )
     np.testing.assert_allclose(
         values["earth_limb.earth_limb_angle_deg"],
         expected["earth"] - earth_radius,
@@ -226,7 +228,9 @@ def test_apparent_batch_kernels_match_astropy(spacecraft: Any) -> None:
             angle = expected[body]
             if body == "earth":
                 angle = angle - np.degrees(
-                    np.arcsin(6378.137 / expected["earth_distance"])
+                    np.arcsin(
+                        6378.137 / np.linalg.norm(spacecraft.obsgeoloc[rows], axis=1)
+                    )
                 )
             decided = (np.abs(angle - low) > margin) & (np.abs(angle - high) > margin)
             violated = (angle < low) | (angle > high)
@@ -354,3 +358,112 @@ def test_apparent_moon_limb(spacecraft: Any) -> None:
             spacecraft, ras[:30], decs[:30], times=[time] * 30, apparent=True
         )
         np.testing.assert_array_equal(grid[:, column], paired)
+
+
+@pytest.mark.parametrize("moving", [False, True], ids=["stationary", "leo"])
+def test_apparent_earth_limb_near_earth(
+    tmp_path: Path, ensure_planetary_data: None, moving: bool
+) -> None:
+    """Compare with geometric tangent rays aberrated by geocentric velocity.
+
+    This reference never uses a retarded Earth-centre distance to size the disk.
+    """
+    seconds = np.arange(0, 6001, 120)
+    omega = np.sqrt(398600.4418 / 7000**3) if moving else 0.0
+    phase = omega * seconds
+    positions = 7000 * np.column_stack(
+        (np.cos(phase), np.sin(phase), np.zeros(len(phase)))
+    )
+    velocities = (
+        7000
+        * omega
+        * np.column_stack((-np.sin(phase), np.cos(phase), np.zeros(len(phase))))
+    )
+    path = tmp_path / "leo.txt"
+    lines = [f"ScenarioEpoch {BEGIN.isoformat()}", "CoordinateSystem GCRS"]
+    for sec, r, v in zip(seconds, positions, velocities):
+        lines.append(f"{sec} " + " ".join(map(str, [*r, *v])))
+    path.write_text("\n".join(lines) + "\n")
+    ephem = re.FileEphemeris(
+        str(path), begin=BEGIN, end=BEGIN + timedelta(seconds=6000), step_size=120
+    )
+    rows = np.arange(len(ephem.timestamp))
+    ras, decs = targets(len(rows), seed=35)
+    with solar_system_ephemeris.set(str(KERNEL)):
+        geocentric = SkyCoord(ras * u.deg, decs * u.deg, frame="icrs").transform_to(
+            GCRS(obstime=Time(ephem.timestamp))
+        )
+    target_units = geocentric.cartesian.xyz.value.T
+    radius = np.arcsin(6378.137 / 7000)
+    azimuth = np.linspace(0, 2 * np.pi, 32768, endpoint=False)
+
+    def aberrate(vectors: npt.NDArray[Any], velocity: npt.NDArray[Any]) -> Any:
+        beta = velocity / 299792.458
+        bm1 = np.sqrt(1 - np.dot(beta, beta))
+        dot = vectors @ beta
+        return (bm1 * vectors + (1 + dot[..., None] / (1 + bm1)) * beta) / (
+            1 + dot[..., None]
+        )
+
+    expected = []
+    for r, v, target in zip(ephem.obsgeoloc, ephem.obsgeovel, target_units):
+        centre = -r / np.linalg.norm(r)
+        east = np.cross(centre, [0, 0, 1])
+        east /= np.linalg.norm(east)
+        north = np.cross(centre, east)
+        limb = np.cos(radius) * centre + np.sin(radius) * (
+            np.cos(azimuth)[:, None] * east + np.sin(azimuth)[:, None] * north
+        )
+        corrected_target = aberrate(target, v)
+        separation = np.arccos(
+            np.clip(aberrate(limb, v) @ corrected_target, -1, 1)
+        ).min()
+        # Signed distance from the disk, including targets behind the limb.
+        inside = np.dot(target, centre) > np.cos(radius)
+        expected.append(np.degrees(separation) * (-1 if inside else 1))
+    constraint = re.EarthLimbConstraint(min_angle=0)
+    result = constraint.evaluate_elementwise(
+        ephem, ras, decs, times=ephem.timestamp, apparent=True
+    )
+    np.testing.assert_allclose(
+        result.constraint_values["earth_limb_angle_deg"],
+        expected,
+        atol=(4.0 if moving else 0.05) / 3600,
+        rtol=0,
+    )
+    # Exercise both the vectorised grid and the fixed-roll column fallback.
+    for rolls in (None, [12.0] * len(ras)):
+        grid = constraint.in_constraint_batch(
+            ephem, list(ras), list(decs), target_rolls=rolls, apparent=True
+        )
+        np.testing.assert_array_equal(np.diag(grid), result.constraint_array)
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "evaluate",
+        "evaluate_batch",
+        "in_constraint_batch",
+        "evaluate_elementwise",
+        "in_constraint_elementwise",
+    ],
+)
+@pytest.mark.parametrize("tree", ["leaf", "and", "or", "not", "boresight"])
+def test_apparent_rejects_bright_stars(spacecraft: Any, method: str, tree: str) -> None:
+    star = re.BrightStarConstraint(stars=[(90.0, 0.0)], fov_radius=0.5)
+    sun = re.SunConstraint(min_angle=30)
+    constraint = {
+        "leaf": star,
+        "and": sun & star,
+        "or": sun | star,
+        "not": ~star,
+        "boresight": (sun | ~star).boresight_offset(yaw_deg=2),
+    }[tree]
+    args = (90.6, 0.0) if method == "evaluate" else ([90.6], [0.0])
+    # Geometric evaluation remains available.
+    getattr(constraint, method)(spacecraft, *args, times=[spacecraft.timestamp[0]])
+    with pytest.raises(ValueError, match="apparent=True.*BrightStarConstraint"):
+        getattr(constraint, method)(
+            spacecraft, *args, times=[spacecraft.timestamp[0]], apparent=True
+        )

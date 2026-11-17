@@ -1389,6 +1389,7 @@ impl PyConstraint {
         n_roll_samples: usize,
         apparent: bool,
     ) -> PyResult<ConstraintResult> {
+        self.validate_apparent(apparent)?;
         Self::validate_n_roll_samples(n_roll_samples)?;
         if let Some(roll) = target_roll {
             Self::validate_target_roll(roll)?;
@@ -1437,6 +1438,7 @@ impl PyConstraint {
         n_roll_samples: usize,
         apparent: bool,
     ) -> PyResult<Vec<ConstraintResult>> {
+        self.validate_apparent(apparent)?;
         Self::validate_n_roll_samples(n_roll_samples)?;
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1570,6 +1572,7 @@ impl PyConstraint {
         n_roll_samples: usize,
         apparent: bool,
     ) -> PyResult<Py<PyAny>> {
+        self.validate_apparent(apparent)?;
         Self::validate_n_roll_samples(n_roll_samples)?;
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(

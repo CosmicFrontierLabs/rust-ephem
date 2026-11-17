@@ -170,7 +170,17 @@ impl SampledEphemeris {
             &[None, Some(&sun), moon.as_ref()],
         )
         .map_err(PyValueError::new_err)?;
-        let earth = apparent.remove(0);
+        let mut earth = apparent.remove(0);
+        // Retain the apparent centre direction, but size the Earth's disk from
+        // the reception-time geometric distance. The retarded centre distance
+        // is not the distance to the limb and biases LEO limb angles by ~1'.
+        for (mut centre, state) in earth.outer_iter_mut().zip(observer.outer_iter()) {
+            let distance = state.iter().take(3).map(|x| x * x).sum::<f64>().sqrt();
+            let retarded = centre.dot(&centre).sqrt();
+            if retarded > 0.0 {
+                centre *= distance / retarded;
+            }
+        }
         view.apparent_observer = Some(observer.clone());
         let mut shifted = observer;
         shifted.slice_mut(s![.., 0..3]).assign(&(&earth * -1.0));

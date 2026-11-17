@@ -2073,10 +2073,13 @@ With this option:
 * Each target is corrected for solar light deflection and for the same
   aberration, at the time it is evaluated.
 
-The resulting Sun, Moon, Earth-limb and body angles agree with Astropy (target
+The resulting Sun, Moon and body centre angles agree with Astropy (target
 and body both transformed to a ``GCRS`` frame at the observer's position and
 velocity) to better than a milliarcsecond. A limb-based Moon rule measures the
 limb from the Moon's apparent centre at its light-time distance.
+The Earth's disk uses the geometric observer distance and the apparent centre
+direction. Aberration of the disk itself is not included; the remaining limb
+error can reach about 3.5 arcseconds in low Earth orbit.
 
 The option needs a planetary SPICE kernel, as apparent ``get_body()`` does, and
 raises ``ValueError`` without one. It applies at any time within the ephemeris
@@ -2091,13 +2094,13 @@ Limits of the option:
   ``in_constraint_elementwise()`` on 10,000 rows takes about 5% longer, and
   ``evaluate()`` over all 52,561 samples takes 8 ms instead of 2 ms.
 * A grid whose tree holds any other target-dependent rule (``BodyConstraint``,
-  ``BrightStarConstraint``, a boresight offset) or fixed rolls is evaluated one
+  a boresight offset) or fixed rolls is evaluated one
   time column at a time, with the targets corrected per column. That is about
   as fast as the geometric grid for large target sets and slower for a few
   targets at many times.
-* Catalogue stars (``BrightStarConstraint``) are not corrected, so with
-  ``apparent=True`` the angle between a star and the target is the catalogue
-  star against the apparent target (up to 20.5 arcseconds off).
+* Catalogue stars (``BrightStarConstraint``) are not corrected. Using
+  ``apparent=True`` with this constraint, including inside a logical tree or a
+  boresight offset, raises ``ValueError``.
 * ``in_constraint()``, field-of-regard, routing and moving-body evaluation keep
   the geometric convention.
 
