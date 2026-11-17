@@ -151,12 +151,15 @@ impl PyConstraint {
     /// Args:
     ///     min_angle (float): Minimum allowed angular separation from Moon in degrees
     ///     max_angle (float, optional): Maximum allowed angular separation from Moon in degrees
+    ///     from_limb (bool, optional): Measure angles from the Moon's limb rather than its
+    ///         centre, i.e. add the Moon's apparent angular radius at each time step to
+    ///         ``min_angle``/``max_angle`` (default: False)
     ///
     /// Returns:
     ///     Constraint: A new constraint object
-    #[pyo3(signature=(min_angle, max_angle=None))]
+    #[pyo3(signature=(min_angle, max_angle=None, from_limb=false))]
     #[staticmethod]
-    fn moon_proximity(min_angle: f64, max_angle: Option<f64>) -> PyResult<Self> {
+    fn moon_proximity(min_angle: f64, max_angle: Option<f64>, from_limb: bool) -> PyResult<Self> {
         if !(0.0..=180.0).contains(&min_angle) {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "min_angle must be between 0 and 180 degrees",
@@ -179,6 +182,7 @@ impl PyConstraint {
         let config = MoonProximityConfig {
             min_angle,
             max_angle,
+            from_limb,
         };
         let mut json_obj = serde_json::json!({
             "type": "moon",
@@ -186,6 +190,9 @@ impl PyConstraint {
         });
         if let Some(max) = max_angle {
             json_obj["max_angle"] = serde_json::json!(max);
+        }
+        if from_limb {
+            json_obj["from_limb"] = serde_json::json!(true);
         }
         let config_json = json_obj.to_string();
 

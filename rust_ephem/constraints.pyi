@@ -250,6 +250,12 @@ class MoonConstraint(RustConstraintMixin):
     type: Literal["moon"] = "moon"
     min_angle: float
     max_angle: float | None = None
+    from_limb: bool = False
+
+class MoonLimbConstraint(RustConstraintMixin):
+    type: Literal["moon_limb"] = "moon_limb"
+    min_angle: float
+    max_angle: float | None = None
 
 class EclipseConstraint(RustConstraintMixin):
     type: Literal["eclipse"] = "eclipse"
@@ -342,6 +348,7 @@ class BrightStarConstraint(RustConstraintMixin):
 ConstraintConfig = (
     SunConstraint
     | MoonConstraint
+    | MoonLimbConstraint
     | EclipseConstraint
     | EarthLimbConstraint
     | BodyConstraint

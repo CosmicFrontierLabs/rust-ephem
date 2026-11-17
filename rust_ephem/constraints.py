@@ -1418,10 +1418,18 @@ class MoonConstraint(RustConstraintMixin):
 
     Ensures target maintains minimum angular separation from Moon.
 
+    By default angles are measured from the Moon's centre. With
+    ``from_limb=True`` they are measured from the Moon's limb instead: the
+    Moon's apparent angular radius (asin(R_moon / distance), evaluated at each
+    time step from the observer's distance to the Moon) is added to
+    ``min_angle`` and ``max_angle``. This matters most for observers far from
+    Earth (e.g. cislunar spacecraft), where the Moon's disc can be large.
+
     Attributes:
         type: Always "moon"
         min_angle: Minimum allowed angular separation in degrees (0-180)
         max_angle: Maximum allowed angular separation in degrees (0-180), optional
+        from_limb: Measure angles from the Moon's limb rather than its centre
     """
 
     type: Literal["moon"] = "moon"
@@ -1430,6 +1438,38 @@ class MoonConstraint(RustConstraintMixin):
     )
     max_angle: float | None = Field(
         default=None, ge=0.0, le=180.0, description="Maximum angle from Moon in degrees"
+    )
+    from_limb: bool = Field(
+        default=False,
+        description="Measure angles from the Moon's limb (adds the Moon's apparent "
+        "angular radius to min_angle/max_angle) instead of its centre",
+    )
+
+
+class MoonLimbConstraint(RustConstraintMixin):
+    """Moon limb avoidance constraint
+
+    Ensures target maintains minimum angular separation from the Moon's limb.
+    Equivalent to ``MoonConstraint(..., from_limb=True)``: the Moon's apparent
+    angular radius (asin(R_moon / distance), evaluated at each time step from
+    the observer's distance to the Moon) is added to ``min_angle`` and
+    ``max_angle``.
+
+    Attributes:
+        type: Always "moon_limb"
+        min_angle: Minimum allowed angular separation from the Moon's limb in degrees (0-180)
+        max_angle: Maximum allowed angular separation from the Moon's limb in degrees (0-180), optional
+    """
+
+    type: Literal["moon_limb"] = "moon_limb"
+    min_angle: float = Field(
+        ..., ge=0.0, le=180.0, description="Minimum angle from Moon's limb in degrees"
+    )
+    max_angle: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=180.0,
+        description="Maximum angle from Moon's limb in degrees",
     )
 
 
@@ -1919,6 +1959,7 @@ class BrightStarConstraint(RustConstraintMixin):
 ConstraintConfig = Union[
     SunConstraint,
     MoonConstraint,
+    MoonLimbConstraint,
     EclipseConstraint,
     EarthLimbConstraint,
     BodyConstraint,

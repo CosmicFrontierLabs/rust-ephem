@@ -140,6 +140,9 @@ from rust_ephem.constraints import (
     MoonConstraint as MoonConstraint,
 )
 from rust_ephem.constraints import (
+    MoonLimbConstraint as MoonLimbConstraint,
+)
+from rust_ephem.constraints import (
     MoonPhaseConstraint as MoonPhaseConstraint,
 )
 from rust_ephem.constraints import (
@@ -201,6 +204,7 @@ from .tle import (
 __all__ = [
     "SunConstraint",
     "MoonConstraint",
+    "MoonLimbConstraint",
     "EarthLimbConstraint",
     "EclipseConstraint",
     "BodyConstraint",
