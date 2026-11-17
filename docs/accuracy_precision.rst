@@ -122,12 +122,27 @@ IERS data is automatically cached locally:
 - **TTL**: 24 hours (configurable)
 - **Environment variables**:
 
-  - ``RUST_EPHEM_EOP_CACHE``: Custom cache directory (the file is ``latest_eop2.short`` in it)
-  - ``RUST_EPHEM_EOP_CACHE_TTL``: Cache time-to-live in seconds
+  - ``RUST_EPHEM_EOP_CACHE``: Custom cache directory (the file is ``latest_eop2.short`` in it).
+    A leading ``~`` or ``~/`` expands to the current user's home directory;
+    ``~user`` is not expanded. Relative paths resolve against the working
+    directory; an absolute path is recommended for reproducible runs.
+  - ``RUST_EPHEM_EOP_CACHE_TTL``: Cache time-to-live as a plain non-negative
+    integer number of seconds (0 through 18446744073709551615), or ``never``
+    to disable expiry. Invalid values (including negative numbers, overflow,
+    scientific notation and unit suffixes) emit a warning and use 86400 seconds.
+    Surrounding whitespace is ignored.
+
+- **Configuration timing**: Each variable is read once per process, on its
+  first use. Set both before initializing an ephemeris or EOP/UT1 provider.
 
 - **Pinning**: a run that must repeat exactly keeps the EOP2 file it was made
   with in its own directory, names that directory in ``RUST_EPHEM_EOP_CACHE``
-  and sets ``RUST_EPHEM_EOP_CACHE_TTL`` long enough that it is never refreshed.
+  and sets ``RUST_EPHEM_EOP_CACHE_TTL=never``. A sufficiently large integer TTL
+  is also supported. Future file modification times are treated as age zero.
+  A missing or unreadable file still triggers a download, even with ``never``.
+
+- **Cache writes**: Downloads replace the cached file atomically. Write failures
+  emit a warning; the current run uses downloaded data, which is not cached.
 
 - **Fallback**: Returns zero offset if data unavailable (graceful degradation)
 
