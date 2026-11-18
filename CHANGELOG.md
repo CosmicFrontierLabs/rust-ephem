@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.17.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.16.1...v0.17.0) (2026-11-18)
+
+
+### Features
+
+* add moon limb avoidance constraint ([#212](https://github.com/CosmicFrontierLabs/rust-ephem/issues/212)) ([0a902ba](https://github.com/CosmicFrontierLabs/rust-ephem/commit/0a902ba73b2043a955819336647df323c8335de8))
+* apparent angles in constraint evaluation ([#218](https://github.com/CosmicFrontierLabs/rust-ephem/issues/218)) ([f4622d0](https://github.com/CosmicFrontierLabs/rust-ephem/commit/f4622d056742b187ad174959fb95287f5937fc32))
+* build a FileEphemeris from in-memory arrays ([#215](https://github.com/CosmicFrontierLabs/rust-ephem/issues/215)) ([83a89c3](https://github.com/CosmicFrontierLabs/rust-ephem/commit/83a89c3ecc6f860334e4f505c7185502df6516e3))
+* elementwise constraint evaluation ([#216](https://github.com/CosmicFrontierLabs/rust-ephem/issues/216)) ([e48ea42](https://github.com/CosmicFrontierLabs/rust-ephem/commit/e48ea42765154feaf85f1946b39e8d7950b6f351))
+* **eop:** honour RUST_EPHEM_EOP_CACHE and RUST_EPHEM_EOP_CACHE_TTL ([#222](https://github.com/CosmicFrontierLabs/rust-ephem/issues/222)) ([e8f8a89](https://github.com/CosmicFrontierLabs/rust-ephem/commit/e8f8a89d03b46eb46381620130e6de9fea014f91))
+* ephemeris positions and velocities at arbitrary times ([#214](https://github.com/CosmicFrontierLabs/rust-ephem/issues/214)) ([36f28c2](https://github.com/CosmicFrontierLabs/rust-ephem/commit/36f28c22dc233952abe82b67dbad57377911452e))
+
+
+### Bug Fixes
+
+* measure Earth limb angles from the limb and unify the Earth radius ([#213](https://github.com/CosmicFrontierLabs/rust-ephem/issues/213)) ([9455be6](https://github.com/CosmicFrontierLabs/rust-ephem/commit/9455be6cc43b55126fb1e7531ce6e41d03bfb236))
+
 ## [0.16.1](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.16.0...v0.16.1) (2026-11-01)
 
 
