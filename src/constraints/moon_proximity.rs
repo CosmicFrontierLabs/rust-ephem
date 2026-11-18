@@ -266,6 +266,15 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
+        // An apparent view asks the kernel to correct the targets: one path does that.
+        if ephemeris.target_corrections().is_some() {
+            let vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
+            if let Some(result) =
+                self.in_constraint_batch_unit_vectors(ephemeris, &vectors, time_indices)?
+            {
+                return Ok(result);
+            }
+        }
         let (_times, moon, observer) =
             extract_body_ephemeris_data!(ephemeris, time_indices, get_moon_positions_at_indices);
         if target_ras.len() != target_decs.len() {
@@ -275,6 +284,10 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
         }
         let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
         Ok(self.violation_mask(&target_vectors, &moon, &observer))
+    }
+
+    fn applies_target_corrections(&self) -> bool {
+        true
     }
 
     fn in_constraint_batch_unit_vectors(
@@ -290,6 +303,21 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
         }
         let (_times, moon, observer) =
             extract_body_ephemeris_data!(ephemeris, time_indices, get_moon_positions_at_indices);
+        // On an apparent view the catalogue cosine becomes the apparent one.
+        if let Some(corrections) = super::core::target_corrections_at(ephemeris, time_indices) {
+            let (bodies, thresholds): (Vec<[f64; 3]>, Vec<_>) = (0..moon.nrows())
+                .map(|t| {
+                    let (unit, dist) = moon_direction(&moon, &observer, t);
+                    (unit, self.cos_thresholds(self.limb_offset_deg(dist)))
+                })
+                .unzip();
+            return Ok(Some(super::core::apparent_cosine_grid(
+                target_unit_vectors,
+                &bodies,
+                &corrections,
+                |t, cos_angle| Self::is_violated(cos_angle, thresholds[t]),
+            )));
+        }
         Ok(Some(self.violation_mask(
             target_unit_vectors,
             &moon,

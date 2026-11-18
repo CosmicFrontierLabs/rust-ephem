@@ -1376,7 +1376,7 @@ impl PyConstraint {
     ///     Only one of `times` or `indices` should be provided. If neither is provided,
     ///     all ephemeris times are evaluated.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (ephemeris, target_ra, target_dec, times=None, indices=None, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES))]
+    #[pyo3(signature = (ephemeris, target_ra, target_dec, times=None, indices=None, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=false))]
     fn evaluate(
         &self,
         py: Python,
@@ -1387,13 +1387,26 @@ impl PyConstraint {
         indices: Option<&Bound<PyAny>>,
         target_roll: Option<f64>,
         n_roll_samples: usize,
+        apparent: bool,
     ) -> PyResult<ConstraintResult> {
+        self.validate_apparent(apparent)?;
         Self::validate_n_roll_samples(n_roll_samples)?;
         if let Some(roll) = target_roll {
             Self::validate_target_roll(roll)?;
         }
         let bound = ephemeris.bind(py);
         self.with_evaluation_ephemeris(bound, times, indices, |ephem_ref, time_indices| {
+            if apparent {
+                let mut results = self.eval_batch_apparent(
+                    ephem_ref,
+                    &[target_ra],
+                    &[target_dec],
+                    time_indices.as_deref(),
+                    n_roll_samples,
+                    target_roll,
+                )?;
+                return Ok(results.remove(0));
+            }
             self.eval_with_ephemeris(
                 &*self.evaluator,
                 ephem_ref,
@@ -1412,7 +1425,7 @@ impl PyConstraint {
     /// sweep `n_roll_samples` roll angles uniformly over [0°, 360°) and count a
     /// timestamp as violated only where no orientation clears the constraint.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES))]
+    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=false))]
     fn evaluate_batch(
         &self,
         py: Python,
@@ -1423,7 +1436,9 @@ impl PyConstraint {
         indices: Option<&Bound<PyAny>>,
         target_rolls: Option<Vec<f64>>,
         n_roll_samples: usize,
+        apparent: bool,
     ) -> PyResult<Vec<ConstraintResult>> {
+        self.validate_apparent(apparent)?;
         Self::validate_n_roll_samples(n_roll_samples)?;
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1445,6 +1460,16 @@ impl PyConstraint {
                 times,
                 indices,
                 |ephem_ref, time_indices| {
+                    if apparent {
+                        return self.eval_batch_apparent(
+                            ephem_ref,
+                            &target_ras,
+                            &target_decs,
+                            time_indices.as_deref(),
+                            n_roll_samples,
+                            None,
+                        );
+                    }
                     self.eval_batch_with_ephemeris(
                         &*self.evaluator,
                         ephem_ref,
@@ -1465,15 +1490,26 @@ impl PyConstraint {
                 let roll = rolls[group_indices[0]];
                 let (ras, decs) =
                     Self::extract_group_targets(&target_ras, &target_decs, group_indices);
-                let group_results = self.eval_batch_with_ephemeris(
-                    &*self.evaluator,
-                    ephem_ref,
-                    &ras,
-                    &decs,
-                    time_indices.clone(),
-                    n_roll_samples,
-                    Some(roll),
-                )?;
+                let group_results = if apparent {
+                    self.eval_batch_apparent(
+                        ephem_ref,
+                        &ras,
+                        &decs,
+                        time_indices.as_deref(),
+                        n_roll_samples,
+                        Some(roll),
+                    )?
+                } else {
+                    self.eval_batch_with_ephemeris(
+                        &*self.evaluator,
+                        ephem_ref,
+                        &ras,
+                        &decs,
+                        time_indices.clone(),
+                        n_roll_samples,
+                        Some(roll),
+                    )?
+                };
                 if group_results.len() != group_indices.len() {
                     return Err(pyo3::exceptions::PyRuntimeError::new_err(
                         "Batch evaluation returned an incorrect number of results",
@@ -1523,7 +1559,7 @@ impl PyConstraint {
     ///     >>> violations.shape  # (3, n_times)
     ///     >>> violations[0, :]  # Violations for first target across all times
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES))]
+    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=false))]
     fn in_constraint_batch(
         &self,
         py: Python,
@@ -1534,7 +1570,9 @@ impl PyConstraint {
         indices: Option<&Bound<PyAny>>,
         target_rolls: Option<Vec<f64>>,
         n_roll_samples: usize,
+        apparent: bool,
     ) -> PyResult<Py<PyAny>> {
+        self.validate_apparent(apparent)?;
         Self::validate_n_roll_samples(n_roll_samples)?;
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1561,13 +1599,33 @@ impl PyConstraint {
                 for group_indices in groups.values() {
                     let (ras, decs) =
                         Self::extract_group_targets(&target_ras, &target_decs, group_indices);
-                    let mask = self.evaluator.in_constraint_batch_at_roll(
-                        ephem_ref,
-                        &ras,
-                        &decs,
-                        time_indices.as_deref(),
-                        EvaluationRoll::Fixed(rolls[group_indices[0]]),
-                    )?;
+                    let roll = EvaluationRoll::Fixed(rolls[group_indices[0]]);
+                    let mask = if apparent {
+                        self.apparent_batch(
+                            ephem_ref,
+                            time_indices.as_deref(),
+                            &ras,
+                            &decs,
+                            false,
+                            |view, ras, decs, selected| {
+                                self.evaluator.in_constraint_batch_at_roll(
+                                    view,
+                                    ras,
+                                    decs,
+                                    Some(selected),
+                                    roll,
+                                )
+                            },
+                        )?
+                    } else {
+                        self.evaluator.in_constraint_batch_at_roll(
+                            ephem_ref,
+                            &ras,
+                            &decs,
+                            time_indices.as_deref(),
+                            roll,
+                        )?
+                    };
                     for (local, &idx) in group_indices.iter().enumerate() {
                         result.row_mut(idx).assign(&mask.row(local));
                     }
@@ -1576,6 +1634,25 @@ impl PyConstraint {
             })?
         } else {
             self.with_evaluation_ephemeris(bound, times, indices, |ephem_ref, time_indices| {
+                if apparent {
+                    return self.apparent_batch(
+                        ephem_ref,
+                        time_indices.as_deref(),
+                        &target_ras,
+                        &target_decs,
+                        !self.evaluator.is_roll_dependent(),
+                        |view, ras, decs, selected| {
+                            self.evaluator
+                                .in_constraint_batch_constrained_at_every_roll(
+                                    view,
+                                    ras,
+                                    decs,
+                                    Some(selected),
+                                    n_roll_samples,
+                                )
+                        },
+                    );
+                }
                 self.evaluator
                     .in_constraint_batch_constrained_at_every_roll(
                         ephem_ref,
@@ -1813,6 +1890,7 @@ impl PyConstraint {
             None,
             target_rolls,
             n_roll_samples,
+            false,
         )?;
 
         // Extract the results for the single target (first row)
@@ -2100,7 +2178,7 @@ impl PyConstraint {
     /// Raises:
     ///     ValueError: On length mismatches or times outside the ephemeris range.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES))]
+    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=false))]
     fn in_constraint_elementwise(
         &self,
         py: Python,
@@ -2110,6 +2188,7 @@ impl PyConstraint {
         times: Option<&Bound<PyAny>>,
         target_rolls: Option<Vec<Option<f64>>>,
         n_roll_samples: usize,
+        apparent: bool,
     ) -> PyResult<Py<PyAny>> {
         let (_, evaluation) = self.elementwise(
             py,
@@ -2120,6 +2199,7 @@ impl PyConstraint {
             target_rolls.as_deref(),
             n_roll_samples,
             false,
+            apparent,
         )?;
         use numpy::IntoPyArray;
         Ok(evaluation.violated.into_pyarray(py).into_any().unbind())
@@ -2137,7 +2217,7 @@ impl PyConstraint {
     ///     ``visibility_flags``, ``constraint_values``, ``component_violated``,
     ///     ``cause_value_keys``, ``timestamp``, ``ras`` and ``decs``.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES))]
+    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=false))]
     fn evaluate_elementwise(
         &self,
         py: Python,
@@ -2147,6 +2227,7 @@ impl PyConstraint {
         times: Option<&Bound<PyAny>>,
         target_rolls: Option<Vec<Option<f64>>>,
         n_roll_samples: usize,
+        apparent: bool,
     ) -> PyResult<ElementwiseResult> {
         let (element_times, evaluation) = self.elementwise(
             py,
@@ -2157,6 +2238,7 @@ impl PyConstraint {
             target_rolls.as_deref(),
             n_roll_samples,
             true,
+            apparent,
         )?;
         Ok(ElementwiseResult::new(
             self.evaluator.name(),

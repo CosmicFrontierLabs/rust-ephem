@@ -769,6 +769,16 @@ pub trait ConstraintEvaluator: Send + Sync {
         true
     }
 
+    /// Whether the batch kernels of this tree correct catalogue targets on an
+    /// apparent view that carries `EphemerisBase::target_corrections`, so the
+    /// whole target x time grid can be evaluated in one call. Leaves that
+    /// ignore the target satisfy this trivially; target-dependent leaves opt in
+    /// when their kernels apply the correction, and combinators require it of
+    /// every child.
+    fn applies_target_corrections(&self) -> bool {
+        !self.is_target_dependent()
+    }
+
     /// Evaluate target_i at its selected time_i, returning masks, values, and
     /// attribution together. The default bounds all leaf work to one sample;
     /// common leaves and combinators override it with vectorized paired kernels.
@@ -1302,6 +1312,65 @@ pub fn sweep_rolls_with_attribution(
 
 /// Macro to generate common methods for proximity evaluators
 /// This is exported so constraint modules can use it
+/// The target corrections of the evaluated rows, when `ephemeris` is an
+/// apparent view asking the batch kernels to correct targets themselves.
+pub(crate) fn target_corrections_at(
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    time_indices: Option<&[usize]>,
+) -> Option<Vec<crate::utils::apparent::ObserverAberration>> {
+    let corrections = ephemeris.target_corrections()?;
+    Some(match time_indices {
+        Some(indices) => indices.iter().map(|&i| corrections[i]).collect(),
+        None => corrections.to_vec(),
+    })
+}
+
+/// Fewest target x time cells worth spreading over the cores.
+const APPARENT_PARALLEL_MIN_CELLS: usize = 20_000;
+
+/// The violation grid (targets x times) of a rule on the apparent cosine
+/// between each catalogue target and the body direction of each time
+/// (`bodies`, unit vectors on an apparent view), with the target correction of
+/// that time. `violated(t, cos)` is the rule. Rows are filled across the cores
+/// for large grids: the correction is the one per-cell cost of apparent
+/// evaluation.
+pub(crate) fn apparent_cosine_grid(
+    target_unit_vectors: &Array2<f64>,
+    bodies: &[[f64; 3]],
+    corrections: &[crate::utils::apparent::ObserverAberration],
+    violated: impl Fn(usize, f64) -> bool + Sync,
+) -> Array2<bool> {
+    use rayon::prelude::*;
+
+    let (n_targets, n_times) = (target_unit_vectors.nrows(), bodies.len());
+    let apparent: Vec<_> = corrections
+        .iter()
+        .zip(bodies)
+        .map(|(correction, &body)| correction.toward(body))
+        .collect();
+    let mut cells = vec![false; n_targets * n_times];
+    let fill = |(i, row): (usize, &mut [bool])| {
+        let target = [
+            target_unit_vectors[[i, 0]],
+            target_unit_vectors[[i, 1]],
+            target_unit_vectors[[i, 2]],
+        ];
+        for (t, cell) in row.iter_mut().enumerate() {
+            let body = &bodies[t];
+            let geometric = target[0] * body[0] + target[1] * body[1] + target[2] * body[2];
+            *cell = violated(t, apparent[t].cosine(target, geometric));
+        }
+    };
+    if n_times > 0 {
+        if n_targets * n_times >= APPARENT_PARALLEL_MIN_CELLS {
+            cells.par_chunks_mut(n_times).enumerate().for_each(fill);
+        } else {
+            cells.chunks_mut(n_times).enumerate().for_each(fill);
+        }
+    }
+    Array2::from_shape_vec((n_targets, n_times), cells).expect("one cell per target and time")
+}
+
 macro_rules! impl_proximity_evaluator {
     ($evaluator:ty, $body_name:expr, $friendly_name:expr, $positions:ident) => {
         impl $evaluator {

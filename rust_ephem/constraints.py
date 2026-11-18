@@ -250,6 +250,7 @@ class RustConstraintMixin(BaseModel):
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> list[ConstraintResult]:
         """Evaluate a batch where all targets share the same roll semantics."""
         rust_constraint = self._resolve_evaluation_constraint(None)
@@ -261,6 +262,7 @@ class RustConstraintMixin(BaseModel):
             times,
             indices,
             n_roll_samples=n_roll_samples,
+            apparent=apparent,
         )
         return [
             ConstraintResult._from_rust_result(rust_result)
@@ -275,6 +277,7 @@ class RustConstraintMixin(BaseModel):
         times: datetime | list[datetime] | None = None,
         indices: int | list[int] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> npt.NDArray[np.bool_]:
         """Evaluate a batch where all targets share the same roll semantics."""
         # When target_roll is None and the tree is roll-dependent the Rust backend
@@ -294,6 +297,7 @@ class RustConstraintMixin(BaseModel):
                 times,
                 indices,
                 n_roll_samples=n_roll_samples,
+                apparent=apparent,
             ),
         )
 
@@ -490,6 +494,7 @@ class RustConstraintMixin(BaseModel):
         indices: int | list[int] | None = None,
         target_roll: float | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> ConstraintResult:
         """
         Evaluate the constraint using the Rust backend.
@@ -513,6 +518,8 @@ class RustConstraintMixin(BaseModel):
             n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
                 and the constraint is roll-dependent.  Uniformly spaced over [0°, 360°).
                 Default :data:`DEFAULT_N_ROLL_SAMPLES` (360 ≈ 1° resolution).
+            apparent: Measure angles as the observer sees them (see
+                :meth:`in_constraint_elementwise`). Default ``False``.
 
         Returns:
             ConstraintResult containing violation windows
@@ -534,6 +541,7 @@ class RustConstraintMixin(BaseModel):
             times,
             indices,
             n_roll_samples=n_roll_samples,
+            apparent=apparent,
             **roll_kwargs,
         )
 
@@ -549,6 +557,7 @@ class RustConstraintMixin(BaseModel):
         indices: int | list[int] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> list[ConstraintResult]:
         """Evaluate the constraint for multiple targets and return one result per target.
 
@@ -576,6 +585,7 @@ class RustConstraintMixin(BaseModel):
                 times=times,
                 indices=indices,
                 n_roll_samples=n_roll_samples,
+                apparent=apparent,
             )
 
         if any(roll is None for roll in normalized_target_rolls):
@@ -590,6 +600,7 @@ class RustConstraintMixin(BaseModel):
                 times=times,
                 indices=indices,
                 n_roll_samples=n_roll_samples,
+                apparent=apparent,
             )
             if not fixed:
                 return free_results
@@ -601,6 +612,7 @@ class RustConstraintMixin(BaseModel):
                 indices=indices,
                 target_rolls=[normalized_target_rolls[i] for i in fixed],
                 n_roll_samples=n_roll_samples,
+                apparent=apparent,
             )
             ordered = dict(zip(free + fixed, free_results + fixed_results, strict=True))
             return [ordered[i] for i in range(len(target_ras))]
@@ -613,6 +625,7 @@ class RustConstraintMixin(BaseModel):
             indices,
             target_rolls=cast(list[float], normalized_target_rolls),
             n_roll_samples=n_roll_samples,
+            apparent=apparent,
         )
         return [ConstraintResult._from_rust_result(result) for result in rust_results]
 
@@ -625,6 +638,7 @@ class RustConstraintMixin(BaseModel):
         indices: int | list[int] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> npt.NDArray[np.bool_]:
         """
         Check if targets are in-constraint for multiple RA/Dec positions (vectorized).
@@ -650,6 +664,14 @@ class RustConstraintMixin(BaseModel):
             n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
                 and the constraint is roll-dependent.  Uniformly spaced over [0°, 360°).
                 Default :data:`DEFAULT_N_ROLL_SAMPLES` (360 ≈ 1° resolution).
+            apparent: Measure angles as the observer sees them rather than
+                geometrically. The Earth, Sun and Moon are placed where their light
+                arrives from (reception light time, solar deflection and the
+                aberration of the observer's barycentric velocity) and each target
+                is aberrated for the same velocity. Needs a planetary SPICE kernel
+                (``ensure_planetary_ephemeris()``). The default, ``False``, keeps
+                the geometric convention. See "Geometric and apparent angles" in
+                the constraints documentation for what is and is not corrected.
 
         Returns:
             2D numpy array of shape (n_targets, n_times) with boolean violation status
@@ -670,6 +692,7 @@ class RustConstraintMixin(BaseModel):
                 times=times,
                 indices=indices,
                 n_roll_samples=n_roll_samples,
+                apparent=apparent,
             )
 
         if any(roll is None for roll in normalized_target_rolls):
@@ -684,6 +707,7 @@ class RustConstraintMixin(BaseModel):
                 times=times,
                 indices=indices,
                 n_roll_samples=n_roll_samples,
+                apparent=apparent,
             )
             if not fixed:
                 return free_mask
@@ -697,6 +721,7 @@ class RustConstraintMixin(BaseModel):
                 indices=indices,
                 target_rolls=[normalized_target_rolls[i] for i in fixed],
                 n_roll_samples=n_roll_samples,
+                apparent=apparent,
             )
             return result
 
@@ -710,6 +735,7 @@ class RustConstraintMixin(BaseModel):
                 indices,
                 target_rolls=cast(list[float], normalized_target_rolls),
                 n_roll_samples=n_roll_samples,
+                apparent=apparent,
             ),
         )
 
@@ -748,6 +774,7 @@ class RustConstraintMixin(BaseModel):
         times: datetime | Sequence[datetime] | npt.NDArray[Any] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> npt.NDArray[np.bool_]:
         """Check targets paired elementwise with times (no target x time grid).
 
@@ -771,6 +798,14 @@ class RustConstraintMixin(BaseModel):
                 entries sweep ``n_roll_samples`` rolls for roll-dependent
                 constraints, as in :meth:`in_constraint_batch`.
             n_roll_samples: Roll angles swept in the free-roll case.
+            apparent: Measure angles as the observer sees them rather than
+                geometrically. The Earth, Sun and Moon are placed where their light
+                arrives from (reception light time, solar deflection and the
+                aberration of the observer's barycentric velocity) and each target
+                is aberrated for the same velocity. Needs a planetary SPICE kernel
+                (``ensure_planetary_ephemeris()``). The default, ``False``, keeps
+                the geometric convention. See "Geometric and apparent angles" in
+                the constraints documentation for what is and is not corrected.
 
         Returns:
             1D boolean array of shape (N,), ``True`` where the constraint is
@@ -789,6 +824,7 @@ class RustConstraintMixin(BaseModel):
                 self._elementwise_times(times),
                 target_rolls=rolls,
                 n_roll_samples=n_roll_samples,
+                apparent=apparent,
             ),
         )
 
@@ -800,11 +836,14 @@ class RustConstraintMixin(BaseModel):
         times: datetime | Sequence[datetime] | npt.NDArray[Any] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> ElementwiseResult:
         """Evaluate targets paired elementwise with times, with per-element values.
 
-        Same pairing, time handling, roll semantics and polarity as
-        :meth:`in_constraint_elementwise`.
+        Same pairing, time handling, roll semantics, ``apparent`` option and
+        polarity as :meth:`in_constraint_elementwise`. With ``apparent=True`` the
+        ``constraint_values`` are the apparent angles; ``ras`` and ``decs`` remain
+        the catalogue coordinates passed in.
 
         Returns:
             :class:`~rust_ephem.ElementwiseResult` with ``constraint_array``
@@ -824,6 +863,7 @@ class RustConstraintMixin(BaseModel):
                 self._elementwise_times(times),
                 target_rolls=rolls,
                 n_roll_samples=n_roll_samples,
+                apparent=apparent,
             ),
         )
 
