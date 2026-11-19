@@ -1435,8 +1435,36 @@ table's azimuth-zero axis and ``x = y x b``. At the nominal attitude the Sun's
 direction, projected perpendicular to the boresight, lies at azimuth
 ``sun_azimuth_deg``: 0 if the table is measured from the Sun's side, 180 if
 from the side away from it. ``roll_offset_deg`` rolls the spacecraft
-right-handed about the boresight from there and adds to the Sun's azimuth. A
-``target_roll`` passed to an evaluation method is not used by this constraint.
+right-handed about the boresight from there and adds to the Sun's azimuth.
+
+**Explicit rolls.** A ``target_roll`` (or a ``target_rolls`` entry) passed to
+an evaluation method is the absolute spacecraft roll for that row, in the
+convention of ``SolarRollConstraint`` and ``BoresightOffsetConstraint``:
+counter-clockwise about the boresight, with body +Y to the east and body +Z to
+the north at roll zero. It replaces the nominal attitude, and
+``roll_offset_deg`` is not applied to that row; rows whose roll is ``None`` keep
+the nominal attitude. In those terms the table's azimuth-zero axis is body +Y
+turned by ``sun_azimuth_deg``, and the nominal attitude is the solar-optimal
+roll of a +Y panel plus ``roll_offset_deg``.
+
+The roll actually used comes back as ``roll_deg``, so the two descriptions
+convert through it:
+
+.. code-block:: python
+
+   nominal = stray.evaluate_elementwise(ephem, ras, decs, times=times)
+   roll = np.asarray(nominal.constraint_values["roll_deg"])
+
+   # The same result, and the result 10 degrees either side of nominal
+   same = stray.evaluate_elementwise(ephem, ras, decs, times=times, target_rolls=list(roll))
+   plus = stray.evaluate_elementwise(ephem, ras, decs, times=times, target_rolls=list(roll + 10))
+
+   # Rolls at which one pointing is clear at one time
+   stray.roll_range(time, ephem, ra, dec)
+
+In a combined constraint every component is evaluated at the same roll. A
+free-roll sweep (``target_roll=None`` on a tree with roll-dependent
+components) does not move this constraint off its nominal attitude.
 
 **Validity.** A body gives no prediction when:
 
@@ -1536,8 +1564,8 @@ constants, so this one number is all the radiometry the constraint needs.
 
    The pointing:
 
-   - ``roll_deg``: position angle (north through east) of the table's
-     azimuth-zero axis
+   - ``roll_deg``: the spacecraft roll used (0-360), in the convention of
+     ``target_roll``: the explicit roll, or the nominal one
    - ``helio_ecliptic_longitude_deg`` (ecliptic longitude from the Sun, 0-360),
      ``ecliptic_latitude_deg`` and ``zodi_table_v_mag_arcsec2`` (the tabulated
      zodi at the pointing, whichever zodi the ratio uses)

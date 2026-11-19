@@ -260,12 +260,27 @@ class Reference:
         self.c = constraint
         self.pst = ReferenceTable(constraint.pst)
 
-    def frame(self, b: Array, sun: Array) -> tuple[Array, Array]:
-        s = unit(sun)
-        sun_side = unit(s - (s @ b) * b)
-        q = np.radians(self.c.roll_offset_deg + self.c.sun_azimuth_deg)
-        y = np.cos(q) * sun_side + np.sin(q) * np.cross(b, sun_side)
-        return y, np.cross(y, b)
+    def frame(
+        self, b: Array, sun: Array, roll: float | None
+    ) -> tuple[Array, Array, float]:
+        """Table axes (y, x) and the spacecraft roll they correspond to.
+
+        Roll zero puts body +Y to the east; roll turns it toward north. With no
+        roll given, body +Y is on the Sun's side, turned by roll_offset_deg.
+        The table's azimuth-zero axis is body +Y turned by sun_azimuth_deg."""
+        east = unit(np.cross([0.0, 0.0, 1.0], b))
+        north = np.cross(b, east)
+        if roll is None:
+            s = unit(sun)
+            sun_side = unit(s - (s @ b) * b)
+            offset = np.radians(self.c.roll_offset_deg)
+            body_y = np.cos(offset) * sun_side + np.sin(offset) * np.cross(b, sun_side)
+            roll = float(np.degrees(np.arctan2(body_y @ north, body_y @ east)))
+        angle = np.radians(roll)
+        body_y = np.cos(angle) * east + np.sin(angle) * north
+        q = np.radians(self.c.sun_azimuth_deg)
+        y = np.cos(q) * body_y + np.sin(q) * np.cross(b, body_y)
+        return y, np.cross(y, b), roll % 360.0
 
     def level(
         self,
@@ -400,22 +415,24 @@ class Reference:
         return float(10.0 ** (-0.4 * v_mag) * mean), status.is_valid, info
 
     def __call__(
-        self, ra: float, dec: float, bodies: dict[str, Array]
+        self,
+        ra: float,
+        dec: float,
+        bodies: dict[str, Array],
+        roll: float | None = None,
     ) -> dict[str, float]:
         r, d = np.radians(ra), np.radians(dec)
         b = np.array([np.cos(d) * np.cos(r), np.cos(d) * np.sin(r), np.sin(d)])
         sun = bodies["sun"]
-        y, x = self.frame(b, sun)
+        y, x, roll_used = self.frame(b, sun, roll)
         longitude, latitude = ecliptic(b)
         from_sun = (longitude - ecliptic(sun)[0]) % 360.0
         tabulated = zodi_table(b, sun)
         zodi = self.c.zodi_v_mag_arcsec2 if self.c.zodi == "constant" else tabulated
         per_zodi = self.c.conversion_factor / 10.0 ** (-0.4 * zodi)
         out: dict[str, float] = {"zodi_v_mag_arcsec2": zodi}
-        north = np.array([-np.sin(d) * np.cos(r), -np.sin(d) * np.sin(r), np.cos(d)])
-        east = np.array([-np.sin(r), np.cos(r), 0.0])
         out.update(
-            roll_deg=float(np.degrees(np.arctan2(y @ east, y @ north)) % 360.0),
+            roll_deg=roll_used,
             helio_ecliptic_longitude_deg=from_sun,
             ecliptic_latitude_deg=latitude,
             zodi_table_v_mag_arcsec2=tabulated,
@@ -432,12 +449,22 @@ class Reference:
 
 
 def reference_values(
-    constraint: StrayLightConstraint, ephem: Any, ra: Array, dec: Array, rows: Any
+    constraint: StrayLightConstraint,
+    ephem: Any,
+    ra: Array,
+    dec: Array,
+    rows: Any,
+    rolls: Any = None,
 ) -> dict[str, Array]:
     model = Reference(constraint)
     bodies = bodies_at(ephem, rows)
     cells = [
-        model(float(ra[i]), float(dec[i]), {k: v[i] for k, v in bodies.items()})
+        model(
+            float(ra[i]),
+            float(dec[i]),
+            {k: v[i] for k, v in bodies.items()},
+            None if rolls is None else rolls[i],
+        )
         for i in range(len(ra))
     ]
     return {key: np.array([cell[key] for cell in cells]) for key in cells[0]}
@@ -849,17 +876,220 @@ def test_combinators_and_value_keys(
     assert causes <= {"stray_light", "sun"}
 
 
-def test_target_roll_is_not_used(
+# --- explicit rolls ----------------------------------------------------------
+
+
+def roll_inputs(
+    ephem: Any, sample: tuple[Array, Array, Any], count: int = 24
+) -> tuple[Array, Array, Any, list[Any]]:
+    ra, dec, rows = (a[:count] for a in sample)
+    return ra, dec, rows, [ephem.timestamp[int(i)] for i in rows]
+
+
+def test_explicit_rolls_match_independent_reference(
+    table: PointSourceTransmittance, ephem: Any, sample: tuple[Array, Array, Any]
+) -> None:
+    """A target roll is the absolute spacecraft roll; roll_offset_deg does not
+    apply to those rows."""
+    ra, dec, rows, times = roll_inputs(ephem, sample)
+    rolls = list(np.random.default_rng(3).uniform(-180.0, 360.0, len(ra)))
+    constraint = StrayLightConstraint(
+        pst=table,
+        conversion_factor=CONVERSION,
+        sun_azimuth_deg=180,
+        roll_offset_deg=25.0,
+    )
+    result = constraint.evaluate_elementwise(
+        ephem, ra, dec, times=times, target_rolls=rolls
+    )
+    expected = reference_values(constraint, ephem, ra, dec, rows, rolls)
+    assert_values_match(result.constraint_values, expected)
+    np.testing.assert_allclose(
+        result.constraint_values["roll_deg"], np.mod(rolls, 360.0), atol=1e-9
+    )
+    np.testing.assert_array_equal(
+        result.constraint_array,
+        ~(expected["stray_light_ratio"] <= constraint.max_ratio),
+    )
+
+
+def test_reported_roll_reproduces_the_nominal_attitude(
     constraint: StrayLightConstraint, ephem: Any, sample: tuple[Array, Array, Any]
 ) -> None:
-    """The attitude comes from the Sun and roll_offset_deg alone."""
-    ra, dec, rows = (a[:10] for a in sample)
-    times = [ephem.timestamp[int(i)] for i in rows]
-    free = constraint.evaluate_elementwise(ephem, ra, dec, times=times)
-    fixed = constraint.evaluate_elementwise(
-        ephem, ra, dec, times=times, target_rolls=[33.0] * 10
+    """roll_deg is the roll to pass back: the nominal value reproduces the
+    result without a roll."""
+    ra, dec, _, times = roll_inputs(ephem, sample)
+    nominal = constraint.evaluate_elementwise(ephem, ra, dec, times=times)
+    rolls = list(nominal.constraint_values["roll_deg"])
+    again = constraint.evaluate_elementwise(
+        ephem, ra, dec, times=times, target_rolls=rolls
     )
-    np.testing.assert_array_equal(free.constraint_array, fixed.constraint_array)
+    np.testing.assert_array_equal(again.constraint_array, nominal.constraint_array)
+    assert_values_match(
+        again.constraint_values,
+        {key: np.asarray(v) for key, v in nominal.constraint_values.items()},
+    )
+
+
+@pytest.mark.parametrize("offset", [12.5, -70.0])
+def test_roll_plus_x_reproduces_roll_offset_x(
+    table: PointSourceTransmittance,
+    ephem: Any,
+    sample: tuple[Array, Array, Any],
+    offset: float,
+) -> None:
+    ra, dec, _, times = roll_inputs(ephem, sample)
+    kwargs: dict[str, Any] = dict(
+        pst=table, conversion_factor=CONVERSION, sun_azimuth_deg=180
+    )
+    nominal = StrayLightConstraint(**kwargs)
+    rolled = StrayLightConstraint(roll_offset_deg=offset, **kwargs)
+    base = np.asarray(
+        nominal.evaluate_elementwise(ephem, ra, dec, times=times).constraint_values[
+            "roll_deg"
+        ]
+    )
+    by_offset = rolled.evaluate_elementwise(ephem, ra, dec, times=times)
+    by_roll = nominal.evaluate_elementwise(
+        ephem, ra, dec, times=times, target_rolls=list(base + offset)
+    )
+    np.testing.assert_allclose(
+        by_roll.constraint_values["stray_light_ratio"],
+        by_offset.constraint_values["stray_light_ratio"],
+        rtol=1e-9,
+        equal_nan=True,
+    )
+    difference = (
+        np.asarray(by_offset.constraint_values["roll_deg"]) - base - offset + 180.0
+    ) % 360.0 - 180.0
+    np.testing.assert_allclose(difference, 0.0, atol=1e-9)
+
+
+def test_mixed_rolls_in_one_call(
+    constraint: StrayLightConstraint, ephem: Any, sample: tuple[Array, Array, Any]
+) -> None:
+    ra, dec, rows, times = roll_inputs(ephem, sample, 12)
+    rolls: list[float | None] = [None if i % 2 else 40.0 + 20.0 * i for i in range(12)]
+    mixed = constraint.evaluate_elementwise(
+        ephem, ra, dec, times=times, target_rolls=rolls
+    )
+    expected = reference_values(constraint, ephem, ra, dec, rows, rolls)
+    assert_values_match(mixed.constraint_values, expected)
+    mask = constraint.in_constraint_elementwise(
+        ephem, ra, dec, times=times, target_rolls=rolls
+    )
+    np.testing.assert_array_equal(mask, mixed.constraint_array)
+
+
+ROLLS = np.arange(0.0, 360.0, 5.0)
+
+
+@pytest.fixture(scope="module")
+def roll_case(
+    table: PointSourceTransmittance, ephem: Any, sample: tuple[Array, Array, Any]
+) -> tuple[StrayLightConstraint, float, float, Any, Array]:
+    """A pointing with a prediction at every roll, and a constraint whose limit
+    splits the rolls: (constraint, ra, dec, time, ratio at each of ROLLS)."""
+    probe = StrayLightConstraint(pst=table, conversion_factor=CONVERSION)
+    n = len(ROLLS)
+    for ra, dec, row in zip(*sample):
+        time = ephem.timestamp[int(row)]
+        ratios = np.asarray(
+            probe.evaluate_elementwise(
+                ephem, [ra] * n, [dec] * n, times=[time] * n, target_rolls=list(ROLLS)
+            ).constraint_values["stray_light_ratio"]
+        )
+        if np.isfinite(ratios).all() and ratios.max() > 1.5 * ratios.min():
+            limit = float(np.sqrt(ratios.max() * ratios.min()))
+            constraint = StrayLightConstraint(
+                pst=table, conversion_factor=CONVERSION, max_ratio=limit
+            )
+            return constraint, float(ra), float(dec), time, ratios
+    raise AssertionError("no pointing in the sample varies with roll")
+
+
+def test_every_method_takes_the_roll(
+    roll_case: tuple[StrayLightConstraint, float, float, Any, Array], ephem: Any
+) -> None:
+    """The same roll gives the same answer through every evaluation method."""
+    constraint, ra, dec, time, ratios = roll_case
+    nominal = bool(constraint.in_constraint(time, ephem, ra, dec))
+    for index in (int(np.argmax(ratios)), int(np.argmin(ratios))):
+        roll, ratio = float(ROLLS[index]), ratios[index]
+        expected = bool(ratio > constraint.max_ratio)
+        single = constraint.evaluate(ephem, ra, dec, times=[time], target_roll=roll)
+        assert bool(single.constraint_array[0]) == expected
+        assert single.constraint_values["stray_light_ratio"][0] == pytest.approx(ratio)
+        assert single.constraint_values["roll_deg"][0] == pytest.approx(roll)
+        (batch,) = constraint.evaluate_batch(
+            ephem, [ra], [dec], times=[time], target_rolls=[roll]
+        )
+        assert batch.constraint_values["stray_light_ratio"][0] == pytest.approx(ratio)
+        grid = constraint.in_constraint_batch(
+            ephem, [ra, ra], [dec, dec], times=[time], target_rolls=[roll, None]
+        )
+        assert [bool(grid[0, 0]), bool(grid[1, 0])] == [expected, nominal]
+        assert (
+            bool(constraint.in_constraint(time, ephem, ra, dec, target_roll=roll))
+            == expected
+        )
+
+
+def test_combined_constraint_shares_the_roll(
+    table: PointSourceTransmittance, ephem: Any, sample: tuple[Array, Array, Any]
+) -> None:
+    """In a tree, the stray-light leaf and a solar-roll leaf see the same
+    spacecraft roll, and the nominal attitude is the solar-optimal roll."""
+    ra, dec, _, times = roll_inputs(ephem, sample, 16)
+    stray = StrayLightConstraint(
+        pst=table, conversion_factor=CONVERSION, max_ratio=40.0
+    )
+    solar = re.SolarRollConstraint(tolerance_deg=5.0)
+    nominal = stray.evaluate_elementwise(ephem, ra, dec, times=times)
+    rolls = np.asarray(nominal.constraint_values["roll_deg"])
+    optimal = np.asarray(
+        solar.evaluate_elementwise(
+            ephem, ra, dec, times=times, target_rolls=list(rolls)
+        ).constraint_values["solar_optimal_roll_deg"]
+    )
+    np.testing.assert_allclose(
+        (rolls - optimal + 180.0) % 360.0 - 180.0, 0.0, atol=1e-9
+    )
+
+    tree = stray | solar
+    for shift in (0.0, 30.0):
+        given = list(rolls + shift)
+        combined = tree.evaluate_elementwise(
+            ephem, ra, dec, times=times, target_rolls=given
+        )
+        alone = stray.evaluate_elementwise(
+            ephem, ra, dec, times=times, target_rolls=given
+        )
+        np.testing.assert_allclose(
+            combined.constraint_values["stray_light.stray_light_ratio"],
+            alone.constraint_values["stray_light_ratio"],
+            rtol=1e-12,
+            equal_nan=True,
+        )
+        # 30 degrees off the solar-optimal roll breaks the 5 degree tolerance.
+        solar_violated = shift > 5.0
+        np.testing.assert_array_equal(
+            combined.constraint_array,
+            np.asarray(alone.constraint_array) | solar_violated,
+        )
+
+
+def test_roll_range_gives_the_rolls_that_are_dark(
+    roll_case: tuple[StrayLightConstraint, float, float, Any, Array], ephem: Any
+) -> None:
+    constraint, ra, dec, time, ratios = roll_case
+    violated = ratios > constraint.max_ratio
+    assert violated.any() and not violated.all()
+    ranges = constraint.roll_range(time, ephem, ra, dec, n_roll_samples=len(ROLLS))
+    allowed = np.zeros(len(ROLLS), dtype=bool)
+    for low, high in ranges:
+        allowed |= (ROLLS >= low - 1e-9) & (ROLLS <= high + 1e-9)
+    np.testing.assert_array_equal(allowed, ~violated)
 
 
 def test_apparent_angles_shift_the_result_slightly(

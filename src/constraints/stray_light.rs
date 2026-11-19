@@ -30,6 +30,13 @@
 //! right-handed about the boresight by `roll_offset_deg` adds that angle to
 //! the Sun's azimuth.
 //!
+//! The same attitude in the library's terms: body +Y points to the Sun's
+//! side, which is the solar-optimal spacecraft roll of a +Y panel
+//! (`SolarRollConstraint`), and the table's azimuth-zero axis is body +Y
+//! turned by `sun_azimuth_deg`. An explicit spacecraft roll (`target_roll`)
+//! replaces the nominal roll and the offset; a roll-sweep candidate does not,
+//! because without an explicit roll this constraint supplies its own.
+//!
 //! # Disk integral
 //!
 //! For a body of angular radius `rho` centred on direction `e` the effective
@@ -48,8 +55,11 @@
 //! no sunlit surface is valid: its quoted flux is an upper bound on a
 //! contribution that is physically negligible.
 
-use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
+use super::core::{
+    track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult, EvaluationRoll,
+};
 use super::diagonal::DiagonalEvaluation;
+use super::solar_roll::{default_panel_normal, north_referenced_axes, solar_optimal_roll_deg};
 use crate::ephemeris::ephemeris_common::EphemerisBase;
 use crate::utils::config::{AU_TO_KM, MOON_RADIUS_KM, SUN_RADIUS_KM};
 use crate::utils::vector_math::radec_to_unit_vector;
@@ -271,12 +281,12 @@ impl StrayLightConfig {
 
 impl ConstraintConfig for StrayLightConfig {
     fn to_evaluator(&self) -> Box<dyn ConstraintEvaluator> {
-        let roll = (self.roll_offset_deg + self.sun_azimuth_deg).to_radians();
         Box::new(StrayLightEvaluator {
             pst: PstTable::new(&self.pst),
             conversion_factor: self.conversion_factor,
             max_ratio: self.max_ratio,
-            frame_roll: roll.sin_cos(),
+            roll_offset_deg: self.roll_offset_deg,
+            sun_azimuth_deg: self.sun_azimuth_deg,
             zodi: self.zodi,
             zodi_v_mag_arcsec2: self.zodi_v_mag_arcsec2,
             in_field_deg: self.in_field_deg,
@@ -625,21 +635,6 @@ fn zodi_table_v_mag(helio_longitude_deg: f64, latitude_deg: f64) -> f64 {
         + u * ((1.0 - v) * t[i + 1][j] + v * t[i + 1][j + 1])
 }
 
-/// Position angle (degrees, north through east, 0-360) of the direction
-/// `axis` as seen at `boresight`. `NaN` at the celestial poles.
-fn position_angle_deg(boresight: Vec3, axis: Vec3) -> f64 {
-    let pole = [0.0, 0.0, 1.0];
-    let east = cross(pole, boresight);
-    let north = cross(boresight, east);
-    if norm(east) < 1e-12 {
-        return f64::NAN;
-    }
-    dot(axis, east)
-        .atan2(dot(axis, north))
-        .to_degrees()
-        .rem_euclid(360.0)
-}
-
 // ─── Evaluator ────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -794,7 +789,7 @@ struct Cell {
 struct Report {
     cell: Cell,
     bodies: [BodyReport; 3],
-    /// Position angle (north through east) of the table's azimuth-zero axis.
+    /// The spacecraft roll used: the explicit one, or the nominal one.
     roll_deg: f64,
     /// Ecliptic longitude of the boresight from the Sun (0-360), and latitude.
     helio_ecliptic_longitude_deg: f64,
@@ -807,15 +802,42 @@ struct StrayLightEvaluator {
     pst: PstTable,
     conversion_factor: f64,
     max_ratio: f64,
-    /// (sin, cos) of the Sun's table azimuth: its nominal value plus the
-    /// roll offset.
-    frame_roll: (f64, f64),
+    /// Roll about the boresight from the nominal attitude, degrees.
+    roll_offset_deg: f64,
+    /// Table azimuth of the Sun at the nominal attitude, degrees.
+    sun_azimuth_deg: f64,
     zodi: ZodiModel,
     zodi_v_mag_arcsec2: f64,
     in_field_deg: f64,
     earth_v_full_1au: f64,
     sun_v_mag_1au: f64,
     moon_v_mag_full: f64,
+}
+
+/// How one evaluation is to be carried out.
+#[derive(Clone, Copy)]
+struct Mode {
+    /// Compute every reported quantity, not only what the mask needs.
+    detail: bool,
+    /// An explicit spacecraft roll (degrees); `None` for the nominal attitude.
+    roll_deg: Option<f64>,
+}
+
+impl Mode {
+    /// The violation mask at the nominal attitude.
+    const MASK: Mode = Mode {
+        detail: false,
+        roll_deg: None,
+    };
+    /// Every value at the nominal attitude.
+    const VALUES: Mode = Mode {
+        detail: true,
+        roll_deg: None,
+    };
+
+    fn at_roll(self, roll_deg: Option<f64>) -> Mode {
+        Mode { roll_deg, ..self }
+    }
 }
 
 /// The three (N, 6) state tables the model reads, borrowed from an ephemeris.
@@ -854,34 +876,32 @@ impl StrayLightEvaluator {
         format!("StrayLight(max_ratio={})", self.max_ratio)
     }
 
-    /// Telescope axes for a boresight and the direction of the Sun.
-    fn frame(&self, boresight: Vec3, sun: Vec3) -> Frame {
-        let sun = unit(sun);
-        let across = add_scaled(sun, boresight, -dot(sun, boresight));
-        let length = norm(across);
-        let sun_side = if length < 1e-6 {
-            // Sun on the boresight: the roll is undefined and the pointing is
-            // invalid anyway. Any perpendicular axis will do.
-            let pole = if boresight[2].abs() < 0.95 {
-                [0.0, 0.0, 1.0]
-            } else {
-                [0.0, 1.0, 0.0]
-            };
-            unit(add_scaled(pole, boresight, -dot(pole, boresight)))
-        } else {
-            scaled(across, 1.0 / length)
-        };
-        let (sin_roll, cos_roll) = self.frame_roll;
-        let y = add_scaled(
-            scaled(sun_side, cos_roll),
-            cross(boresight, sun_side),
-            sin_roll,
-        );
-        Frame {
-            boresight,
-            x: cross(y, boresight),
-            y,
-        }
+    /// Telescope axes for a boresight, and the spacecraft roll they correspond
+    /// to (degrees, 0-360).
+    ///
+    /// The roll is the library's spacecraft roll: counter-clockwise about the
+    /// boresight in the north-referenced body frame (`north_referenced_axes`),
+    /// as `SolarRollConstraint` and `BoresightOffsetConstraint` use it. With
+    /// `roll = None` it is the Sun-referenced nominal one, body +Y toward the
+    /// Sun (the solar-optimal roll of a +Y panel), plus the configured offset.
+    /// The table's azimuth-zero axis is body +Y turned by the Sun's nominal
+    /// table azimuth.
+    fn frame(&self, boresight: Vec3, sun: Vec3, roll_deg: Option<f64>) -> (Frame, f64) {
+        let roll_deg = roll_deg.unwrap_or_else(|| {
+            solar_optimal_roll_deg(&boresight, &unit(sun), default_panel_normal())
+                + self.roll_offset_deg
+        });
+        let (y_ref, z_ref) = north_referenced_axes(boresight);
+        let (sin_roll, cos_roll) = (roll_deg + self.sun_azimuth_deg).to_radians().sin_cos();
+        let y = add_scaled(scaled(y_ref, cos_roll), z_ref, sin_roll);
+        (
+            Frame {
+                boresight,
+                x: cross(y, boresight),
+                y,
+            },
+            roll_deg.rem_euclid(360.0),
+        )
     }
 
     /// PST toward direction `p` (a unit vector).
@@ -1117,11 +1137,11 @@ impl StrayLightEvaluator {
         report
     }
 
-    /// The model for one boresight and the bodies of one time. See
-    /// `body_report` for `detail`.
-    fn report(&self, boresight: Vec3, bodies: &[Vec3; 3], detail: bool) -> Report {
+    /// The model for one boresight and the bodies of one time.
+    fn report(&self, boresight: Vec3, bodies: &[Vec3; 3], mode: Mode) -> Report {
+        let detail = mode.detail;
         let sun = bodies[0];
-        let frame = self.frame(boresight, sun);
+        let (frame, roll_deg) = self.frame(boresight, sun, mode.roll_deg);
         let parts = [Body::Sun, Body::Earth, Body::Moon]
             .map(|body| self.body_report(&frame, body, bodies[body as usize], sun, detail));
         let (helio_ecliptic_longitude_deg, ecliptic_latitude_deg) =
@@ -1158,7 +1178,7 @@ impl StrayLightEvaluator {
                 violated: ratio.is_nan() || ratio > self.max_ratio,
             },
             bodies: parts,
-            roll_deg: position_angle_deg(boresight, frame.y),
+            roll_deg,
             helio_ecliptic_longitude_deg,
             ecliptic_latitude_deg,
             zodi_table_v_mag_arcsec2,
@@ -1203,7 +1223,7 @@ impl StrayLightEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-        detail: bool,
+        mode: Mode,
         keep: impl Fn(&Report) -> T + Sync,
     ) -> PyResult<(Vec<T>, usize)> {
         let states = States::of(ephemeris)?;
@@ -1219,7 +1239,7 @@ impl StrayLightEvaluator {
             .collect();
         let n_times = rows.len();
         let one = |index: usize| {
-            keep(&self.report(targets[index / n_times], &bodies[index % n_times], detail))
+            keep(&self.report(targets[index / n_times], &bodies[index % n_times], mode))
         };
         let count = targets.len() * n_times;
         let cells = if count >= PARALLEL_MIN_CELLS {
@@ -1237,7 +1257,7 @@ impl StrayLightEvaluator {
         target_ras: &[f64],
         target_decs: &[f64],
         indices: &[usize],
-        detail: bool,
+        mode: Mode,
         keep: impl Fn(&Report) -> T + Sync,
     ) -> PyResult<Vec<T>> {
         let states = States::of(ephemeris)?;
@@ -1245,7 +1265,7 @@ impl StrayLightEvaluator {
             keep(&self.report(
                 radec_to_unit_vector(target_ras[i], target_decs[i]),
                 &states.bodies(indices[i]),
-                detail,
+                mode,
             ))
         };
         Ok(if indices.len() >= PARALLEL_MIN_CELLS {
@@ -1272,7 +1292,7 @@ impl ConstraintEvaluator for StrayLightEvaluator {
             target_ras,
             target_decs,
             &indices,
-            true,
+            Mode::VALUES,
             |report| (report.cell.violated, Self::values(report)),
         )?;
         let values = Self::value_keys()
@@ -1300,7 +1320,7 @@ impl ConstraintEvaluator for StrayLightEvaluator {
             &[target_ra],
             &[target_dec],
             time_indices,
-            false,
+            Mode::MASK,
             |report| report.cell,
         )?;
         let violations = track_violations(
@@ -1344,17 +1364,13 @@ impl ConstraintEvaluator for StrayLightEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
-        let (violated, n_times) = self.grid(
+        // A sweep candidate leaves the nominal attitude in force.
+        self.in_constraint_batch_at_roll(
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
-            false,
-            |report| report.cell.violated,
-        )?;
-        Ok(
-            Array2::from_shape_vec((target_ras.len(), n_times), violated)
-                .expect("one cell per target and time"),
+            EvaluationRoll::Sweep(0.0),
         )
     }
 
@@ -1365,12 +1381,49 @@ impl ConstraintEvaluator for StrayLightEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<HashMap<String, Array2<f64>>> {
+        self.compute_named_values_at_roll(ephemeris, target_ras, target_decs, time_indices, None)
+    }
+
+    /// An explicit spacecraft roll sets the attitude; a sweep candidate does
+    /// not, since this constraint defines its own (Sun-referenced) attitude
+    /// when no roll is given.
+    fn in_constraint_batch_at_roll(
+        &self,
+        ephemeris: &dyn EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        roll_deg: EvaluationRoll,
+    ) -> PyResult<Array2<bool>> {
+        let roll = roll_deg.is_fixed().then(|| roll_deg.degrees());
+        let (violated, n_times) = self.grid(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            Mode::MASK.at_roll(roll),
+            |report| report.cell.violated,
+        )?;
+        Ok(
+            Array2::from_shape_vec((target_ras.len(), n_times), violated)
+                .expect("one cell per target and time"),
+        )
+    }
+
+    fn compute_named_values_at_roll(
+        &self,
+        ephemeris: &dyn EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        target_roll: Option<f64>,
+    ) -> PyResult<HashMap<String, Array2<f64>>> {
         let (cells, n_times) = self.grid(
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
-            true,
+            Mode::VALUES.at_roll(target_roll),
             Self::values,
         )?;
         Ok(Self::value_keys()
@@ -1441,12 +1494,12 @@ mod tests {
     }
 
     fn evaluator(config: &StrayLightConfig) -> StrayLightEvaluator {
-        let roll = (config.roll_offset_deg + config.sun_azimuth_deg).to_radians();
         StrayLightEvaluator {
             pst: PstTable::new(&config.pst),
             conversion_factor: config.conversion_factor,
             max_ratio: config.max_ratio,
-            frame_roll: roll.sin_cos(),
+            roll_offset_deg: config.roll_offset_deg,
+            sun_azimuth_deg: config.sun_azimuth_deg,
             zodi: config.zodi,
             zodi_v_mag_arcsec2: config.zodi_v_mag_arcsec2,
             in_field_deg: config.in_field_deg,
@@ -1533,7 +1586,7 @@ mod tests {
             let mut config = config();
             config.roll_offset_deg = roll;
             config.sun_azimuth_deg = zero;
-            let frame = evaluator(&config).frame(boresight, sun);
+            let (frame, _) = evaluator(&config).frame(boresight, sun, None);
             // Orthonormal, right-handed with the boresight.
             assert!(dot(frame.x, frame.y).abs() < 1e-12);
             assert!(dot(frame.y, frame.boresight).abs() < 1e-12);
@@ -1550,7 +1603,7 @@ mod tests {
         let evaluator = evaluator(&config);
         let boresight = radec_to_unit_vector(0.0, 0.0);
         let sun = scaled(radec_to_unit_vector(90.0, 0.0), AU_TO_KM);
-        let frame = evaluator.frame(boresight, sun);
+        let (frame, _) = evaluator.frame(boresight, sun, None);
         // The Sun, half a degree across, 90 degrees off axis.
         let (disk, converged, _) = evaluator.disk_mean(&frame, Body::Sun, sun, sun);
         assert!(converged);
