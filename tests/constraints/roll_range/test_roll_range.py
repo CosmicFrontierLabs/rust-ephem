@@ -7,8 +7,9 @@ violated (i.e. the pointing is valid).
 
 from __future__ import annotations
 
+import itertools
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable
 
 import pytest
 
@@ -190,7 +191,7 @@ class TestRollRangeBasicContract:
             time, ephemeris=ephem, target_ra=ra, target_dec=dec, n_roll_samples=72
         )
 
-        for a, b in zip(result, result[1:]):
+        for a, b in itertools.pairwise(result):
             assert a[1] < b[0], "Intervals overlap or are out of order"
 
 

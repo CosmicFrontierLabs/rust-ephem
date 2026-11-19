@@ -352,7 +352,7 @@ class TestSolarRollConstraintNestedInjection:
         )
 
         invalid_roll = None
-        for roll in range(0, 360):
+        for roll in range(360):
             if not self._roll_in_intervals(float(roll), intervals):
                 invalid_roll = float(roll)
                 break

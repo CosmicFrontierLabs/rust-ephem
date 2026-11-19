@@ -2,16 +2,11 @@
 Test suite for SAAConstraint.
 """
 
-from typing import TYPE_CHECKING
-
 import numpy as np
 import pytest
 
 import rust_ephem
 from rust_ephem.constraints import SAAConstraint
-
-if TYPE_CHECKING:
-    import rust_ephem
 
 
 class TestSAAConstraint:

@@ -1,8 +1,5 @@
 /// Moon proximity constraint implementation
-use super::core::{
-    compute_angle_deg_batch, track_violations, ConstraintConfig, ConstraintEvaluator,
-    ConstraintResult,
-};
+use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
 use crate::utils::config::MOON_RADIUS_KM;
 use crate::utils::vector_math::{dot_product, radec_to_unit_vector, radec_to_unit_vectors_batch};
 use ndarray::Array2;
@@ -334,7 +331,9 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
     ) -> PyResult<HashMap<String, Array2<f64>>> {
         let (_times_slice, moon_positions_slice, observer_positions_slice) =
             extract_body_ephemeris_data!(ephemeris, time_indices, get_moon_positions_at_indices);
-        let angle_deg = compute_angle_deg_batch(
+        let angle_deg = super::core::compute_angle_deg_batch_on(
+            ephemeris,
+            time_indices,
             target_ras,
             target_decs,
             &moon_positions_slice,

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Test script to verify get_body_pv() and get_body() methods work correctly
 across all ephemeris types (TLE, SPICE, Ground).

@@ -200,8 +200,8 @@ pub struct ConstraintResult {
     #[pyo3(get)]
     pub constraint_name: String,
     /// Named continuous values computed during evaluation (e.g. `sun_angle_deg`),
-    /// one array per key, aligned with `times`/`timestamp`.
-    #[pyo3(get)]
+    /// one array per key, aligned with `times`/`timestamp`. Exposed to Python
+    /// through a getter that converts them once.
     pub constraint_values: HashMap<String, Vec<f64>>,
     /// Per-leaf-constraint violation mask (namespaced the same way as
     /// `constraint_values`' keys), aligned with `times`. Used to attribute
@@ -227,6 +227,8 @@ pub struct ConstraintResult {
     constraint_vec_cache: OnceLock<Vec<bool>>,
     /// Cached constraint array (Python-side, not directly exposed, use getter)
     constraint_array_cache: OnceLock<Py<PyAny>>,
+    /// Cached `constraint_values` (Python-side: a dict of NumPy arrays)
+    constraint_values_cache: OnceLock<Py<PyAny>>,
 }
 
 impl ConstraintResult {
@@ -256,6 +258,7 @@ impl ConstraintResult {
             timestamp_cache: OnceLock::new(),
             constraint_vec_cache: OnceLock::new(),
             constraint_array_cache: OnceLock::new(),
+            constraint_values_cache: OnceLock::new(),
         }
     }
 
@@ -290,6 +293,34 @@ impl ConstraintResult {
     #[getter]
     fn cause_value_keys(&self) -> HashMap<String, Vec<String>> {
         (*self.cause_value_keys).clone()
+    }
+
+    /// dict[str, numpy float array]: the named continuous values, one array
+    /// per key, aligned with `timestamp`.
+    ///
+    /// The arrays are built on first access and shared by later ones, so they
+    /// are read-only. Converting every key to a new list on each access cost
+    /// more than the evaluation when a caller collected one key over the
+    /// results of a batch.
+    #[getter]
+    fn constraint_values(&self, py: Python) -> PyResult<Py<PyAny>> {
+        use numpy::IntoPyArray;
+
+        let cached = match self.constraint_values_cache.get() {
+            Some(cached) => cached,
+            None => {
+                let dict = pyo3::types::PyDict::new(py);
+                for (key, values) in &self.constraint_values {
+                    let array = values.clone().into_pyarray(py);
+                    super::grid::freeze(&array);
+                    dict.set_item(key, array)?;
+                }
+                self.constraint_values_cache
+                    .get_or_init(|| dict.into_any().unbind())
+            }
+        };
+        // A fresh dict, so a caller editing its keys leaves the cache alone.
+        Ok(cached.bind(py).call_method0("copy")?.unbind())
     }
 
     fn __repr__(&self) -> String {
@@ -963,10 +994,12 @@ pub trait ConstraintEvaluator: Send + Sync {
         time_indices: Option<&[usize]>,
     ) -> PyResult<HashMap<String, Vec<String>>> {
         let own_tag = value_key_prefix(&self.name());
-        let value_keys: Vec<String> = self
+        let mut value_keys: Vec<String> = self
             .compute_named_values(ephemeris, target_ras, target_decs, time_indices)?
             .into_keys()
             .collect();
+        // A leaf with several values lists them in the same order every time.
+        value_keys.sort();
         Ok(HashMap::from([(own_tag, value_keys)]))
     }
 
@@ -1341,18 +1374,18 @@ pub(crate) fn target_corrections_at(
 /// Fewest target x time cells worth spreading over the cores.
 const APPARENT_PARALLEL_MIN_CELLS: usize = 20_000;
 
-/// The violation grid (targets x times) of a rule on the apparent cosine
-/// between each catalogue target and the body direction of each time
-/// (`bodies`, unit vectors on an apparent view), with the target correction of
-/// that time. `violated(t, cos)` is the rule. Rows are filled across the cores
-/// for large grids: the correction is the one per-cell cost of apparent
-/// evaluation.
-pub(crate) fn apparent_cosine_grid(
+/// A grid (targets x times) of some function of the apparent cosine between
+/// each catalogue target and the body direction of each time (`bodies`, unit
+/// vectors on an apparent view), with the target correction of that time.
+/// `cell(t, cos)` is the function: a rule for a violation mask, an angle for a
+/// value. Rows are filled across the cores for large grids: the correction is
+/// the one per-cell cost of apparent evaluation.
+pub(crate) fn apparent_cosine_grid<T: Copy + Default + Send>(
     target_unit_vectors: &Array2<f64>,
     bodies: &[[f64; 3]],
     corrections: &[crate::utils::apparent::ObserverAberration],
-    violated: impl Fn(usize, f64) -> bool + Sync,
-) -> Array2<bool> {
+    violated: impl Fn(usize, f64) -> T + Sync,
+) -> Array2<T> {
     use rayon::prelude::*;
 
     let (n_targets, n_times) = (target_unit_vectors.nrows(), bodies.len());
@@ -1361,8 +1394,8 @@ pub(crate) fn apparent_cosine_grid(
         .zip(bodies)
         .map(|(correction, &body)| correction.toward(body))
         .collect();
-    let mut cells = vec![false; n_targets * n_times];
-    let fill = |(i, row): (usize, &mut [bool])| {
+    let mut cells = vec![T::default(); n_targets * n_times];
+    let fill = |(i, row): (usize, &mut [T])| {
         let target = [
             target_unit_vectors[[i, 0]],
             target_unit_vectors[[i, 1]],
@@ -1474,6 +1507,40 @@ macro_rules! impl_proximity_evaluator {
 ///
 /// # Returns
 /// (M x N) array (targets x times) of angles in degrees.
+/// `compute_angle_deg_batch` for the rows of `ephemeris` selected by
+/// `time_indices`. On an apparent view that leaves target corrections to the
+/// kernels, the angles are the apparent ones, as the batch masks are.
+pub(crate) fn compute_angle_deg_batch_on(
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    time_indices: Option<&[usize]>,
+    target_ras: &[f64],
+    target_decs: &[f64],
+    body_positions: &Array2<f64>,
+    observer_positions: &Array2<f64>,
+) -> Array2<f64> {
+    let Some(corrections) = target_corrections_at(ephemeris, time_indices) else {
+        return compute_angle_deg_batch(
+            target_ras,
+            target_decs,
+            body_positions,
+            observer_positions,
+        );
+    };
+    let bodies: Vec<[f64; 3]> = (0..body_positions.nrows())
+        .map(|t| {
+            crate::utils::vector_math::normalize_vector(&std::array::from_fn(|j| {
+                body_positions[[t, j]] - observer_positions[[t, j]]
+            }))
+        })
+        .collect();
+    apparent_cosine_grid(
+        &crate::utils::vector_math::radec_to_unit_vectors_batch(target_ras, target_decs),
+        &bodies,
+        &corrections,
+        |_, cos_angle| cos_angle.clamp(-1.0, 1.0).acos().to_degrees(),
+    )
+}
+
 pub(crate) fn compute_angle_deg_batch(
     target_ras: &[f64],
     target_decs: &[f64],

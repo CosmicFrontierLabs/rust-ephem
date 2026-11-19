@@ -278,16 +278,26 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         }
 
         let mut earth_limb_angle_deg = Array2::<f64>::zeros((n_targets, n_times));
-        for i in 0..n_targets {
-            let target_vec = [
-                target_vectors[[i, 0]],
-                target_vectors[[i, 1]],
-                target_vectors[[i, 2]],
-            ];
-            for t in 0..n_times {
-                let cos_angle = dot_product(&target_vec, &center_units[t]);
-                earth_limb_angle_deg[[i, t]] =
-                    cos_angle.clamp(-1.0, 1.0).acos().to_degrees() - limb_offsets[t];
+        // On an apparent view the catalogue cosine becomes the apparent one.
+        if let Some(corrections) = super::core::target_corrections_at(ephemeris, time_indices) {
+            earth_limb_angle_deg = super::core::apparent_cosine_grid(
+                &target_vectors,
+                &center_units,
+                &corrections,
+                |t, cos_angle| cos_angle.clamp(-1.0, 1.0).acos().to_degrees() - limb_offsets[t],
+            );
+        } else {
+            for i in 0..n_targets {
+                let target_vec = [
+                    target_vectors[[i, 0]],
+                    target_vectors[[i, 1]],
+                    target_vectors[[i, 2]],
+                ];
+                for t in 0..n_times {
+                    let cos_angle = dot_product(&target_vec, &center_units[t]);
+                    earth_limb_angle_deg[[i, t]] =
+                        cos_angle.clamp(-1.0, 1.0).acos().to_degrees() - limb_offsets[t];
+                }
             }
         }
 
