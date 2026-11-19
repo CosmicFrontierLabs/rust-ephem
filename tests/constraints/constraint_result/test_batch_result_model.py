@@ -1,6 +1,7 @@
 """Results of ``evaluate`` / ``evaluate_batch`` are built without running
 pydantic validation; they must still behave as ordinary models."""
 
+import itertools
 from datetime import datetime, timezone
 from typing import Any
 
@@ -64,5 +65,5 @@ def test_shared_batch_data_is_per_result(results: list[ConstraintResult]) -> Non
     assert first.cause_value_keys["sun"] != []
     assert any(
         list(a.constraint_array) != list(b.constraint_array)
-        for a, b in zip(results, results[1:])
+        for a, b in itertools.pairwise(results)
     )

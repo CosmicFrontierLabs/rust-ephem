@@ -5,6 +5,7 @@ Tests the base constraint mixin methods including evaluation, logical operators,
 and operator overloads.
 """
 
+import contextlib
 from typing import Any
 
 import pytest
@@ -36,25 +37,21 @@ class TestRustConstraintMixin:
         self: Any, sun_constraint: Any, mock_ephem: Any
     ) -> None:
         config = sun_constraint
-        try:
+        # The mock is not an ephemeris, so evaluation fails; only the
+        # constraint's creation is under test.
+        with contextlib.suppress(TypeError):
             config.evaluate(mock_ephem, 0.0, 0.0)
-        except Exception:
-            pass  # We expect this to fail, we just want to check constraint creation
         assert hasattr(config, "_rust_constraint")
 
     def test_evaluate_uses_cached_constraint(
         self: Any, sun_constraint: Any, mock_ephem: Any
     ) -> None:
         config = sun_constraint
-        try:
+        with contextlib.suppress(TypeError):
             config.evaluate(mock_ephem, 0.0, 0.0)
-        except Exception:
-            pass
         cached_constraint = config._rust_constraint
-        try:
+        with contextlib.suppress(TypeError):
             config.evaluate(mock_ephem, 0.0, 0.0)
-        except Exception:
-            pass
         assert config._rust_constraint is cached_constraint
 
     def test_operator_precedence_expr_is_or(
