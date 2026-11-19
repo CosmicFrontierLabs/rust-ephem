@@ -13,7 +13,8 @@ from pydantic import ValidationError
 import rust_ephem as re
 from rust_ephem import PointSourceTransmittance, StrayLightConstraint
 
-Array = npt.NDArray[np.float64]
+# Any dtype: older NumPy stubs type arange() and cross() as floating[Any].
+Array = npt.NDArray[Any]
 
 AU_KM = 1.495978707e8
 RADIUS_KM = {"sun": 695700.0, "earth": 6371.0, "moon": 1737.4}
