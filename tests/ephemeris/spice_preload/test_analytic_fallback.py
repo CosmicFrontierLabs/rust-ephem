@@ -43,8 +43,15 @@ def run(home: Path) -> str:
     env = dict(os.environ, HOME=str(home))
     # Keep using the developer's (or CI's) EOP cache rather than downloading.
     env.setdefault("RUST_EPHEM_EOP_CACHE", str(Path.home() / ".cache" / "rust_ephem"))
+    # Run from outside the repository: with ``-c`` the working directory is on
+    # sys.path, and the source tree has no compiled extension when the package
+    # was installed from a wheel.
     done = subprocess.run(
-        [sys.executable, "-c", SCRIPT], env=env, capture_output=True, text=True
+        [sys.executable, "-c", SCRIPT],
+        env=env,
+        cwd=home,
+        capture_output=True,
+        text=True,
     )
     assert done.returncode == 0, done.stderr
     return done.stdout
