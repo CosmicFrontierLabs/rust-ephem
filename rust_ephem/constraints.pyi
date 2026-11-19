@@ -364,6 +364,15 @@ class PointSourceTransmittance(BaseModel):
         azimuth_symmetric: bool = True,
     ) -> PointSourceTransmittance: ...
 
+class StrayLightStatus(int, Enum):
+    OK = 0
+    DARK = 1
+    IN_FIELD = 2
+    FIRST_CELL = 3
+    UNCONVERGED = 4
+    @property
+    def is_valid(self) -> bool: ...
+
 class StrayLightConstraint(RustConstraintMixin):
     type: Literal["stray_light"] = "stray_light"
     pst: PointSourceTransmittance

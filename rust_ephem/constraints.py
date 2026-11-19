@@ -2124,6 +2124,29 @@ class PointSourceTransmittance(BaseModel):
         )
 
 
+class StrayLightStatus(int, Enum):
+    """Why a body has, or has not, a stray-light prediction: the meaning of the
+    ``sun_status``, ``earth_status`` and ``moon_status`` values of
+    :class:`StrayLightConstraint`."""
+
+    #: A converged prediction.
+    OK = 0
+    #: No sunlit surface is visible. The quoted contribution is an upper bound
+    #: on one that is physically negligible; it counts as a prediction.
+    DARK = 1
+    #: The nearest limb is within ``in_field_deg`` of the boresight.
+    IN_FIELD = 2
+    #: The nearest limb is inside the first off-axis cell of the table.
+    FIRST_CELL = 3
+    #: The disk integral did not converge.
+    UNCONVERGED = 4
+
+    @property
+    def is_valid(self) -> bool:
+        """Whether the body's contribution is a usable prediction."""
+        return self in (StrayLightStatus.OK, StrayLightStatus.DARK)
+
+
 class StrayLightConstraint(RustConstraintMixin):
     """Stray-light constraint: scattered light against the zodiacal background.
 
@@ -2152,11 +2175,29 @@ class StrayLightConstraint(RustConstraintMixin):
     when the disk integral does not converge, or when the tabulated zodi has no
     entry for the pointing. ``constraint_values`` are NaN in those cases.
 
-    **Values.** ``constraint_values`` holds ``stray_light_ratio`` (scattered
-    light over zodi), the parts of it due to each body
-    (``sun_stray_light_ratio``, ``earth_stray_light_ratio``,
-    ``moon_stray_light_ratio``; each NaN only when that body has no
-    prediction) and ``zodi_v_mag_arcsec2``.
+    **Values.** ``constraint_values`` holds everything the model works out, so
+    nothing has to be recomputed outside it:
+
+    * ``stray_light_ratio`` (scattered light over zodi) and the parts of it due
+      to each body, ``sun_stray_light_ratio``, ``earth_stray_light_ratio`` and
+      ``moon_stray_light_ratio`` (each NaN only when that body has no
+      prediction), and ``zodi_v_mag_arcsec2``, the zodi they are taken against;
+    * for the pointing: ``roll_deg`` (position angle, north through east, of
+      the table's azimuth-zero axis), ``helio_ecliptic_longitude_deg`` (ecliptic
+      longitude from the Sun, 0-360), ``ecliptic_latitude_deg`` and
+      ``zodi_table_v_mag_arcsec2`` (the tabulated zodi there, whichever zodi the
+      ratio uses);
+    * for each body, with the prefix ``sun_``, ``earth_`` or ``moon_`` (for
+      example ``earth_v_mag``): ``v_mag``; ``phase_deg`` (NaN for the Sun);
+      ``distance_km``; ``angular_radius_deg``; ``separation_deg`` and
+      ``limb_deg`` (boresight to the centre and to the nearest limb);
+      ``azimuth_deg`` (table azimuth of the centre, -180 to 180);
+      ``pst_center`` and ``pst_mean`` (PST toward the centre and its
+      brightness-weighted mean over the disk); ``lit_fraction``;
+      ``quadrature_error``; and ``status`` (a :class:`StrayLightStatus` value).
+
+    The per-body values are filled in even where the body has no prediction. A
+    body's scattered flux in V = 0 sources is ``10**(-0.4 * v_mag) * pst_mean``.
 
     **Conversion factor.** The two sides of the ratio start in different
     units. The scattered light is an irradiance on the focal plane,

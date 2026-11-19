@@ -601,20 +601,43 @@ fn ecliptic_lon_lat_deg(v: Vec3) -> (f64, f64) {
     )
 }
 
-/// Tabulated zodiacal surface brightness toward `boresight` with the Sun in
-/// direction `sun`. `NaN` where a surrounding table cell is not tabulated:
-/// unknown, not bright.
-fn zodi_table_v_mag(boresight: Vec3, sun: Vec3) -> f64 {
+/// Ecliptic longitude of `boresight` from the Sun (0-360 degrees) and its
+/// ecliptic latitude: the coordinates the zodiacal light is tabulated in.
+fn zodi_coordinates_deg(boresight: Vec3, sun: Vec3) -> (f64, f64) {
     let (longitude, latitude) = ecliptic_lon_lat_deg(boresight);
-    let from_sun = (longitude - ecliptic_lon_lat_deg(sun).0).rem_euclid(360.0);
-    let fx = ((from_sun + 180.0).rem_euclid(360.0) - 180.0).abs() / ZODI_STEP_DEG;
-    let fy = latitude.abs() / ZODI_STEP_DEG;
+    (
+        (longitude - ecliptic_lon_lat_deg(sun).0).rem_euclid(360.0),
+        latitude,
+    )
+}
+
+/// Tabulated zodiacal surface brightness at the coordinates of
+/// `zodi_coordinates_deg`. `NaN` where a surrounding table cell is not
+/// tabulated: unknown, not bright.
+fn zodi_table_v_mag(helio_longitude_deg: f64, latitude_deg: f64) -> f64 {
+    let fx = ((helio_longitude_deg + 180.0).rem_euclid(360.0) - 180.0).abs() / ZODI_STEP_DEG;
+    let fy = latitude_deg.abs() / ZODI_STEP_DEG;
     let i = (fx as usize).min(ZODI_TABLE_V.len() - 2);
     let j = (fy as usize).min(ZODI_TABLE_V[0].len() - 2);
     let (u, v) = (fx - i as f64, fy - j as f64);
     let t = &ZODI_TABLE_V;
     (1.0 - u) * ((1.0 - v) * t[i][j] + v * t[i][j + 1])
         + u * ((1.0 - v) * t[i + 1][j] + v * t[i + 1][j + 1])
+}
+
+/// Position angle (degrees, north through east, 0-360) of the direction
+/// `axis` as seen at `boresight`. `NaN` at the celestial poles.
+fn position_angle_deg(boresight: Vec3, axis: Vec3) -> f64 {
+    let pole = [0.0, 0.0, 1.0];
+    let east = cross(pole, boresight);
+    let north = cross(boresight, east);
+    if norm(east) < 1e-12 {
+        return f64::NAN;
+    }
+    dot(axis, east)
+        .atan2(dot(axis, north))
+        .to_degrees()
+        .rem_euclid(360.0)
 }
 
 // ─── Evaluator ────────────────────────────────────────────────────────────────
@@ -663,12 +686,97 @@ struct DiskLevel {
     spread: f64,
 }
 
-/// What one body contributes at one pointing and time.
+/// Why a body has, or has not, a stray-light prediction. The numeric values
+/// are what `<body>_status` reports.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Status {
+    /// A converged prediction.
+    Ok = 0,
+    /// No sunlit surface is visible: the quoted flux is an upper bound on a
+    /// contribution that is physically negligible. Valid.
+    Dark = 1,
+    /// The nearest limb is inside the field: direct light.
+    InField = 2,
+    /// The nearest limb is inside the first off-axis cell of the table.
+    FirstCell = 3,
+    /// The disk quadrature did not converge.
+    Unconverged = 4,
+}
+
+impl Status {
+    fn is_valid(self) -> bool {
+        matches!(self, Status::Ok | Status::Dark)
+    }
+}
+
+/// Everything the model works out for one body at one pointing and time.
+/// Fields that were not computed are `NaN`.
 #[derive(Clone, Copy)]
-struct Contribution {
+struct BodyReport {
     /// Scattered flux in units of a V = 0 source: `10^(-0.4 V) <PST>`.
     flux: f64,
-    valid: bool,
+    status: Status,
+    v_mag: f64,
+    /// Sun-body-observer angle, degrees: 0 full, 180 new. `NaN` for the Sun.
+    phase_deg: f64,
+    distance_km: f64,
+    angular_radius_deg: f64,
+    /// Boresight to the body's centre, and to its nearest limb.
+    separation_deg: f64,
+    limb_deg: f64,
+    /// Table azimuth of the centre, in (-180, 180].
+    azimuth_deg: f64,
+    /// PST toward the centre, and its brightness-weighted mean over the disk.
+    pst_center: f64,
+    pst_mean: f64,
+    lit_fraction: f64,
+    /// Relative change of the mean between the last two quadrature levels;
+    /// for a disk with no sunlit sample, the relative PST spread across it.
+    quadrature_error: f64,
+}
+
+/// Names of the per-body values, in the order `BodyReport::values`
+/// yields them.
+const BODY_VALUES: [&str; 12] = [
+    "v_mag",
+    "phase_deg",
+    "distance_km",
+    "angular_radius_deg",
+    "separation_deg",
+    "limb_deg",
+    "azimuth_deg",
+    "pst_center",
+    "pst_mean",
+    "lit_fraction",
+    "quadrature_error",
+    "status",
+];
+const BODY_NAMES: [&str; 3] = ["sun", "earth", "moon"];
+/// Values describing the pointing itself, ahead of the per-body ones.
+const POINTING_VALUES: [&str; 4] = [
+    "roll_deg",
+    "helio_ecliptic_longitude_deg",
+    "ecliptic_latitude_deg",
+    "zodi_table_v_mag_arcsec2",
+];
+
+impl BodyReport {
+    fn values(&self) -> [f64; 12] {
+        [
+            self.v_mag,
+            self.phase_deg,
+            self.distance_km,
+            self.angular_radius_deg,
+            self.separation_deg,
+            self.limb_deg,
+            self.azimuth_deg,
+            self.pst_center,
+            self.pst_mean,
+            self.lit_fraction,
+            self.quadrature_error,
+            self.status as u8 as f64,
+        ]
+    }
 }
 
 /// The model's result for one target at one time.
@@ -682,14 +790,17 @@ struct Cell {
     violated: bool,
 }
 
-impl Cell {
-    fn value(&self, key: usize) -> f64 {
-        match key {
-            0 => self.ratio,
-            1..=3 => self.bodies[key - 1],
-            _ => self.zodi_v_mag_arcsec2,
-        }
-    }
+/// A `Cell` with everything that went into it.
+struct Report {
+    cell: Cell,
+    bodies: [BodyReport; 3],
+    /// Position angle (north through east) of the table's azimuth-zero axis.
+    roll_deg: f64,
+    /// Ecliptic longitude of the boresight from the Sun (0-360), and latitude.
+    helio_ecliptic_longitude_deg: f64,
+    ecliptic_latitude_deg: f64,
+    /// The tabulated zodi at the pointing, whichever zodi the ratio uses.
+    zodi_table_v_mag_arcsec2: f64,
 }
 
 struct StrayLightEvaluator {
@@ -862,9 +973,15 @@ impl StrayLightEvaluator {
     }
 
     /// Brightness-weighted mean PST over a body's disk, refining the grid
-    /// until two levels agree and a sample is sunlit. Returns the last level
-    /// and whether the result is converged.
-    fn disk_mean(&self, frame: &Frame, body: Body, centre: Vec3, sun: Vec3) -> (DiskLevel, bool) {
+    /// until two levels agree and a sample is sunlit. Returns the last level,
+    /// whether the result is converged, and the quadrature error estimate.
+    fn disk_mean(
+        &self,
+        frame: &Frame,
+        body: Body,
+        centre: Vec3,
+        sun: Vec3,
+    ) -> (DiskLevel, bool, f64) {
         let (n_r, n_az) = body.grid();
         let lambert = body != Body::Sun;
         let level = |k: u32| {
@@ -880,9 +997,10 @@ impl StrayLightEvaluator {
         };
         let mut current = level(0);
         let mut unsettled = true;
+        let mut change = f64::INFINITY;
         for k in 1..=MAX_REFINEMENTS {
             let finer = level(k);
-            let change = (finer.mean - current.mean).abs() / finer.mean;
+            change = (finer.mean - current.mean).abs() / finer.mean;
             current = finer;
             // A NaN change (a zero mean) counts as unsettled.
             unsettled = change.is_nan() || change > QUADRATURE_RTOL || current.lit_fraction == 0.0;
@@ -890,14 +1008,14 @@ impl StrayLightEvaluator {
                 break;
             }
         }
-        let converged = if current.lit_fraction == 0.0 {
+        if current.lit_fraction == 0.0 {
             // A crescent thinner than the finest grid: the uniform-disk mean
             // stands only if the PST hardly varies across the disk.
-            current.spread <= UNLIT_SPREAD_TOLERANCE
+            let spread = current.spread;
+            (current, spread <= UNLIT_SPREAD_TOLERANCE, spread)
         } else {
-            !unsettled
-        };
-        (current, converged)
+            (current, !unsettled, change)
+        }
     }
 
     /// Disk-integrated V magnitude of a body at `distance_km`, `phase_deg`.
@@ -922,83 +1040,172 @@ impl StrayLightEvaluator {
         }
     }
 
-    fn contribution(&self, frame: &Frame, body: Body, centre: Vec3, sun: Vec3) -> Contribution {
-        const INVALID: Contribution = Contribution {
-            flux: f64::NAN,
-            valid: false,
-        };
+    /// `detail` asks for every reported quantity; without it only what the
+    /// violation mask needs is computed.
+    fn body_report(
+        &self,
+        frame: &Frame,
+        body: Body,
+        centre: Vec3,
+        sun: Vec3,
+        detail: bool,
+    ) -> BodyReport {
         let radius = body.radius_km();
         let distance = norm(centre);
+        let mut report = BodyReport {
+            flux: f64::NAN,
+            status: Status::InField,
+            v_mag: f64::NAN,
+            phase_deg: f64::NAN,
+            distance_km: distance,
+            angular_radius_deg: f64::NAN,
+            separation_deg: angle_deg(centre, frame.boresight),
+            limb_deg: f64::NAN,
+            azimuth_deg: dot(centre, frame.x)
+                .atan2(dot(centre, frame.y))
+                .to_degrees(),
+            pst_center: f64::NAN,
+            pst_mean: f64::NAN,
+            lit_fraction: f64::NAN,
+            quadrature_error: f64::NAN,
+        };
         // The observer is inside the body, or its position is not a number.
         if distance.is_nan() || distance <= radius {
-            return INVALID;
+            return report;
         }
-        let separation = angle_deg(centre, frame.boresight);
-        let limb = separation - (radius / distance).asin().to_degrees();
-        if limb.is_nan() || limb < self.in_field_deg {
-            // Direct light: a pointing violation, not a stray-light level.
-            return INVALID;
-        }
+        report.angular_radius_deg = (radius / distance).asin().to_degrees();
+        report.limb_deg = report.separation_deg - report.angular_radius_deg;
         // Sun-body-observer angle: 0 full, 180 new.
         let phase = if body == Body::Sun {
             0.0
         } else {
-            angle_deg(add_scaled(sun, centre, -1.0), scaled(centre, -1.0))
+            report.phase_deg = angle_deg(add_scaled(sun, centre, -1.0), scaled(centre, -1.0));
+            report.phase_deg
         };
-        let (disk, converged) = self.disk_mean(frame, body, centre, sun);
+        report.v_mag = self.v_mag(body, distance, phase);
+        // Direct light is a pointing violation, not a stray-light level: the
+        // integral is only worth its cost when the numbers are asked for.
+        let in_field = report.limb_deg.is_nan() || report.limb_deg < self.in_field_deg;
+        if in_field && !detail {
+            return report;
+        }
+        let (disk, converged, error) = self.disk_mean(frame, body, centre, sun);
+        report.pst_mean = disk.mean;
+        report.lit_fraction = disk.lit_fraction;
+        report.quadrature_error = error;
+        if detail {
+            report.pst_center = self.pst_toward(frame, scaled(centre, 1.0 / distance));
+        }
         // No sunlit surface is visible when the day cap (90 degrees from the
         // subsolar point) and the visible cap (acos(R / d) from the
         // sub-observer point) are disjoint.
         let dark = body != Body::Sun
             && disk.lit_fraction == 0.0
             && phase >= 90.0 + (radius / distance).clamp(0.0, 1.0).acos().to_degrees();
-        let valid = dark || (limb >= self.pst.first_cell_deg && converged);
-        Contribution {
-            flux: 10f64.powf(-0.4 * self.v_mag(body, distance, phase)) * disk.mean,
-            valid,
-        }
+        report.status = if in_field {
+            Status::InField
+        } else if dark {
+            Status::Dark
+        } else if report.limb_deg < self.pst.first_cell_deg {
+            Status::FirstCell
+        } else if !converged {
+            Status::Unconverged
+        } else {
+            Status::Ok
+        };
+        report.flux = 10f64.powf(-0.4 * report.v_mag) * disk.mean;
+        report
     }
 
-    /// The model for one boresight and the bodies of one time.
-    fn cell(&self, boresight: Vec3, bodies: &[Vec3; 3]) -> Cell {
+    /// The model for one boresight and the bodies of one time. See
+    /// `body_report` for `detail`.
+    fn report(&self, boresight: Vec3, bodies: &[Vec3; 3], detail: bool) -> Report {
         let sun = bodies[0];
         let frame = self.frame(boresight, sun);
         let parts = [Body::Sun, Body::Earth, Body::Moon]
-            .map(|body| self.contribution(&frame, body, bodies[body as usize], sun));
+            .map(|body| self.body_report(&frame, body, bodies[body as usize], sun, detail));
+        let (helio_ecliptic_longitude_deg, ecliptic_latitude_deg) =
+            zodi_coordinates_deg(boresight, sun);
+        let table_needed = detail || self.zodi == ZodiModel::Table;
+        let zodi_table_v_mag_arcsec2 = if table_needed {
+            zodi_table_v_mag(helio_ecliptic_longitude_deg, ecliptic_latitude_deg)
+        } else {
+            f64::NAN
+        };
         let zodi_v_mag_arcsec2 = match self.zodi {
             ZodiModel::Constant => self.zodi_v_mag_arcsec2,
-            ZodiModel::Table => zodi_table_v_mag(boresight, sun),
+            ZodiModel::Table => zodi_table_v_mag_arcsec2,
         };
         // NaN zodi (not tabulated) makes every ratio NaN: unknown.
         let per_zodi = self.conversion_factor / 10f64.powf(-0.4 * zodi_v_mag_arcsec2);
-        let ratio = if parts.iter().all(|part| part.valid) {
+        let ratio = if parts.iter().all(|part| part.status.is_valid()) {
             parts.iter().map(|part| part.flux).sum::<f64>() * per_zodi
         } else {
             f64::NAN
         };
-        Cell {
-            ratio,
-            bodies: parts.map(|part| {
-                if part.valid {
-                    part.flux * per_zodi
-                } else {
-                    f64::NAN
-                }
-            }),
-            zodi_v_mag_arcsec2,
-            // No valid prediction (NaN) counts as violated.
-            violated: ratio.is_nan() || ratio > self.max_ratio,
+        Report {
+            cell: Cell {
+                ratio,
+                bodies: parts.map(|part| {
+                    if part.status.is_valid() {
+                        part.flux * per_zodi
+                    } else {
+                        f64::NAN
+                    }
+                }),
+                zodi_v_mag_arcsec2,
+                // No valid prediction (NaN) counts as violated.
+                violated: ratio.is_nan() || ratio > self.max_ratio,
+            },
+            bodies: parts,
+            roll_deg: position_angle_deg(boresight, frame.y),
+            helio_ecliptic_longitude_deg,
+            ecliptic_latitude_deg,
+            zodi_table_v_mag_arcsec2,
         }
     }
 
-    /// The model on the target x time grid, row-major (targets, then times).
-    fn grid(
+    /// Names of the reported values, in the order of `values`.
+    fn value_keys() -> Vec<String> {
+        let mut keys: Vec<String> = VALUE_KEYS.iter().map(|key| key.to_string()).collect();
+        keys.extend(POINTING_VALUES.iter().map(|key| key.to_string()));
+        for body in BODY_NAMES {
+            keys.extend(BODY_VALUES.iter().map(|key| format!("{body}_{key}")));
+        }
+        keys
+    }
+
+    /// The reported values of a `report` made with `detail`.
+    fn values(report: &Report) -> Vec<f64> {
+        let cell = &report.cell;
+        let mut values = vec![
+            cell.ratio,
+            cell.bodies[0],
+            cell.bodies[1],
+            cell.bodies[2],
+            cell.zodi_v_mag_arcsec2,
+            report.roll_deg,
+            report.helio_ecliptic_longitude_deg,
+            report.ecliptic_latitude_deg,
+            report.zodi_table_v_mag_arcsec2,
+        ];
+        for body in &report.bodies {
+            values.extend(body.values());
+        }
+        values
+    }
+
+    /// The model on the target x time grid, row-major (targets, then times),
+    /// keeping `keep(report)` of each cell.
+    fn grid<T: Send>(
         &self,
         ephemeris: &dyn EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
-    ) -> PyResult<(Vec<Cell>, usize)> {
+        detail: bool,
+        keep: impl Fn(&Report) -> T + Sync,
+    ) -> PyResult<(Vec<T>, usize)> {
         let states = States::of(ephemeris)?;
         let rows: Vec<usize> = match time_indices {
             Some(indices) => indices.to_vec(),
@@ -1011,7 +1218,9 @@ impl StrayLightEvaluator {
             .map(|(&ra, &dec)| radec_to_unit_vector(ra, dec))
             .collect();
         let n_times = rows.len();
-        let one = |index: usize| self.cell(targets[index / n_times], &bodies[index % n_times]);
+        let one = |index: usize| {
+            keep(&self.report(targets[index / n_times], &bodies[index % n_times], detail))
+        };
         let count = targets.len() * n_times;
         let cells = if count >= PARALLEL_MIN_CELLS {
             (0..count).into_par_iter().map(one).collect()
@@ -1022,19 +1231,22 @@ impl StrayLightEvaluator {
     }
 
     /// The model for target `i` at ephemeris row `indices[i]`.
-    fn paired(
+    fn paired<T: Send>(
         &self,
         ephemeris: &dyn EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
         indices: &[usize],
-    ) -> PyResult<Vec<Cell>> {
+        detail: bool,
+        keep: impl Fn(&Report) -> T + Sync,
+    ) -> PyResult<Vec<T>> {
         let states = States::of(ephemeris)?;
         let one = |i: usize| {
-            self.cell(
+            keep(&self.report(
                 radec_to_unit_vector(target_ras[i], target_decs[i]),
                 &states.bodies(indices[i]),
-            )
+                detail,
+            ))
         };
         Ok(if indices.len() >= PARALLEL_MIN_CELLS {
             (0..indices.len()).into_par_iter().map(one).collect()
@@ -1055,20 +1267,22 @@ impl ConstraintEvaluator for StrayLightEvaluator {
         let indices =
             super::diagonal::time_indices(ephemeris, target_ras, target_decs, time_indices)?;
         // One pass yields both the mask and the values.
-        let cells = self.paired(ephemeris, target_ras, target_decs, &indices)?;
-        let values = VALUE_KEYS
-            .iter()
+        let cells = self.paired(
+            ephemeris,
+            target_ras,
+            target_decs,
+            &indices,
+            true,
+            |report| (report.cell.violated, Self::values(report)),
+        )?;
+        let values = Self::value_keys()
+            .into_iter()
             .enumerate()
-            .map(|(key, name)| {
-                (
-                    name.to_string(),
-                    cells.iter().map(|cell| cell.value(key)).collect(),
-                )
-            })
+            .map(|(key, name)| (name, cells.iter().map(|(_, values)| values[key]).collect()))
             .collect();
         Ok(DiagonalEvaluation::leaf(
             &self.name(),
-            cells.iter().map(|cell| cell.violated).collect(),
+            cells.iter().map(|(violated, _)| *violated).collect(),
             values,
         ))
     }
@@ -1081,7 +1295,14 @@ impl ConstraintEvaluator for StrayLightEvaluator {
         time_indices: Option<&[usize]>,
     ) -> PyResult<ConstraintResult> {
         let times = ephemeris.get_times_at_indices(time_indices)?;
-        let (cells, _) = self.grid(ephemeris, &[target_ra], &[target_dec], time_indices)?;
+        let (cells, _) = self.grid(
+            ephemeris,
+            &[target_ra],
+            &[target_dec],
+            time_indices,
+            false,
+            |report| report.cell,
+        )?;
         let violations = track_violations(
             &times,
             |i| {
@@ -1123,11 +1344,18 @@ impl ConstraintEvaluator for StrayLightEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
-        let (cells, n_times) = self.grid(ephemeris, target_ras, target_decs, time_indices)?;
-        Ok(Array2::from_shape_fn(
-            (target_ras.len(), n_times),
-            |(i, j)| cells[i * n_times + j].violated,
-        ))
+        let (violated, n_times) = self.grid(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            false,
+            |report| report.cell.violated,
+        )?;
+        Ok(
+            Array2::from_shape_vec((target_ras.len(), n_times), violated)
+                .expect("one cell per target and time"),
+        )
     }
 
     fn compute_named_values(
@@ -1137,15 +1365,22 @@ impl ConstraintEvaluator for StrayLightEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<HashMap<String, Array2<f64>>> {
-        let (cells, n_times) = self.grid(ephemeris, target_ras, target_decs, time_indices)?;
-        Ok(VALUE_KEYS
-            .iter()
+        let (cells, n_times) = self.grid(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            true,
+            Self::values,
+        )?;
+        Ok(Self::value_keys()
+            .into_iter()
             .enumerate()
             .map(|(key, name)| {
                 (
-                    name.to_string(),
+                    name,
                     Array2::from_shape_fn((target_ras.len(), n_times), |(i, j)| {
-                        cells[i * n_times + j].value(key)
+                        cells[i * n_times + j][key]
                     }),
                 )
             })
@@ -1317,7 +1552,7 @@ mod tests {
         let sun = scaled(radec_to_unit_vector(90.0, 0.0), AU_TO_KM);
         let frame = evaluator.frame(boresight, sun);
         // The Sun, half a degree across, 90 degrees off axis.
-        let (disk, converged) = evaluator.disk_mean(&frame, Body::Sun, sun, sun);
+        let (disk, converged, _) = evaluator.disk_mean(&frame, Body::Sun, sun, sun);
         assert!(converged);
         assert_eq!(disk.lit_fraction, 1.0);
         let centre = evaluator.pst_toward(&frame, unit(sun));
