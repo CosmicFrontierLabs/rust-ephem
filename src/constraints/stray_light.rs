@@ -1249,30 +1249,46 @@ impl StrayLightEvaluator {
         };
         Ok((cells, n_times))
     }
+}
 
-    /// The model for target `i` at ephemeris row `indices[i]`.
-    fn paired<T: Send>(
+impl StrayLightEvaluator {
+    /// Paired evaluation, the mask and the values of each element in one pass:
+    /// target `i` at ephemeris row `time_indices[i]`, at spacecraft roll
+    /// `rolls[i]` where one is given.
+    fn diagonal(
         &self,
         ephemeris: &dyn EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-        indices: &[usize],
-        mode: Mode,
-        keep: impl Fn(&Report) -> T + Sync,
-    ) -> PyResult<Vec<T>> {
+        time_indices: Option<&[usize]>,
+        rolls: Option<&[Option<f64>]>,
+    ) -> PyResult<DiagonalEvaluation> {
+        let indices =
+            super::diagonal::time_indices(ephemeris, target_ras, target_decs, time_indices)?;
         let states = States::of(ephemeris)?;
         let one = |i: usize| {
-            keep(&self.report(
+            let report = self.report(
                 radec_to_unit_vector(target_ras[i], target_decs[i]),
                 &states.bodies(indices[i]),
-                mode,
-            ))
+                Mode::VALUES.at_roll(rolls.and_then(|rolls| rolls[i])),
+            );
+            (report.cell.violated, Self::values(&report))
         };
-        Ok(if indices.len() >= PARALLEL_MIN_CELLS {
+        let cells: Vec<(bool, Vec<f64>)> = if indices.len() >= PARALLEL_MIN_CELLS {
             (0..indices.len()).into_par_iter().map(one).collect()
         } else {
             (0..indices.len()).map(one).collect()
-        })
+        };
+        let values = Self::value_keys()
+            .into_iter()
+            .enumerate()
+            .map(|(key, name)| (name, cells.iter().map(|(_, values)| values[key]).collect()))
+            .collect();
+        Ok(DiagonalEvaluation::leaf(
+            &self.name(),
+            cells.iter().map(|(violated, _)| *violated).collect(),
+            values,
+        ))
     }
 }
 
@@ -1284,27 +1300,32 @@ impl ConstraintEvaluator for StrayLightEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<DiagonalEvaluation> {
-        let indices =
-            super::diagonal::time_indices(ephemeris, target_ras, target_decs, time_indices)?;
-        // One pass yields both the mask and the values.
-        let cells = self.paired(
+        self.diagonal(ephemeris, target_ras, target_decs, time_indices, None)
+    }
+
+    /// An explicit roll is the attitude of its element; the others keep the
+    /// nominal one. Every element is independent, so no grouping is needed.
+    fn evaluate_diagonal_at_rolls(
+        &self,
+        ephemeris: &dyn EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        rolls: &[Option<f64>],
+    ) -> PyResult<Option<DiagonalEvaluation>> {
+        if rolls.len() != target_ras.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_rolls must have the same length as target_ras and target_decs",
+            ));
+        }
+        self.diagonal(
             ephemeris,
             target_ras,
             target_decs,
-            &indices,
-            Mode::VALUES,
-            |report| (report.cell.violated, Self::values(report)),
-        )?;
-        let values = Self::value_keys()
-            .into_iter()
-            .enumerate()
-            .map(|(key, name)| (name, cells.iter().map(|(_, values)| values[key]).collect()))
-            .collect();
-        Ok(DiagonalEvaluation::leaf(
-            &self.name(),
-            cells.iter().map(|(violated, _)| *violated).collect(),
-            values,
-        ))
+            time_indices,
+            Some(rolls),
+        )
+        .map(Some)
     }
 
     fn evaluate(

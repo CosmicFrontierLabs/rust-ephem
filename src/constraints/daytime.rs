@@ -227,6 +227,10 @@ impl ConstraintEvaluator for DaytimeEvaluator {
         self.format_name()
     }
 
+    fn ignores_explicit_roll(&self) -> bool {
+        true
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
