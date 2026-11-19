@@ -3,7 +3,7 @@ model, on a synthetic point-source transmittance table."""
 
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -315,33 +315,19 @@ class Reference:
 
     def body(
         self, name: str, b: Array, y: Array, x: Array, centre: Array, sun: Array
-    ) -> tuple[float, bool]:
-        """(flux in V = 0 sources, valid)"""
+    ) -> tuple[float, bool, dict[str, float]]:
+        """(flux in V = 0 sources, valid, the intermediate quantities)"""
         radius = RADIUS_KM[name]
         d = float(np.linalg.norm(centre))
-        limb = angle_deg(centre, b) - np.degrees(np.arcsin(radius / d))
-        if limb < self.c.in_field_deg:
-            return np.nan, False
-        n_r, n_az = START_GRID[name]
-        lambert = name != "sun"
-        mean, lit, spread = self.level(b, y, x, centre, radius, sun, n_r, n_az, lambert)
-        unsettled = True
-        for k in range(1, 5):
-            finer = self.level(
-                b, y, x, centre, radius, sun, n_r << k, n_az << k, lambert
-            )
-            change = abs(finer[0] - mean) / finer[0]
-            mean, lit, spread = finer
-            unsettled = change > 0.02 or lit == 0
-            if not unsettled:
-                break
-        converged = spread <= 0.1 if lit == 0 else not unsettled
+        separation = angle_deg(centre, b)
+        rho = float(np.degrees(np.arcsin(radius / d)))
+        limb = separation - rho
+        azimuth = float(np.degrees(np.arctan2(centre @ x, centre @ y)))
         if name == "sun":
-            phase, dark = 0.0, False
+            phase = 0.0
             v_mag = self.c.sun_v_mag_1au + 5 * np.log10(d / AU_KM)
         else:
             phase = angle_deg(sun - centre, -centre)
-            dark = lit == 0 and phase >= 90 + np.degrees(np.arccos(radius / d))
             if name == "earth":
                 full = self.c.sun_v_mag_1au - 2.5 * np.log10(
                     self.c.earth_albedo * (radius / AU_KM) ** 2
@@ -358,9 +344,60 @@ class Reference:
                     + 0.026 * phase
                     + 4e-9 * phase**4
                 )
-        first_cell = self.c.pst.off_axis_deg[1]
-        valid = bool(dark or (limb >= first_cell and converged))
-        return float(10.0 ** (-0.4 * v_mag) * mean), valid
+        info = {
+            "v_mag": float(v_mag),
+            "phase_deg": np.nan if name == "sun" else phase,
+            "distance_km": d,
+            "angular_radius_deg": rho,
+            "separation_deg": separation,
+            "limb_deg": limb,
+            "azimuth_deg": azimuth,
+            "pst_center": float(
+                10.0 ** self.pst(np.array([separation]), np.array([azimuth]))[0]
+            ),
+            "pst_mean": np.nan,
+            "lit_fraction": np.nan,
+            "quadrature_error": np.nan,
+            "status": float(re.StrayLightStatus.IN_FIELD),
+        }
+        in_field = limb < self.c.in_field_deg
+        n_r, n_az = START_GRID[name]
+        lambert = name != "sun"
+        mean, lit, spread = self.level(b, y, x, centre, radius, sun, n_r, n_az, lambert)
+        unsettled, change = True, np.inf
+        for k in range(1, 5):
+            finer = self.level(
+                b, y, x, centre, radius, sun, n_r << k, n_az << k, lambert
+            )
+            change = abs(finer[0] - mean) / finer[0]
+            mean, lit, spread = finer
+            unsettled = change > 0.02 or lit == 0
+            if not unsettled:
+                break
+        converged = spread <= 0.1 if lit == 0 else not unsettled
+        dark = (
+            name != "sun"
+            and lit == 0
+            and phase >= 90 + np.degrees(np.arccos(radius / d))
+        )
+        status = (
+            re.StrayLightStatus.IN_FIELD
+            if in_field
+            else re.StrayLightStatus.DARK
+            if dark
+            else re.StrayLightStatus.FIRST_CELL
+            if limb < self.c.pst.off_axis_deg[1]
+            else re.StrayLightStatus.UNCONVERGED
+            if not converged
+            else re.StrayLightStatus.OK
+        )
+        info.update(
+            pst_mean=mean,
+            lit_fraction=lit,
+            quadrature_error=spread if lit == 0 else change,
+            status=float(status),
+        )
+        return float(10.0 ** (-0.4 * v_mag) * mean), status.is_valid, info
 
     def __call__(
         self, ra: float, dec: float, bodies: dict[str, Array]
@@ -369,19 +406,27 @@ class Reference:
         b = np.array([np.cos(d) * np.cos(r), np.cos(d) * np.sin(r), np.sin(d)])
         sun = bodies["sun"]
         y, x = self.frame(b, sun)
-        zodi = (
-            self.c.zodi_v_mag_arcsec2
-            if self.c.zodi == "constant"
-            else zodi_table(b, sun)
-        )
+        longitude, latitude = ecliptic(b)
+        from_sun = (longitude - ecliptic(sun)[0]) % 360.0
+        tabulated = zodi_table(b, sun)
+        zodi = self.c.zodi_v_mag_arcsec2 if self.c.zodi == "constant" else tabulated
         per_zodi = self.c.conversion_factor / 10.0 ** (-0.4 * zodi)
         out: dict[str, float] = {"zodi_v_mag_arcsec2": zodi}
+        north = np.array([-np.sin(d) * np.cos(r), -np.sin(d) * np.sin(r), np.cos(d)])
+        east = np.array([-np.sin(r), np.cos(r), 0.0])
+        out.update(
+            roll_deg=float(np.degrees(np.arctan2(y @ east, y @ north)) % 360.0),
+            helio_ecliptic_longitude_deg=from_sun,
+            ecliptic_latitude_deg=latitude,
+            zodi_table_v_mag_arcsec2=tabulated,
+        )
         total, all_valid = 0.0, True
         for name in ("sun", "earth", "moon"):
-            flux, valid = self.body(name, b, y, x, bodies[name], sun)
+            flux, valid, info = self.body(name, b, y, x, bodies[name], sun)
             out[f"{name}_stray_light_ratio"] = flux * per_zodi if valid else np.nan
             total += flux
             all_valid &= valid
+            out.update({f"{name}_{key}": value for key, value in info.items()})
         out["stray_light_ratio"] = total * per_zodi if all_valid else np.nan
         return out
 
@@ -396,6 +441,26 @@ def reference_values(
         for i in range(len(ra))
     ]
     return {key: np.array([cell[key] for cell in cells]) for key in cells[0]}
+
+
+def assert_values_match(values: dict[str, Any], expected: dict[str, Array]) -> None:
+    """Every reported value against the reference."""
+    assert set(values) == set(expected)
+    assert len(values) == 5 + 4 + 3 * 12
+    for key, reference in expected.items():
+        mine = np.asarray(values[key])
+        if key.endswith("azimuth_deg") or key == "roll_deg":
+            difference = (mine - reference + 180.0) % 360.0 - 180.0
+            np.testing.assert_allclose(difference, 0.0, atol=1e-8, err_msg=key)
+        elif key.endswith("quadrature_error"):
+            # A change between levels of exactly zero is at rounding level.
+            np.testing.assert_allclose(
+                mine, reference, rtol=1e-6, atol=1e-11, equal_nan=True, err_msg=key
+            )
+        else:
+            np.testing.assert_allclose(
+                mine, reference, rtol=1e-9, equal_nan=True, err_msg=key
+            )
 
 
 # --- the model ---------------------------------------------------------------
@@ -424,17 +489,75 @@ def test_matches_independent_reference(
     )
     result = evaluate(constraint, ephem, ra, dec, rows)
     expected = reference_values(constraint, ephem, ra, dec, rows)
-    values = result.constraint_values
-    assert set(values) == set(expected)
-    for key, reference in expected.items():
-        np.testing.assert_allclose(
-            np.asarray(values[key]), reference, rtol=1e-9, equal_nan=True, err_msg=key
-        )
+    assert_values_match(result.constraint_values, expected)
     # Violated above the limit, and wherever there is no prediction.
     ratio = expected["stray_light_ratio"]
     np.testing.assert_array_equal(result.constraint_array, ~(ratio <= 3.0))
     # The sample exercises valid and invalid cells of every kind used below.
     assert np.isnan(ratio).any() and np.isfinite(ratio).sum() > len(ratio) // 2
+
+
+@pytest.mark.parametrize("zodi", ["constant", "table"])
+def test_per_body_values_explain_the_ratio(
+    table: PointSourceTransmittance,
+    ephem: Any,
+    sample: tuple[Array, Array, Any],
+    zodi: Literal["constant", "table"],
+) -> None:
+    """The intermediates are reported for every body, with or without a
+    prediction, and are enough to rebuild the ratio."""
+    ra, dec, rows = sample
+    constraint = StrayLightConstraint(
+        pst=table, conversion_factor=CONVERSION, sun_azimuth_deg=180, zodi=zodi
+    )
+    result = evaluate(constraint, ephem, ra, dec, rows)
+    values = {k: np.asarray(v) for k, v in result.constraint_values.items()}
+    assert_values_match(values, reference_values(constraint, ephem, ra, dec, rows))
+
+    # The statuses explain the validity, and the flux follows from the parts.
+    statuses = {b: values[f"{b}_status"].astype(int) for b in ("sun", "earth", "moon")}
+    seen = set(np.concatenate(list(statuses.values())).tolist())
+    assert {int(re.StrayLightStatus.OK), int(re.StrayLightStatus.DARK)} <= seen
+    assert seen <= {int(status) for status in re.StrayLightStatus}
+    per_zodi = CONVERSION / 10.0 ** (-0.4 * values["zodi_v_mag_arcsec2"])
+    for body, status in statuses.items():
+        valid = np.isin(
+            status, [int(re.StrayLightStatus.OK), int(re.StrayLightStatus.DARK)]
+        )
+        part = values[f"{body}_stray_light_ratio"]
+        np.testing.assert_array_equal(np.isfinite(part), valid & np.isfinite(per_zodi))
+        flux = 10.0 ** (-0.4 * values[f"{body}_v_mag"]) * values[f"{body}_pst_mean"]
+        usable = np.isfinite(part)
+        np.testing.assert_allclose(part[usable], (flux * per_zodi)[usable], rtol=1e-12)
+    np.testing.assert_allclose(
+        values["sun_limb_deg"],
+        values["sun_separation_deg"] - values["sun_angular_radius_deg"],
+        rtol=1e-12,
+    )
+
+
+def test_values_for_a_body_in_the_field(
+    table: PointSourceTransmittance, ephem: Any
+) -> None:
+    row = 300
+    moon = unit(bodies_at(ephem, [row])["moon"][0])
+    ra = float(np.degrees(np.arctan2(moon[1], moon[0])) % 360)
+    dec = float(np.degrees(np.arcsin(moon[2])))
+    constraint = StrayLightConstraint(pst=table, conversion_factor=CONVERSION)
+    values = evaluate(constraint, ephem, ra, dec, [row]).constraint_values
+    assert values["moon_status"][0] == re.StrayLightStatus.IN_FIELD
+    assert not re.StrayLightStatus(int(values["moon_status"][0])).is_valid
+    assert values["moon_separation_deg"][0] < 1e-6
+    assert values["moon_limb_deg"][0] < 0
+    assert np.isfinite(values["moon_pst_mean"][0])
+    assert np.isnan(values["moon_stray_light_ratio"][0])
+    assert np.isnan(values["stray_light_ratio"][0])
+    # In a tree the keys carry the constraint's prefix like any others.
+    tree = constraint | re.SunConstraint(min_angle=45)
+    assert (
+        "stray_light.moon_status"
+        in evaluate(tree, ephem, ra, dec, [row]).constraint_values
+    )
 
 
 def test_matches_reference_for_a_full_turn_table(

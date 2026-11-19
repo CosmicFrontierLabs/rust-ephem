@@ -60,6 +60,7 @@ from .constraints import (
     SAAConstraint,
     SolarRollConstraint,
     StrayLightConstraint,
+    StrayLightStatus,
     SunConstraint,
     XorConstraint,
 )
@@ -95,6 +96,7 @@ __all__ = [
     "AltAzConstraint",
     "SolarRollConstraint",
     "StrayLightConstraint",
+    "StrayLightStatus",
     "PointSourceTransmittance",
     "OrbitRamConstraint",
     "OrbitPoleConstraint",
