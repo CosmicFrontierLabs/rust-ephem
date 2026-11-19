@@ -1523,13 +1523,60 @@ constants, so this one number is all the radiometry the constraint needs.
    - ``type``: Always ``"stray_light"`` (Literal)
    - the parameters above
 
-   **Constraint values:**
+   **Constraint values.** ``constraint_values`` holds everything the model
+   works out, so nothing has to be recomputed outside it.
+
+   The result:
 
    - ``stray_light_ratio``: scattered light over zodi; NaN without a prediction
    - ``sun_stray_light_ratio``, ``earth_stray_light_ratio``,
      ``moon_stray_light_ratio``: the part due to each body; NaN only when that
      body has no prediction
    - ``zodi_v_mag_arcsec2``: the zodi the ratio is taken against
+
+   The pointing:
+
+   - ``roll_deg``: position angle (north through east) of the table's
+     azimuth-zero axis
+   - ``helio_ecliptic_longitude_deg`` (ecliptic longitude from the Sun, 0-360),
+     ``ecliptic_latitude_deg`` and ``zodi_table_v_mag_arcsec2`` (the tabulated
+     zodi at the pointing, whichever zodi the ratio uses)
+
+   Each body, with the prefix ``sun_``, ``earth_`` or ``moon_`` (for example
+   ``earth_v_mag``):
+
+   - ``v_mag``: disk-integrated V magnitude at the observer
+   - ``phase_deg``: Sun-body-observer angle (NaN for the Sun)
+   - ``distance_km``, ``angular_radius_deg``
+   - ``separation_deg``, ``limb_deg``: boresight to the centre and to the
+     nearest limb
+   - ``azimuth_deg``: table azimuth of the centre, -180 to 180
+   - ``pst_center``, ``pst_mean``: PST toward the centre, and its
+     brightness-weighted mean over the disk
+   - ``lit_fraction``: sunlit fraction of the disk samples
+   - ``quadrature_error``: relative change between the last two levels of the
+     disk integral (for a disk with no sunlit sample, the relative spread of
+     the PST across it)
+   - ``status``: a :py:class:`StrayLightStatus` value
+
+   The per-body values are reported even where the body has no prediction. A
+   body's scattered flux in V = 0 sources is ``10**(-0.4 * v_mag) * pst_mean``,
+   and its part of the ratio is that times ``conversion_factor`` over the zodi
+   flux ``10**(-0.4 * zodi_v_mag_arcsec2)``.
+
+.. py:class:: StrayLightStatus
+
+   Integer enum behind ``sun_status``, ``earth_status`` and ``moon_status``.
+
+   - ``OK`` (0): a converged prediction
+   - ``DARK`` (1): no sunlit surface is visible; the quoted contribution is an
+     upper bound on a negligible one, and counts as a prediction
+   - ``IN_FIELD`` (2): the nearest limb is within ``in_field_deg`` of the boresight
+   - ``FIRST_CELL`` (3): the nearest limb is inside the first off-axis cell of
+     the table
+   - ``UNCONVERGED`` (4): the disk integral did not converge
+
+   ``is_valid`` is true for ``OK`` and ``DARK``.
 
    **Example:**
 
@@ -2175,7 +2222,8 @@ by :py:meth:`evaluate`, :py:meth:`evaluate_batch`, and
    * - ``StrayLightConstraint``
      - ``stray_light_ratio``, ``sun_stray_light_ratio``,
        ``earth_stray_light_ratio``, ``moon_stray_light_ratio``,
-       ``zodi_v_mag_arcsec2``
+       ``zodi_v_mag_arcsec2``, and the model's intermediates for the pointing
+       and each body (see ``StrayLightConstraint``)
      - Scattered light over zodi, in total and per body; NaN where the model
        has no prediction (which also counts as violated)
    * - ``SolarRollConstraint``

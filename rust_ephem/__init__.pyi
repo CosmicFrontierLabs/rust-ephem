@@ -170,6 +170,9 @@ from rust_ephem.constraints import (
     StrayLightConstraint as StrayLightConstraint,
 )
 from rust_ephem.constraints import (
+    StrayLightStatus as StrayLightStatus,
+)
+from rust_ephem.constraints import (
     SunConstraint as SunConstraint,
 )
 from rust_ephem.constraints import (
@@ -221,6 +224,7 @@ __all__ = [
     "SAAConstraint",
     "SolarRollConstraint",
     "StrayLightConstraint",
+    "StrayLightStatus",
     "PointSourceTransmittance",
     "AltAzConstraint",
     "OrbitRamConstraint",
