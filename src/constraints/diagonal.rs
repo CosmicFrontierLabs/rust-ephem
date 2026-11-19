@@ -142,6 +142,8 @@ pub fn evaluate<T: ConstraintEvaluator + ?Sized>(
 pub(crate) struct SampleEphemeris {
     data: EphemerisData,
     apparent_observer: Option<Array2<f64>>,
+    /// The target correction of the sampled row of an apparent view.
+    target_aberration: Option<[crate::utils::apparent::ObserverAberration; 1]>,
     itrs: Option<Array2<f64>>,
     itrs_skycoord: OnceLock<Py<PyAny>>,
 }
@@ -172,6 +174,9 @@ impl SampleEphemeris {
             data,
             // A sample of an apparent view is itself one.
             apparent_observer: ephemeris.apparent_observer().map(row),
+            target_aberration: ephemeris
+                .target_aberrations()
+                .map(|aberrations| [aberrations[index]]),
             itrs: ephemeris.get_itrs_data().map(row),
             itrs_skycoord: OnceLock::new(),
         }
@@ -184,6 +189,9 @@ impl EphemerisBase for SampleEphemeris {
     }
     fn apparent_observer(&self) -> Option<&Array2<f64>> {
         self.apparent_observer.as_ref()
+    }
+    fn target_aberrations(&self) -> Option<&[crate::utils::apparent::ObserverAberration]> {
+        self.target_aberration.as_ref().map(|one| one.as_slice())
     }
     fn data_mut(&mut self) -> &mut EphemerisData {
         &mut self.data
@@ -316,6 +324,7 @@ mod tests {
         data.gcrs = Some(Array2::from_shape_fn((n, 6), |(i, _)| i as f64));
         let ephemeris = SampleEphemeris {
             apparent_observer: None,
+            target_aberration: None,
             data,
             itrs: None,
             itrs_skycoord: OnceLock::new(),

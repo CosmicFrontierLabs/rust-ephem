@@ -29,7 +29,7 @@
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use ndarray::{s, Array2};
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayMethods};
+use numpy::{IntoPyArray, PyArray2, PyArrayMethods};
 use pyo3::{prelude::*, types::PyDateTime};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -55,7 +55,9 @@ struct ParsedStates {
     states: Array2<f64>,
     frame: String,
     position_unit: String,
-    velocity_unit: String,
+    /// `None` when the source does not state one: it then follows the
+    /// position unit (see [`velocity_unit_for`]).
+    velocity_unit: Option<String>,
 }
 
 // ─── Public struct ────────────────────────────────────────────────────────────
@@ -113,7 +115,7 @@ impl FileEphemeris {
             parsed.position_unit = unit;
         }
         if let Some(unit) = velocity_unit {
-            parsed.velocity_unit = unit;
+            parsed.velocity_unit = Some(unit);
         }
         if let Some(f) = frame {
             parsed.frame = f;
@@ -139,7 +141,7 @@ impl FileEphemeris {
     /// ``begin``/``end``/``step_size`` grid, frame transforms, Sun/Moon).
     #[staticmethod]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (times, positions, velocities, begin=None, end=None, step_size=60, *, polar_motion=false, position_unit="km".to_string(), velocity_unit="km/s".to_string(), frame="J2000".to_string()))]
+    #[pyo3(signature = (times, positions, velocities, begin=None, end=None, step_size=60, *, polar_motion=false, position_unit="km".to_string(), velocity_unit=None, frame="J2000".to_string()))]
     fn from_arrays(
         py: Python,
         times: &Bound<'_, PyAny>,
@@ -150,10 +152,10 @@ impl FileEphemeris {
         step_size: i64,
         polar_motion: bool,
         position_unit: String,
-        velocity_unit: String,
+        velocity_unit: Option<String>,
         frame: String,
     ) -> PyResult<Self> {
-        let times = extract_utc_times(py, times)?;
+        let times = extract_utc_times(times)?;
         let pos = extract_vectors(py, positions, "positions")?;
         let vel = extract_vectors(py, velocities, "velocities")?;
 
@@ -644,6 +646,10 @@ impl FileEphemeris {
         }
 
         // ── Convert units to km / km/s ─────────────────────────────────────
+        let velocity_unit = match velocity_unit {
+            Some(unit) => unit,
+            None => Self::velocity_unit_for(&position_unit)?,
+        };
         let source_states = Self::apply_unit_conversion(&states, &position_unit, &velocity_unit)?;
 
         // ── Validate requested time range ───────────────────────────────────
@@ -779,22 +785,40 @@ impl FileEphemeris {
 
     // ── Unit conversion ───────────────────────────────────────────────────────
 
+    /// Scale factor from a position unit to km.
+    fn position_scale(pos_unit: &str) -> PyResult<f64> {
+        let pos_lower = pos_unit.to_lowercase();
+        match pos_lower.trim() {
+            "km" | "kilometre" | "kilometres" | "kilometer" | "kilometers" => Ok(1.0),
+            "m" | "metre" | "metres" | "meter" | "meters" => Ok(1.0e-3),
+            "cm" | "centimetre" | "centimetres" | "centimeter" | "centimeters" => Ok(1.0e-5),
+            other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Unknown position unit '{other}'. Supported: 'km', 'm', 'cm'"
+            ))),
+        }
+    }
+
+    /// Velocity unit assumed when none is given: the position unit per second.
+    /// Positions in metres with velocities left in km/s would put every
+    /// interpolated (off-sample) state far from the orbit.
+    fn velocity_unit_for(pos_unit: &str) -> PyResult<String> {
+        let scale = Self::position_scale(pos_unit)?;
+        Ok(if scale == 1.0 {
+            "km/s"
+        } else if scale == 1.0e-3 {
+            "m/s"
+        } else {
+            "cm/s"
+        }
+        .to_string())
+    }
+
     fn apply_unit_conversion(
         states: &Array2<f64>,
         pos_unit: &str,
         vel_unit: &str,
     ) -> PyResult<Array2<f64>> {
-        let pos_lower = pos_unit.to_lowercase();
-        let pos_scale: f64 = match pos_lower.trim() {
-            "km" | "kilometre" | "kilometres" | "kilometer" | "kilometers" => 1.0,
-            "m" | "metre" | "metres" | "meter" | "meters" => 1.0e-3,
-            "cm" | "centimetre" | "centimetres" | "centimeter" | "centimeters" => 1.0e-5,
-            other => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "Unknown position unit '{other}'. Supported: 'km', 'm', 'cm'"
-                )))
-            }
-        };
+        let pos_scale = Self::position_scale(pos_unit)?;
 
         let vel_lower = vel_unit.to_lowercase();
         let vel_scale: f64 = match vel_lower.trim() {
@@ -855,7 +879,7 @@ impl FileEphemeris {
         let mut detected_epoch: Option<DateTime<Utc>> = override_epoch.copied();
         let mut detected_frame = "J2000".to_string();
         let mut detected_position_unit = "km".to_string();
-        let mut detected_velocity_unit = "km/s".to_string();
+        let mut detected_velocity_unit: Option<String> = None;
 
         let mut in_data_section = false;
         let mut data_times: Vec<DateTime<Utc>> = Vec::new();
@@ -997,7 +1021,7 @@ impl FileEphemeris {
                     detected_position_unit = value.clone();
                 }
                 if matches!(key.as_str(), "velocityunit" | "velocity_unit" | "speedunit") {
-                    detected_velocity_unit = value.clone();
+                    detected_velocity_unit = Some(value.clone());
                 }
             }
         }
@@ -1156,40 +1180,9 @@ impl FileEphemeris {
 
 /// Convert a sequence of datetimes (naive = UTC) or a NumPy ``datetime64``
 /// array to UTC timestamps.
-fn extract_utc_times(py: Python, obj: &Bound<'_, PyAny>) -> PyResult<Vec<DateTime<Utc>>> {
-    let is_datetime64 = obj
-        .getattr("dtype")
-        .and_then(|dt| dt.getattr("kind"))
-        .and_then(|k| k.extract::<String>())
-        .map(|k| k == "M")
-        .unwrap_or(false);
-
-    if is_datetime64 {
-        let np = py.import("numpy")?;
-        let micros = np
-            .call_method1("asarray", (obj,))?
-            .call_method1("astype", ("datetime64[us]",))?
-            .call_method1("astype", ("int64",))?
-            .call_method1("ravel", ())?;
-        let arr = micros.cast::<PyArray1<i64>>().map_err(|_| {
-            pyo3::exceptions::PyTypeError::new_err("Could not convert datetime64 times to int64")
-        })?;
-        return arr
-            .readonly()
-            .as_array()
-            .iter()
-            .enumerate()
-            .map(|(i, &us)| {
-                if us == i64::MIN {
-                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "times[{i}] is NaT"
-                    )));
-                }
-                DateTime::<Utc>::from_timestamp_micros(us).ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err(format!("times[{i}] is out of range"))
-                })
-            })
-            .collect();
+fn extract_utc_times(obj: &Bound<'_, PyAny>) -> PyResult<Vec<DateTime<Utc>>> {
+    if let Some(times) = crate::utils::time_utils::datetime64_to_utc(obj)? {
+        return Ok(times);
     }
 
     let iter = pyo3::types::PyIterator::from_object(obj).map_err(|_| {

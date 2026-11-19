@@ -688,7 +688,7 @@ Evaluation Methods
       blocked = result.constraint_array
       sun_angle = result.constraint_values["sun.sun_angle_deg"]
 
-.. py:method:: Constraint.in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+.. py:method:: Constraint.in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
 
    Check if the target satisfies the constraint at given time(s).
 
@@ -777,7 +777,7 @@ Evaluation Methods
       for lo, hi in ranges:
           print(f"Valid rolls: {lo:.1f}° – {hi:.1f}°")
 
-.. py:method:: Constraint.instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+.. py:method:: Constraint.instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
 
    Compute instantaneous field of regard in steradians.
 
@@ -1721,7 +1721,7 @@ All Pydantic constraint models inherit these methods:
 
    :rtype: ElementwiseResult
 
-.. py:method:: in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+.. py:method:: in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
 
    Check if target violates the constraint at given time(s).
 
@@ -1772,7 +1772,7 @@ All Pydantic constraint models inherit these methods:
       Empty list if no roll is valid.
    :rtype: list[tuple[float, float]]
 
-.. py:method:: instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, target_roll=None)
+.. py:method:: instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, target_roll=None, apparent=False)
 
    Compute instantaneous field of regard in steradians.
 
@@ -2051,9 +2051,11 @@ angle differs from the one a moving observer sees by the difference of the
 two aberrations: up to about 41 arcseconds for a body and target on opposite
 sides of the observer's direction of motion.
 
-``evaluate()``, ``evaluate_batch()``, ``in_constraint_batch()``,
-``in_constraint_elementwise()`` and ``evaluate_elementwise()`` accept
-``apparent=True`` to measure the angle as the observer sees it:
+Every evaluation method accepts ``apparent=True`` to measure the angle as the
+observer sees it: ``evaluate()``, ``evaluate_batch()``, ``in_constraint()``,
+``in_constraint_batch()``, ``in_constraint_elementwise()``,
+``evaluate_elementwise()``, ``evaluate_moving_body()``,
+``instantaneous_field_of_regard()`` and ``route_around()``:
 
 .. code-block:: python
 
@@ -2098,11 +2100,23 @@ Limits of the option:
   time column at a time, with the targets corrected per column. That is about
   as fast as the geometric grid for large target sets and slower for a few
   targets at many times.
-* Catalogue stars (``BrightStarConstraint``) are not corrected. Using
-  ``apparent=True`` with this constraint, including inside a logical tree or a
-  boresight offset, raises ``ValueError``.
-* ``in_constraint()``, field-of-regard, routing and moving-body evaluation keep
-  the geometric convention.
+* The stars of a ``BrightStarConstraint`` are displaced by the same aberration
+  and deflection as the target, so whether a star is in the field is decided
+  from the catalogue positions of both, where the common displacement cancels.
+  What is left out is its variation across the field: under 0.4 arcseconds per
+  degree between star and boresight.
+* ``instantaneous_field_of_regard(apparent=True)`` places the Earth, Sun and
+  Moon where they are seen and reports the clear solid angle of that apparent
+  sky. The area changes very little; the directions that make it up move with
+  the bodies.
+* ``route_around(apparent=True)`` routes in the apparent sky and returns the
+  waypoint in catalogue (ICRS) coordinates, like its inputs.
+* ``evaluate_moving_body(body=..., apparent=True)`` places the body where its
+  light arrives from and returns those apparent ``ras`` / ``decs``. It needs
+  the body in a SPICE kernel and cannot be combined with ``use_horizons``. A
+  supplied ``target_ras`` / ``target_decs`` track is corrected for deflection
+  and aberration only, so it should already allow for light time.
+* ``roll_range()`` keeps the geometric convention.
 
 .. _visibility-window-cause:
 

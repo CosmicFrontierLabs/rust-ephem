@@ -94,6 +94,20 @@ class TestDefaultsAndMetadata:
         assert eph.step_size == STEP
         assert isinstance(eph, Ephemeris)
 
+    def test_velocity_unit_follows_position_unit(
+        self, file_eph: FileEphemeris, arrays: Arrays
+    ) -> None:
+        t, r, v = arrays
+        eph = FileEphemeris.from_arrays(
+            t, r * 1000.0, v * 1000.0, BEGIN, END, STEP, position_unit="m"
+        )
+        assert eph.source_velocity_unit == "m/s"
+        np.testing.assert_allclose(eph.file_pv.velocity, v, rtol=1e-12)
+        np.testing.assert_allclose(
+            eph.gcrs_pv.position, file_eph.gcrs_pv.position, rtol=1e-12
+        )
+        assert FileEphemeris.from_arrays(t, r, v).source_velocity_unit == "km/s"
+
     def test_metre_units(self, file_eph: FileEphemeris, arrays: Arrays) -> None:
         t, r, v = arrays
         eph = FileEphemeris.from_arrays(

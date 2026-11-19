@@ -87,7 +87,9 @@ class Ephemeris(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def gcrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def gcrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer GCRS position/velocity at arbitrary time(s).
 
         Grid times return the ``gcrs_pv`` rows unchanged; times between grid
@@ -98,17 +100,23 @@ class Ephemeris(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def itrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def itrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer ITRS position/velocity at arbitrary time(s); see ``gcrs_pv_at``."""
         ...
 
     @abc.abstractmethod
-    def sun_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def sun_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Sun GCRS position/velocity at arbitrary time(s); see ``gcrs_pv_at``."""
         ...
 
     @abc.abstractmethod
-    def moon_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def moon_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Moon GCRS position/velocity at arbitrary time(s); see ``gcrs_pv_at``."""
         ...
 

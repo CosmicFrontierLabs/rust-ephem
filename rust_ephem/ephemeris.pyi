@@ -55,19 +55,19 @@ class Ephemeris(abc.ABC):
     def moon_pv(self) -> PositionVelocityData: ...
     @abc.abstractmethod
     def gcrs_pv_at(
-        self, times: datetime | Iterable[datetime]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
     ) -> PositionVelocityData: ...
     @abc.abstractmethod
     def itrs_pv_at(
-        self, times: datetime | Iterable[datetime]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
     ) -> PositionVelocityData: ...
     @abc.abstractmethod
     def sun_pv_at(
-        self, times: datetime | Iterable[datetime]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
     ) -> PositionVelocityData: ...
     @abc.abstractmethod
     def moon_pv_at(
-        self, times: datetime | Iterable[datetime]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
     ) -> PositionVelocityData: ...
     @property
     @abc.abstractmethod

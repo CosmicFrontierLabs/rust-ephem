@@ -15,6 +15,8 @@ use std::sync::{Mutex, OnceLock};
 pub(crate) struct SampledEphemeris {
     data: EphemerisData,
     target_corrections: Option<Vec<ObserverAberration>>,
+    /// The target correction of each row of an apparent view.
+    target_aberrations: Option<Vec<ObserverAberration>>,
     /// The true observer states of an apparent view, whose `data.gcrs` holds
     /// the shifted positions instead.
     apparent_observer: Option<Array2<f64>>,
@@ -108,6 +110,7 @@ impl SampledEphemeris {
         Ok(Self {
             data,
             target_corrections: None,
+            target_aberrations: None,
             apparent_observer: None,
             apparent_bodies: Mutex::new(HashMap::new()),
             itrs: source.get_itrs_data().map(sample),
@@ -182,6 +185,7 @@ impl SampledEphemeris {
             }
         }
         view.apparent_observer = Some(observer.clone());
+        view.target_aberrations = Some(aberrations.clone());
         let mut shifted = observer;
         shifted.slice_mut(s![.., 0..3]).assign(&(&earth * -1.0));
         view.data.gcrs = Some(shifted);
@@ -203,6 +207,9 @@ impl EphemerisBase for SampledEphemeris {
     }
     fn target_corrections(&self) -> Option<&[ObserverAberration]> {
         self.target_corrections.as_deref()
+    }
+    fn target_aberrations(&self) -> Option<&[ObserverAberration]> {
+        self.target_aberrations.as_deref()
     }
     fn apparent_observer(&self) -> Option<&Array2<f64>> {
         self.apparent_observer.as_ref()

@@ -99,6 +99,8 @@ rows unchanged; other times use the same cubic Hermite interpolation (position
 and velocity over the bracketing pair) that constraint evaluation uses for
 ``times=``, so geometry computed from these states matches what constraints see.
 No extrapolation is done: times outside the span raise ``ValueError``.
+Times may be ``datetime`` objects or a NumPy ``datetime64`` array (read as
+UTC), as for the ``times=`` argument of the constraint methods.
 
 .. code-block:: python
 
