@@ -34,6 +34,21 @@ pub(crate) fn locate_times(
     source: &[DateTime<Utc>],
     requested: &[DateTime<Utc>],
 ) -> PyResult<Vec<Result<usize, usize>>> {
+    // Many requests are located across the cores. If any lies outside the
+    // range, the serial pass below reports the first one.
+    if requested.len() >= SAMPLE_PARALLEL_MIN_ROWS {
+        let located: Option<Vec<Result<usize, usize>>> = requested
+            .par_iter()
+            .map(|time| match source.binary_search(time) {
+                Ok(index) => Some(Ok(index)),
+                Err(right) if right > 0 && right < source.len() => Some(Err(right)),
+                _ => None,
+            })
+            .collect();
+        if let Some(located) = located {
+            return Ok(located);
+        }
+    }
     requested
         .iter()
         .map(|time| match source.binary_search(time) {
