@@ -93,6 +93,9 @@ pub fn python_datetimes_to_utc(times: &Bound<PyAny>) -> PyResult<Vec<DateTime<Ut
         .collect()
 }
 
+/// `datetime64` entries above which the conversion is shared across the cores.
+const DATETIME64_PARALLEL_MIN_LEN: usize = 8192;
+
 /// Convert NumPy `datetime64` data (array or scalar, any unit) to UTC instants
 /// in flattened (C) order. Returns `Ok(None)` when `obj` is not `datetime64`.
 ///
@@ -128,8 +131,25 @@ fn datetime64_to_utc_from(
             pyo3::exceptions::PyTypeError::new_err("Could not convert datetime64 times to int64")
         })?
         .readonly();
+    let micros = micros.as_array();
+    // A long array is converted across the cores. If any entry is invalid,
+    // the serial pass below reports the first one.
+    if micros.len() >= DATETIME64_PARALLEL_MIN_LEN {
+        use rayon::prelude::*;
+        let valid = |us: &i64| {
+            (*us != i64::MIN)
+                .then(|| DateTime::<Utc>::from_timestamp_micros(*us))
+                .flatten()
+        };
+        let converted: Option<Vec<DateTime<Utc>>> = match micros.as_slice() {
+            Some(values) => values.par_iter().map(valid).collect(),
+            None => None,
+        };
+        if converted.is_some() {
+            return Ok(converted);
+        }
+    }
     micros
-        .as_array()
         .iter()
         .enumerate()
         .map(|(i, &us)| {
