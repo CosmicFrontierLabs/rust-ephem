@@ -15,7 +15,11 @@ def test_import_does_not_load_astroquery_or_astropy(tmp_path: Path) -> None:
     # sys.path, and the source tree has no compiled extension when the package
     # was installed from a wheel.
     done = subprocess.run(
-        [sys.executable, "-c", code], cwd=tmp_path, capture_output=True, text=True
+        [sys.executable, "-c", code],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip() == "[]"
@@ -24,6 +28,6 @@ def test_import_does_not_load_astroquery_or_astropy(tmp_path: Path) -> None:
 def test_vizier_is_still_reachable_for_downloads() -> None:
     from astroquery.vizier import Vizier  # type: ignore[import-untyped]
 
-    import rust_ephem.bright_stars as bright_stars
+    from rust_ephem import bright_stars
 
     assert bright_stars.Vizier is Vizier

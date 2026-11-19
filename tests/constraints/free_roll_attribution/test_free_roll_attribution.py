@@ -95,6 +95,7 @@ def test_empty_altaz_roll_combination(
         capture_output=True,
         text=True,
         timeout=60,
+        check=False,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
 

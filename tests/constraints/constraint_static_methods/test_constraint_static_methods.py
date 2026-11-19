@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Test suite for Constraint static methods that create constraints.
 Tests body_proximity, airmass, alt_az, orbit_ram, and orbit_pole methods.
