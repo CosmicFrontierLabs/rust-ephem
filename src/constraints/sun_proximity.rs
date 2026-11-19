@@ -1,8 +1,5 @@
 /// Sun proximity constraint implementation
-use super::core::{
-    compute_angle_deg_batch, track_violations, ConstraintConfig, ConstraintEvaluator,
-    ConstraintResult,
-};
+use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
 use crate::utils::vector_math::radec_to_unit_vectors_batch;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
@@ -305,8 +302,14 @@ impl ConstraintEvaluator for SunProximityEvaluator {
     ) -> PyResult<HashMap<String, Array2<f64>>> {
         let (_times_filtered, sun_filtered, obs_filtered) =
             extract_standard_ephemeris_data!(ephemeris, time_indices);
-        let angle_deg =
-            compute_angle_deg_batch(target_ras, target_decs, &sun_filtered, &obs_filtered);
+        let angle_deg = super::core::compute_angle_deg_batch_on(
+            ephemeris,
+            time_indices,
+            target_ras,
+            target_decs,
+            &sun_filtered,
+            &obs_filtered,
+        );
         let mut values = HashMap::new();
         values.insert("sun_angle_deg".to_string(), angle_deg);
         Ok(values)
@@ -314,6 +317,10 @@ impl ConstraintEvaluator for SunProximityEvaluator {
 
     fn name(&self) -> String {
         self.format_name()
+    }
+
+    fn ignores_explicit_roll(&self) -> bool {
+        true
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

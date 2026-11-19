@@ -5,6 +5,7 @@
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::{exceptions::PyValueError, PyResult};
+use rayon::prelude::*;
 use sofars::{
     consts::{DAS2R, DJ00, DJC, DS2R},
     erst::{era00, gmst82},
@@ -174,6 +175,8 @@ fn isolated_celestial_rotation(tt: (f64, f64)) -> Rotation {
 }
 
 const CELESTIAL_STEP_SECONDS: f64 = 300.0;
+/// Fewest rows worth converting on more than one thread.
+const PARALLEL_MIN_ROWS: usize = 1024;
 type CelestialNode = (f64, i64, [[f64; 3]; 3]);
 
 /// Batch-local, four-node cubic interpolation of the slowly varying Q matrix.
@@ -354,40 +357,56 @@ pub fn convert_frames(
         (Frame::TEME, Frame::GCRS) | (Frame::ITRS, Frame::TEME) | (Frame::ITRS, Frame::GCRS)
     );
 
-    let mut celestial_cache = CelestialMatrixCache::default();
+    // Rows are independent: the celestial cache only memoises a pure function
+    // of TT, so each block of rows can own one and the result does not depend
+    // on how the rows are split.
+    let convert_block = |first: usize, block: &mut [f64]| {
+        let mut celestial_cache = CelestialMatrixCache::default();
+        for (offset, out_row) in block.as_chunks_mut::<6>().0.iter_mut().enumerate() {
+            let i = first + offset;
+            let dt = &times[i];
+            // Only nearby samples amortize interpolation. A data hole affects its
+            // isolated samples, never the dense stretches elsewhere in the batch.
+            let nearby = |other: &DateTime<Utc>| {
+                (*other - *dt).num_milliseconds().abs() <= (CELESTIAL_STEP_SECONDS * 1000.0) as i64
+            };
+            let use_cache = times.get(i + 1).is_some_and(nearby)
+                || i.checked_sub(1)
+                    .and_then(|j| times.get(j))
+                    .is_some_and(nearby);
+            // Get the base rotation (always defined in the "forward" direction)
+            let rotation = get_rotation(
+                input_frame,
+                output_frame,
+                dt,
+                polar_motion,
+                use_cache.then_some(&mut celestial_cache),
+            );
 
-    for (i, dt) in times.iter().enumerate() {
-        // Only nearby samples amortize interpolation. A data hole affects its
-        // isolated samples, never the dense stretches elsewhere in the batch.
-        let nearby = |other: &DateTime<Utc>| {
-            (*other - *dt).num_milliseconds().abs() <= (CELESTIAL_STEP_SECONDS * 1000.0) as i64
-        };
-        let use_cache = times.get(i + 1).is_some_and(nearby)
-            || i.checked_sub(1)
-                .and_then(|j| times.get(j))
-                .is_some_and(nearby);
-        // Get the base rotation (always defined in the "forward" direction)
-        let rotation = get_rotation(
-            input_frame,
-            output_frame,
-            dt,
-            polar_motion,
-            use_cache.then_some(&mut celestial_cache),
-        );
+            let in_row = data.row(i);
+            let pos = [in_row[0], in_row[1], in_row[2]];
+            let vel = [in_row[3], in_row[4], in_row[5]];
 
-        let in_row = data.row(i);
-        let pos = [in_row[0], in_row[1], in_row[2]];
-        let vel = [in_row[3], in_row[4], in_row[5]];
+            let (new_pos, new_vel) = rotation.apply(pos, vel, needs_inverse);
+            out_row[..3].copy_from_slice(&new_pos);
+            out_row[3..].copy_from_slice(&new_vel);
+        }
+    };
 
-        let (new_pos, new_vel) = rotation.apply(pos, vel, needs_inverse);
-
-        let mut out_row = out.row_mut(i);
-        out_row[0] = new_pos[0];
-        out_row[1] = new_pos[1];
-        out_row[2] = new_pos[2];
-        out_row[3] = new_vel[0];
-        out_row[4] = new_vel[1];
-        out_row[5] = new_vel[2];
+    let values = out
+        .as_slice_mut()
+        .expect("freshly allocated arrays are in standard layout");
+    if n >= PARALLEL_MIN_ROWS {
+        // A sample spaced wider than the cache step costs two full
+        // precession-nutation series, which dominates building a long
+        // ephemeris; spread the rows over the cores.
+        let rows_per_block = n.div_ceil(rayon::current_num_threads() * 4).max(64);
+        values
+            .par_chunks_mut(6 * rows_per_block)
+            .enumerate()
+            .for_each(|(block, values)| convert_block(block * rows_per_block, values));
+    } else {
+        convert_block(0, values);
     }
 
     Ok(out)
@@ -640,6 +659,43 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn test_parallel_blocks_match_row_by_row_conversion() {
+        // Long enough to be split across threads, at a cadence that mixes
+        // cached (60 s) and isolated (900 s) samples and crosses a day boundary.
+        let begin = "2024-01-01T23:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let mut offset = 0;
+        let times: Vec<_> = (0..3 * PARALLEL_MIN_ROWS)
+            .map(|i| {
+                offset += if (i / 100) % 2 == 0 { 60 } else { 900 };
+                begin + chrono::Duration::seconds(offset)
+            })
+            .collect();
+        let data = Array2::from_shape_fn((times.len(), 6), |(i, j)| {
+            [7000.0, -1200.0, 1800.0, 1.2, 6.8, -2.4][j] + (i % 17) as f64
+        });
+        for (from, to) in [(Frame::GCRS, Frame::ITRS), (Frame::ITRS, Frame::GCRS)] {
+            let whole = convert_frames(&data, &times, from, to, false).unwrap();
+            // Below the threshold the same rows are converted on this thread,
+            // each slice with its neighbours so the cache decision is the same.
+            for start in (0..times.len()).step_by(PARALLEL_MIN_ROWS - 24) {
+                let end = (start + PARALLEL_MIN_ROWS - 24).min(times.len());
+                let (lo, hi) = (start.saturating_sub(1), (end + 1).min(times.len()));
+                let part = convert_frames(
+                    &data.slice(ndarray::s![lo..hi, ..]).to_owned(),
+                    &times[lo..hi],
+                    from,
+                    to,
+                    false,
+                )
+                .unwrap();
+                for i in start..end {
+                    assert_eq!(whole.row(i), part.row(i - lo), "row {i}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_series_work_is_bounded_for_isolated_and_gapped_queries() {
         let begin = "2024-01-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap();

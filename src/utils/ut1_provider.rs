@@ -2,7 +2,7 @@
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 #[cfg(feature = "ut1")]
-use std::sync::Mutex;
+use std::sync::RwLock;
 
 use crate::utils::eop_cache::{load_or_download_eop2_data, Eop2Provenance};
 use crate::utils::time_utils::{chrono_to_epoch, get_tai_utc_offset};
@@ -27,20 +27,20 @@ fn load_ut1_state() -> Result<Ut1State, String> {
         })
 }
 
-static UT1_PROVIDER: Lazy<Mutex<Option<Ut1State>>> = Lazy::new(|| match load_ut1_state() {
+static UT1_PROVIDER: Lazy<RwLock<Option<Ut1State>>> = Lazy::new(|| match load_ut1_state() {
     Ok(p) => {
         eprintln!("UT1 provider initialized (EOP2 short, cached)");
-        Mutex::new(Some(p))
+        RwLock::new(Some(p))
     }
     Err(e) => {
         eprintln!("Warning: UT1 provider init failed: {e}");
-        Mutex::new(None)
+        RwLock::new(None)
     }
 });
 
 /// Get UT1-UTC offset in seconds (UT1-UTC = TAI-UTC - TAI-UT1)
 pub fn get_ut1_utc_offset(dt: &DateTime<Utc>) -> f64 {
-    let guard = UT1_PROVIDER.lock().unwrap();
+    let guard = UT1_PROVIDER.read().unwrap();
     guard.as_ref().map_or(0.0, |state| {
         let epoch = chrono_to_epoch(dt);
         epoch.ut1_offset(&state.provider).map_or(0.0, |tai_ut1| {
@@ -51,7 +51,7 @@ pub fn get_ut1_utc_offset(dt: &DateTime<Utc>) -> f64 {
 
 /// Initialize/refresh UT1 provider
 pub fn init_ut1_provider() -> bool {
-    let mut guard = UT1_PROVIDER.lock().unwrap();
+    let mut guard = UT1_PROVIDER.write().unwrap();
     match load_ut1_state() {
         Ok(p) => {
             *guard = Some(p);
@@ -66,12 +66,12 @@ pub fn init_ut1_provider() -> bool {
 
 /// Check if UT1 provider is available
 pub fn is_ut1_available() -> bool {
-    UT1_PROVIDER.lock().unwrap().is_some()
+    UT1_PROVIDER.read().unwrap().is_some()
 }
 
 pub fn eop_provenance() -> Option<Eop2Provenance> {
     Lazy::get(&UT1_PROVIDER)?
-        .lock()
+        .read()
         .unwrap()
         .as_ref()
         .map(|state| state.provenance.clone())

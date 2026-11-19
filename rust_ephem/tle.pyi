@@ -68,11 +68,9 @@ class TLERecord(BaseModel):
         Returns:
             2-line or 3-line TLE string depending on whether name is set.
         """
-        ...
 
     def classical_elements(self, mu_m3_s2: float = ...) -> dict[str, Any]:
         """Return TLE mean classical elements at the TLE epoch."""
-        ...
 
 def fetch_tle(
     *,
@@ -132,4 +130,3 @@ def fetch_tle(
         ...     epoch=datetime(2020, 1, 1, tzinfo=timezone.utc)
         ... )
     """
-    ...

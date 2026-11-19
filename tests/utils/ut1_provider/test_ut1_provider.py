@@ -1,11 +1,9 @@
-#!/usr/bin/env python3
 """
 Test suite for UT1-UTC implementation using hifitime.
 Tests UT1 provider availability, functionality, and accuracy.
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import List, Tuple
 
 import pytest
 from astropy.time.core import Time  # type: ignore[import-untyped]
@@ -60,7 +58,7 @@ class TestUT1Offsets:
     def test_ut1_offset_reasonable_range(self) -> None:
         """Test that UT1-UTC offsets are in reasonable range."""
         # Test several dates with expected IERS coverage
-        test_dates: List[datetime] = [
+        test_dates: list[datetime] = [
             datetime(2024, 6, 1, 0, 0, 0, tzinfo=timezone.utc),
             datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
             datetime.now(timezone.utc),
@@ -94,7 +92,7 @@ class TestUT1Offsets:
     )
     def test_ut1_offset_various_dates(self, date_tuple: tuple[str, datetime]) -> None:
         """Test UT1-UTC offsets for various dates."""
-        date_str, dt = date_tuple
+        _date_str, dt = date_tuple
         offset: float = rust_ephem.get_ut1_utc_offset(dt)
 
         # Should return a float in reasonable range
@@ -109,7 +107,7 @@ class TestUT1DataCoverage:
         """Test UT1 data coverage for various time ranges."""
         now: datetime = datetime.now(timezone.utc)
 
-        test_periods: List[Tuple[str, datetime]] = [
+        test_periods: list[tuple[str, datetime]] = [
             ("1 year ago", now - timedelta(days=365)),
             ("6 months ago", now - timedelta(days=180)),
             ("3 months ago", now - timedelta(days=90)),
@@ -153,7 +151,7 @@ class TestUT1Comparison:
         now: datetime = datetime.now(timezone.utc)
 
         # Test dates with expected IERS coverage
-        test_dates: List[datetime] = [
+        test_dates: list[datetime] = [
             now - timedelta(days=180),  # 6 months ago
             now - timedelta(days=90),  # 3 months ago
             now - timedelta(days=30),  # 1 month ago

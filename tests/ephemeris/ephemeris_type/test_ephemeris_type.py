@@ -74,6 +74,7 @@ class TestEphemerisABCBehavior:
             "itrs_pv_at",
             "sun_pv_at",
             "moon_pv_at",
+            "apparent_target_at",
             "obsgeoloc",
             "obsgeovel",
             "latitude",
@@ -359,7 +360,7 @@ class TestEphemerisABCBehavior:
         self, ground_ephemeris: GroundEphemeris
     ) -> None:
         """Test that ephemeris index attribute is callable."""
-        assert callable(getattr(ground_ephemeris, "index"))
+        assert callable(ground_ephemeris.index)
 
     def test_ephemeris_instance_has_begin_attribute(
         self, ground_ephemeris: GroundEphemeris

@@ -1,8 +1,5 @@
 /// Moon proximity constraint implementation
-use super::core::{
-    compute_angle_deg_batch, track_violations, ConstraintConfig, ConstraintEvaluator,
-    ConstraintResult,
-};
+use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
 use crate::utils::config::MOON_RADIUS_KM;
 use crate::utils::vector_math::{dot_product, radec_to_unit_vector, radec_to_unit_vectors_batch};
 use ndarray::Array2;
@@ -181,19 +178,21 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
             ));
         }
         let n = indices.len();
-        let mut violated = Vec::with_capacity(n);
-        let mut centre = Vec::with_capacity(n);
-        let mut limb = Vec::with_capacity(n);
-        for (i, &t) in indices.iter().enumerate() {
+        let cells = super::diagonal::each_element(n, |i| {
             let target = radec_to_unit_vector(target_ras[i], target_decs[i]);
-            let (unit, dist) = moon_direction(body, observer, t);
+            let (unit, dist) = moon_direction(body, observer, indices[i]);
             let offset = self.limb_offset_deg(dist);
             let cos_angle = dot_product(&target, &unit);
-            violated.push(Self::is_violated(cos_angle, self.cos_thresholds(offset)));
             let angle = cos_angle.clamp(-1.0, 1.0).acos().to_degrees();
-            centre.push(angle);
-            limb.push(angle - offset);
-        }
+            (
+                Self::is_violated(cos_angle, self.cos_thresholds(offset)),
+                angle,
+                angle - offset,
+            )
+        });
+        let violated: Vec<bool> = cells.iter().map(|cell| cell.0).collect();
+        let centre: Vec<f64> = cells.iter().map(|cell| cell.1).collect();
+        let limb: Vec<f64> = cells.iter().map(|cell| cell.2).collect();
         Ok(super::diagonal::DiagonalEvaluation::leaf(
             &self.name(),
             violated,
@@ -334,7 +333,9 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
     ) -> PyResult<HashMap<String, Array2<f64>>> {
         let (_times_slice, moon_positions_slice, observer_positions_slice) =
             extract_body_ephemeris_data!(ephemeris, time_indices, get_moon_positions_at_indices);
-        let angle_deg = compute_angle_deg_batch(
+        let angle_deg = super::core::compute_angle_deg_batch_on(
+            ephemeris,
+            time_indices,
             target_ras,
             target_decs,
             &moon_positions_slice,
@@ -356,6 +357,10 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
 
     fn name(&self) -> String {
         self.format_name()
+    }
+
+    fn ignores_explicit_roll(&self) -> bool {
+        true
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

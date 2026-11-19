@@ -50,8 +50,9 @@ Classes
   **Common Methods:**
     * ``index(time)`` — Find closest timestamp index
     * ``get_body(body, spice_kernel=None, use_horizons=False, *, apparent=False)`` — Get SkyCoord for a celestial body. Set ``apparent=True`` for reception light time, solar light deflection, and observer aberration (SPICE only, positions without velocity differentials). The default is geometric. If ``use_horizons=True``, geometric queries fall back to JPL Horizons when the body is not found in SPICE kernels. See :doc:`ephemeris_get_body`.
-    * ``get_body_pv(body, spice_kernel=None, use_horizons=False)`` — Get position/velocity for a celestial body. If ``use_horizons=True``, falls back to JPL Horizons when the body is not found in SPICE kernels.
-    * ``gcrs_pv_at(times)``, ``itrs_pv_at(times)``, ``sun_pv_at(times)``, ``moon_pv_at(times)`` — Position/velocity (km, km/s, same frames as the matching ``*_pv`` property) at arbitrary time(s). ``times`` is a datetime or iterable of datetimes; rows follow input order (unsorted and duplicate times allowed). Grid times return the stored rows unchanged; times between grid points use the same cubic Hermite interpolation as constraint evaluation with ``times=`` (Sun and Moon are interpolated, not recomputed). Times outside the ephemeris span raise ``ValueError``. See :doc:`ephemeris_tle` for an example.
+    * ``get_body_pv(body, spice_kernel=None, use_horizons=False, *, times=None, apparent=False)`` — Position/velocity (km, km/s, GCRS axes) of a celestial body relative to the observer. If ``use_horizons=True``, falls back to JPL Horizons when the body is not found in SPICE kernels. ``times`` evaluates at arbitrary time(s) instead of the ephemeris grid, handled as in ``gcrs_pv_at``. ``apparent=True`` returns the body as it is seen (reception light time, solar light deflection, aberration of the observer's barycentric velocity): the position points where constraints place the body with ``apparent=True`` and its length is the light-time distance; the velocity is the rate of change of that apparent position, which is not the geometric velocity.
+    * ``gcrs_pv_at(times)``, ``itrs_pv_at(times)``, ``sun_pv_at(times)``, ``moon_pv_at(times)`` — Position/velocity (km, km/s, same frames as the matching ``*_pv`` property) at arbitrary time(s). ``times`` is a datetime, an iterable of datetimes or a NumPy ``datetime64`` array (read as UTC); rows follow input order (unsorted and duplicate times allowed). Grid times return the stored rows unchanged; times between grid points use the same cubic Hermite interpolation as constraint evaluation with ``times=`` (Sun and Moon are interpolated, not recomputed). Times outside the ephemeris span raise ``ValueError``. See :doc:`ephemeris_tle` for an example.
+    * ``apparent_target_at(ras, decs, times)`` — Unit vectors (``(N, 3)``, GCRS axes) in which catalogue targets at ``ras``/``decs`` (degrees, ICRS) are seen at arbitrary time(s): the deflection and aberration correction that constraints apply to targets with ``apparent=True``. The three arguments are paired row by row; any may be a single value. The angle between a row and ``get_body_pv(body, times=times, apparent=True).position`` is the angle a constraint reports for that body.
     * ``moon_illumination(time_indices=None)`` — Calculate Moon illumination fraction (0.0-1.0) as seen from observer
     * ``radec_to_altaz(ra_deg, dec_deg, time_indices=None)`` — Convert RA/Dec to Alt/Az coordinates
     * ``calculate_airmass(ra_deg, dec_deg, time_indices=None)`` — Calculate astronomical airmass for target
@@ -399,7 +400,9 @@ Classes
     * ``step_size`` — Output time step in seconds (default: 60)
     * ``polar_motion`` — Apply polar motion correction (default: False)
     * ``position_unit`` — Override detected position unit: ``"km"`` (default), ``"m"``, ``"cm"``
-    * ``velocity_unit`` — Override detected velocity unit: ``"km/s"`` (default), ``"m/s"``, ``"cm/s"``
+    * ``velocity_unit`` — Override detected velocity unit: ``"km/s"``, ``"m/s"``, ``"cm/s"``.
+      When neither given nor stated in the file, it follows the position unit
+      (``position_unit="m"`` means velocities in m/s)
     * ``frame`` — Override detected coordinate frame.
       GCRS-compatible: ``"J2000"``, ``"EME2000"``, ``"GCRF"``, ``"GCRS"``, ``"ICRF"``.
       Earth-fixed: ``"ITRS"``, ``"ECEF"``, ``"ECF"``, ``"FIXED"``, ``"TERRESTRIAL"``
@@ -412,10 +415,11 @@ Classes
       units are unrecognised, or the frame is unsupported
 
   **Alternate constructor (in-memory data):**
-    ``FileEphemeris.from_arrays(times, positions, velocities, begin=None, end=None, step_size=60, *, polar_motion=False, position_unit="km", velocity_unit="km/s", frame="J2000")``
+    ``FileEphemeris.from_arrays(times, positions, velocities=None, begin=None, end=None, step_size=60, *, polar_motion=False, position_unit="km", velocity_unit=None, frame="J2000")``
 
     * ``times`` — Strictly increasing sample times: sequence of datetimes (naive = UTC) or NumPy ``datetime64`` array
     * ``positions``, ``velocities`` — ``(N, 3)`` array-likes in ``position_unit`` / ``velocity_unit``
+      (``velocity_unit`` defaults to the position unit per second)
     * ``begin``, ``end`` — Output grid bounds (default: first / last sample time)
     * Remaining arguments as for the file constructor; ``file_path`` is ``None`` on the result
     * Raises ``ValueError`` for wrong shapes, mismatched lengths, fewer than two samples,
@@ -450,16 +454,19 @@ Classes
   to a uniform output grid via Hermite interpolation. Supports local files,
   globs, and cloud object stores (S3, DigitalOcean Spaces, GCS, R2, HTTPS).
 
-  Requires the optional ``duckdb`` Python package
-  (``pip install rust-ephem[parquet]`` or ``pip install duckdb``).
+  Reads with the ``duckdb`` Python package. Without it, local files, globs and
+  directories are read with ``pyarrow``; remote sources and ``where_clause``
+  need ``duckdb``.
 
   **Constructor:**
-    ``ParquetEphemeris(source, begin, end, step_size=60, *, polar_motion=False, time_col=None, pos_cols=None, vel_cols=None, position_unit=None, velocity_unit=None, frame=None, s3_endpoint=None, s3_region=None, where_clause=None)``
+    ``ParquetEphemeris(source, begin=None, end=None, step_size=60, *, polar_motion=False, time_col=None, pos_cols=None, vel_cols=None, position_unit=None, velocity_unit=None, frame=None, s3_endpoint=None, s3_region=None, where_clause=None)``
 
     * ``source`` — Path or URI to the Parquet file. Supports local paths and
       globs, ``s3://``, ``gcs://``, ``r2://``, ``http(s)://``
-    * ``begin`` — Start time for the output grid (Python datetime, UTC)
-    * ``end`` — End time for the output grid (Python datetime, UTC)
+    * ``begin`` — Start time for the output grid (Python datetime, UTC).
+      Default: the first row of the data
+    * ``end`` — End time for the output grid (Python datetime, UTC).
+      Default: the last row of the data
     * ``step_size`` — Output time step in seconds (default: 60)
     * ``polar_motion`` — Apply polar motion correction (default: False)
     * ``time_col`` — Name of the timestamp column (default: ``"time"``)
@@ -484,7 +491,8 @@ Classes
     ``AWS_SECRET_ACCESS_KEY``, ``AWS_REGION``, ``AWS_SESSION_TOKEN``.
 
   **Raises:**
-    * ``ImportError`` — If the ``duckdb`` package is not installed
+    * ``ImportError`` — If neither ``duckdb`` nor ``pyarrow`` is installed, or
+      the request needs ``duckdb`` (remote source, ``where_clause``) and it is missing
     * ``ValueError`` — If column names are not safe identifiers, the requested
       time range exceeds the Parquet's data range (with a 1 hour margin),
       units are unrecognised, or the frame is unsupported
@@ -577,16 +585,21 @@ Classes
       - ``target_rolls`` — Optional per-element roll (degrees); ``None`` entries sweep rolls for roll-dependent constraints, as in ``in_constraint_batch``
       - Returns: 1D NumPy boolean array of shape (N,), True where the constraint is violated
 
+    * ``evaluate_grid(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)`` — As ``evaluate_batch``, returning the whole grid as ``(n_targets, n_times)`` arrays instead of one result per target
+
+      - Returns: ``GridResult`` object
+
     * ``evaluate_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)`` — Same pairing as ``in_constraint_elementwise``, plus per-element values
 
       - Returns: ``ElementwiseResult`` object
 
-    * ``in_constraint(time, ephemeris, target_ra, target_dec)`` — Check if target is in-constraint at a single time
+    * ``in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)`` — Check if target is in-constraint at one or more times
 
-      - ``time`` — Python datetime object (must exist in ephemeris timestamps)
+      - ``time`` — Python datetime, list of datetimes or NumPy ``datetime64`` array, within the ephemeris range
+      - ``apparent`` — Measure apparent rather than geometric angles (see :ref:`apparent-angles`)
       - Returns: ``bool`` (True if constraint is violated / target is blocked, False if satisfied)
 
-    * ``instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, target_roll=None)`` — Compute instantaneous visible sky solid angle. When ``target_roll`` is not specified, sweeps ``n_roll_samples`` spacecraft roll angles for boresight-offset constraints with non-zero pitch/yaw, giving the total accessible sky over all roll states.
+    * ``instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, target_roll=None, apparent=False)`` — Compute instantaneous visible sky solid angle. When ``target_roll`` is not specified, sweeps ``n_roll_samples`` spacecraft roll angles for boresight-offset constraints with non-zero pitch/yaw, giving the total accessible sky over all roll states.
 
       - ``ephemeris`` — Any ``Ephemeris`` object (TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris)
       - ``time`` — Optional datetime to evaluate (must exist in ephemeris)
@@ -598,7 +611,7 @@ Classes
       - Requirement: exactly one of ``time`` or ``index`` must be provided
       - Semantics: constraints are violated when ``True``; this method integrates visible sky where constraint is ``False``
 
-    * ``evaluate_moving_body(ephemeris, target_ras=None, target_decs=None, times=None, body=None, use_horizons=False, spice_kernel=None)`` — Evaluate against a body whose RA/Dec varies over time (comet, asteroid, planet), instead of a single fixed sky position
+    * ``evaluate_moving_body(ephemeris, target_ras=None, target_decs=None, times=None, body=None, use_horizons=False, spice_kernel=None, apparent=False)`` — Evaluate against a body whose RA/Dec varies over time (comet, asteroid, planet), instead of a single fixed sky position
 
       - Provide either explicit ``target_ras``/``target_decs`` (optionally with ``times``), or a ``body`` name/NAIF ID to look up via SPICE (or JPL Horizons if ``use_horizons=True``)
       - Returns: ``MovingBodyResult`` object
@@ -615,7 +628,7 @@ Classes
     * ``constraint_name`` — String name/description of the constraint
     * ``timestamp`` — NumPy array of Python datetime objects (optimized with caching)
     * ``constraint_array`` — NumPy boolean array where True means constraint violated / target blocked (optimized with caching)
-    * ``constraint_values`` — ``dict[str, list[float]]`` of named continuous values computed
+    * ``constraint_values`` — ``dict[str, numpy.ndarray]`` (read-only float arrays, built once) of named continuous values computed
       during evaluation (e.g. ``sun_angle_deg``, the angle a ``SunConstraint`` thresholds), one
       array per key, aligned with ``timestamp``. Empty for constraints with no natural scalar
       (e.g. ``SAAConstraint``, polygon-mode ``BodyConstraint``/``BrightStarConstraint``).
@@ -650,6 +663,20 @@ Classes
       ``ConstraintResult`` (see above)
     * ``ras`` — NumPy array of the body's right ascension in degrees at each timestamp
     * ``decs`` — NumPy array of the body's declination in degrees at each timestamp
+
+**GridResult**
+  Result of ``evaluate_grid()``: every target at every time.
+
+  **Attributes (read-only):**
+    * ``constraint_array`` — (n_targets, n_times) NumPy bool array, True where the constraint is violated
+    * ``visibility_flags`` — the inverse of ``constraint_array``
+    * ``constraint_values`` — ``dict[str, numpy.ndarray]`` of (n_targets, n_times) float arrays
+    * ``component_violated`` — ``dict[str, numpy.ndarray]`` of (n_targets, n_times) bool arrays keyed by cause tag
+    * ``cause_value_keys``, ``constraint_name``, ``shape``
+    * ``timestamp`` — (n_times,) array of datetimes; ``ras``, ``decs`` — (n_targets,) arrays
+
+  **Methods:**
+    * ``target(index)`` — The ``ConstraintResult`` of one target, built on demand
 
 **ElementwiseResult**
   Result of ``evaluate_elementwise()``: one entry per input element, in input order.

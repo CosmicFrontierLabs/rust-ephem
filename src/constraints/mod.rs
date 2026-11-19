@@ -11,6 +11,7 @@ pub mod core;
 pub mod diagonal;
 pub mod elementwise;
 pub mod fov_polygon;
+pub mod grid;
 pub mod roll_sweep;
 
 #[cfg(test)]
@@ -30,6 +31,7 @@ pub mod orbit_pole;
 pub mod orbit_ram;
 pub mod saa;
 pub mod solar_roll;
+pub mod stray_light;
 pub mod sun_proximity;
 
 // Python wrapper
@@ -39,3 +41,4 @@ pub mod constraint_wrapper;
 pub use constraint_wrapper::{PyConstraint, RouteResult};
 pub use core::{ConstraintResult, ConstraintViolation, MovingBodyResult, VisibilityWindow};
 pub use elementwise::ElementwiseResult;
+pub use grid::GridResult;

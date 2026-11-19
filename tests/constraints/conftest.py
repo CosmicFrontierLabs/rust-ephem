@@ -1,5 +1,6 @@
+from collections.abc import Generator
 from datetime import datetime, timedelta, timezone
-from typing import Any, Generator, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -67,11 +68,11 @@ class DummyRustResult:
 class DummyMovingBodyResult:
     def __init__(self) -> None:
         base = datetime(2024, 1, 1, 0, 0, 0)
-        self.timestamp: List[datetime] = [base, base + timedelta(seconds=1)]
-        self.ras: List[float] = [1.0, 2.0]
-        self.decs: List[float] = [3.0, 4.0]
-        self.constraint_array: List[bool] = [True, False]
-        self.visibility: List[str] = []
+        self.timestamp: list[datetime] = [base, base + timedelta(seconds=1)]
+        self.ras: list[float] = [1.0, 2.0]
+        self.decs: list[float] = [3.0, 4.0]
+        self.constraint_array: list[bool] = [True, False]
+        self.visibility: list[str] = []
         self.all_satisfied: bool = False
         self.constraint_name: str = "DummyMovingBody"
         self.constraint_values: dict[str, list[float]] = {}
@@ -194,6 +195,7 @@ class DummyConstraintBackend:
         target_dec: object,
         target_roll: object = None,
         n_roll_samples: object = None,
+        apparent: bool = False,
     ) -> str:
         self.single_calls.append(
             (time, ephemeris, target_ra, target_dec, target_roll, n_roll_samples)
@@ -208,7 +210,8 @@ class DummyConstraintBackend:
         times: object,
         body: str,
         use_horizons: bool,
-        spice_kernel: Optional[str],
+        spice_kernel: str | None,
+        apparent: bool = False,
     ) -> DummyRustResult:
         self.evaluate_moving_body_calls.append(
             (ephemeris, ras, decs, times, body, use_horizons, spice_kernel)
@@ -234,7 +237,7 @@ def mock_ephemeris_with_body() -> object:
         def get_body(
             self,
             body: str,
-            spice_kernel: Optional[str] = None,
+            spice_kernel: str | None = None,
             use_horizons: bool = False,
         ) -> object:
             return type(
@@ -247,7 +250,7 @@ def mock_ephemeris_with_body() -> object:
             )()
 
         @property
-        def timestamp(self) -> List[datetime]:
+        def timestamp(self) -> list[datetime]:
             from datetime import datetime
 
             return [datetime(2024, 1, 1, 0, 0, 0)]
@@ -320,7 +323,7 @@ def dummy_rust_result() -> Any:
             decs: object,
             times: object,
             use_horizons: bool,
-            spice_kernel: Optional[str],
+            spice_kernel: str | None,
         ) -> Any:
             self.evaluate_calls.append(
                 (ephemeris, ras, decs, times, use_horizons, spice_kernel)
@@ -335,7 +338,7 @@ def dummy_rust_result() -> Any:
             times: object,
             body: str,
             use_horizons: bool,
-            spice_kernel: Optional[str],
+            spice_kernel: str | None,
         ) -> Any:
             self.evaluate_moving_body_calls.append(
                 (ephemeris, ras, decs, times, body, use_horizons, spice_kernel)
@@ -348,7 +351,7 @@ def dummy_rust_result() -> Any:
 @pytest.fixture
 def constraint_result_with_rust_ref(
     dummy_rust_result: object,
-) -> Tuple[ConstraintResult, object]:
+) -> tuple[ConstraintResult, object]:
     result = ConstraintResult(
         violations=[
             ConstraintViolation(
@@ -405,7 +408,7 @@ def mock_ephemeris_simple() -> object:
 
     class MockEphemeris:
         @property
-        def timestamp(self) -> List[datetime]:
+        def timestamp(self) -> list[datetime]:
             return [datetime(2024, 1, 1, 0, 0, 0), datetime(2024, 1, 1, 0, 0, 1)]
 
     return MockEphemeris()
@@ -417,7 +420,7 @@ def mock_ephemeris_single() -> object:
 
     class MockEphemeris:
         @property
-        def timestamp(self) -> List[datetime]:
+        def timestamp(self) -> list[datetime]:
             return [datetime(2024, 1, 1, 0, 0, 0)]
 
     return MockEphemeris()

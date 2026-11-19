@@ -2,16 +2,21 @@
 
 from collections.abc import Iterable, Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, runtime_checkable
+from typing import (
+    Any,
+    Literal,
+    Protocol,
+    TypeAlias,
+    TypedDict,
+    runtime_checkable,
+)
 
 import numpy as np
 import numpy.typing as npt
 
 from .constraints import DEFAULT_N_POINTS, DEFAULT_N_ROLL_SAMPLES
 from .ephemeris import Ephemeris
-
-if TYPE_CHECKING:
-    from .tle import TLERecord
+from .tle import TLERecord
 
 class EopProviderUnavailable(TypedDict):
     available: Literal[False]
@@ -23,7 +28,7 @@ class EopProviderAvailable(TypedDict):
     loaded_from: Literal["download", "fresh_cache", "stale_cache"]
     stale: bool
 
-EopProviderProvenance = EopProviderUnavailable | EopProviderAvailable
+EopProviderProvenance: TypeAlias = EopProviderUnavailable | EopProviderAvailable
 
 class EopProvenance(TypedDict):
     ut1: EopProviderProvenance
@@ -36,17 +41,14 @@ class TLELike(Protocol):
     @property
     def line1(self) -> str:
         """First line of TLE."""
-        ...
 
     @property
     def line2(self) -> str:
         """Second line of TLE."""
-        ...
 
     @property
     def epoch(self) -> datetime:
         """TLE epoch."""
-        ...
 
 class PositionVelocityData:
     """Position and velocity data container"""
@@ -54,22 +56,18 @@ class PositionVelocityData:
     @property
     def position(self) -> npt.NDArray[np.float64]:
         """Position array (N x 3) in kilometers"""
-        ...
 
     @property
     def velocity(self) -> npt.NDArray[np.float64]:
         """Velocity array (N x 3) in km/s"""
-        ...
 
     @property
     def position_unit(self) -> str:
         """Unit for position (always 'km')"""
-        ...
 
     @property
     def velocity_unit(self) -> str:
         """Unit for velocity (always 'km/s')"""
-        ...
 
 class VisibilityWindow:
     """A time window when the target is not constrained (visible)"""
@@ -96,11 +94,9 @@ class VisibilityWindow:
     last sample and the sample immediately after this window ended. See ``start_cause`` for why
     no flip direction is implied. ``None`` if the window ends at the last evaluated sample."""
 
-    def __repr__(self) -> str: ...
     @property
     def duration_seconds(self) -> float:
         """Duration of the visibility window in seconds"""
-        ...
 
 class ConstraintViolation:
     """A time window when a constraint was violated."""
@@ -110,48 +106,41 @@ class ConstraintViolation:
     max_severity: float
     description: str
 
-    def __repr__(self) -> str: ...
     @property
     def duration_seconds(self) -> float:
         """Duration of the violation window in seconds."""
-        ...
 
 class ConstraintResult:
     """Result of constraint evaluation containing all violations."""
 
     @property
-    def violations(self) -> list["ConstraintViolation"]:
+    def violations(self) -> list[ConstraintViolation]:
         """List of time windows when constraint was violated."""
-        ...
 
     @property
     def all_satisfied(self) -> bool:
         """True if constraint was satisfied at all timestamps."""
-        ...
 
     @property
     def constraint_name(self) -> str:
         """Name/description of the constraint."""
-        ...
 
     @property
     def timestamp(self) -> list[datetime]:
         """List of timestamps that were evaluated."""
-        ...
 
     @property
     def constraint_array(self) -> list[bool]:
         """Boolean array where True indicates constraint violation at that timestamp."""
-        ...
 
     @property
-    def constraint_values(self) -> dict[str, list[float]]:
+    def constraint_values(self) -> dict[str, npt.NDArray[np.float64]]:
         """Named continuous values computed during evaluation (e.g. ``sun_angle_deg``).
 
-        One array per key, aligned with ``timestamp``. Empty for constraints that
-        don't expose a natural scalar (e.g. polygon-based constraints).
+        One read-only NumPy array per key, aligned with ``timestamp``, built on
+        first access and shared by later ones. Empty for constraints that don't
+        expose a natural scalar (e.g. polygon-based constraints).
         """
-        ...
 
     @property
     def cause_value_keys(self) -> dict[str, list[str]]:
@@ -165,12 +154,10 @@ class ConstraintResult:
         corresponding value key(s) cannot be found by string-matching a prefix.
         Use this mapping instead of guessing.
         """
-        ...
 
     @property
     def visibility(self) -> list[VisibilityWindow]:
         """List of time windows when constraint was satisfied (target was visible)."""
-        ...
 
     def in_constraint(self, time: datetime) -> bool:
         """Check if constraint was violated at a specific time.
@@ -184,7 +171,6 @@ class ConstraintResult:
         Raises:
             ValueError: If time is not found in timestamps.
         """
-        ...
 
     def total_violation_duration(self) -> float:
         """Get total duration of all constraint violations in seconds.
@@ -192,9 +178,6 @@ class ConstraintResult:
         Returns:
             Sum of all violation window durations in seconds.
         """
-        ...
-
-    def __repr__(self) -> str: ...
 
 class MovingBodyResult:
     """Result from evaluating a constraint against a moving body.
@@ -204,39 +187,32 @@ class MovingBodyResult:
     """
 
     @property
-    def violations(self) -> list["ConstraintViolation"]:
+    def violations(self) -> list[ConstraintViolation]:
         """List of time windows when constraint was violated."""
-        ...
 
     @property
     def all_satisfied(self) -> bool:
         """True if constraint was satisfied at all timestamps."""
-        ...
 
     @property
     def constraint_name(self) -> str:
         """Name/description of the constraint."""
-        ...
 
     @property
     def timestamp(self) -> list[datetime]:
         """List of timestamps that were evaluated."""
-        ...
 
     @property
     def ras(self) -> list[float]:
         """Right ascensions in degrees at each timestamp."""
-        ...
 
     @property
     def decs(self) -> list[float]:
         """Declinations in degrees at each timestamp."""
-        ...
 
     @property
     def constraint_array(self) -> list[bool]:
         """Boolean array where True indicates constraint violation at that timestamp."""
-        ...
 
     @property
     def constraint_values(self) -> dict[str, list[float]]:
@@ -245,7 +221,6 @@ class MovingBodyResult:
         One array per key, aligned with ``timestamp``. Empty for constraints that
         don't expose a natural scalar (e.g. polygon-based constraints).
         """
-        ...
 
     @property
     def cause_value_keys(self) -> dict[str, list[str]]:
@@ -259,12 +234,10 @@ class MovingBodyResult:
         corresponding value key(s) cannot be found by string-matching a prefix.
         Use this mapping instead of guessing.
         """
-        ...
 
     @property
     def visibility(self) -> list[VisibilityWindow]:
         """List of time windows when constraint was satisfied (target was visible)."""
-        ...
 
     def in_constraint(self, time: datetime) -> bool:
         """Check if constraint was violated at a specific time.
@@ -278,7 +251,6 @@ class MovingBodyResult:
         Raises:
             ValueError: If time is not found in timestamps.
         """
-        ...
 
     def total_violation_duration(self) -> float:
         """Get total duration of all constraint violations in seconds.
@@ -286,9 +258,61 @@ class MovingBodyResult:
         Returns:
             Sum of all violation window durations in seconds.
         """
-        ...
 
-    def __repr__(self) -> str: ...
+class GridResult:
+    """Result of :meth:`Constraint.evaluate_grid`.
+
+    Every target at every time, as ``(n_targets, n_times)`` arrays. The arrays
+    are read-only: each is built on first access and shared by later ones.
+    """
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        """``(n_targets, n_times)``."""
+
+    @property
+    def constraint_name(self) -> str:
+        """Name/description of the constraint."""
+
+    @property
+    def constraint_array(self) -> npt.NDArray[np.bool_]:
+        """(n_targets, n_times) bool array; True where the constraint is violated."""
+
+    @property
+    def visibility_flags(self) -> npt.NDArray[np.bool_]:
+        """(n_targets, n_times) bool array; True where the target is visible."""
+
+    @property
+    def constraint_values(self) -> dict[str, npt.NDArray[np.float64]]:
+        """Named continuous values, one (n_targets, n_times) float array per key.
+
+        Keys are exactly those ``evaluate_batch`` reports for this constraint
+        (e.g. ``sun_angle_deg``, or ``sun.sun_angle_deg`` inside a combinator).
+        """
+
+    @property
+    def component_violated(self) -> dict[str, npt.NDArray[np.bool_]]:
+        """Per-leaf violation masks, keyed by cause tag (e.g. ``sun``, ``not.moon``)."""
+
+    @property
+    def cause_value_keys(self) -> dict[str, list[str]]:
+        """Map from a ``component_violated`` cause tag to its ``constraint_values`` key(s)."""
+
+    @property
+    def timestamp(self) -> npt.NDArray[np.object_]:
+        """(n_times,) object array of the UTC datetimes evaluated."""
+
+    @property
+    def ras(self) -> npt.NDArray[np.float64]:
+        """(n_targets,) target right ascensions in degrees."""
+
+    @property
+    def decs(self) -> npt.NDArray[np.float64]:
+        """(n_targets,) target declinations in degrees."""
+
+    def target(self, index: int) -> ConstraintResult:
+        """The result of one target, with its violation and visibility windows,
+        built on demand from row ``index``."""
 
 class ElementwiseResult:
     """Result of :meth:`Constraint.evaluate_elementwise`.
@@ -300,17 +324,14 @@ class ElementwiseResult:
     @property
     def constraint_name(self) -> str:
         """Name/description of the constraint."""
-        ...
 
     @property
     def constraint_array(self) -> npt.NDArray[np.bool_]:
         """(N,) bool array; True where the constraint is violated."""
-        ...
 
     @property
     def visibility_flags(self) -> npt.NDArray[np.bool_]:
         """(N,) bool array; True where the target is visible (``~constraint_array``)."""
-        ...
 
     @property
     def constraint_values(self) -> dict[str, npt.NDArray[np.float64]]:
@@ -320,35 +341,28 @@ class ElementwiseResult:
         constraint (e.g. ``sun_angle_deg``, or ``sun.sun_angle_deg`` inside a
         combinator).
         """
-        ...
 
     @property
     def component_violated(self) -> dict[str, npt.NDArray[np.bool_]]:
         """Per-leaf violation masks, keyed by cause tag (e.g. ``sun``, ``not.moon``)."""
-        ...
 
     @property
     def cause_value_keys(self) -> dict[str, list[str]]:
         """Map from a ``component_violated`` cause tag to its ``constraint_values`` key(s)."""
-        ...
 
     @property
     def timestamp(self) -> npt.NDArray[np.object_]:
         """(N,) object array of the UTC datetime each element was evaluated at."""
-        ...
 
     @property
     def ras(self) -> npt.NDArray[np.float64]:
         """(N,) target right ascensions in degrees."""
-        ...
 
     @property
     def decs(self) -> npt.NDArray[np.float64]:
         """(N,) target declinations in degrees."""
-        ...
 
     def __len__(self) -> int: ...
-    def __repr__(self) -> str: ...
 
 class Constraint:
     """Wrapper for constraint evaluation with ephemeris data"""
@@ -367,6 +381,7 @@ class Constraint:
         samples: int = 50,
         margin_deg: float = 5.0,
         grow_margin: bool = True,
+        apparent: bool = False,
     ) -> RouteResult: ...
     @staticmethod
     def sun_proximity(min_angle: float, max_angle: float | None = None) -> Constraint:
@@ -383,7 +398,6 @@ class Constraint:
         Raises:
             ValueError: If angles are out of valid range
         """
-        ...
 
     @staticmethod
     def moon_proximity(
@@ -405,7 +419,6 @@ class Constraint:
         Raises:
             ValueError: If angles are out of valid range
         """
-        ...
 
     @staticmethod
     def earth_limb(min_angle: float, max_angle: float | None = None) -> Constraint:
@@ -422,7 +435,6 @@ class Constraint:
         Raises:
             ValueError: If angles are out of valid range
         """
-        ...
 
     @staticmethod
     def body_proximity(
@@ -458,7 +470,6 @@ class Constraint:
         Note:
             Supported bodies depend on the ephemeris type and loaded kernels.
         """
-        ...
 
     @staticmethod
     def bright_star(
@@ -489,7 +500,6 @@ class Constraint:
         Raises:
             ValueError: If arguments are invalid or inconsistent.
         """
-        ...
 
     @staticmethod
     def eclipse(umbra_only: bool = True) -> Constraint:
@@ -502,7 +512,6 @@ class Constraint:
         Returns:
             A new Constraint instance
         """
-        ...
 
     @staticmethod
     def daytime(twilight: str = "civil") -> Constraint:
@@ -515,7 +524,6 @@ class Constraint:
         Returns:
             A new Constraint instance
         """
-        ...
 
     @staticmethod
     def airmass(
@@ -534,7 +542,6 @@ class Constraint:
         Raises:
             ValueError: If airmass values are invalid
         """
-        ...
 
     @staticmethod
     def moon_phase(
@@ -562,7 +569,6 @@ class Constraint:
         Raises:
             ValueError: If illumination or distance values are invalid
         """
-        ...
 
     @staticmethod
     def saa(polygon: list[tuple[float, float]]) -> Constraint:
@@ -578,7 +584,6 @@ class Constraint:
         Raises:
             ValueError: If polygon has fewer than 3 vertices
         """
-        ...
 
     @staticmethod
     def alt_az(
@@ -605,7 +610,6 @@ class Constraint:
         Raises:
             ValueError: If angles are out of valid range or polygon has fewer than 3 vertices
         """
-        ...
 
     @staticmethod
     def orbit_ram(min_angle: float, max_angle: float | None = None) -> Constraint:
@@ -622,7 +626,6 @@ class Constraint:
         Raises:
             ValueError: If angles are out of valid range
         """
-        ...
 
     @staticmethod
     def orbit_pole(
@@ -642,7 +645,6 @@ class Constraint:
         Raises:
             ValueError: If angles are out of valid range
         """
-        ...
 
     @staticmethod
     def and_(*constraints: Constraint) -> Constraint:
@@ -658,7 +660,6 @@ class Constraint:
         Raises:
             ValueError: If no constraints provided
         """
-        ...
 
     @staticmethod
     def or_(*constraints: Constraint) -> Constraint:
@@ -674,7 +675,6 @@ class Constraint:
         Raises:
             ValueError: If no constraints provided
         """
-        ...
 
     @staticmethod
     def xor_(*constraints: Constraint) -> Constraint:
@@ -690,7 +690,6 @@ class Constraint:
         Raises:
             ValueError: If fewer than two constraints are provided
         """
-        ...
 
     @staticmethod
     def at_least(min_violated: int, constraints: list[Constraint]) -> Constraint:
@@ -709,7 +708,6 @@ class Constraint:
             ValueError: If `constraints` is empty, `min_violated < 1`, or
                 `min_violated > len(constraints)`
         """
-        ...
 
     @staticmethod
     def not_(constraint: Constraint) -> Constraint:
@@ -722,7 +720,6 @@ class Constraint:
         Returns:
             A new Constraint that is satisfied when the input is violated
         """
-        ...
 
     @staticmethod
     def boresight_offset(
@@ -753,7 +750,6 @@ class Constraint:
         Returns:
             A new offset-wrapped Constraint
         """
-        ...
 
     @staticmethod
     def from_json(json_str: str) -> Constraint:
@@ -787,14 +783,13 @@ class Constraint:
             {"type": "not", "constraint": { ... }}
             {"type": "boresight_offset", "constraint": { ... }, "roll_deg": 0.0, "pitch_deg": 0.0, "yaw_deg": 1.0}
         """
-        ...
 
     def evaluate(
         self,
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
-        times: datetime | list[datetime] | None = None,
+        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
         indices: int | list[int] | None = None,
         target_roll: float | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -832,14 +827,13 @@ class Constraint:
             Only one of `times` or `indices` should be provided. If neither is
             provided, all ephemeris times are evaluated.
         """
-        ...
 
     def evaluate_batch(
         self,
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
+        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
         indices: int | list[int] | None = None,
         target_rolls: list[float] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -867,14 +861,13 @@ class Constraint:
         Returns:
             List of ConstraintResult objects, one per input target.
         """
-        ...
 
     def in_constraint_batch(
         self,
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
+        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
         indices: int | list[int] | None = None,
         target_rolls: list[float] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -912,14 +905,13 @@ class Constraint:
             Only one of `times` or `indices` should be provided. If neither is
             provided, all ephemeris times are evaluated.
         """
-        ...
 
     def in_constraint_elementwise(
         self,
         ephemeris: Ephemeris,
-        target_ras: list[float],
-        target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
+        target_ras: npt.ArrayLike,
+        target_decs: npt.ArrayLike,
+        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
         target_rolls: list[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
@@ -948,20 +940,31 @@ class Constraint:
         Raises:
             ValueError: On length mismatches or times outside the ephemeris range.
         """
-        ...
+
+    def evaluate_grid(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: npt.ArrayLike,
+        target_decs: npt.ArrayLike,
+        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
+        indices: int | list[int] | None = None,
+        target_rolls: list[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
+    ) -> GridResult:
+        """Like :meth:`evaluate_batch`, returning the grid as arrays."""
 
     def evaluate_elementwise(
         self,
         ephemeris: Ephemeris,
-        target_ras: list[float],
-        target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
+        target_ras: npt.ArrayLike,
+        target_decs: npt.ArrayLike,
+        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
         target_rolls: list[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
     ) -> ElementwiseResult:
         """Like :meth:`in_constraint_elementwise`, plus per-element ``constraint_values``."""
-        ...
 
     def in_constraint(
         self,
@@ -971,6 +974,7 @@ class Constraint:
         target_dec: float,
         target_roll: float | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> bool | list[bool]:
         """
         Check if the target is in-constraint at given time(s).
@@ -992,7 +996,6 @@ class Constraint:
             ValueError: If time is not found in ephemeris timestamps
             TypeError: If ephemeris type is not supported
         """
-        ...
 
     def roll_range(
         self,
@@ -1032,7 +1035,6 @@ class Constraint:
             ValueError: If time is not found in the ephemeris.
             TypeError: If ephemeris type is not supported.
         """
-        ...
 
     def instantaneous_field_of_regard(
         self,
@@ -1041,22 +1043,25 @@ class Constraint:
         index: int | None = None,
         n_points: int = DEFAULT_N_POINTS,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> float:
         """Compute instantaneous visible solid angle in steradians.
 
-        Exactly one of ``time`` or ``index`` must be provided.
+        Exactly one of ``time`` or ``index`` must be provided. With
+        ``apparent=True`` the Earth, Sun and Moon are placed where the observer
+        sees them and the result is the clear solid angle of that apparent sky.
         """
-        ...
 
     def evaluate_moving_body(
         self,
         ephemeris: Ephemeris,
         target_ras: list[float] | None = None,
         target_decs: list[float] | None = None,
-        times: datetime | list[datetime] | None = None,
+        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
         body: str | None = None,
         use_horizons: bool = False,
         spice_kernel: str | None = None,
+        apparent: bool = False,
     ) -> MovingBodyResult:
         """
         Evaluate constraint for a moving body (varying RA/Dec over time).
@@ -1109,7 +1114,6 @@ class Constraint:
             ValueError: If neither body nor target_ras/target_decs are provided
             TypeError: If ephemeris type is not supported
         """
-        ...
 
     def to_json(self) -> str:
         """
@@ -1118,7 +1122,6 @@ class Constraint:
         Returns:
             JSON string representation of the constraint
         """
-        ...
 
     def to_dict(self) -> dict[str, Any]:
         """
@@ -1127,9 +1130,6 @@ class Constraint:
         Returns:
             Dictionary representation of the constraint
         """
-        ...
-
-    def __repr__(self) -> str: ...
 
 class TLEEphemeris(Ephemeris):
     """Ephemeris calculator using Two-Line Element (TLE) data"""
@@ -1191,159 +1191,130 @@ class TLEEphemeris(Ephemeris):
             >>> tle_record = fetch_tle(norad_id=25544)
             >>> ephem = TLEEphemeris(tle=tle_record, begin=begin, end=end, step_size=60)
         """
-        ...
 
     @property
     def tle1(self) -> str:
         """First line of the TLE"""
-        ...
 
     @property
     def tle2(self) -> str:
         """Second line of the TLE"""
-        ...
 
     @property
     def propagator(self) -> Literal["SGP4"]:
         """Propagation model used for TLE states"""
-        ...
 
     @property
     def gravity_model(self) -> Literal["WGS-72"]:
         """Geopotential model used by SGP4"""
-        ...
 
     @property
     def sgp4_operation_mode(self) -> Literal["improved"]:
         """SGP4 operation mode"""
-        ...
 
     @property
     def begin(self) -> datetime:
         """Start time of the ephemeris"""
-        ...
 
     @property
     def end(self) -> datetime:
         """End time of the ephemeris"""
-        ...
 
     @property
     def step_size(self) -> int:
         """Time step in seconds"""
-        ...
 
     @property
     def polar_motion(self) -> bool:
         """Whether polar motion correction is applied"""
-        ...
 
     @property
     def tle_epoch(self) -> datetime:
         """Epoch timestamp extracted from the TLE (UTC datetime)"""
-        ...
 
     @property
-    def tle_record(self) -> "TLERecord":
+    def tle_record(self) -> TLERecord:
         """TLERecord used to construct this ephemeris"""
-        ...
 
     @property
     def teme_pv(self) -> PositionVelocityData:
         """Position and velocity data in TEME frame"""
-        ...
 
     @property
     def itrs_pv(self) -> PositionVelocityData:
         """Position and velocity data in ITRS (Earth-fixed) frame"""
-        ...
 
     @property
     def itrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object in ITRS frame"""
-        ...
 
     @property
     def gcrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object in GCRS frame"""
-        ...
 
     @property
     def earth(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object for Earth position relative to satellite"""
-        ...
 
     @property
     def latitude(self) -> Any:  # Returns astropy.units.Quantity
         """Geodetic latitude as an astropy Quantity array (degrees), one per timestamp"""
-        ...
 
     @property
     def latitude_deg(self) -> npt.NDArray[np.float64]:
         """Geodetic latitude in degrees as a raw NumPy array (one per timestamp)"""
-        ...
 
     @property
     def latitude_rad(self) -> npt.NDArray[np.float64]:
         """Geodetic latitude in radians as a raw NumPy array (one per timestamp)"""
-        ...
 
     @property
     def longitude(self) -> Any:  # Returns astropy.units.Quantity
         """Geodetic longitude as an astropy Quantity array (degrees), one per timestamp"""
-        ...
 
     @property
     def longitude_deg(self) -> npt.NDArray[np.float64]:
         """Geodetic longitude in degrees as a raw NumPy array (one per timestamp)"""
-        ...
 
     @property
     def longitude_rad(self) -> npt.NDArray[np.float64]:
         """Geodetic longitude in radians as a raw NumPy array (one per timestamp)"""
-        ...
 
     @property
     def height(self) -> Any:  # Returns astropy.units.Quantity
         """Geodetic height above the WGS84 ellipsoid as an astropy Quantity array (meters), one per timestamp"""
-        ...
 
     @property
     def height_m(self) -> npt.NDArray[np.float64]:
         """Geodetic height above the WGS84 ellipsoid as a raw NumPy array in meters (one per timestamp)"""
-        ...
 
     @property
     def height_km(self) -> npt.NDArray[np.float64]:
         """Geodetic height above the WGS84 ellipsoid as a raw NumPy array in kilometers (one per timestamp)"""
-        ...
 
     @property
     def sun(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object for Sun position relative to satellite"""
-        ...
 
     @property
     def moon(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object for Moon position relative to satellite"""
-        ...
 
     @property
     def gcrs_pv(self) -> PositionVelocityData:
         """Position and velocity data in GCRS frame"""
-        ...
 
     @property
     def sun_pv(self) -> PositionVelocityData:
         """Sun position and velocity in GCRS frame"""
-        ...
 
     @property
     def moon_pv(self) -> PositionVelocityData:
         """Moon position and velocity in GCRS frame"""
-        ...
 
-    def gcrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def gcrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
 
         Times on the ephemeris grid return the ``gcrs_pv`` rows unchanged;
@@ -1355,19 +1326,52 @@ class TLEEphemeris(Ephemeris):
         Raises:
             ValueError: If any time is outside the ephemeris span.
         """
-        ...
 
-    def itrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def itrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
-        ...
 
-    def sun_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def sun_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
-        ...
 
-    def moon_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def moon_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
-        ...
+
+    def apparent_target_at(
+        self,
+        ras: float | Sequence[float] | npt.NDArray[np.float64],
+        decs: float | Sequence[float] | npt.NDArray[np.float64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+    ) -> npt.NDArray[np.float64]:
+        """Directions in which catalogue targets are seen at arbitrary time(s).
+
+        Applies the correction constraints apply to targets with
+        ``apparent=True``: solar light deflection, then the aberration of the
+        observer's barycentric velocity. The angle between a row of the result
+        and ``get_body_pv(body, times=times, apparent=True).position`` is the
+        angle a constraint reports for that body with ``apparent=True``.
+
+        ``ras``, ``decs`` and ``times`` are paired row by row; any of them may
+        be a single value used for every row.
+
+        Args:
+            ras: Catalogue (ICRS) right ascension(s) in degrees.
+            decs: Catalogue (ICRS) declination(s) in degrees.
+            times: A datetime, an iterable of datetimes or a ``datetime64``
+                array (read as UTC).
+
+        Returns:
+            ``(N, 3)`` array of unit vectors, GCRS axes, rows in input order.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the lengths do
+                not match, or no planetary kernel covers the times.
+        """
 
     @property
     def timestamp(self) -> npt.NDArray[np.datetime64]:
@@ -1377,7 +1381,6 @@ class TLEEphemeris(Ephemeris):
         Returns a NumPy array of datetime objects (not a list) for efficient indexing.
         This property is cached for performance - repeated access is ~90x faster.
         """
-        ...
 
     @property
     def sun_radius(self) -> Any:  # Returns astropy.units.Quantity
@@ -1387,7 +1390,6 @@ class TLEEphemeris(Ephemeris):
         Returns an astropy Quantity with units of degrees.
         This property is cached for performance.
         """
-        ...
 
     @property
     def sun_radius_deg(self) -> npt.NDArray[np.float64]:
@@ -1398,7 +1400,6 @@ class TLEEphemeris(Ephemeris):
         Angular radius = arcsin(physical_radius / distance)
         This property is cached for performance.
         """
-        ...
 
     @property
     def moon_radius(self) -> Any:  # Returns astropy.units.Quantity
@@ -1408,7 +1409,6 @@ class TLEEphemeris(Ephemeris):
         Returns an astropy Quantity with units of degrees.
         This property is cached for performance.
         """
-        ...
 
     @property
     def moon_radius_deg(self) -> npt.NDArray[np.float64]:
@@ -1419,7 +1419,6 @@ class TLEEphemeris(Ephemeris):
         Angular radius = arcsin(physical_radius / distance)
         This property is cached for performance.
         """
-        ...
 
     @property
     def earth_radius(self) -> Any:  # Returns astropy.units.Quantity
@@ -1429,7 +1428,6 @@ class TLEEphemeris(Ephemeris):
         Returns an astropy Quantity with units of degrees.
         This property is cached for performance.
         """
-        ...
 
     @property
     def earth_radius_deg(self) -> npt.NDArray[np.float64]:
@@ -1440,7 +1438,6 @@ class TLEEphemeris(Ephemeris):
         Angular radius = arcsin(physical_radius / distance)
         This property is cached for performance.
         """
-        ...
 
     @property
     def sun_radius_rad(self) -> npt.NDArray[np.float64]:
@@ -1451,7 +1448,6 @@ class TLEEphemeris(Ephemeris):
         Angular radius = arcsin(physical_radius / distance)
         This property is cached for performance.
         """
-        ...
 
     @property
     def moon_radius_rad(self) -> npt.NDArray[np.float64]:
@@ -1462,7 +1458,6 @@ class TLEEphemeris(Ephemeris):
         Angular radius = arcsin(physical_radius / distance)
         This property is cached for performance.
         """
-        ...
 
     @property
     def earth_radius_rad(self) -> npt.NDArray[np.float64]:
@@ -1473,7 +1468,6 @@ class TLEEphemeris(Ephemeris):
         Angular radius = arcsin(physical_radius / distance)
         This property is cached for performance.
         """
-        ...
 
     @property
     def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]:
@@ -1502,7 +1496,6 @@ class TLEEphemeris(Ephemeris):
             >>> # Find when Sun is above horizon (Dec > 0)
             >>> above_horizon = sun_dec > 0
         """
-        ...
 
     @property
     def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]:
@@ -1529,7 +1522,6 @@ class TLEEphemeris(Ephemeris):
             >>> moon_ra = moon_coords[:, 0]   # All RA values
             >>> moon_dec = moon_coords[:, 1]  # All Dec values
         """
-        ...
 
     @property
     def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]:
@@ -1556,7 +1548,6 @@ class TLEEphemeris(Ephemeris):
             >>> earth_ra = earth_coords[:, 0]   # All RA values
             >>> earth_dec = earth_coords[:, 1]  # All Dec values
         """
-        ...
 
     @property
     def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]:
@@ -1586,7 +1577,6 @@ class TLEEphemeris(Ephemeris):
             >>> # Convert to degrees if needed
             >>> sun_ra_deg = np.degrees(sun_ra)
         """
-        ...
 
     @property
     def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]:
@@ -1613,7 +1603,6 @@ class TLEEphemeris(Ephemeris):
             >>> moon_ra = moon_coords[:, 0]   # All RA values in radians
             >>> moon_dec = moon_coords[:, 1]  # All Dec values in radians
         """
-        ...
 
     @property
     def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]:
@@ -1640,83 +1629,107 @@ class TLEEphemeris(Ephemeris):
             >>> earth_ra = earth_coords[:, 0]   # All RA values in radians
             >>> earth_dec = earth_coords[:, 1]  # All Dec values in radians
         """
-        ...
 
     @property
     def sun_ra_deg(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Sun in degrees. Extracts column 0 from sun_ra_dec_deg."""
-        ...
 
     @property
     def sun_dec_deg(self) -> npt.NDArray[np.float64]:
         """Declination of the Sun in degrees. Extracts column 1 from sun_ra_dec_deg."""
-        ...
 
     @property
     def moon_ra_deg(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Moon in degrees. Extracts column 0 from moon_ra_dec_deg."""
-        ...
 
     @property
     def moon_dec_deg(self) -> npt.NDArray[np.float64]:
         """Declination of the Moon in degrees. Extracts column 1 from moon_ra_dec_deg."""
-        ...
 
     @property
     def earth_ra_deg(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Earth in degrees. Extracts column 0 from earth_ra_dec_deg."""
-        ...
 
     @property
     def earth_dec_deg(self) -> npt.NDArray[np.float64]:
         """Declination of the Earth in degrees. Extracts column 1 from earth_ra_dec_deg."""
-        ...
 
     @property
     def sun_ra_rad(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Sun in radians. Extracts column 0 from sun_ra_dec_rad."""
-        ...
 
     @property
     def sun_dec_rad(self) -> npt.NDArray[np.float64]:
         """Declination of the Sun in radians. Extracts column 1 from sun_ra_dec_rad."""
-        ...
 
     @property
     def moon_ra_rad(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Moon in radians. Extracts column 0 from moon_ra_dec_rad."""
-        ...
 
     @property
     def moon_dec_rad(self) -> npt.NDArray[np.float64]:
         """Declination of the Moon in radians. Extracts column 1 from moon_ra_dec_rad."""
-        ...
 
     @property
     def earth_ra_rad(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Earth in radians. Extracts column 0 from earth_ra_dec_rad."""
-        ...
 
     @property
     def earth_dec_rad(self) -> npt.NDArray[np.float64]:
         """Declination of the Earth in radians. Extracts column 1 from earth_ra_dec_rad."""
-        ...
 
     def get_body_pv(
-        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+        self,
+        body: str,
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = ...,
+        apparent: bool = ...,
     ) -> PositionVelocityData:
         """
-        Get position and velocity of a celestial body.
+        Get position and velocity of a celestial body relative to the observer.
 
         Args:
-            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499')
             spice_kernel: Optional path to SPICE kernel
-            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+            use_horizons: Geometric queries only: fall back to the JPL
+                Horizons API when SPICE fails.
+            times: Time(s) to evaluate at instead of the ephemeris grid: a
+                datetime, an iterable of datetimes or a ``datetime64`` array
+                (read as UTC). Times between grid points interpolate the
+                observer as ``gcrs_pv_at`` does; rows follow input order.
+            apparent: Return the body as it is seen: reception light time,
+                solar light deflection and the aberration of the observer's
+                barycentric velocity. The directions are those constraints
+                use with ``apparent=True``.
 
         Returns:
-            Position and velocity data for the requested body
+            Position (km) and velocity (km/s) in GCRS axes, centred on the
+            observer.
+
+            With ``apparent=False`` they are geometric. With ``times`` given,
+            the Sun, Moon and Earth come from the states the ephemeris holds,
+            so the Sun's position is ``sun_pv_at(t).position -
+            gcrs_pv_at(t).position``.
+
+            With ``apparent=True`` the position points where the body's light
+            arrives from and its length is the light-time distance: from the
+            observer at the requested time to the body where it was when the
+            light left it. The velocity is the rate of change of that apparent
+            position, which is not the geometric velocity: the aberration
+            shift turns with the observer's velocity (several km/s for the Sun
+            seen from low orbit). It is a finite difference over half a second
+            and takes the observer's acceleration from the interpolated
+            ephemeris: about 2 m/s for the Sun and 2 cm/s for the Moon and
+            Earth on a one-minute step in low orbit. It is NaN if the
+            ephemeris spans less than a second.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the body is
+                unknown, or ``apparent=True`` and no planetary kernel covers
+                the times.
         """
-        ...
 
     def get_body(
         self,
@@ -1740,7 +1753,6 @@ class TLEEphemeris(Ephemeris):
         Returns:
             astropy.coordinates.SkyCoord object
         """
-        ...
 
     def index(self, time: datetime) -> int:
         """
@@ -1765,7 +1777,6 @@ class TLEEphemeris(Ephemeris):
             >>> idx = eph.index(target_time)
             >>> position = eph.gcrs_pv.position[idx]
         """
-        ...
 
     def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
         """
@@ -1780,7 +1791,6 @@ class TLEEphemeris(Ephemeris):
         Returns:
             List of Moon illumination fractions
         """
-        ...
 
     @property
     def obsgeoloc(
@@ -1791,12 +1801,10 @@ class TLEEphemeris(Ephemeris):
 
         Returns position in km, compatible with astropy's GCRS frame obsgeoloc parameter.
         """
-        ...
 
     @property
     def obsgeovel(self) -> npt.NDArray[np.float64]:  # Returns astropy quantity array
         """Observer geocentric velocity (alias for GCRS velocity)"""
-        ...
 
     def radec_to_altaz(
         self,
@@ -1805,7 +1813,6 @@ class TLEEphemeris(Ephemeris):
         time_indices: list[int] | None = None,
     ) -> npt.NDArray[np.float64]:
         """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
-        ...
 
     def calculate_airmass(
         self,
@@ -1818,7 +1825,6 @@ class TLEEphemeris(Ephemeris):
         Returns airmass values (1.0 at zenith, ~2.0 at 30° altitude, infinity below horizon).
         Accounts for observer height using atmospheric scale height correction.
         """
-        ...
 
 class SPICEEphemeris(Ephemeris):
     """Ephemeris calculator using SPICE kernels"""
@@ -1846,122 +1852,98 @@ class SPICEEphemeris(Ephemeris):
             center_id: NAIF ID of the observer/center (default: 399 = Earth)
             polar_motion: Whether to apply polar motion correction (default: False)
         """
-        ...
 
     @property
     def spk_path(self) -> str:
         """Path to SPICE SPK kernel file"""
-        ...
 
     @property
     def naif_id(self) -> int:
         """NAIF ID of the target body"""
-        ...
 
     @property
     def center_id(self) -> int:
         """NAIF ID of the observer/center body"""
-        ...
 
     @property
     def begin(self) -> datetime:
         """Start time of the ephemeris"""
-        ...
 
     @property
     def end(self) -> datetime:
         """End time of the ephemeris"""
-        ...
 
     @property
     def step_size(self) -> int:
         """Time step in seconds"""
-        ...
 
     @property
     def polar_motion(self) -> bool:
         """Whether polar motion correction is applied"""
-        ...
 
     @property
     def gcrs_pv(self) -> PositionVelocityData:
         """Position and velocity data in GCRS frame"""
-        ...
 
     @property
     def itrs_pv(self) -> PositionVelocityData:
         """Position and velocity data in ITRS (Earth-fixed) frame"""
-        ...
 
     @property
     def itrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object in ITRS frame"""
-        ...
 
     @property
     def gcrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object in GCRS frame"""
-        ...
 
     @property
     def earth(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object for Earth position relative to body"""
-        ...
 
     @property
     def latitude(self) -> Any:  # Returns astropy.units.Quantity
         """Geodetic latitude as an astropy Quantity array (degrees), one per timestamp"""
-        ...
 
     @property
     def latitude_deg(self) -> npt.NDArray[np.float64]:
         """Geodetic latitude in degrees as a raw NumPy array (one per timestamp)"""
-        ...
 
     @property
     def latitude_rad(self) -> npt.NDArray[np.float64]:
         """Geodetic latitude in radians as a raw NumPy array (one per timestamp)"""
-        ...
 
     @property
     def longitude(self) -> Any:  # Returns astropy.units.Quantity
         """Geodetic longitude as an astropy Quantity array (degrees), one per timestamp"""
-        ...
 
     @property
     def longitude_deg(self) -> npt.NDArray[np.float64]:
         """Geodetic longitude in degrees as a raw NumPy array (one per timestamp)"""
-        ...
 
     @property
     def longitude_rad(self) -> npt.NDArray[np.float64]:
         """Geodetic longitude in radians as a raw NumPy array (one per timestamp)"""
-        ...
 
     @property
     def height(self) -> Any:  # Returns astropy.units.Quantity
         """Height above the WGS84 ellipsoid as an astropy Quantity array (meters), one per timestamp"""
-        ...
 
     @property
     def height_m(self) -> npt.NDArray[np.float64]:
         """Height above the WGS84 ellipsoid as a raw NumPy array in meters (one per timestamp)"""
-        ...
 
     @property
     def height_km(self) -> npt.NDArray[np.float64]:
         """Height above the WGS84 ellipsoid as a raw NumPy array in kilometers (one per timestamp)"""
-        ...
 
     @property
     def sun(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object for Sun position relative to body"""
-        ...
 
     @property
     def moon(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object for Moon position relative to body"""
-        ...
 
     @property
     def timestamp(self) -> npt.NDArray[np.datetime64]:
@@ -1971,19 +1953,18 @@ class SPICEEphemeris(Ephemeris):
         Returns a NumPy array of datetime objects (not a list) for efficient indexing.
         This property is cached for performance - repeated access is ~90x faster.
         """
-        ...
 
     @property
     def sun_pv(self) -> PositionVelocityData:
         """Sun position and velocity in GCRS frame"""
-        ...
 
     @property
     def moon_pv(self) -> PositionVelocityData:
         """Moon position and velocity in GCRS frame"""
-        ...
 
-    def gcrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def gcrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
 
         Times on the ephemeris grid return the ``gcrs_pv`` rows unchanged;
@@ -1995,19 +1976,52 @@ class SPICEEphemeris(Ephemeris):
         Raises:
             ValueError: If any time is outside the ephemeris span.
         """
-        ...
 
-    def itrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def itrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
-        ...
 
-    def sun_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def sun_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
-        ...
 
-    def moon_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def moon_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
-        ...
+
+    def apparent_target_at(
+        self,
+        ras: float | Sequence[float] | npt.NDArray[np.float64],
+        decs: float | Sequence[float] | npt.NDArray[np.float64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+    ) -> npt.NDArray[np.float64]:
+        """Directions in which catalogue targets are seen at arbitrary time(s).
+
+        Applies the correction constraints apply to targets with
+        ``apparent=True``: solar light deflection, then the aberration of the
+        observer's barycentric velocity. The angle between a row of the result
+        and ``get_body_pv(body, times=times, apparent=True).position`` is the
+        angle a constraint reports for that body with ``apparent=True``.
+
+        ``ras``, ``decs`` and ``times`` are paired row by row; any of them may
+        be a single value used for every row.
+
+        Args:
+            ras: Catalogue (ICRS) right ascension(s) in degrees.
+            decs: Catalogue (ICRS) declination(s) in degrees.
+            times: A datetime, an iterable of datetimes or a ``datetime64``
+                array (read as UTC).
+
+        Returns:
+            ``(N, 3)`` array of unit vectors, GCRS axes, rows in input order.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the lengths do
+                not match, or no planetary kernel covers the times.
+        """
 
     @property
     def obsgeoloc(self) -> npt.NDArray[np.float64]:
@@ -2017,7 +2031,6 @@ class SPICEEphemeris(Ephemeris):
         Returns position in km, compatible with astropy's GCRS frame obsgeoloc parameter.
         Shape: (N, 3) where N is the number of timestamps.
         """
-        ...
 
     @property
     def obsgeovel(self) -> npt.NDArray[np.float64]:
@@ -2027,7 +2040,6 @@ class SPICEEphemeris(Ephemeris):
         Returns velocity in km/s, compatible with astropy's GCRS frame obsgeovel parameter.
         Shape: (N, 3) where N is the number of timestamps.
         """
-        ...
 
     def radec_to_altaz(
         self,
@@ -2036,7 +2048,6 @@ class SPICEEphemeris(Ephemeris):
         time_indices: list[int] | None = None,
     ) -> npt.NDArray[np.float64]:
         """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
-        ...
 
     def calculate_airmass(
         self,
@@ -2049,7 +2060,6 @@ class SPICEEphemeris(Ephemeris):
         Returns airmass values (1.0 at zenith, ~2.0 at 30° altitude, infinity below horizon).
         Accounts for observer height using atmospheric scale height correction.
         """
-        ...
 
     @property
     def sun_radius(self) -> Any:  # Returns astropy.units.Quantity
@@ -2059,7 +2069,6 @@ class SPICEEphemeris(Ephemeris):
         Returns an astropy Quantity with units of degrees.
         This property is cached for performance.
         """
-        ...
 
     @property
     def sun_radius_deg(self) -> npt.NDArray[np.float64]:
@@ -2070,7 +2079,6 @@ class SPICEEphemeris(Ephemeris):
         Angular radius = arcsin(physical_radius / distance)
         This property is cached for performance.
         """
-        ...
 
     @property
     def moon_radius(self) -> Any:  # Returns astropy.units.Quantity
@@ -2080,7 +2088,6 @@ class SPICEEphemeris(Ephemeris):
         Returns an astropy Quantity with units of degrees.
         This property is cached for performance.
         """
-        ...
 
     @property
     def moon_radius_deg(self) -> npt.NDArray[np.float64]:
@@ -2091,7 +2098,6 @@ class SPICEEphemeris(Ephemeris):
         Angular radius = arcsin(physical_radius / distance)
         This property is cached for performance.
         """
-        ...
 
     @property
     def earth_radius(self) -> Any:  # Returns astropy.units.Quantity
@@ -2101,7 +2107,6 @@ class SPICEEphemeris(Ephemeris):
         Returns an astropy Quantity with units of degrees.
         This property is cached for performance.
         """
-        ...
 
     @property
     def earth_radius_deg(self) -> npt.NDArray[np.float64]:
@@ -2112,7 +2117,6 @@ class SPICEEphemeris(Ephemeris):
         Angular radius = arcsin(physical_radius / distance)
         This property is cached for performance.
         """
-        ...
 
     @property
     def sun_radius_rad(self) -> npt.NDArray[np.float64]:
@@ -2123,7 +2127,6 @@ class SPICEEphemeris(Ephemeris):
         Angular radius = arcsin(physical_radius / distance)
         This property is cached for performance.
         """
-        ...
 
     @property
     def moon_radius_rad(self) -> npt.NDArray[np.float64]:
@@ -2134,7 +2137,6 @@ class SPICEEphemeris(Ephemeris):
         Angular radius = arcsin(physical_radius / distance)
         This property is cached for performance.
         """
-        ...
 
     @property
     def earth_radius_rad(self) -> npt.NDArray[np.float64]:
@@ -2145,7 +2147,6 @@ class SPICEEphemeris(Ephemeris):
         Angular radius = arcsin(physical_radius / distance)
         This property is cached for performance.
         """
-        ...
 
     @property
     def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]:
@@ -2155,7 +2156,6 @@ class SPICEEphemeris(Ephemeris):
         Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
         This property is cached for performance.
         """
-        ...
 
     @property
     def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]:
@@ -2165,7 +2165,6 @@ class SPICEEphemeris(Ephemeris):
         Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
         This property is cached for performance.
         """
-        ...
 
     @property
     def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]:
@@ -2175,7 +2174,6 @@ class SPICEEphemeris(Ephemeris):
         Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
         This property is cached for performance.
         """
-        ...
 
     @property
     def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]:
@@ -2185,7 +2183,6 @@ class SPICEEphemeris(Ephemeris):
         Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
         This property is cached for performance.
         """
-        ...
 
     @property
     def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]:
@@ -2195,7 +2192,6 @@ class SPICEEphemeris(Ephemeris):
         Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
         This property is cached for performance.
         """
-        ...
 
     @property
     def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]:
@@ -2205,67 +2201,54 @@ class SPICEEphemeris(Ephemeris):
         Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
         This property is cached for performance.
         """
-        ...
 
     @property
     def sun_ra_deg(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Sun in degrees. Extracts column 0 from sun_ra_dec_deg."""
-        ...
 
     @property
     def sun_dec_deg(self) -> npt.NDArray[np.float64]:
         """Declination of the Sun in degrees. Extracts column 1 from sun_ra_dec_deg."""
-        ...
 
     @property
     def moon_ra_deg(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Moon in degrees. Extracts column 0 from moon_ra_dec_deg."""
-        ...
 
     @property
     def moon_dec_deg(self) -> npt.NDArray[np.float64]:
         """Declination of the Moon in degrees. Extracts column 1 from moon_ra_dec_deg."""
-        ...
 
     @property
     def earth_ra_deg(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Earth in degrees. Extracts column 0 from earth_ra_dec_deg."""
-        ...
 
     @property
     def earth_dec_deg(self) -> npt.NDArray[np.float64]:
         """Declination of the Earth in degrees. Extracts column 1 from earth_ra_dec_deg."""
-        ...
 
     @property
     def sun_ra_rad(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Sun in radians. Extracts column 0 from sun_ra_dec_rad."""
-        ...
 
     @property
     def sun_dec_rad(self) -> npt.NDArray[np.float64]:
         """Declination of the Sun in radians. Extracts column 1 from sun_ra_dec_rad."""
-        ...
 
     @property
     def moon_ra_rad(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Moon in radians. Extracts column 0 from moon_ra_dec_rad."""
-        ...
 
     @property
     def moon_dec_rad(self) -> npt.NDArray[np.float64]:
         """Declination of the Moon in radians. Extracts column 1 from moon_ra_dec_rad."""
-        ...
 
     @property
     def earth_ra_rad(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Earth in radians. Extracts column 0 from earth_ra_dec_rad."""
-        ...
 
     @property
     def earth_dec_rad(self) -> npt.NDArray[np.float64]:
         """Declination of the Earth in radians. Extracts column 1 from earth_ra_dec_rad."""
-        ...
 
     def index(self, time: datetime) -> int:
         """
@@ -2290,7 +2273,6 @@ class SPICEEphemeris(Ephemeris):
             >>> idx = eph.index(target_time)
             >>> position = eph.gcrs_pv.position[idx]
         """
-        ...
 
     def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
         """
@@ -2305,23 +2287,59 @@ class SPICEEphemeris(Ephemeris):
         Returns:
             List of Moon illumination fractions
         """
-        ...
 
     def get_body_pv(
-        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+        self,
+        body: str,
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = ...,
+        apparent: bool = ...,
     ) -> PositionVelocityData:
         """
-        Get position and velocity of a celestial body.
+        Get position and velocity of a celestial body relative to the observer.
 
         Args:
-            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499')
             spice_kernel: Optional path to SPICE kernel
-            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+            use_horizons: Geometric queries only: fall back to the JPL
+                Horizons API when SPICE fails.
+            times: Time(s) to evaluate at instead of the ephemeris grid: a
+                datetime, an iterable of datetimes or a ``datetime64`` array
+                (read as UTC). Times between grid points interpolate the
+                observer as ``gcrs_pv_at`` does; rows follow input order.
+            apparent: Return the body as it is seen: reception light time,
+                solar light deflection and the aberration of the observer's
+                barycentric velocity. The directions are those constraints
+                use with ``apparent=True``.
 
         Returns:
-            Position and velocity data for the requested body
+            Position (km) and velocity (km/s) in GCRS axes, centred on the
+            observer.
+
+            With ``apparent=False`` they are geometric. With ``times`` given,
+            the Sun, Moon and Earth come from the states the ephemeris holds,
+            so the Sun's position is ``sun_pv_at(t).position -
+            gcrs_pv_at(t).position``.
+
+            With ``apparent=True`` the position points where the body's light
+            arrives from and its length is the light-time distance: from the
+            observer at the requested time to the body where it was when the
+            light left it. The velocity is the rate of change of that apparent
+            position, which is not the geometric velocity: the aberration
+            shift turns with the observer's velocity (several km/s for the Sun
+            seen from low orbit). It is a finite difference over half a second
+            and takes the observer's acceleration from the interpolated
+            ephemeris: about 2 m/s for the Sun and 2 cm/s for the Moon and
+            Earth on a one-minute step in low orbit. It is NaN if the
+            ephemeris spans less than a second.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the body is
+                unknown, or ``apparent=True`` and no planetary kernel covers
+                the times.
         """
-        ...
 
     def get_body(
         self,
@@ -2345,7 +2363,6 @@ class SPICEEphemeris(Ephemeris):
         Returns:
             astropy.coordinates.SkyCoord object
         """
-        ...
 
 class OEMEphemeris(Ephemeris):
     """
@@ -2384,112 +2401,90 @@ class OEMEphemeris(Ephemeris):
             ValueError: If OEM file cannot be parsed, time range exceeds available data,
                        reference frame is missing, or reference frame is incompatible with GCRS
         """
-        ...
 
     @property
     def oem_path(self) -> str:
         """Path to the CCSDS OEM file"""
-        ...
 
     @property
     def begin(self) -> datetime:
         """Start time of ephemeris"""
-        ...
 
     @property
     def end(self) -> datetime:
         """End time of ephemeris"""
-        ...
 
     @property
     def step_size(self) -> int:
         """Time step in seconds"""
-        ...
 
     @property
     def polar_motion(self) -> bool:
         """Whether polar motion correction is applied"""
-        ...
 
     @property
     def gcrs_pv(self) -> PositionVelocityData:
         """Position and velocity data in GCRS frame (interpolated)"""
-        ...
 
     @property
     def itrs_pv(self) -> PositionVelocityData:
         """Position and velocity data in ITRS (Earth-fixed) frame"""
-        ...
 
     @property
     def itrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object in ITRS frame"""
-        ...
 
     @property
     def gcrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object in GCRS frame"""
-        ...
 
     @property
     def earth(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object for Earth position relative to spacecraft"""
-        ...
 
     @property
     def latitude(self) -> Any:  # Returns astropy.units.Quantity
         """Geodetic latitude as an astropy Quantity array (degrees), one per timestamp"""
-        ...
 
     @property
     def latitude_deg(self) -> npt.NDArray[np.float64]:
         """Geodetic latitude in degrees as a raw NumPy array (one per timestamp)"""
-        ...
 
     @property
     def latitude_rad(self) -> npt.NDArray[np.float64]:
         """Geodetic latitude in radians as a raw NumPy array (one per timestamp)"""
-        ...
 
     @property
     def longitude(self) -> Any:  # Returns astropy.units.Quantity
         """Geodetic longitude as an astropy Quantity array (degrees), one per timestamp"""
-        ...
 
     @property
     def longitude_deg(self) -> npt.NDArray[np.float64]:
         """Geodetic longitude in degrees as a raw NumPy array (one per timestamp)"""
-        ...
 
     @property
     def longitude_rad(self) -> npt.NDArray[np.float64]:
         """Geodetic longitude in radians as a raw NumPy array (one per timestamp)"""
-        ...
 
     @property
     def height(self) -> Any:  # Returns astropy.units.Quantity
         """Height above the WGS84 ellipsoid as an astropy Quantity array (meters), one per timestamp"""
-        ...
 
     @property
     def height_m(self) -> npt.NDArray[np.float64]:
         """Height above the WGS84 ellipsoid as a raw NumPy array in meters (one per timestamp)"""
-        ...
 
     @property
     def height_km(self) -> npt.NDArray[np.float64]:
         """Height above the WGS84 ellipsoid as a raw NumPy array in kilometers (one per timestamp)"""
-        ...
 
     @property
     def sun(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object for Sun position relative to spacecraft"""
-        ...
 
     @property
     def moon(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object for Moon position relative to spacecraft"""
-        ...
 
     @property
     def timestamp(self) -> npt.NDArray[np.datetime64]:
@@ -2499,7 +2494,6 @@ class OEMEphemeris(Ephemeris):
         Returns a NumPy array of datetime objects (not a list) for efficient indexing.
         This property is cached for performance - repeated access is ~90x faster.
         """
-        ...
 
     @property
     def oem_pv(self) -> PositionVelocityData:
@@ -2508,7 +2502,6 @@ class OEMEphemeris(Ephemeris):
 
         Returns the original state vectors from the OEM file.
         """
-        ...
 
     @property
     def oem_timestamp(self) -> list[datetime]:
@@ -2517,19 +2510,18 @@ class OEMEphemeris(Ephemeris):
 
         Returns the original timestamps from the OEM file as UTC datetime objects.
         """
-        ...
 
     @property
     def sun_pv(self) -> PositionVelocityData:
         """Sun position and velocity in GCRS frame"""
-        ...
 
     @property
     def moon_pv(self) -> PositionVelocityData:
         """Moon position and velocity in GCRS frame"""
-        ...
 
-    def gcrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def gcrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
 
         Times on the ephemeris grid return the ``gcrs_pv`` rows unchanged;
@@ -2541,19 +2533,52 @@ class OEMEphemeris(Ephemeris):
         Raises:
             ValueError: If any time is outside the ephemeris span.
         """
-        ...
 
-    def itrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def itrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
-        ...
 
-    def sun_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def sun_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
-        ...
 
-    def moon_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def moon_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
-        ...
+
+    def apparent_target_at(
+        self,
+        ras: float | Sequence[float] | npt.NDArray[np.float64],
+        decs: float | Sequence[float] | npt.NDArray[np.float64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+    ) -> npt.NDArray[np.float64]:
+        """Directions in which catalogue targets are seen at arbitrary time(s).
+
+        Applies the correction constraints apply to targets with
+        ``apparent=True``: solar light deflection, then the aberration of the
+        observer's barycentric velocity. The angle between a row of the result
+        and ``get_body_pv(body, times=times, apparent=True).position`` is the
+        angle a constraint reports for that body with ``apparent=True``.
+
+        ``ras``, ``decs`` and ``times`` are paired row by row; any of them may
+        be a single value used for every row.
+
+        Args:
+            ras: Catalogue (ICRS) right ascension(s) in degrees.
+            decs: Catalogue (ICRS) declination(s) in degrees.
+            times: A datetime, an iterable of datetimes or a ``datetime64``
+                array (read as UTC).
+
+        Returns:
+            ``(N, 3)`` array of unit vectors, GCRS axes, rows in input order.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the lengths do
+                not match, or no planetary kernel covers the times.
+        """
 
     @property
     def obsgeoloc(self) -> npt.NDArray[np.float64]:
@@ -2563,7 +2588,6 @@ class OEMEphemeris(Ephemeris):
         Returns position in km, compatible with astropy's GCRS frame obsgeoloc parameter.
         Shape: (N, 3) where N is the number of timestamps.
         """
-        ...
 
     @property
     def obsgeovel(self) -> npt.NDArray[np.float64]:
@@ -2573,7 +2597,6 @@ class OEMEphemeris(Ephemeris):
         Returns velocity in km/s, compatible with astropy's GCRS frame obsgeovel parameter.
         Shape: (N, 3) where N is the number of timestamps.
         """
-        ...
 
     def radec_to_altaz(
         self,
@@ -2582,7 +2605,6 @@ class OEMEphemeris(Ephemeris):
         time_indices: list[int] | None = None,
     ) -> npt.NDArray[np.float64]:
         """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
-        ...
 
     def calculate_airmass(
         self,
@@ -2595,7 +2617,6 @@ class OEMEphemeris(Ephemeris):
         Returns airmass values (1.0 at zenith, ~2.0 at 30° altitude, infinity below horizon).
         Accounts for observer height using atmospheric scale height correction.
         """
-        ...
 
     @property
     def sun_radius(self) -> Any:  # Returns astropy.units.Quantity
@@ -2605,7 +2626,6 @@ class OEMEphemeris(Ephemeris):
         Returns an astropy Quantity with units of degrees.
         This property is cached for performance.
         """
-        ...
 
     @property
     def sun_radius_deg(self) -> npt.NDArray[np.float64]:
@@ -2616,7 +2636,6 @@ class OEMEphemeris(Ephemeris):
         Angular radius = arcsin(physical_radius / distance)
         This property is cached for performance.
         """
-        ...
 
     @property
     def moon_radius(self) -> Any:  # Returns astropy.units.Quantity
@@ -2626,7 +2645,6 @@ class OEMEphemeris(Ephemeris):
         Returns an astropy Quantity with units of degrees.
         This property is cached for performance.
         """
-        ...
 
     @property
     def moon_radius_deg(self) -> npt.NDArray[np.float64]:
@@ -2637,7 +2655,6 @@ class OEMEphemeris(Ephemeris):
         Angular radius = arcsin(physical_radius / distance)
         This property is cached for performance.
         """
-        ...
 
     @property
     def earth_radius(self) -> Any:  # Returns astropy.units.Quantity
@@ -2647,7 +2664,6 @@ class OEMEphemeris(Ephemeris):
         Returns an astropy Quantity with units of degrees.
         This property is cached for performance.
         """
-        ...
 
     @property
     def earth_radius_deg(self) -> npt.NDArray[np.float64]:
@@ -2658,7 +2674,6 @@ class OEMEphemeris(Ephemeris):
         Angular radius = arcsin(physical_radius / distance)
         This property is cached for performance.
         """
-        ...
 
     @property
     def sun_radius_rad(self) -> npt.NDArray[np.float64]:
@@ -2669,7 +2684,6 @@ class OEMEphemeris(Ephemeris):
         Angular radius = arcsin(physical_radius / distance)
         This property is cached for performance.
         """
-        ...
 
     @property
     def moon_radius_rad(self) -> npt.NDArray[np.float64]:
@@ -2680,7 +2694,6 @@ class OEMEphemeris(Ephemeris):
         Angular radius = arcsin(physical_radius / distance)
         This property is cached for performance.
         """
-        ...
 
     @property
     def earth_radius_rad(self) -> npt.NDArray[np.float64]:
@@ -2691,7 +2704,6 @@ class OEMEphemeris(Ephemeris):
         Angular radius = arcsin(physical_radius / distance)
         This property is cached for performance.
         """
-        ...
 
     @property
     def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]:
@@ -2701,7 +2713,6 @@ class OEMEphemeris(Ephemeris):
         Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
         This property is cached for performance.
         """
-        ...
 
     @property
     def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]:
@@ -2711,7 +2722,6 @@ class OEMEphemeris(Ephemeris):
         Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
         This property is cached for performance.
         """
-        ...
 
     @property
     def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]:
@@ -2721,7 +2731,6 @@ class OEMEphemeris(Ephemeris):
         Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
         This property is cached for performance.
         """
-        ...
 
     @property
     def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]:
@@ -2731,7 +2740,6 @@ class OEMEphemeris(Ephemeris):
         Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
         This property is cached for performance.
         """
-        ...
 
     @property
     def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]:
@@ -2741,7 +2749,6 @@ class OEMEphemeris(Ephemeris):
         Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
         This property is cached for performance.
         """
-        ...
 
     @property
     def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]:
@@ -2751,67 +2758,54 @@ class OEMEphemeris(Ephemeris):
         Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
         This property is cached for performance.
         """
-        ...
 
     @property
     def sun_ra_deg(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Sun in degrees. Extracts column 0 from sun_ra_dec_deg."""
-        ...
 
     @property
     def sun_dec_deg(self) -> npt.NDArray[np.float64]:
         """Declination of the Sun in degrees. Extracts column 1 from sun_ra_dec_deg."""
-        ...
 
     @property
     def moon_ra_deg(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Moon in degrees. Extracts column 0 from moon_ra_dec_deg."""
-        ...
 
     @property
     def moon_dec_deg(self) -> npt.NDArray[np.float64]:
         """Declination of the Moon in degrees. Extracts column 1 from moon_ra_dec_deg."""
-        ...
 
     @property
     def earth_ra_deg(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Earth in degrees. Extracts column 0 from earth_ra_dec_deg."""
-        ...
 
     @property
     def earth_dec_deg(self) -> npt.NDArray[np.float64]:
         """Declination of the Earth in degrees. Extracts column 1 from earth_ra_dec_deg."""
-        ...
 
     @property
     def sun_ra_rad(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Sun in radians. Extracts column 0 from sun_ra_dec_rad."""
-        ...
 
     @property
     def sun_dec_rad(self) -> npt.NDArray[np.float64]:
         """Declination of the Sun in radians. Extracts column 1 from sun_ra_dec_rad."""
-        ...
 
     @property
     def moon_ra_rad(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Moon in radians. Extracts column 0 from moon_ra_dec_rad."""
-        ...
 
     @property
     def moon_dec_rad(self) -> npt.NDArray[np.float64]:
         """Declination of the Moon in radians. Extracts column 1 from moon_ra_dec_rad."""
-        ...
 
     @property
     def earth_ra_rad(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Earth in radians. Extracts column 0 from earth_ra_dec_rad."""
-        ...
 
     @property
     def earth_dec_rad(self) -> npt.NDArray[np.float64]:
         """Declination of the Earth in radians. Extracts column 1 from earth_ra_dec_rad."""
-        ...
 
     def index(self, time: datetime) -> int:
         """
@@ -2836,7 +2830,6 @@ class OEMEphemeris(Ephemeris):
             >>> idx = eph.index(target_time)
             >>> position = eph.gcrs_pv.position[idx]
         """
-        ...
 
     def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
         """
@@ -2851,23 +2844,59 @@ class OEMEphemeris(Ephemeris):
         Returns:
             List of Moon illumination fractions
         """
-        ...
 
     def get_body_pv(
-        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+        self,
+        body: str,
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = ...,
+        apparent: bool = ...,
     ) -> PositionVelocityData:
         """
-        Get position and velocity of a celestial body.
+        Get position and velocity of a celestial body relative to the observer.
 
         Args:
-            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499')
             spice_kernel: Optional path to SPICE kernel
-            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+            use_horizons: Geometric queries only: fall back to the JPL
+                Horizons API when SPICE fails.
+            times: Time(s) to evaluate at instead of the ephemeris grid: a
+                datetime, an iterable of datetimes or a ``datetime64`` array
+                (read as UTC). Times between grid points interpolate the
+                observer as ``gcrs_pv_at`` does; rows follow input order.
+            apparent: Return the body as it is seen: reception light time,
+                solar light deflection and the aberration of the observer's
+                barycentric velocity. The directions are those constraints
+                use with ``apparent=True``.
 
         Returns:
-            Position and velocity data for the requested body
+            Position (km) and velocity (km/s) in GCRS axes, centred on the
+            observer.
+
+            With ``apparent=False`` they are geometric. With ``times`` given,
+            the Sun, Moon and Earth come from the states the ephemeris holds,
+            so the Sun's position is ``sun_pv_at(t).position -
+            gcrs_pv_at(t).position``.
+
+            With ``apparent=True`` the position points where the body's light
+            arrives from and its length is the light-time distance: from the
+            observer at the requested time to the body where it was when the
+            light left it. The velocity is the rate of change of that apparent
+            position, which is not the geometric velocity: the aberration
+            shift turns with the observer's velocity (several km/s for the Sun
+            seen from low orbit). It is a finite difference over half a second
+            and takes the observer's acceleration from the interpolated
+            ephemeris: about 2 m/s for the Sun and 2 cm/s for the Moon and
+            Earth on a one-minute step in low orbit. It is NaN if the
+            ephemeris spans less than a second.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the body is
+                unknown, or ``apparent=True`` and no planetary kernel covers
+                the times.
         """
-        ...
 
     def get_body(
         self,
@@ -2891,7 +2920,6 @@ class OEMEphemeris(Ephemeris):
         Returns:
             astropy.coordinates.SkyCoord object
         """
-        ...
 
 class FileEphemeris(Ephemeris):
     """
@@ -2952,7 +2980,8 @@ class FileEphemeris(Ephemeris):
             position_unit: Override detected position unit.
                 Supported: ``"km"`` (default), ``"m"``, ``"cm"``.
             velocity_unit: Override detected velocity unit.
-                Supported: ``"km/s"`` (default), ``"m/s"``, ``"cm/s"``.
+                Supported: ``"km/s"``, ``"m/s"``, ``"cm/s"``. When neither given
+                nor stated in the file, it follows the position unit.
             frame: Override detected coordinate frame.
                 GCRS-compatible: ``"J2000"``, ``"EME2000"``, ``"GCRF"``, ``"GCRS"``,
                 ``"ICRF"``.  Earth-fixed: ``"ITRS"``, ``"ECEF"``, ``"ECF"``,
@@ -2968,20 +2997,19 @@ class FileEphemeris(Ephemeris):
                 exceeds the file's data range, units are unrecognised, or the
                 frame is unsupported.
         """
-        ...
 
     @staticmethod
     def from_arrays(
         times: Sequence[datetime] | npt.NDArray[np.datetime64],
         positions: npt.ArrayLike,
-        velocities: npt.ArrayLike,
+        velocities: npt.ArrayLike | None = None,
         begin: datetime | None = None,
         end: datetime | None = None,
         step_size: int = 60,
         *,
         polar_motion: bool = False,
         position_unit: str = "km",
-        velocity_unit: str = "km/s",
+        velocity_unit: str | None = None,
         frame: str = "J2000",
     ) -> FileEphemeris:
         """
@@ -2998,13 +3026,24 @@ class FileEphemeris(Ephemeris):
                 array (interpreted as UTC, microsecond resolution).
             positions: ``(N, 3)`` array-like of positions in ``position_unit``.
             velocities: ``(N, 3)`` array-like of velocities in
-                ``velocity_unit``.  Required: Hermite interpolation uses them.
+                ``velocity_unit``, which the Hermite interpolation uses.  If
+                omitted, they are derived from the positions: the derivative
+                of the cubic spline through each coordinate (continuous first
+                and second derivatives, "not-a-knot" ends, as
+                ``scipy.interpolate.CubicSpline``), in the position unit per
+                second.  The error grows as the cube of the sample spacing
+                and is largest at the first and last samples: for a low
+                Earth orbit sampled every 60 s, about 1 mm/s inside the span
+                and 0.4 m/s at its ends (2 mm/s at the ends every 10 s); for a
+                geostationary orbit, under 0.1 mm/s.  Supply velocities when
+                they are known.
             begin: Start of the output time grid (default: ``times[0]``).
             end: End of the output time grid (default: ``times[-1]``).
             step_size: Output time step in seconds (default 60).
             polar_motion: Apply polar motion correction (default False).
             position_unit: ``"km"`` (default), ``"m"`` or ``"cm"``.
-            velocity_unit: ``"km/s"`` (default), ``"m/s"`` or ``"cm/s"``.
+            velocity_unit: ``"km/s"``, ``"m/s"`` or ``"cm/s"``.  Default: the
+                position unit per second.
             frame: Frame of the input vectors.  GCRS-compatible: ``"J2000"``
                 (default), ``"EME2000"``, ``"GCRF"``, ``"GCRS"``, ``"ICRF"``.
                 Earth-fixed: ``"ITRS"``, ``"ECEF"``, ``"ECF"``, ``"FIXED"``,
@@ -3016,111 +3055,93 @@ class FileEphemeris(Ephemeris):
             ValueError: If shapes are not ``(N, 3)``, lengths differ, fewer than
                 two samples are given, values are non-finite, times are not
                 strictly increasing, the requested range lies outside the
-                samples, or a unit/frame is unrecognised.
+                samples, a unit/frame is unrecognised, or ``velocity_unit``
+                is given without ``velocities``.
         """
-        ...
 
     @property
     def file_path(self) -> str | None:
         """Path to the source file, or ``None`` if built with :meth:`from_arrays`."""
-        ...
 
     @property
     def polar_motion(self) -> bool:
         """Whether polar motion correction is applied."""
-        ...
 
     @property
     def source_position_unit(self) -> str:
         """Position unit as found in / specified for the file (before km conversion)."""
-        ...
 
     @property
     def source_velocity_unit(self) -> str:
         """Velocity unit as found in / specified for the file (before km/s conversion)."""
-        ...
 
     @property
     def source_frame(self) -> str:
         """Coordinate frame as found in / specified for the file."""
-        ...
 
     @property
     def file_pv(self) -> PositionVelocityData:
         """Raw position/velocity from the file (in km, km/s) before resampling."""
-        ...
 
     @property
     def file_timestamp(self) -> list[datetime]:
         """Raw timestamps from the file before resampling."""
-        ...
 
     @property
     def begin(self) -> datetime:
         """Start time of the output ephemeris grid."""
-        ...
 
     @property
     def end(self) -> datetime:
         """End time of the output ephemeris grid."""
-        ...
 
     @property
     def step_size(self) -> int:
         """Output time step in seconds."""
-        ...
 
     @property
     def gcrs_pv(self) -> PositionVelocityData:
         """Position and velocity in GCRS frame (interpolated to the output grid)."""
-        ...
 
     @property
     def itrs_pv(self) -> PositionVelocityData:
         """Position and velocity in ITRS (Earth-fixed) frame."""
-        ...
 
     @property
     def itrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord in ITRS frame."""
-        ...
 
     @property
     def gcrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord in GCRS frame."""
-        ...
 
     @property
     def earth(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord for the Earth position relative to the spacecraft."""
-        ...
 
     @property
     def sun(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord for the Sun."""
-        ...
 
     @property
     def moon(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord for the Moon."""
-        ...
 
     @property
     def timestamp(self) -> npt.NDArray[np.datetime64]:
         """Output grid timestamps."""
-        ...
 
     @property
     def sun_pv(self) -> PositionVelocityData:
         """Sun position/velocity in GCRS frame."""
-        ...
 
     @property
     def moon_pv(self) -> PositionVelocityData:
         """Moon position/velocity in GCRS frame."""
-        ...
 
-    def gcrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def gcrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
 
         Times on the ephemeris grid return the ``gcrs_pv`` rows unchanged;
@@ -3132,223 +3153,263 @@ class FileEphemeris(Ephemeris):
         Raises:
             ValueError: If any time is outside the ephemeris span.
         """
-        ...
 
-    def itrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def itrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
-        ...
 
-    def sun_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def sun_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
-        ...
 
-    def moon_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def moon_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
-        ...
+
+    def apparent_target_at(
+        self,
+        ras: float | Sequence[float] | npt.NDArray[np.float64],
+        decs: float | Sequence[float] | npt.NDArray[np.float64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+    ) -> npt.NDArray[np.float64]:
+        """Directions in which catalogue targets are seen at arbitrary time(s).
+
+        Applies the correction constraints apply to targets with
+        ``apparent=True``: solar light deflection, then the aberration of the
+        observer's barycentric velocity. The angle between a row of the result
+        and ``get_body_pv(body, times=times, apparent=True).position`` is the
+        angle a constraint reports for that body with ``apparent=True``.
+
+        ``ras``, ``decs`` and ``times`` are paired row by row; any of them may
+        be a single value used for every row.
+
+        Args:
+            ras: Catalogue (ICRS) right ascension(s) in degrees.
+            decs: Catalogue (ICRS) declination(s) in degrees.
+            times: A datetime, an iterable of datetimes or a ``datetime64``
+                array (read as UTC).
+
+        Returns:
+            ``(N, 3)`` array of unit vectors, GCRS axes, rows in input order.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the lengths do
+                not match, or no planetary kernel covers the times.
+        """
 
     @property
     def obsgeoloc(self) -> Any:
         """Observer geocentric location."""
-        ...
 
     @property
     def obsgeovel(self) -> Any:
         """Observer geocentric velocity."""
-        ...
 
     @property
     def latitude(self) -> Any:  # Returns astropy.units.Quantity
         """Geodetic latitude as an astropy Quantity array (degrees)."""
-        ...
 
     @property
     def latitude_deg(self) -> npt.NDArray[np.float64]:
         """Geodetic latitude in degrees."""
-        ...
 
     @property
     def latitude_rad(self) -> npt.NDArray[np.float64]:
         """Geodetic latitude in radians."""
-        ...
 
     @property
     def longitude(self) -> Any:  # Returns astropy.units.Quantity
         """Geodetic longitude as an astropy Quantity array (degrees)."""
-        ...
 
     @property
     def longitude_deg(self) -> npt.NDArray[np.float64]:
         """Geodetic longitude in degrees."""
-        ...
 
     @property
     def longitude_rad(self) -> npt.NDArray[np.float64]:
         """Geodetic longitude in radians."""
-        ...
 
     @property
     def height(self) -> Any:  # Returns astropy.units.Quantity
         """Geodetic height above WGS84 ellipsoid."""
-        ...
 
     @property
     def height_m(self) -> npt.NDArray[np.float64]:
         """Geodetic height in metres."""
-        ...
 
     @property
     def height_km(self) -> npt.NDArray[np.float64]:
         """Geodetic height in kilometres."""
-        ...
 
     @property
     def sun_radius(self) -> Any:
         """Angular radius of the Sun as an astropy Quantity (degrees)."""
-        ...
 
     @property
     def sun_radius_deg(self) -> npt.NDArray[np.float64]:
         """Angular radius of the Sun in degrees."""
-        ...
 
     @property
     def sun_radius_rad(self) -> npt.NDArray[np.float64]:
         """Angular radius of the Sun in radians."""
-        ...
 
     @property
     def moon_radius(self) -> Any:
         """Angular radius of the Moon as an astropy Quantity (degrees)."""
-        ...
 
     @property
     def moon_radius_deg(self) -> npt.NDArray[np.float64]:
         """Angular radius of the Moon in degrees."""
-        ...
 
     @property
     def moon_radius_rad(self) -> npt.NDArray[np.float64]:
         """Angular radius of the Moon in radians."""
-        ...
 
     @property
     def earth_radius(self) -> Any:
         """Angular radius of the Earth as an astropy Quantity (degrees)."""
-        ...
 
     @property
     def earth_radius_deg(self) -> npt.NDArray[np.float64]:
         """Angular radius of the Earth in degrees."""
-        ...
 
     @property
     def earth_radius_rad(self) -> npt.NDArray[np.float64]:
         """Angular radius of the Earth in radians."""
-        ...
 
     @property
     def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]:
         """Sun RA/Dec in degrees (N×2 array: RA, Dec)."""
-        ...
 
     @property
     def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]:
         """Moon RA/Dec in degrees (N×2 array: RA, Dec)."""
-        ...
 
     @property
     def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]:
         """Earth RA/Dec in degrees (N×2 array: RA, Dec)."""
-        ...
 
     @property
     def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]:
         """Sun RA/Dec in radians (N×2 array: RA, Dec)."""
-        ...
 
     @property
     def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]:
         """Moon RA/Dec in radians (N×2 array: RA, Dec)."""
-        ...
 
     @property
     def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]:
         """Earth RA/Dec in radians (N×2 array: RA, Dec)."""
-        ...
 
     @property
     def sun_ra_deg(self) -> npt.NDArray[np.float64]:
         """Sun right ascension in degrees."""
-        ...
 
     @property
     def sun_dec_deg(self) -> npt.NDArray[np.float64]:
         """Sun declination in degrees."""
-        ...
 
     @property
     def moon_ra_deg(self) -> npt.NDArray[np.float64]:
         """Moon right ascension in degrees."""
-        ...
 
     @property
     def moon_dec_deg(self) -> npt.NDArray[np.float64]:
         """Moon declination in degrees."""
-        ...
 
     @property
     def earth_ra_deg(self) -> npt.NDArray[np.float64]:
         """Earth right ascension in degrees."""
-        ...
 
     @property
     def earth_dec_deg(self) -> npt.NDArray[np.float64]:
         """Earth declination in degrees."""
-        ...
 
     @property
     def sun_ra_rad(self) -> npt.NDArray[np.float64]:
         """Sun right ascension in radians."""
-        ...
 
     @property
     def sun_dec_rad(self) -> npt.NDArray[np.float64]:
         """Sun declination in radians."""
-        ...
 
     @property
     def moon_ra_rad(self) -> npt.NDArray[np.float64]:
         """Moon right ascension in radians."""
-        ...
 
     @property
     def moon_dec_rad(self) -> npt.NDArray[np.float64]:
         """Moon declination in radians."""
-        ...
 
     @property
     def earth_ra_rad(self) -> npt.NDArray[np.float64]:
         """Earth right ascension in radians."""
-        ...
 
     @property
     def earth_dec_rad(self) -> npt.NDArray[np.float64]:
         """Earth declination in radians."""
-        ...
 
     def index(self, time: datetime) -> int:
         """Find the index of the closest timestamp to the given datetime."""
-        ...
 
     def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
         """Calculate Moon illumination fraction for all (or selected) ephemeris times."""
-        ...
 
     def get_body_pv(
-        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+        self,
+        body: str,
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = ...,
+        apparent: bool = ...,
     ) -> PositionVelocityData:
-        """Get position and velocity of a named solar-system body."""
-        ...
+        """
+        Get position and velocity of a celestial body relative to the observer.
+
+        Args:
+            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: Geometric queries only: fall back to the JPL
+                Horizons API when SPICE fails.
+            times: Time(s) to evaluate at instead of the ephemeris grid: a
+                datetime, an iterable of datetimes or a ``datetime64`` array
+                (read as UTC). Times between grid points interpolate the
+                observer as ``gcrs_pv_at`` does; rows follow input order.
+            apparent: Return the body as it is seen: reception light time,
+                solar light deflection and the aberration of the observer's
+                barycentric velocity. The directions are those constraints
+                use with ``apparent=True``.
+
+        Returns:
+            Position (km) and velocity (km/s) in GCRS axes, centred on the
+            observer.
+
+            With ``apparent=False`` they are geometric. With ``times`` given,
+            the Sun, Moon and Earth come from the states the ephemeris holds,
+            so the Sun's position is ``sun_pv_at(t).position -
+            gcrs_pv_at(t).position``.
+
+            With ``apparent=True`` the position points where the body's light
+            arrives from and its length is the light-time distance: from the
+            observer at the requested time to the body where it was when the
+            light left it. The velocity is the rate of change of that apparent
+            position, which is not the geometric velocity: the aberration
+            shift turns with the observer's velocity (several km/s for the Sun
+            seen from low orbit). It is a finite difference over half a second
+            and takes the observer's acceleration from the interpolated
+            ephemeris: about 2 m/s for the Sun and 2 cm/s for the Moon and
+            Earth on a one-minute step in low orbit. It is NaN if the
+            ephemeris spans less than a second.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the body is
+                unknown, or ``apparent=True`` and no planetary kernel covers
+                the times.
+        """
 
     def get_body(
         self,
@@ -3362,7 +3423,6 @@ class FileEphemeris(Ephemeris):
         and observer aberration using SPICE, returning positions only.
         The default is geometric.
         """
-        ...
 
     def radec_to_altaz(
         self,
@@ -3371,7 +3431,6 @@ class FileEphemeris(Ephemeris):
         time_indices: list[int] | None = None,
     ) -> npt.NDArray[np.float64]:
         """Convert RA/Dec to Altitude/Azimuth. Returns (N, 2) array: [alt_deg, az_deg]."""
-        ...
 
     def calculate_airmass(
         self,
@@ -3380,7 +3439,6 @@ class FileEphemeris(Ephemeris):
         time_indices: list[int] | None = None,
     ) -> list[float]:
         """Calculate airmass for a target at the given RA/Dec."""
-        ...
 
 class ParquetEphemeris(Ephemeris):
     """
@@ -3414,8 +3472,9 @@ class ParquetEphemeris(Ephemeris):
     DigitalOcean Spaces, additionally pass ``s3_endpoint``
     (e.g. ``"nyc3.digitaloceanspaces.com"``).
 
-    Requires the ``duckdb`` Python package: ``pip install rust-ephem[parquet]``
-    or ``pip install duckdb``.
+    Reads with the ``duckdb`` Python package. Without it, local files, globs
+    and directories are read with ``pyarrow``; remote sources and
+    ``where_clause`` need ``duckdb``.
 
     Example
     -------
@@ -3434,8 +3493,8 @@ class ParquetEphemeris(Ephemeris):
     def __init__(
         self,
         source: str,
-        begin: datetime,
-        end: datetime,
+        begin: datetime | None = None,
+        end: datetime | None = None,
         step_size: int = 60,
         *,
         polar_motion: bool = False,
@@ -3455,8 +3514,10 @@ class ParquetEphemeris(Ephemeris):
         Args:
             source: Path or URI to the Parquet file. Supports local paths,
                 ``s3://``, ``gcs://``, ``r2://``, and ``http(s)://``.
-            begin: Start of the output time grid (UTC).
-            end: End of the output time grid (UTC).
+            begin: Start of the output time grid (UTC). Default: the first
+                row of the data.
+            end: End of the output time grid (UTC). Default: the last row of
+                the data.
             step_size: Output time step in seconds (default 60).
             polar_motion: Apply polar motion correction (default False).
             time_col: Name of the timestamp column. Default ``"time"``.
@@ -3487,72 +3548,58 @@ class ParquetEphemeris(Ephemeris):
                 requested time range exceeds the Parquet's data range,
                 unit is unrecognised, or the frame is unsupported.
         """
-        ...
 
     @property
     def source(self) -> str:
         """Source path or URI for the Parquet data."""
-        ...
 
     @property
     def file_path(self) -> str:
         """Alias for ``source``."""
-        ...
 
     @property
     def polar_motion(self) -> bool:
         """Whether polar motion correction is applied."""
-        ...
 
     @property
     def source_position_unit(self) -> str:
         """Position unit of the source data (e.g. ``"km"``, ``"m"``, ``"cm"``)."""
-        ...
 
     @property
     def source_velocity_unit(self) -> str:
         """Velocity unit of the source data (e.g. ``"km/s"``, ``"m/s"``, ``"cm/s"``)."""
-        ...
 
     @property
     def source_frame(self) -> str:
         """Coordinate frame as specified for the source."""
-        ...
 
     @property
     def file_pv(self) -> PositionVelocityData:
         """Raw position/velocity from the Parquet (in km, km/s) before resampling."""
-        ...
 
     @property
     def file_timestamp(self) -> list[datetime]:
         """Raw timestamps from the Parquet before resampling."""
-        ...
 
     @property
     def begin(self) -> datetime:
         """Start time of the output ephemeris grid."""
-        ...
 
     @property
     def end(self) -> datetime:
         """End time of the output ephemeris grid."""
-        ...
 
     @property
     def step_size(self) -> int:
         """Output time step in seconds."""
-        ...
 
     @property
     def gcrs_pv(self) -> PositionVelocityData:
         """Position and velocity in GCRS frame (interpolated to the output grid)."""
-        ...
 
     @property
     def itrs_pv(self) -> PositionVelocityData:
         """Position and velocity in ITRS (Earth-fixed) frame."""
-        ...
 
     @property
     def itrs(self) -> Any: ...
@@ -3571,17 +3618,23 @@ class ParquetEphemeris(Ephemeris):
     @property
     def moon_pv(self) -> PositionVelocityData: ...
     def gcrs_pv_at(
-        self, times: datetime | Iterable[datetime]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
     ) -> PositionVelocityData: ...
     def itrs_pv_at(
-        self, times: datetime | Iterable[datetime]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
     ) -> PositionVelocityData: ...
     def sun_pv_at(
-        self, times: datetime | Iterable[datetime]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
     ) -> PositionVelocityData: ...
     def moon_pv_at(
-        self, times: datetime | Iterable[datetime]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
     ) -> PositionVelocityData: ...
+    def apparent_target_at(
+        self,
+        ras: float | Sequence[float] | npt.NDArray[np.float64],
+        decs: float | Sequence[float] | npt.NDArray[np.float64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+    ) -> npt.NDArray[np.float64]: ...
     @property
     def obsgeoloc(self) -> Any: ...
     @property
@@ -3663,7 +3716,13 @@ class ParquetEphemeris(Ephemeris):
         self, time_indices: list[int] | None = None
     ) -> list[float]: ...
     def get_body_pv(
-        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+        self,
+        body: str,
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = ...,
+        apparent: bool = ...,
     ) -> PositionVelocityData: ...
     def get_body(
         self,
@@ -3712,62 +3771,50 @@ class GroundEphemeris(Ephemeris):
             step_size: Time step in seconds (default: 60)
             polar_motion: Whether to apply polar motion correction (default: False)
         """
-        ...
 
     @property
     def input_latitude(self) -> float:
         """Input geodetic latitude in degrees"""
-        ...
 
     @property
     def input_longitude(self) -> float:
         """Input geodetic longitude in degrees"""
-        ...
 
     @property
     def input_height(self) -> float:
         """Input altitude in meters above WGS84 ellipsoid"""
-        ...
 
     @property
     def begin(self) -> datetime:
         """Start time of ephemeris"""
-        ...
 
     @property
     def end(self) -> datetime:
         """End time of ephemeris"""
-        ...
 
     @property
     def step_size(self) -> int:
         """Time step in seconds"""
-        ...
 
     @property
     def polar_motion(self) -> bool:
         """Whether polar motion correction is applied"""
-        ...
 
     @property
     def gcrs_pv(self) -> PositionVelocityData:
         """Position and velocity data in GCRS frame"""
-        ...
 
     @property
     def itrs_pv(self) -> PositionVelocityData:
         """Position and velocity data in ITRS (Earth-fixed) frame"""
-        ...
 
     @property
     def itrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object in ITRS frame for ground location"""
-        ...
 
     @property
     def gcrs(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object in GCRS frame for ground location"""
-        ...
 
     def radec_to_altaz(
         self,
@@ -3776,7 +3823,6 @@ class GroundEphemeris(Ephemeris):
         time_indices: list[int] | None = None,
     ) -> npt.NDArray[np.float64]:
         """Topocentric altitude/azimuth for given RA/Dec (deg) at selected times."""
-        ...
 
     def calculate_airmass(
         self,
@@ -3789,34 +3835,30 @@ class GroundEphemeris(Ephemeris):
         Returns airmass values (1.0 at zenith, ~2.0 at 30° altitude, infinity below horizon).
         Accounts for observer height using atmospheric scale height correction.
         """
-        ...
 
     @property
     def earth(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object for Earth (same as ground location)"""
-        ...
 
     @property
     def sun(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object for Sun position relative to ground location"""
-        ...
 
     @property
     def moon(self) -> Any:  # Returns astropy.coordinates.SkyCoord
         """SkyCoord object for Moon position relative to ground location"""
-        ...
 
     @property
     def sun_pv(self) -> PositionVelocityData:
         """Position and velocity data for Sun"""
-        ...
 
     @property
     def moon_pv(self) -> PositionVelocityData:
         """Position and velocity data for Moon"""
-        ...
 
-    def gcrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def gcrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
 
         Times on the ephemeris grid return the ``gcrs_pv`` rows unchanged;
@@ -3828,19 +3870,52 @@ class GroundEphemeris(Ephemeris):
         Raises:
             ValueError: If any time is outside the ephemeris span.
         """
-        ...
 
-    def itrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def itrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
-        ...
 
-    def sun_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def sun_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
-        ...
 
-    def moon_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def moon_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
-        ...
+
+    def apparent_target_at(
+        self,
+        ras: float | Sequence[float] | npt.NDArray[np.float64],
+        decs: float | Sequence[float] | npt.NDArray[np.float64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+    ) -> npt.NDArray[np.float64]:
+        """Directions in which catalogue targets are seen at arbitrary time(s).
+
+        Applies the correction constraints apply to targets with
+        ``apparent=True``: solar light deflection, then the aberration of the
+        observer's barycentric velocity. The angle between a row of the result
+        and ``get_body_pv(body, times=times, apparent=True).position`` is the
+        angle a constraint reports for that body with ``apparent=True``.
+
+        ``ras``, ``decs`` and ``times`` are paired row by row; any of them may
+        be a single value used for every row.
+
+        Args:
+            ras: Catalogue (ICRS) right ascension(s) in degrees.
+            decs: Catalogue (ICRS) declination(s) in degrees.
+            times: A datetime, an iterable of datetimes or a ``datetime64``
+                array (read as UTC).
+
+        Returns:
+            ``(N, 3)`` array of unit vectors, GCRS axes, rows in input order.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the lengths do
+                not match, or no planetary kernel covers the times.
+        """
 
     @property
     def timestamp(self) -> npt.NDArray[np.datetime64]:
@@ -3850,62 +3925,50 @@ class GroundEphemeris(Ephemeris):
         Returns a NumPy array of datetime objects (not a list) for efficient indexing.
         This property is cached for performance - repeated access is ~90x faster.
         """
-        ...
 
     @property
     def obsgeoloc(self) -> npt.NDArray[np.float64]:  # Returns astropy quantity array
         """Observatory geocentric location for astropy"""
-        ...
 
     @property
     def obsgeovel(self) -> npt.NDArray[np.float64]:  # Returns astropy quantity array
         """Observatory geocentric velocity for astropy"""
-        ...
 
     @property
     def latitude(self) -> Any:  # Returns astropy.units.Quantity
         """Geodetic latitude as an astropy Quantity array (degrees), one per timestamp"""
-        ...
 
     @property
     def latitude_deg(self) -> npt.NDArray[np.float64]:
         """Geodetic latitude in degrees as a raw NumPy array (one per timestamp)"""
-        ...
 
     @property
     def latitude_rad(self) -> npt.NDArray[np.float64]:
         """Geodetic latitude in radians as a raw NumPy array (one per timestamp)"""
-        ...
 
     @property
     def longitude(self) -> Any:  # Returns astropy.units.Quantity
         """Geodetic longitude as an astropy Quantity array (degrees), one per timestamp"""
-        ...
 
     @property
     def longitude_deg(self) -> npt.NDArray[np.float64]:
         """Geodetic longitude in degrees as a raw NumPy array (one per timestamp)"""
-        ...
 
     @property
     def longitude_rad(self) -> npt.NDArray[np.float64]:
         """Geodetic longitude in radians as a raw NumPy array (one per timestamp)"""
-        ...
 
     @property
     def height(self) -> Any:  # Returns astropy.units.Quantity
         """Geodetic height above the WGS84 ellipsoid as an astropy Quantity array (meters), one per timestamp"""
-        ...
 
     @property
     def height_m(self) -> npt.NDArray[np.float64]:
         """Geodetic height above the WGS84 ellipsoid as a raw NumPy array in meters (one per timestamp)"""
-        ...
 
     @property
     def height_km(self) -> npt.NDArray[np.float64]:
         """Geodetic height above the WGS84 ellipsoid as a raw NumPy array in kilometers (one per timestamp)"""
-        ...
 
     @property
     def sun_radius(self) -> Any:  # Returns astropy.units.Quantity
@@ -3918,7 +3981,6 @@ class GroundEphemeris(Ephemeris):
         Returns:
             astropy Quantity array with units of degrees
         """
-        ...
 
     @property
     def sun_radius_deg(self) -> npt.NDArray[np.float64]:
@@ -3932,7 +3994,6 @@ class GroundEphemeris(Ephemeris):
         Returns:
             NumPy array of angular radii in degrees
         """
-        ...
 
     @property
     def moon_radius(self) -> Any:  # Returns astropy.units.Quantity
@@ -3945,7 +4006,6 @@ class GroundEphemeris(Ephemeris):
         Returns:
             astropy Quantity array with units of degrees
         """
-        ...
 
     @property
     def moon_radius_deg(self) -> npt.NDArray[np.float64]:
@@ -3959,7 +4019,6 @@ class GroundEphemeris(Ephemeris):
         Returns:
             NumPy array of angular radii in degrees
         """
-        ...
 
     @property
     def earth_radius(self) -> Any:  # Returns astropy.units.Quantity
@@ -3972,7 +4031,6 @@ class GroundEphemeris(Ephemeris):
         Returns:
             astropy Quantity array with units of degrees
         """
-        ...
 
     @property
     def earth_radius_deg(self) -> npt.NDArray[np.float64]:
@@ -3986,7 +4044,6 @@ class GroundEphemeris(Ephemeris):
         Returns:
             NumPy array of angular radii in degrees
         """
-        ...
 
     @property
     def sun_radius_rad(self) -> npt.NDArray[np.float64]:
@@ -4000,7 +4057,6 @@ class GroundEphemeris(Ephemeris):
         Returns:
             NumPy array of angular radii in radians
         """
-        ...
 
     @property
     def moon_radius_rad(self) -> npt.NDArray[np.float64]:
@@ -4014,7 +4070,6 @@ class GroundEphemeris(Ephemeris):
         Returns:
             NumPy array of angular radii in radians
         """
-        ...
 
     @property
     def earth_radius_rad(self) -> npt.NDArray[np.float64]:
@@ -4028,7 +4083,6 @@ class GroundEphemeris(Ephemeris):
         Returns:
             NumPy array of angular radii in radians
         """
-        ...
 
     @property
     def sun_ra_dec_deg(self) -> npt.NDArray[np.float64]:
@@ -4038,7 +4092,6 @@ class GroundEphemeris(Ephemeris):
         Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
         This property is cached for performance.
         """
-        ...
 
     @property
     def moon_ra_dec_deg(self) -> npt.NDArray[np.float64]:
@@ -4048,7 +4101,6 @@ class GroundEphemeris(Ephemeris):
         Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
         This property is cached for performance.
         """
-        ...
 
     @property
     def earth_ra_dec_deg(self) -> npt.NDArray[np.float64]:
@@ -4058,7 +4110,6 @@ class GroundEphemeris(Ephemeris):
         Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
         This property is cached for performance.
         """
-        ...
 
     @property
     def sun_ra_dec_rad(self) -> npt.NDArray[np.float64]:
@@ -4068,7 +4119,6 @@ class GroundEphemeris(Ephemeris):
         Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
         This property is cached for performance.
         """
-        ...
 
     @property
     def moon_ra_dec_rad(self) -> npt.NDArray[np.float64]:
@@ -4078,7 +4128,6 @@ class GroundEphemeris(Ephemeris):
         Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
         This property is cached for performance.
         """
-        ...
 
     @property
     def earth_ra_dec_rad(self) -> npt.NDArray[np.float64]:
@@ -4088,67 +4137,54 @@ class GroundEphemeris(Ephemeris):
         Returns an Nx2 NumPy array where column 0 is RA and column 1 is Dec.
         This property is cached for performance.
         """
-        ...
 
     @property
     def sun_ra_deg(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Sun in degrees. Extracts column 0 from sun_ra_dec_deg."""
-        ...
 
     @property
     def sun_dec_deg(self) -> npt.NDArray[np.float64]:
         """Declination of the Sun in degrees. Extracts column 1 from sun_ra_dec_deg."""
-        ...
 
     @property
     def moon_ra_deg(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Moon in degrees. Extracts column 0 from moon_ra_dec_deg."""
-        ...
 
     @property
     def moon_dec_deg(self) -> npt.NDArray[np.float64]:
         """Declination of the Moon in degrees. Extracts column 1 from moon_ra_dec_deg."""
-        ...
 
     @property
     def earth_ra_deg(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Earth in degrees. Extracts column 0 from earth_ra_dec_deg."""
-        ...
 
     @property
     def earth_dec_deg(self) -> npt.NDArray[np.float64]:
         """Declination of the Earth in degrees. Extracts column 1 from earth_ra_dec_deg."""
-        ...
 
     @property
     def sun_ra_rad(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Sun in radians. Extracts column 0 from sun_ra_dec_rad."""
-        ...
 
     @property
     def sun_dec_rad(self) -> npt.NDArray[np.float64]:
         """Declination of the Sun in radians. Extracts column 1 from sun_ra_dec_rad."""
-        ...
 
     @property
     def moon_ra_rad(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Moon in radians. Extracts column 0 from moon_ra_dec_rad."""
-        ...
 
     @property
     def moon_dec_rad(self) -> npt.NDArray[np.float64]:
         """Declination of the Moon in radians. Extracts column 1 from moon_ra_dec_rad."""
-        ...
 
     @property
     def earth_ra_rad(self) -> npt.NDArray[np.float64]:
         """Right Ascension of the Earth in radians. Extracts column 0 from earth_ra_dec_rad."""
-        ...
 
     @property
     def earth_dec_rad(self) -> npt.NDArray[np.float64]:
         """Declination of the Earth in radians. Extracts column 1 from earth_ra_dec_rad."""
-        ...
 
     def index(self, time: datetime) -> int:
         """
@@ -4173,7 +4209,6 @@ class GroundEphemeris(Ephemeris):
             >>> idx = eph.index(target_time)
             >>> sun_position = eph.sun_pv.position[idx]
         """
-        ...
 
     def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
         """
@@ -4188,23 +4223,59 @@ class GroundEphemeris(Ephemeris):
         Returns:
             List of Moon illumination fractions
         """
-        ...
 
     def get_body_pv(
-        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+        self,
+        body: str,
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = ...,
+        apparent: bool = ...,
     ) -> PositionVelocityData:
         """
-        Get position and velocity of a celestial body.
+        Get position and velocity of a celestial body relative to the observer.
 
         Args:
-            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499')
             spice_kernel: Optional path to SPICE kernel
-            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+            use_horizons: Geometric queries only: fall back to the JPL
+                Horizons API when SPICE fails.
+            times: Time(s) to evaluate at instead of the ephemeris grid: a
+                datetime, an iterable of datetimes or a ``datetime64`` array
+                (read as UTC). Times between grid points interpolate the
+                observer as ``gcrs_pv_at`` does; rows follow input order.
+            apparent: Return the body as it is seen: reception light time,
+                solar light deflection and the aberration of the observer's
+                barycentric velocity. The directions are those constraints
+                use with ``apparent=True``.
 
         Returns:
-            Position and velocity data for the requested body
+            Position (km) and velocity (km/s) in GCRS axes, centred on the
+            observer.
+
+            With ``apparent=False`` they are geometric. With ``times`` given,
+            the Sun, Moon and Earth come from the states the ephemeris holds,
+            so the Sun's position is ``sun_pv_at(t).position -
+            gcrs_pv_at(t).position``.
+
+            With ``apparent=True`` the position points where the body's light
+            arrives from and its length is the light-time distance: from the
+            observer at the requested time to the body where it was when the
+            light left it. The velocity is the rate of change of that apparent
+            position, which is not the geometric velocity: the aberration
+            shift turns with the observer's velocity (several km/s for the Sun
+            seen from low orbit). It is a finite difference over half a second
+            and takes the observer's acceleration from the interpolated
+            ephemeris: about 2 m/s for the Sun and 2 cm/s for the Moon and
+            Earth on a one-minute step in low orbit. It is NaN if the
+            ephemeris spans less than a second.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the body is
+                unknown, or ``apparent=True`` and no planetary kernel covers
+                the times.
         """
-        ...
 
     def get_body(
         self,
@@ -4228,7 +4299,6 @@ class GroundEphemeris(Ephemeris):
         Returns:
             astropy.coordinates.SkyCoord object
         """
-        ...
 
 def init_planetary_ephemeris(
     py_path: str,
@@ -4242,7 +4312,6 @@ def init_planetary_ephemeris(
     Raises:
         RuntimeError: If initialization fails
     """
-    ...
 
 def download_planetary_ephemeris(
     url: str,
@@ -4258,7 +4327,6 @@ def download_planetary_ephemeris(
     Raises:
         RuntimeError: If download fails
     """
-    ...
 
 def ensure_planetary_ephemeris(
     py_path: str | None = None,
@@ -4279,7 +4347,6 @@ def ensure_planetary_ephemeris(
         FileNotFoundError: If file not found and download_if_missing=False
         RuntimeError: If download or initialization fails
     """
-    ...
 
 def is_planetary_ephemeris_initialized() -> bool:
     """
@@ -4288,7 +4355,6 @@ def is_planetary_ephemeris_initialized() -> bool:
     Returns:
         True if ephemeris is initialized and ready to use
     """
-    ...
 
 def get_tai_utc_offset(py_datetime: datetime) -> float | None:
     """
@@ -4300,7 +4366,6 @@ def get_tai_utc_offset(py_datetime: datetime) -> float | None:
     Returns:
         TAI-UTC offset in seconds, or None if not available
     """
-    ...
 
 def get_ut1_utc_offset(py_datetime: datetime) -> float:
     """
@@ -4315,7 +4380,6 @@ def get_ut1_utc_offset(py_datetime: datetime) -> float:
     Raises:
         RuntimeError: If UT1 provider is not initialized
     """
-    ...
 
 def is_ut1_available() -> bool:
     """
@@ -4324,7 +4388,6 @@ def is_ut1_available() -> bool:
     Returns:
         True if UT1 provider is initialized
     """
-    ...
 
 def init_ut1_provider() -> bool:
     """
@@ -4333,7 +4396,6 @@ def init_ut1_provider() -> bool:
     Returns:
         True if initialization succeeded
     """
-    ...
 
 def get_polar_motion(py_datetime: datetime) -> tuple[float, float]:
     """
@@ -4348,7 +4410,6 @@ def get_polar_motion(py_datetime: datetime) -> tuple[float, float]:
     Raises:
         RuntimeError: If EOP provider is not initialized
     """
-    ...
 
 def is_eop_available() -> bool:
     """
@@ -4357,7 +4418,6 @@ def is_eop_available() -> bool:
     Returns:
         True if EOP provider is initialized
     """
-    ...
 
 def init_eop_provider() -> bool:
     """
@@ -4366,11 +4426,9 @@ def init_eop_provider() -> bool:
     Returns:
         True if initialization succeeded
     """
-    ...
 
 def get_eop_provenance() -> EopProvenance:
     """Return provenance for the exact EOP2 data loaded by each provider."""
-    ...
 
 def get_cache_dir() -> str:
     """
@@ -4379,7 +4437,6 @@ def get_cache_dir() -> str:
     Returns:
         String path to the cache directory
     """
-    ...
 
 def fetch_tle(
     *,
@@ -4419,7 +4476,6 @@ def fetch_tle(
     Raises:
         ValueError: If no valid TLE source is specified or fetching fails
     """
-    ...
 
 class RouteResult:
     @property

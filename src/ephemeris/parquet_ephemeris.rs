@@ -1,4 +1,4 @@
-//! Parquet-based ephemeris support via DuckDB.
+//! Parquet-based ephemeris support via DuckDB, with a PyArrow fallback.
 //!
 //! Loads spacecraft state vectors from a Parquet file (local or cloud-hosted)
 //! using the Python `duckdb` package, which handles:
@@ -7,6 +7,9 @@
 //! - S3: `s3://bucket/key.parquet` (credentials via standard AWS env vars)
 //! - DigitalOcean Spaces and other S3-compatibles: pass `s3_endpoint=...`
 //! - HTTPS: `https://host/path.parquet` (public buckets)
+//!
+//! Without `duckdb`, local files, globs and directories are read with
+//! `pyarrow` instead; remote sources and `where_clause` still need DuckDB.
 //!
 //! The Parquet file must contain at minimum a timestamp column and three
 //! position + three velocity columns. Column names default to `time`,
@@ -27,7 +30,7 @@ use pyo3::{
 use std::sync::OnceLock;
 
 use crate::ephemeris::ephemeris_common::{
-    generate_timestamps, split_pos_vel, EphemerisBase, EphemerisData,
+    generate_timestamps_utc, split_pos_vel, EphemerisBase, EphemerisData,
 };
 use crate::ephemeris::position_velocity::PositionVelocityData;
 use crate::utils::conversions::{self, Frame};
@@ -70,7 +73,7 @@ impl ParquetEphemeris {
     #[new]
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
-        source, begin, end, step_size=60, *,
+        source, begin=None, end=None, step_size=60, *,
         polar_motion=false,
         time_col=None,
         pos_cols=None,
@@ -85,8 +88,8 @@ impl ParquetEphemeris {
     fn new(
         py: Python,
         source: String,
-        begin: &Bound<'_, PyDateTime>,
-        end: &Bound<'_, PyDateTime>,
+        begin: Option<&Bound<'_, PyDateTime>>,
+        end: Option<&Bound<'_, PyDateTime>>,
         step_size: i64,
         polar_motion: bool,
         time_col: Option<String>,
@@ -125,28 +128,36 @@ impl ParquetEphemeris {
         validate_identifier(&vel_cols.1, "vel_cols[1]")?;
         validate_identifier(&vel_cols.2, "vel_cols[2]")?;
 
-        let begin_dt = python_datetime_to_utc(begin)?;
-        let end_dt = python_datetime_to_utc(end)?;
+        // An omitted bound means "as far as the data goes".
+        let requested_begin = begin.map(|b| python_datetime_to_utc(b)).transpose()?;
+        let requested_end = end.map(|e| python_datetime_to_utc(e)).transpose()?;
 
-        // ── Pull data via DuckDB ────────────────────────────────────────────
-        let (raw_times, raw_states) = load_via_duckdb(
+        // ── Pull data via DuckDB (or PyArrow when DuckDB is unavailable) ────
+        let (raw_times, raw_states) = load_states(
             py,
             &source,
             &time_col,
             &pos_cols,
             &vel_cols,
-            &begin_dt,
-            &end_dt,
+            requested_begin.as_ref(),
+            requested_end.as_ref(),
             s3_endpoint.as_deref(),
             s3_region.as_deref(),
             where_clause.as_deref(),
         )?;
 
-        if raw_times.is_empty() {
+        let (Some(&first), Some(&last)) = (raw_times.first(), raw_times.last()) else {
+            let describe = |bound: Option<DateTime<Utc>>, open: &str| {
+                bound.map_or_else(|| open.to_string(), |t| t.to_string())
+            };
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "Parquet source '{source}' returned no rows for [{begin_dt}, {end_dt}]"
+                "Parquet source '{source}' returned no rows for [{}, {}]",
+                describe(requested_begin, "start of data"),
+                describe(requested_end, "end of data"),
             )));
-        }
+        };
+        let begin_dt = requested_begin.unwrap_or(first);
+        let end_dt = requested_end.unwrap_or(last);
 
         // ── Resolve effective units and frame ───────────────────────────────
         let eff_pos_unit = position_unit.unwrap_or_else(|| "km".to_string());
@@ -172,7 +183,7 @@ impl ParquetEphemeris {
         }
 
         // ── Build query time grid ───────────────────────────────────────────
-        let times = generate_timestamps(begin, end, step_size)?;
+        let times = generate_timestamps_utc(begin_dt, end_dt, step_size)?;
 
         let mut ephemeris = ParquetEphemeris {
             source,
@@ -355,6 +366,17 @@ impl ParquetEphemeris {
     /// Moon position/velocity (GCRS, km, km/s) at arbitrary time(s), interpolated like constraint evaluation
     fn moon_pv_at(&self, py: Python, times: &Bound<PyAny>) -> PyResult<Py<PositionVelocityData>> {
         self.get_moon_pv_at(py, times)
+    }
+
+    /// Unit vectors (N x 3, GCRS axes) in which catalogue targets are seen at arbitrary time(s)
+    fn apparent_target_at(
+        &self,
+        py: Python,
+        ras: &Bound<PyAny>,
+        decs: &Bound<PyAny>,
+        times: &Bound<PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        self.get_apparent_target_at(py, ras, decs, times)
     }
 
     #[getter]
@@ -556,15 +578,27 @@ impl ParquetEphemeris {
         EphemerisBase::moon_illumination(self, time_indices.as_deref())
     }
 
-    #[pyo3(signature = (body, spice_kernel=None, use_horizons=false))]
+    /// Position and velocity of a body relative to the observer (GCRS axes, km, km/s),
+    /// on the ephemeris grid or at arbitrary time(s), geometric or apparent
+    #[pyo3(signature = (body, spice_kernel=None, use_horizons=false, *, times=None, apparent=false))]
     fn get_body_pv(
         &self,
         py: Python,
         body: &str,
         spice_kernel: Option<String>,
         use_horizons: bool,
+        times: Option<&Bound<PyAny>>,
+        apparent: bool,
     ) -> PyResult<Py<PositionVelocityData>> {
-        <Self as EphemerisBase>::get_body_pv(self, py, body, spice_kernel.as_deref(), use_horizons)
+        <Self as EphemerisBase>::get_body_pv(
+            self,
+            py,
+            body,
+            spice_kernel.as_deref(),
+            use_horizons,
+            times,
+            apparent,
+        )
     }
 
     /// Get a body in observer-centred GCRS. With apparent=True, apply reception
@@ -808,37 +842,187 @@ fn quote_ident(name: &str) -> String {
     format!("\"{name}\"")
 }
 
+/// Whether `source` names a cloud object rather than a local path.
+fn is_remote_source(source: &str) -> bool {
+    ["s3://", "https://", "http://", "gcs://", "r2://"]
+        .iter()
+        .any(|scheme| source.starts_with(scheme))
+}
+
+/// Microsecond window to read for the requested range: a margin either side
+/// gives Hermite interpolation neighbours at the boundaries. An omitted bound
+/// leaves that side open.
+fn filter_window_us(begin: Option<&DateTime<Utc>>, end: Option<&DateTime<Utc>>) -> (i64, i64) {
+    let margin_us = TIME_FILTER_MARGIN_SECS * 1_000_000;
+    (
+        begin.map_or(i64::MIN + 1, |b| {
+            b.timestamp_micros().saturating_sub(margin_us)
+        }),
+        end.map_or(i64::MAX, |e| e.timestamp_micros().saturating_add(margin_us)),
+    )
+}
+
+/// Load Parquet data with DuckDB, or with PyArrow when DuckDB is not
+/// installed and the request needs nothing only DuckDB provides.
+///
+/// Returns (timestamps in ascending order, Nx6 state matrix in source units).
+#[allow(clippy::too_many_arguments)]
+fn load_states(
+    py: Python,
+    source: &str,
+    time_col: &str,
+    pos_cols: &(String, String, String),
+    vel_cols: &(String, String, String),
+    begin: Option<&DateTime<Utc>>,
+    end: Option<&DateTime<Utc>>,
+    s3_endpoint: Option<&str>,
+    s3_region: Option<&str>,
+    where_clause: Option<&str>,
+) -> PyResult<(Vec<DateTime<Utc>>, Array2<f64>)> {
+    let duckdb_error = match py.import("duckdb") {
+        Ok(duckdb) => {
+            return load_via_duckdb(
+                py,
+                &duckdb,
+                source,
+                time_col,
+                pos_cols,
+                vel_cols,
+                begin,
+                end,
+                s3_endpoint,
+                s3_region,
+                where_clause,
+            )
+        }
+        Err(err) => err,
+    };
+    let needs_duckdb = if is_remote_source(source) {
+        Some("remote sources")
+    } else if where_clause.is_some_and(|w| !w.trim().is_empty()) {
+        Some("where_clause")
+    } else {
+        None
+    };
+    let pyarrow = match (needs_duckdb, py.import("pyarrow.dataset")) {
+        (None, Ok(dataset)) => dataset,
+        (needs, _) => {
+            let why = needs.map_or_else(
+                || "neither duckdb nor pyarrow is installed".to_string(),
+                |feature| format!("{feature} need duckdb"),
+            );
+            return Err(pyo3::exceptions::PyImportError::new_err(format!(
+                "Cannot read Parquet source '{source}': {why}. Install with \
+                 `pip install duckdb`. Underlying error: {duckdb_error}"
+            )));
+        }
+    };
+    load_via_pyarrow(
+        py, &pyarrow, source, time_col, pos_cols, vel_cols, begin, end,
+    )
+}
+
+/// Load local Parquet data via `pyarrow.dataset` (single file, directory or
+/// glob). The time filter and ordering DuckDB applies in SQL are done here.
+#[allow(clippy::too_many_arguments)]
+fn load_via_pyarrow(
+    py: Python,
+    dataset: &Bound<'_, PyModule>,
+    source: &str,
+    time_col: &str,
+    pos_cols: &(String, String, String),
+    vel_cols: &(String, String, String),
+    begin: Option<&DateTime<Utc>>,
+    end: Option<&DateTime<Utc>>,
+) -> PyResult<(Vec<DateTime<Utc>>, Array2<f64>)> {
+    let is_glob = source.contains(['*', '?', '[']);
+    let location = if is_glob {
+        let paths = py.import("glob")?.call_method1("glob", (source,))?;
+        if paths.len()? == 0 {
+            return Err(pyo3::exceptions::PyFileNotFoundError::new_err(format!(
+                "No files match Parquet source '{source}'"
+            )));
+        }
+        paths
+    } else {
+        source.into_pyobject(py)?.into_any()
+    };
+    let kwargs = PyDict::new(py);
+    kwargs.set_item("format", "parquet")?;
+    let state_cols = [
+        &pos_cols.0,
+        &pos_cols.1,
+        &pos_cols.2,
+        &vel_cols.0,
+        &vel_cols.1,
+        &vel_cols.2,
+    ];
+    let mut columns = vec![time_col];
+    columns.extend(state_cols.iter().map(|name| name.as_str()));
+    let table = dataset
+        .call_method("dataset", (location,), Some(&kwargs))?
+        .call_method1("to_table", (columns,))?;
+
+    let np = py.import("numpy")?;
+    let column = |name: &str| {
+        table
+            .call_method1("column", (name,))?
+            .call_method0("to_numpy")
+    };
+    let times =
+        crate::utils::time_utils::datetime64_to_utc(&column(time_col)?)?.ok_or_else(|| {
+            pyo3::exceptions::PyTypeError::new_err(format!(
+                "Column '{time_col}' is not a timestamp or date column"
+            ))
+        })?;
+    let values: Vec<Vec<f64>> = state_cols
+        .iter()
+        .map(|name| {
+            let floats = np.call_method1("asarray", (column(name)?, "float64"))?;
+            let floats = floats.cast::<PyArray1<f64>>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err(format!(
+                    "Column '{name}' could not be read as a float64 array"
+                ))
+            })?;
+            Ok(floats.readonly().as_array().to_vec())
+        })
+        .collect::<PyResult<_>>()?;
+
+    let (begin_us, end_us) = filter_window_us(begin, end);
+    let mut rows: Vec<usize> = (0..times.len())
+        .filter(|&i| (begin_us..=end_us).contains(&times[i].timestamp_micros()))
+        .collect();
+    rows.sort_by_key(|&i| times[i]);
+    let mut states = Array2::<f64>::zeros((rows.len(), 6));
+    for (out, &row) in rows.iter().enumerate() {
+        for (col, column) in values.iter().enumerate() {
+            states[[out, col]] = column[row];
+        }
+    }
+    Ok((rows.iter().map(|&i| times[i]).collect(), states))
+}
+
 /// Load Parquet data via the Python `duckdb` package.
 ///
 /// Returns (timestamps, Nx6 state matrix in source units).
 #[allow(clippy::too_many_arguments)]
 fn load_via_duckdb(
     py: Python,
+    duckdb: &Bound<'_, PyModule>,
     source: &str,
     time_col: &str,
     pos_cols: &(String, String, String),
     vel_cols: &(String, String, String),
-    begin: &DateTime<Utc>,
-    end: &DateTime<Utc>,
+    begin: Option<&DateTime<Utc>>,
+    end: Option<&DateTime<Utc>>,
     s3_endpoint: Option<&str>,
     s3_region: Option<&str>,
     where_clause: Option<&str>,
 ) -> PyResult<(Vec<DateTime<Utc>>, Array2<f64>)> {
-    let duckdb = py.import("duckdb").map_err(|e| {
-        pyo3::exceptions::PyImportError::new_err(format!(
-            "Failed to import duckdb. Install with `pip install rust-ephem[parquet]` \
-             or `pip install duckdb`. Underlying error: {e}"
-        ))
-    })?;
-
     let conn = duckdb.call_method0("connect")?;
 
     // Configure cloud access if the source looks remote.
-    let is_remote = source.starts_with("s3://")
-        || source.starts_with("https://")
-        || source.starts_with("http://")
-        || source.starts_with("gcs://")
-        || source.starts_with("r2://");
+    let is_remote = is_remote_source(source);
 
     // Run all queries in UTC so TIMESTAMP/TIMESTAMPTZ comparisons are unambiguous.
     conn.call_method1("execute", ("SET TIMEZONE = 'UTC';",))?;
@@ -902,9 +1086,7 @@ fn load_via_duckdb(
     );
 
     // Pull a margin around [begin, end] so Hermite interpolation has neighbours.
-    let margin_us = TIME_FILTER_MARGIN_SECS * 1_000_000;
-    let begin_us = begin.timestamp_micros() - margin_us;
-    let end_us = end.timestamp_micros() + margin_us;
+    let (begin_us, end_us) = filter_window_us(begin, end);
 
     let params = PyTuple::new(
         py,

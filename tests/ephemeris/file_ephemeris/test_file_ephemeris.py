@@ -191,6 +191,56 @@ class TestTimestampFormats:
 class TestUnitConversion:
     """Tests for coordinate unit conversion."""
 
+    def test_velocity_unit_follows_position_unit(self, meters_file: str) -> None:
+        """Metres without a velocity unit means metres per second: reading the
+        velocities as km/s would wreck every interpolated state."""
+        kwargs: dict[str, Any] = {"begin": BEGIN, "end": END, "step_size": STEP}
+        implied = FileEphemeris(meters_file, position_unit="m", **kwargs)
+        explicit = FileEphemeris(
+            meters_file, position_unit="m", velocity_unit="m/s", **kwargs
+        )
+        assert implied.source_velocity_unit == "m/s"
+        np.testing.assert_array_equal(
+            implied.file_pv.velocity, explicit.file_pv.velocity
+        )
+        np.testing.assert_array_equal(
+            implied.gcrs_pv.position, explicit.gcrs_pv.position
+        )
+        # Off-sample rows are interpolated with the velocities: still on the
+        # orbit, to the few km that 10-minute LEO samples allow.
+        radius = np.linalg.norm(implied.gcrs_pv.position, axis=1)
+        np.testing.assert_allclose(radius, 7000.0, rtol=1e-3)
+        speed = np.linalg.norm(implied.gcrs_pv.velocity, axis=1)
+        np.testing.assert_allclose(speed, 7.546, rtol=1e-3)
+
+    def test_explicit_velocity_unit_is_kept(self, meters_file: str) -> None:
+        eph = FileEphemeris(
+            meters_file,
+            begin=BEGIN,
+            end=END,
+            step_size=STEP,
+            position_unit="m",
+            velocity_unit="km/s",
+        )
+        assert eph.source_velocity_unit == "km/s"
+        assert np.linalg.norm(eph.file_pv.velocity[0]) == pytest.approx(7546, rel=1e-3)
+
+    def test_header_position_unit_implies_velocity_unit(self, tmp_path: Any) -> None:
+        lines = [
+            "ScenarioEpoch  2024-01-01T00:00:00",
+            "CoordinateSystem  J2000",
+            "DistanceUnit  Meters",
+            "",
+            "0.0  7000000.0  0.0  0.0  0.0  7546.0  0.0",
+            "3600.0  7000000.0  0.0  0.0  0.0  7546.0  0.0",
+        ]
+        path = tmp_path / "header_units.txt"
+        path.write_text("\n".join(lines))
+        eph = FileEphemeris(str(path), begin=BEGIN, end=END, step_size=STEP)
+        assert eph.source_position_unit == "Meters"
+        assert eph.source_velocity_unit == "m/s"
+        assert eph.file_pv.velocity[0, 1] == pytest.approx(7.546)
+
     def test_meters_source_unit_preserved(self, meters_file: str) -> None:
         eph = FileEphemeris(
             meters_file,
