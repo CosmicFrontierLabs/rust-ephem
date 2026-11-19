@@ -26,6 +26,9 @@ const APPARENT_BLOCK_VALUES: usize = 8_000_000;
 /// Fewest target x time cells in a block worth spreading over the cores.
 const APPARENT_PARALLEL_MIN_CELLS: usize = 20_000;
 
+/// Cells of an apparent grid evaluated as paired elements in one call.
+const APPARENT_PAIRED_BLOCK_CELLS: usize = 1 << 20;
+
 /// Read a 1-D sequence of numbers as `f64`s. A NumPy array is copied in one
 /// step; anything else goes through `numpy.asarray`, so lists, tuples and
 /// arrays of other numeric dtypes are accepted alike.
@@ -298,6 +301,73 @@ impl PyConstraint {
                 Ok((element_times, evaluation))
             },
         )
+    }
+
+    /// The apparent target x time violation grid of a tree with an expensive
+    /// member, evaluated as paired elements: every cell in one pass across the
+    /// cores, each tree member seeing only the cells the cheaper ones left
+    /// undecided. `apparent_batch` hands such a tree one time column at a
+    /// time, which keeps it on one core and repeats its setup per column.
+    ///
+    /// `roll` is the explicit spacecraft roll of the grid, if any. `None` when
+    /// this does not apply (a cheap tree, a free roll on a roll-dependent tree,
+    /// or no paired kernel), and `apparent_batch` is to be used.
+    pub(super) fn apparent_mask_paired(
+        &self,
+        ephemeris: &dyn EphemerisBase,
+        time_indices: Option<&[usize]>,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        roll: Option<f64>,
+    ) -> PyResult<Option<ndarray::Array2<bool>>> {
+        let evaluator = &*self.evaluator;
+        if !evaluator.is_expensive() || (roll.is_none() && evaluator.is_roll_dependent()) {
+            return Ok(None);
+        }
+        let rows: Vec<usize> = match time_indices {
+            Some(indices) => indices.to_vec(),
+            None => (0..ephemeris.get_times()?.len()).collect(),
+        };
+        let (view, aberrations) = SampledEphemeris::apparent(ephemeris, &rows)?;
+        let (n_targets, n_times) = (target_ras.len(), rows.len());
+        let mut result = ndarray::Array2::from_elem((n_targets, n_times), false);
+        if n_targets == 0 || n_times == 0 {
+            return Ok(Some(result));
+        }
+        // Whole targets per call, so the paired lists stay bounded.
+        let targets_per_block = (APPARENT_PAIRED_BLOCK_CELLS / n_times).max(1);
+        let local: Vec<usize> = (0..targets_per_block.min(n_targets))
+            .flat_map(|_| 0..n_times)
+            .collect();
+        for (block, (ras, decs)) in target_ras
+            .chunks(targets_per_block)
+            .zip(target_decs.chunks(targets_per_block))
+            .enumerate()
+        {
+            let cells = ras.len() * n_times;
+            let (cell_ras, cell_decs): (Vec<f64>, Vec<f64>) = (0..cells)
+                .into_par_iter()
+                .map(|c| {
+                    aberrations[c % n_times].apply_radec_deg(ras[c / n_times], decs[c / n_times])
+                })
+                .unzip();
+            let rolls = roll.map(|roll| vec![Some(roll); cells]);
+            let Some(mask) = evaluator.mask_diagonal(
+                &view,
+                &cell_ras,
+                &cell_decs,
+                Some(&local[..cells]),
+                rolls.as_deref(),
+            )?
+            else {
+                return Ok(None);
+            };
+            let first = block * targets_per_block;
+            for (c, violated) in mask.into_iter().enumerate() {
+                result[[first + c / n_times, c % n_times]] = violated;
+            }
+        }
+        Ok(Some(result))
     }
 
     /// Target x time violation grid with apparent geometry: the bodies of each

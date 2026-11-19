@@ -99,8 +99,25 @@ pub fn evaluate_elements(
 
     // Fast path: the whole input is served by the paired kernel. Also used for
     // an empty input so the value/cause schema is still reported.
-    if n == 0 || (!roll_dependent && (0..n).all(|i| roll_of(i).is_none())) {
+    let no_rolls = !roll_dependent && (0..n).all(|i| roll_of(i).is_none());
+    if n == 0 || (no_rolls && with_values) {
         return evaluator.evaluate_diagonal(ephemeris, ras, decs, Some(indices));
+    }
+
+    // The mask alone: a tree may then skip its values, and the elements its
+    // cheaper members have already decided.
+    if !with_values && (no_rolls || rolls.is_some()) {
+        let rolls = if no_rolls { None } else { rolls };
+        if let Some(violated) =
+            evaluator.mask_diagonal(ephemeris, ras, decs, Some(indices), rolls)?
+        {
+            return Ok(DiagonalEvaluation {
+                violated,
+                named: HashMap::new(),
+                values: HashMap::new(),
+                cause_value_keys: HashMap::new(),
+            });
+        }
     }
 
     // A tree with a paired kernel for per-element rolls needs no grouping:

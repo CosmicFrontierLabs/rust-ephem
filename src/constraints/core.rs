@@ -1078,6 +1078,47 @@ pub trait ConstraintEvaluator: Send + Sync {
         Ok(None)
     }
 
+    /// Whether one cell of this evaluator costs far more than the comparison
+    /// of an angle with a limit (an integral over a disk, say). A mask-only
+    /// evaluation of `a | b` or `a & b` then evaluates the cheap members
+    /// first and hands an expensive one only the cells they left undecided.
+    /// Combinators are expensive if any child is.
+    fn is_expensive(&self) -> bool {
+        false
+    }
+
+    /// The violation mask of `evaluate_diagonal` (or, with `rolls`, of
+    /// `evaluate_diagonal_at_rolls`) alone: element `i` is `target_i` at
+    /// `time_indices[i]`. `Ok(None)` as for `evaluate_diagonal_at_rolls`.
+    ///
+    /// The default computes the values too and drops them. Evaluators whose
+    /// values cost more than their mask, and combinators that can skip
+    /// elements other members have already decided, override it.
+    fn mask_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        rolls: Option<&[Option<f64>]>,
+    ) -> PyResult<Option<Vec<bool>>> {
+        Ok(match rolls {
+            None => Some(
+                self.evaluate_diagonal(ephemeris, target_ras, target_decs, time_indices)?
+                    .violated,
+            ),
+            Some(rolls) => self
+                .evaluate_diagonal_at_rolls(
+                    ephemeris,
+                    target_ras,
+                    target_decs,
+                    time_indices,
+                    rolls,
+                )?
+                .map(|evaluation| evaluation.violated),
+        })
+    }
+
     /// Returns `true` if this constraint's FoR result changes depending on the spacecraft
     /// roll angle.  Roll-independent constraints return `false` (the default); only
     /// `BoresightOffsetEvaluator` with a free roll angle (`roll_deg = None`) and a
