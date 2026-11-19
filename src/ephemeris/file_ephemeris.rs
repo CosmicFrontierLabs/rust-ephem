@@ -139,14 +139,17 @@ impl FileEphemeris {
     /// Shares the post-parse pipeline of the file constructor (unit
     /// conversion, range validation, Hermite resampling onto the
     /// ``begin``/``end``/``step_size`` grid, frame transforms, Sun/Moon).
+    ///
+    /// Without ``velocities`` they are the derivative of the cubic spline
+    /// through the positions, in the position unit per second.
     #[staticmethod]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (times, positions, velocities, begin=None, end=None, step_size=60, *, polar_motion=false, position_unit="km".to_string(), velocity_unit=None, frame="J2000".to_string()))]
+    #[pyo3(signature = (times, positions, velocities=None, begin=None, end=None, step_size=60, *, polar_motion=false, position_unit="km".to_string(), velocity_unit=None, frame="J2000".to_string()))]
     fn from_arrays(
         py: Python,
         times: &Bound<'_, PyAny>,
         positions: &Bound<'_, PyAny>,
-        velocities: &Bound<'_, PyAny>,
+        velocities: Option<&Bound<'_, PyAny>>,
         begin: Option<&Bound<'_, PyDateTime>>,
         end: Option<&Bound<'_, PyDateTime>>,
         step_size: i64,
@@ -157,15 +160,26 @@ impl FileEphemeris {
     ) -> PyResult<Self> {
         let times = extract_utc_times(times)?;
         let pos = extract_vectors(py, positions, "positions")?;
-        let vel = extract_vectors(py, velocities, "velocities")?;
+        let vel = velocities
+            .map(|velocities| extract_vectors(py, velocities, "velocities"))
+            .transpose()?;
+        if vel.is_none() && velocity_unit.is_some() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "velocity_unit was given without velocities: derived velocities are in the \
+                 position unit per second",
+            ));
+        }
 
         let n = times.len();
-        if pos.nrows() != n || vel.nrows() != n {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "Length mismatch: {n} times, {} positions, {} velocities",
-                pos.nrows(),
-                vel.nrows()
-            )));
+        if pos.nrows() != n || vel.as_ref().is_some_and(|vel| vel.nrows() != n) {
+            return Err(pyo3::exceptions::PyValueError::new_err(match &vel {
+                Some(vel) => format!(
+                    "Length mismatch: {n} times, {} positions, {} velocities",
+                    pos.nrows(),
+                    vel.nrows()
+                ),
+                None => format!("Length mismatch: {n} times, {} positions", pos.nrows()),
+            }));
         }
         if n < 2 {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -181,6 +195,13 @@ impl FileEphemeris {
             )));
         }
 
+        let vel = vel.unwrap_or_else(|| {
+            let seconds: Vec<f64> = times
+                .iter()
+                .map(|time| (*time - times[0]).num_microseconds().unwrap_or(0) as f64 / 1e6)
+                .collect();
+            crate::utils::interpolation::spline_velocities(&seconds, &pos)
+        });
         let mut states = Array2::<f64>::zeros((n, 6));
         states.slice_mut(s![.., 0..3]).assign(&pos);
         states.slice_mut(s![.., 3..6]).assign(&vel);
