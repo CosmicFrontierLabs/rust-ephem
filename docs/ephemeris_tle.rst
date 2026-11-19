@@ -110,6 +110,30 @@ UTC), as for the ``times=`` argument of the constraint methods.
     moon = sat.moon_pv_at(t)
     sun_from_sc = sun.position - sc.position   # km, GCRS
 
+``body_position_at`` returns the vector from the observer to a body directly,
+and with ``apparent=True`` it points where the body is seen: the light left the
+body one light time earlier, is bent by the Sun, and is aberrated by the
+observer's barycentric velocity (about 20 arcseconds for the Sun).
+``apparent_target_at`` applies the matching correction to catalogue targets.
+Together they give the angles that constraints report with ``apparent=True``:
+
+.. code-block:: python
+
+    import numpy as np
+
+    sun = sat.body_position_at("sun", t, apparent=True)     # (N, 3) km, GCRS axes
+    target = sat.apparent_target_at(83.63, 22.01, t)        # (N, 3) unit vectors
+    cosine = np.sum(sun * target, axis=1) / np.linalg.norm(sun, axis=1)
+    sun_angle_deg = np.degrees(np.arccos(cosine))
+    # equals SunConstraint(...).evaluate_elementwise(..., apparent=True)
+    #        .constraint_values["sun_angle_deg"]
+
+The length of an apparent vector is the light-time distance: from the observer
+at the requested time to the body where it was when the light left it.
+``body`` may also be ``"moon"``, ``"earth"``, or any body the loaded kernels
+cover (``"jupiter barycenter"``, ``"499"``). ``apparent=True`` needs a planetary
+kernel (``ensure_planetary_ephemeris()``).
+
 TLEEphemeris Notes
 ------------------
 - Position magnitudes should be in LEO range (6500–8000 km); velocity around

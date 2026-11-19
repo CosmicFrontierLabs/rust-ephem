@@ -179,6 +179,29 @@ impl SPICEEphemeris {
         self.get_moon_pv_at(py, times)
     }
 
+    /// Vector from the observer to a body (N x 3, km, GCRS axes) at arbitrary time(s), geometric or apparent
+    #[pyo3(signature = (body, times, apparent=false))]
+    fn body_position_at(
+        &self,
+        py: Python,
+        body: &str,
+        times: &Bound<PyAny>,
+        apparent: bool,
+    ) -> PyResult<Py<PyAny>> {
+        self.get_body_position_at(py, body, times, apparent)
+    }
+
+    /// Unit vectors (N x 3, GCRS axes) in which catalogue targets are seen at arbitrary time(s)
+    fn apparent_target_at(
+        &self,
+        py: Python,
+        ras: &Bound<PyAny>,
+        decs: &Bound<PyAny>,
+        times: &Bound<PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        self.get_apparent_target_at(py, ras, decs, times)
+    }
+
     #[getter]
     fn obsgeoloc(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         self.get_obsgeoloc(py)

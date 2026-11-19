@@ -108,6 +108,153 @@ pub(crate) fn pv_at(
     Py::new(py, split_pos_vel(&sampled))
 }
 
+/// A float or a sequence/array of floats, flattened.
+fn floats(values: &Bound<PyAny>, what: &str) -> PyResult<Vec<f64>> {
+    if let Ok(value) = values.extract::<f64>() {
+        return Ok(vec![value]);
+    }
+    if let Ok(array) = values.extract::<numpy::PyReadonlyArrayDyn<f64>>() {
+        return Ok(array.as_array().iter().copied().collect());
+    }
+    values.extract::<Vec<f64>>().map_err(|_| {
+        pyo3::exceptions::PyTypeError::new_err(format!(
+            "{what} must be a float or a sequence of floats"
+        ))
+    })
+}
+
+/// Observer, Sun and Moon states of `data` at arbitrary times: the rows
+/// constraint evaluation with `times=` works from.
+struct StatesAt {
+    observer: Array2<f64>,
+    sun: Option<Array2<f64>>,
+    moon: Option<Array2<f64>>,
+}
+
+impl StatesAt {
+    fn new(data: &EphemerisData, times: &[DateTime<Utc>]) -> PyResult<Self> {
+        use crate::ephemeris::sampled_ephemeris::{locate_times, sample_states};
+        let source_times = data.times.as_deref().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("No ephemeris timestamps available")
+        })?;
+        let locations = locate_times(source_times, times)?;
+        let sample = |states: &Array2<f64>| sample_states(states, source_times, times, &locations);
+        Ok(Self {
+            observer: data
+                .gcrs
+                .as_ref()
+                .map(sample)
+                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No GCRS data available"))?,
+            sun: data.sun_gcrs.as_ref().map(sample),
+            moon: data.moon_gcrs.as_ref().map(sample),
+        })
+    }
+
+    fn sun(&self) -> PyResult<&Array2<f64>> {
+        self.sun
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No Sun data available"))
+    }
+
+    fn moon(&self) -> PyResult<&Array2<f64>> {
+        self.moon
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No Moon data available"))
+    }
+
+    /// Apparent positions of `bodies` (`None` is the Earth) and the target
+    /// correction of each row, exactly as `SampledEphemeris::apparent` builds
+    /// them for constraint evaluation.
+    fn apparent(
+        &self,
+        times: &[DateTime<Utc>],
+        bodies: &[Option<&Array2<f64>>],
+    ) -> PyResult<(
+        Vec<Array2<f64>>,
+        Vec<crate::utils::apparent::ObserverAberration>,
+    )> {
+        use crate::utils::apparent::{apparent_from_states, earth_barycentric_velocities};
+        let sun = self.sun()?;
+        let earth_velocity = earth_barycentric_velocities(times, sun, None)
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        apparent_from_states(&self.observer, sun, &earth_velocity, bodies)
+            .map_err(pyo3::exceptions::PyValueError::new_err)
+    }
+}
+
+/// Observer-centred positions (N x 3, km, GCRS axes) of a body at arbitrary
+/// times: `EphemerisBase::get_body_position_at`.
+pub(crate) fn body_positions_at(
+    data: &EphemerisData,
+    body: &str,
+    times: &[DateTime<Utc>],
+    apparent: bool,
+) -> PyResult<Array2<f64>> {
+    use crate::utils::config::{EARTH_NAIF_ID, MOON_NAIF_ID, SUN_NAIF_ID};
+    use crate::utils::naif_ids::parse_body_identifier;
+
+    let states = StatesAt::new(data, times)?;
+    // The Earth, Sun and Moon come from the states the ephemeris holds, as in
+    // constraint evaluation; `None` is the Earth, at the origin.
+    let held = match parse_body_identifier(body) {
+        Some(EARTH_NAIF_ID) => Some(None),
+        Some(SUN_NAIF_ID) => Some(Some(states.sun()?)),
+        Some(MOON_NAIF_ID) => Some(Some(states.moon()?)),
+        _ => None,
+    };
+    let observer = states.observer.slice(s![.., 0..3]);
+    match (held, apparent) {
+        (Some(None), false) => Ok(&observer * -1.0),
+        (Some(Some(body)), false) => Ok(&body.slice(s![.., 0..3]) - &observer),
+        (Some(body), true) => Ok(states.apparent(times, &[body])?.0.remove(0)),
+        (None, false) => {
+            use crate::utils::celestial::calculate_body_by_id_or_name;
+            let geocentric = calculate_body_by_id_or_name(times, body, EARTH_NAIF_ID, None, false)
+                .map_err(pyo3::exceptions::PyValueError::new_err)?;
+            Ok(&geocentric.slice(s![.., 0..3]) - &observer)
+        }
+        (None, true) => {
+            crate::utils::apparent::apparent_body_positions(times, &states.observer, body, None)
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+    }
+}
+
+/// Proper unit vectors (N x 3, GCRS axes) of catalogue targets at arbitrary
+/// times: `EphemerisBase::get_apparent_target_at`. Each of `ras`, `decs` and
+/// `times` has one entry per row or a single entry used for every row.
+pub(crate) fn apparent_targets_at(
+    data: &EphemerisData,
+    ras: &[f64],
+    decs: &[f64],
+    times: &[DateTime<Utc>],
+) -> PyResult<Array2<f64>> {
+    let n = ras.len().max(decs.len()).max(times.len());
+    for (len, what) in [
+        (ras.len(), "ras"),
+        (decs.len(), "decs"),
+        (times.len(), "times"),
+    ] {
+        if len != n && len != 1 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "{what} has {len} entries; expected 1 or {n} to match the other arguments"
+            )));
+        }
+    }
+    let (_, corrections) = StatesAt::new(data, times)?.apparent(times, &[])?;
+    let pick = |values: &[f64], i: usize| values[i.min(values.len() - 1)];
+    let mut out = Array2::zeros((n, 3));
+    for i in 0..n {
+        let (ra, dec) = (pick(ras, i).to_radians(), pick(decs, i).to_radians());
+        let catalogue = [dec.cos() * ra.cos(), dec.cos() * ra.sin(), dec.sin()];
+        let proper = corrections[i.min(corrections.len() - 1)].apply(catalogue);
+        for j in 0..3 {
+            out[[i, j]] = proper[j];
+        }
+    }
+    Ok(out)
+}
+
 /// Make sure Sun and Moon positions come from a planetary kernel when one is
 /// to hand, and say so when they cannot.
 ///
@@ -697,6 +844,35 @@ pub trait EphemerisBase {
             times,
             "Moon",
         )
+    }
+
+    /// Vector from the observer to a body (N x 3, km, GCRS axes) at arbitrary
+    /// time(s), geometric or apparent.
+    fn get_body_position_at(
+        &self,
+        py: Python,
+        body: &str,
+        times: &Bound<PyAny>,
+        apparent: bool,
+    ) -> PyResult<Py<PyAny>> {
+        let times = crate::utils::time_utils::python_datetimes_to_utc(times)?;
+        let positions = body_positions_at(self.data(), body, &times, apparent)?;
+        Ok(positions.into_pyarray(py).into_any().unbind())
+    }
+
+    /// Unit vectors (N x 3, GCRS axes) in which catalogue targets are seen at
+    /// arbitrary time(s): the correction `apparent=True` applies to targets.
+    fn get_apparent_target_at(
+        &self,
+        py: Python,
+        ras: &Bound<PyAny>,
+        decs: &Bound<PyAny>,
+        times: &Bound<PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        let times = crate::utils::time_utils::python_datetimes_to_utc(times)?;
+        let (ras, decs) = (floats(ras, "ras")?, floats(decs, "decs")?);
+        let targets = apparent_targets_at(self.data(), &ras, &decs, &times)?;
+        Ok(targets.into_pyarray(py).into_any().unbind())
     }
 
     // ========== Constraint helper methods ==========

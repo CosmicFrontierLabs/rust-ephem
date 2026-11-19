@@ -1,6 +1,6 @@
 # Create a type alias that supports isinstance checks
 import abc
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -118,6 +118,74 @@ class Ephemeris(abc.ABC):
         self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
     ) -> PositionVelocityData:
         """Moon GCRS position/velocity at arbitrary time(s); see ``gcrs_pv_at``."""
+        ...
+
+    @abc.abstractmethod
+    def body_position_at(
+        self,
+        body: str,
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+        apparent: bool = False,
+    ) -> npt.NDArray[np.float64]:
+        """Vector from the observer to a body at arbitrary time(s).
+
+        Args:
+            body: ``"sun"``, ``"moon"``, ``"earth"``, or any body name or NAIF
+                ID the loaded kernels cover (``"jupiter"``, ``"499"``).
+            times: A datetime, an iterable of datetimes or a ``datetime64``
+                array (read as UTC). Times between grid points interpolate the
+                observer as ``gcrs_pv_at`` does.
+            apparent: If True, the direction the body's light arrives from:
+                reception light time, solar light deflection and the
+                aberration of the observer's barycentric velocity. These are
+                the directions constraints use with ``apparent=True``.
+
+        Returns:
+            ``(N, 3)`` array in km, GCRS axes, centred on the observer, rows in
+            input order. With ``apparent=False`` the length is the geometric
+            distance at ``times`` (for the Sun, ``sun_pv_at(t).position -
+            gcrs_pv_at(t).position``). With ``apparent=True`` it is the
+            light-time distance: from the observer at ``times`` to the body
+            where it was when the light left it.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the body is
+                unknown, or ``apparent=True`` and no planetary kernel covers
+                the times.
+        """
+        ...
+
+    @abc.abstractmethod
+    def apparent_target_at(
+        self,
+        ras: float | Sequence[float] | npt.NDArray[np.float64],
+        decs: float | Sequence[float] | npt.NDArray[np.float64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+    ) -> npt.NDArray[np.float64]:
+        """Directions in which catalogue targets are seen at arbitrary time(s).
+
+        Applies the correction constraints apply to targets with
+        ``apparent=True``: solar light deflection, then the aberration of the
+        observer's barycentric velocity. The angle between a row of the result
+        and ``body_position_at(body, times, apparent=True)`` is the angle a
+        constraint reports for that body with ``apparent=True``.
+
+        ``ras``, ``decs`` and ``times`` are paired row by row; any of them may
+        be a single value used for every row.
+
+        Args:
+            ras: Catalogue (ICRS) right ascension(s) in degrees.
+            decs: Catalogue (ICRS) declination(s) in degrees.
+            times: A datetime, an iterable of datetimes or a ``datetime64``
+                array (read as UTC).
+
+        Returns:
+            ``(N, 3)`` array of unit vectors, GCRS axes, rows in input order.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the lengths do
+                not match, or no planetary kernel covers the times.
+        """
         ...
 
     @property
