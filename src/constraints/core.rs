@@ -39,6 +39,7 @@ pub(crate) fn value_key_prefix(name: &str) -> String {
         "EarthLimb" => "earth_limb",
         "BrightStar" => "bright_star",
         "SolarRollConstraint" => "solar_roll",
+        "StrayLight" => "stray_light",
         "AND" => "and",
         "OR" => "or",
         "NOT" => "not",
