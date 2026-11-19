@@ -354,6 +354,34 @@ class BrightStarConstraint(RustConstraintMixin):
     fov_polygon: list[tuple[float, float]] | None = None
     roll_deg: float | None = None
 
+class PointSourceTransmittance(BaseModel):
+    off_axis_deg: list[float]
+    azimuth_deg: list[float]
+    log10_pst: list[list[float | None]]
+    azimuth_symmetric: bool = True
+    @classmethod
+    def from_pst(
+        cls,
+        off_axis_deg: npt.ArrayLike,
+        azimuth_deg: npt.ArrayLike,
+        pst: npt.ArrayLike,
+        azimuth_symmetric: bool = True,
+    ) -> PointSourceTransmittance: ...
+
+class StrayLightConstraint(RustConstraintMixin):
+    type: Literal["stray_light"] = "stray_light"
+    pst: PointSourceTransmittance
+    conversion_factor: float
+    max_ratio: float = 3.0
+    roll_offset_deg: float = 0.0
+    sun_azimuth_deg: float = 0.0
+    zodi: Literal["constant", "table"] = "constant"
+    zodi_v_mag_arcsec2: float = 22.5
+    in_field_deg: float = 0.3
+    earth_albedo: float = 0.24
+    sun_v_mag_1au: float = -26.74
+    moon_v_mag_full: float = -12.73
+
 ConstraintConfig = (
     SunConstraint
     | MoonConstraint
@@ -365,6 +393,7 @@ ConstraintConfig = (
     | AirmassConstraint
     | MoonPhaseConstraint
     | SolarRollConstraint
+    | StrayLightConstraint
     | SAAConstraint
     | AltAzConstraint
     | OrbitRamConstraint

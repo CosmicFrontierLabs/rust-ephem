@@ -12,6 +12,7 @@ use crate::constraints::orbit_pole::OrbitPoleConfig;
 use crate::constraints::orbit_ram::OrbitRamConfig;
 use crate::constraints::saa::SAAConfig;
 use crate::constraints::solar_roll::{default_panel_normal, SolarRollConfig};
+use crate::constraints::stray_light::StrayLightConfig;
 use crate::constraints::sun_proximity::SunProximityConfig;
 use pyo3::PyResult;
 use serde::Deserialize;
@@ -207,6 +208,8 @@ enum ConstraintSpec {
         #[serde(default = "default_panel_normal")]
         panel_normal: [f64; 3],
     },
+    #[serde(rename = "stray_light")]
+    StrayLight(Box<StrayLightConfig>),
 }
 
 impl ConstraintSpec {
@@ -502,6 +505,14 @@ impl ConstraintSpec {
                 panel_normal,
             }
             .to_evaluator()),
+            ConstraintSpec::StrayLight(config) => {
+                config.validate().map_err(|message| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid stray_light constraint: {message}"
+                    ))
+                })?;
+                Ok(config.to_evaluator())
+            }
         }
     }
 }

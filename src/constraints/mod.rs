@@ -30,6 +30,7 @@ pub mod orbit_pole;
 pub mod orbit_ram;
 pub mod saa;
 pub mod solar_roll;
+pub mod stray_light;
 pub mod sun_proximity;
 
 // Python wrapper

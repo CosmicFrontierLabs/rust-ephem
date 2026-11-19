@@ -345,6 +345,46 @@ The cache is stored as a numpy array in the rust_ephem cache directory
 (``rust_ephem.get_cache_dir()``), keyed by magnitude limit.  Pass
 ``refresh=True`` to force a re-download.
 
+**Stray Light**
+
+Use :py:class:`~rust_ephem.constraints.StrayLightConstraint` when being clear
+of the Sun, Earth and Moon is not enough and the light they scatter into the
+telescope has to stay below a multiple of the zodiacal background. You supply
+the telescope's point-source transmittance table and one conversion factor;
+the constraint integrates the table over each body's illuminated disk.
+
+.. code-block:: python
+
+    import numpy as np
+    from rust_ephem import PointSourceTransmittance, StrayLightConstraint
+
+    pst = PointSourceTransmittance(
+        off_axis_deg=off_axis_deg,   # rows of your table
+        azimuth_deg=azimuth_deg,     # columns, 0-180 for a symmetric response
+        log10_pst=log10_pst,
+    )
+    # Sky surface brightness (per arcsec^2) that gives one unit of focal-plane
+    # irradiance, for focal ratio f_number; 206264.8 arcseconds in a radian.
+    arcsec_per_radian = 3600 * 180 / np.pi
+    stray = StrayLightConstraint(
+        pst=pst,
+        conversion_factor=4 * f_number**2 / (np.pi * arcsec_per_radian**2),
+        max_ratio=3.0,               # at most 3 x zodi
+    )
+
+    result = stray.evaluate_elementwise(ephem, ras, decs, times=times)
+    result.constraint_array                          # True = too bright, or no prediction
+    result.constraint_values["stray_light_ratio"]    # scattered light / zodi
+    result.constraint_values["earth_stray_light_ratio"]
+
+Where the model has no prediction (a body in the field, a limb inside the first
+cell of the table, a disk integral that did not converge) the values are NaN
+and the constraint is violated. It is far more expensive per pointing than a
+proximity rule, so in a combined tree it pays to apply cheap rules first and
+evaluate this one only where they pass. See the
+:py:class:`API reference <rust_ephem.constraints.StrayLightConstraint>` for the
+model, the attitude convention and the conversion factor.
+
 **Proximity Constraints**
 
 .. code-block:: python
