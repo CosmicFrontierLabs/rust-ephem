@@ -111,6 +111,118 @@ pub fn hermite_between(
     hermite_state(t, dt, before, after)
 }
 
+/// Velocities (N x 3) at the samples of a position table (N x 3), as the
+/// derivative of the cubic spline through each coordinate.
+///
+/// `seconds` are the sample times, strictly increasing. The spline has
+/// continuous first and second derivatives and "not-a-knot" ends (the first
+/// two and the last two intervals each share one cubic), which is the default
+/// of `scipy.interpolate.CubicSpline`. Two samples give the straight line
+/// between them and three the parabola through them.
+///
+/// The error is of order `h^3` times the fourth derivative of the motion, for
+/// a sample spacing `h`: the samples must be close together compared with the
+/// time over which the path curves.
+///
+/// # Panics
+/// Panics if there are fewer than two samples or the shapes do not match.
+pub fn spline_velocities(seconds: &[f64], positions: &Array2<f64>) -> Array2<f64> {
+    let n = seconds.len();
+    assert!(n >= 2, "Need at least 2 samples");
+    assert_eq!(positions.dim(), (n, 3));
+    let h: Vec<f64> = seconds.windows(2).map(|pair| pair[1] - pair[0]).collect();
+    let mut velocities = Array2::<f64>::zeros((n, 3));
+    for axis in 0..3 {
+        // Slope of the chord across each interval.
+        let chord: Vec<f64> = (0..n - 1)
+            .map(|i| (positions[[i + 1, axis]] - positions[[i, axis]]) / h[i])
+            .collect();
+        let slopes = match n {
+            2 => vec![chord[0]; 2],
+            3 => {
+                // The parabola through the three samples.
+                let middle = (h[1] * chord[0] + h[0] * chord[1]) / (h[0] + h[1]);
+                vec![2.0 * chord[0] - middle, middle, 2.0 * chord[1] - middle]
+            }
+            _ => {
+                // One row per sample in the unknown slopes: continuity of the
+                // second derivative inside, of the third at the second and
+                // the last-but-one samples.
+                let (mut lower, mut diagonal, mut upper, mut right) =
+                    (vec![0.0; n], vec![0.0; n], vec![0.0; n], vec![0.0; n]);
+                for i in 1..n - 1 {
+                    lower[i] = h[i];
+                    diagonal[i] = 2.0 * (h[i - 1] + h[i]);
+                    upper[i] = h[i - 1];
+                    right[i] = 3.0 * (h[i] * chord[i - 1] + h[i - 1] * chord[i]);
+                }
+                let span = h[0] + h[1];
+                diagonal[0] = h[1];
+                upper[0] = span;
+                right[0] = ((h[0] + 2.0 * span) * h[1] * chord[0] + h[0] * h[0] * chord[1]) / span;
+                let span = h[n - 2] + h[n - 3];
+                lower[n - 1] = span;
+                diagonal[n - 1] = h[n - 3];
+                right[n - 1] = (h[n - 2] * h[n - 2] * chord[n - 3]
+                    + (2.0 * span + h[n - 2]) * h[n - 3] * chord[n - 2])
+                    / span;
+                solve_tridiagonal(lower, diagonal, upper, right)
+            }
+        };
+        for (i, slope) in slopes.into_iter().enumerate() {
+            velocities[[i, axis]] = slope;
+        }
+    }
+    velocities
+}
+
+/// Solve a tridiagonal system by Gaussian elimination with partial pivoting.
+/// `lower[i]`, `diagonal[i]` and `upper[i]` are the entries of row `i` in
+/// columns `i - 1`, `i` and `i + 1`. The end rows of a not-a-knot spline are
+/// not diagonally dominant, so rows are exchanged where that is the larger
+/// pivot.
+fn solve_tridiagonal(
+    lower: Vec<f64>,
+    mut diagonal: Vec<f64>,
+    mut upper: Vec<f64>,
+    mut right: Vec<f64>,
+) -> Vec<f64> {
+    let n = diagonal.len();
+    // An exchange fills in one entry two columns right of the diagonal.
+    let mut second = vec![0.0; n];
+    for i in 0..n - 1 {
+        if lower[i + 1].abs() > diagonal[i].abs() {
+            // Exchange rows i and i + 1.
+            let row = (diagonal[i], upper[i], second[i], right[i]);
+            diagonal[i] = lower[i + 1];
+            upper[i] = diagonal[i + 1];
+            second[i] = upper[i + 1];
+            right[i] = right[i + 1];
+            let factor = row.0 / diagonal[i];
+            diagonal[i + 1] = row.1 - factor * upper[i];
+            upper[i + 1] = row.2 - factor * second[i];
+            right[i + 1] = row.3 - factor * right[i];
+        } else {
+            let factor = lower[i + 1] / diagonal[i];
+            diagonal[i + 1] -= factor * upper[i];
+            upper[i + 1] -= factor * second[i];
+            right[i + 1] -= factor * right[i];
+        }
+    }
+    let mut solution = vec![0.0; n];
+    for i in (0..n).rev() {
+        let mut value = right[i];
+        if i + 1 < n {
+            value -= upper[i] * solution[i + 1];
+        }
+        if i + 2 < n {
+            value -= second[i] * solution[i + 2];
+        }
+        solution[i] = value / diagonal[i];
+    }
+    solution
+}
+
 /// Find the interval index for a query time
 ///
 /// Returns the index i such that data_times[i] <= query_time < data_times[i+1]
@@ -151,6 +263,62 @@ fn find_interval(data_times: &[f64], query_time: f64) -> usize {
 mod tests {
     use super::*;
     use chrono::Duration;
+
+    #[test]
+    fn spline_velocities_are_exact_for_cubics_and_close_for_an_orbit() {
+        // Unevenly spaced samples of a cubic: the spline is that cubic.
+        let seconds = [0.0, 1.0, 2.5, 3.0, 5.0, 6.5, 7.0, 9.0];
+        let cubic = |t: f64, axis: usize| {
+            let a = axis as f64 + 1.0;
+            0.3 * a * t * t * t - 2.0 * t * t + a * t - 7.0
+        };
+        let slope = |t: f64, axis: usize| {
+            let a = axis as f64 + 1.0;
+            0.9 * a * t * t - 4.0 * t + a
+        };
+        for count in [2, 3, 4, 5, 8] {
+            let times = &seconds[..count];
+            // Two samples carry a line and three a parabola.
+            let degree = (count - 1).min(3);
+            let value = |t: f64, axis: usize| match degree {
+                1 => 4.0 * t - axis as f64,
+                2 => -2.0 * t * t + (axis as f64 + 1.0) * t - 7.0,
+                _ => cubic(t, axis),
+            };
+            let expected = |t: f64, axis: usize| match degree {
+                1 => 4.0,
+                2 => -4.0 * t + axis as f64 + 1.0,
+                _ => slope(t, axis),
+            };
+            let positions = Array2::from_shape_fn((count, 3), |(i, axis)| value(times[i], axis));
+            let velocities = spline_velocities(times, &positions);
+            for (i, &t) in times.iter().enumerate() {
+                for axis in 0..3 {
+                    assert!(
+                        (velocities[[i, axis]] - expected(t, axis)).abs() < 1e-10,
+                        "{count} samples, row {i}, axis {axis}"
+                    );
+                }
+            }
+        }
+
+        // A circular low orbit sampled every 10 s: millimetres per second.
+        let rate = 1.1e-3_f64;
+        let times: Vec<f64> = (0..200).map(|i| 10.0 * i as f64).collect();
+        let positions = Array2::from_shape_fn((200, 3), |(i, axis)| {
+            let phase = rate * times[i];
+            7000.0 * [phase.cos(), 0.6 * phase.sin(), 0.8 * phase.sin()][axis]
+        });
+        let velocities = spline_velocities(&times, &positions);
+        for (i, &t) in times.iter().enumerate() {
+            let phase = rate * t;
+            let expected = [-phase.sin(), 0.6 * phase.cos(), 0.8 * phase.cos()];
+            for axis in 0..3 {
+                let error = velocities[[i, axis]] - 7000.0 * rate * expected[axis];
+                assert!(error.abs() < 2e-6, "row {i}, axis {axis}: {error}");
+            }
+        }
+    }
 
     #[test]
     fn hermite_between_is_hermite_interpolate_to_the_last_bit() {
