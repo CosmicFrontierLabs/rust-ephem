@@ -142,6 +142,168 @@ fn merge_children_diagonal(
     }))
 }
 
+/// Cells handed to an expensive child in one paired call when it is given
+/// only the cells its cheaper siblings left undecided.
+const UNDECIDED_BLOCK_CELLS: usize = 1 << 20;
+
+/// `a || b` for OR, `a && b` for AND.
+fn fold_mask(is_and: bool, a: bool, b: bool) -> bool {
+    if is_and {
+        a && b
+    } else {
+        a || b
+    }
+}
+
+/// Cheap children first, in their own order, then the expensive ones.
+fn cheapest_first<'a>(
+    children: impl IntoIterator<Item = &'a dyn ConstraintEvaluator>,
+) -> Vec<&'a dyn ConstraintEvaluator> {
+    let (expensive, mut ordered): (Vec<_>, Vec<_>) =
+        children.into_iter().partition(|child| child.is_expensive());
+    ordered.extend(expensive);
+    ordered
+}
+
+/// The paired mask of an AND (`is_and`) or OR of `children`.
+///
+/// A member that is violated decides an OR, and one that is satisfied decides
+/// an AND, so an expensive member is evaluated only on the elements the
+/// members before it left undecided. `None` when a child has no paired kernel
+/// for `rolls`.
+fn mask_children_diagonal(
+    children: &[Box<dyn ConstraintEvaluator>],
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    ras: &[f64],
+    decs: &[f64],
+    indices: Option<&[usize]>,
+    rolls: Option<&[Option<f64>]>,
+    is_and: bool,
+) -> PyResult<Option<Vec<bool>>> {
+    let indices = diagonal::time_indices(ephemeris, ras, decs, indices)?;
+    let mut result = vec![is_and; ras.len()];
+    for child in cheapest_first(children.iter().map(|child| &**child)) {
+        let pending: Vec<usize> = if child.is_expensive() {
+            (0..result.len()).filter(|&i| result[i] == is_and).collect()
+        } else {
+            Vec::new()
+        };
+        if !child.is_expensive() || pending.len() == result.len() {
+            let Some(mask) = child.mask_diagonal(ephemeris, ras, decs, Some(&indices), rolls)?
+            else {
+                return Ok(None);
+            };
+            for (value, violated) in result.iter_mut().zip(mask) {
+                *value = fold_mask(is_and, *value, violated);
+            }
+            continue;
+        }
+        if pending.is_empty() {
+            continue;
+        }
+        let pick = |values: &[f64]| pending.iter().map(|&i| values[i]).collect::<Vec<_>>();
+        let sub_indices: Vec<usize> = pending.iter().map(|&i| indices[i]).collect();
+        let sub_rolls: Option<Vec<Option<f64>>> =
+            rolls.map(|rolls| pending.iter().map(|&i| rolls[i]).collect());
+        let Some(mask) = child.mask_diagonal(
+            ephemeris,
+            &pick(ras),
+            &pick(decs),
+            Some(&sub_indices),
+            sub_rolls.as_deref(),
+        )?
+        else {
+            return Ok(None);
+        };
+        for (&i, violated) in pending.iter().zip(mask) {
+            result[i] = fold_mask(is_and, result[i], violated);
+        }
+    }
+    Ok(Some(result))
+}
+
+/// The target x time mask of an AND (`is_and`) or OR of `children`, each
+/// evaluated by `in_constraint_batch` (`roll` is `None`) or
+/// `in_constraint_batch_at_roll`.
+///
+/// Cheap members are evaluated on the whole grid. An expensive member is then
+/// given only the cells still undecided, as paired elements, where it has a
+/// paired kernel that answers as its grid kernel does; otherwise it too is
+/// evaluated on the whole grid.
+fn combine_child_masks(
+    children: Vec<&dyn ConstraintEvaluator>,
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    ras: &[f64],
+    decs: &[f64],
+    time_indices: Option<&[usize]>,
+    roll: Option<EvaluationRoll>,
+    is_and: bool,
+) -> PyResult<Array2<bool>> {
+    let n_times = batch_n_times(ephemeris, time_indices)?;
+    let mut result = Array2::from_elem((ras.len(), n_times), is_and);
+    let whole_grid = |child: &dyn ConstraintEvaluator| match roll {
+        None => child.in_constraint_batch(ephemeris, ras, decs, time_indices),
+        Some(roll) => child.in_constraint_batch_at_roll(ephemeris, ras, decs, time_indices, roll),
+    };
+    for child in cheapest_first(children) {
+        // The roll each undecided element is evaluated at, where a paired
+        // evaluation is the grid evaluation: an explicit roll, or none for a
+        // member no roll sweep can move. A view whose batch kernels correct
+        // the targets themselves must stay on the grid.
+        let paired_roll = match roll {
+            _ if !child.is_expensive() || ephemeris.target_corrections().is_some() => None,
+            None => (!child.is_roll_dependent()).then_some(None),
+            Some(roll) => roll.is_fixed().then(|| Some(roll.degrees())),
+        };
+        let cells = result
+            .as_slice_mut()
+            .expect("a new array is in standard layout");
+        let pending: Vec<usize> = match paired_roll {
+            Some(_) => (0..cells.len()).filter(|&c| cells[c] == is_and).collect(),
+            None => Vec::new(),
+        };
+        let mut done = false;
+        if let Some(element_roll) = paired_roll {
+            if pending.is_empty() {
+                continue;
+            }
+            if pending.len() < cells.len() {
+                done = true;
+                for block in pending.chunks(UNDECIDED_BLOCK_CELLS) {
+                    let block_ras: Vec<f64> = block.iter().map(|&c| ras[c / n_times]).collect();
+                    let block_decs: Vec<f64> = block.iter().map(|&c| decs[c / n_times]).collect();
+                    let rows: Vec<usize> = block
+                        .iter()
+                        .map(|&c| time_indices.map_or(c % n_times, |rows| rows[c % n_times]))
+                        .collect();
+                    let rolls = element_roll.map(|roll| vec![Some(roll); block.len()]);
+                    let Some(mask) = child.mask_diagonal(
+                        ephemeris,
+                        &block_ras,
+                        &block_decs,
+                        Some(&rows),
+                        rolls.as_deref(),
+                    )?
+                    else {
+                        done = false;
+                        break;
+                    };
+                    for (&c, violated) in block.iter().zip(mask) {
+                        cells[c] = fold_mask(is_and, cells[c], violated);
+                    }
+                }
+            }
+        }
+        if !done {
+            let mask = whole_grid(child)?;
+            result.zip_mut_with(&mask, |value, &violated| {
+                *value = fold_mask(is_and, *value, violated);
+            });
+        }
+    }
+    Ok(result)
+}
+
 /// Cache independent subtrees once, preserving each child's original cause
 /// namespace and the same shared candidate roll for every dependent child.
 fn prepare_children_with_causes<'a>(
@@ -216,19 +378,12 @@ fn sweep_combination(
     n_roll_samples: usize,
     is_and: bool,
 ) -> PyResult<Array2<bool>> {
-    let n_times = batch_n_times(ephemeris, time_indices)?;
-    let mut independent = Array2::from_elem((ras.len(), n_times), is_and);
-    let mut dependent = Vec::new();
-    for child in children {
-        if child.is_roll_dependent() {
-            dependent.push(&**child);
-        } else {
-            let mask = child.in_constraint_batch(ephemeris, ras, decs, time_indices)?;
-            independent.zip_mut_with(&mask, |v, &b| {
-                *v = if is_and { *v && b } else { *v || b };
-            });
-        }
-    }
+    let (dependent, fixed): (Vec<&dyn ConstraintEvaluator>, Vec<_>) = children
+        .iter()
+        .map(|child| &**child)
+        .partition(|child| child.is_roll_dependent());
+    let mut independent =
+        combine_child_masks(fixed, ephemeris, ras, decs, time_indices, None, is_and)?;
     if dependent.is_empty() {
         return Ok(independent);
     }
@@ -595,6 +750,29 @@ impl ConstraintEvaluator for AndEvaluator {
         )?))
     }
 
+    fn is_expensive(&self) -> bool {
+        self.constraints.iter().any(|c| c.is_expensive())
+    }
+
+    fn mask_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+        rolls: Option<&[Option<f64>]>,
+    ) -> PyResult<Option<Vec<bool>>> {
+        mask_children_diagonal(
+            &self.constraints,
+            ephemeris,
+            ras,
+            decs,
+            indices,
+            rolls,
+            true,
+        )
+    }
+
     fn evaluate_diagonal(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -752,6 +930,17 @@ impl ConstraintEvaluator for AndEvaluator {
             ));
         }
 
+        if self.is_expensive() {
+            return combine_child_masks(
+                self.constraints.iter().map(|c| &**c).collect(),
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices,
+                None,
+                true,
+            );
+        }
         let times = ephemeris.get_times()?;
         // Use filtered time count if time_indices provided, otherwise full times
         let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
@@ -834,6 +1023,17 @@ impl ConstraintEvaluator for AndEvaluator {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "target_ras and target_decs must have the same length",
             ));
+        }
+        if self.is_expensive() {
+            return combine_child_masks(
+                self.constraints.iter().map(|c| &**c).collect(),
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices,
+                Some(roll_deg),
+                true,
+            );
         }
         let times = ephemeris.get_times()?;
         let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
@@ -1094,6 +1294,29 @@ impl ConstraintEvaluator for OrEvaluator {
         )?))
     }
 
+    fn is_expensive(&self) -> bool {
+        self.constraints.iter().any(|c| c.is_expensive())
+    }
+
+    fn mask_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+        rolls: Option<&[Option<f64>]>,
+    ) -> PyResult<Option<Vec<bool>>> {
+        mask_children_diagonal(
+            &self.constraints,
+            ephemeris,
+            ras,
+            decs,
+            indices,
+            rolls,
+            false,
+        )
+    }
+
     fn evaluate_diagonal(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -1241,6 +1464,17 @@ impl ConstraintEvaluator for OrEvaluator {
             ));
         }
 
+        if self.is_expensive() {
+            return combine_child_masks(
+                self.constraints.iter().map(|c| &**c).collect(),
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices,
+                None,
+                false,
+            );
+        }
         let times = ephemeris.get_times()?;
         // Use filtered time count if time_indices provided, otherwise full times
         let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
@@ -1323,6 +1557,17 @@ impl ConstraintEvaluator for OrEvaluator {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "target_ras and target_decs must have the same length",
             ));
+        }
+        if self.is_expensive() {
+            return combine_child_masks(
+                self.constraints.iter().map(|c| &**c).collect(),
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices,
+                Some(roll_deg),
+                false,
+            );
         }
         let times = ephemeris.get_times()?;
         let n_times = time_indices.map(|idx| idx.len()).unwrap_or(times.len());
@@ -1619,6 +1864,24 @@ impl ConstraintEvaluator for NotEvaluator {
                 })
             },
         )))
+    }
+
+    fn is_expensive(&self) -> bool {
+        self.constraint.is_expensive()
+    }
+
+    fn mask_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+        rolls: Option<&[Option<f64>]>,
+    ) -> PyResult<Option<Vec<bool>>> {
+        Ok(self
+            .constraint
+            .mask_diagonal(ephemeris, ras, decs, indices, rolls)?
+            .map(|mask| mask.into_iter().map(|violated| !violated).collect()))
     }
 
     fn evaluate_diagonal(
@@ -1983,6 +2246,10 @@ impl ConstraintEvaluator for XorEvaluator {
             indices,
             move |count| count == 1,
         )?))
+    }
+
+    fn is_expensive(&self) -> bool {
+        self.constraints.iter().any(|c| c.is_expensive())
     }
 
     fn evaluate_diagonal(
@@ -2387,6 +2654,10 @@ impl ConstraintEvaluator for AtLeastEvaluator {
             indices,
             move |count| count >= self.min_violated,
         )?))
+    }
+
+    fn is_expensive(&self) -> bool {
+        self.constraints.iter().any(|c| c.is_expensive())
     }
 
     fn evaluate_diagonal(
@@ -2919,5 +3190,211 @@ mod attributed_sweep_tests {
             assert_eq!(actual.violated, expected.violated);
             assert_eq!(actual.named, expected.named);
         }
+    }
+}
+
+#[cfg(test)]
+mod short_circuit_tests {
+    use super::*;
+    use crate::constraints::test_support::TestEphemeris;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    /// Violated where `(target + time row) % modulus == 0` (the target is its
+    /// right ascension); counts the cells it is asked about.
+    struct Rule {
+        modulus: usize,
+        expensive: bool,
+        cells: Arc<AtomicUsize>,
+    }
+
+    impl Rule {
+        fn violated(&self, ra: f64, row: usize) -> bool {
+            (ra as usize + row).is_multiple_of(self.modulus)
+        }
+    }
+
+    impl ConstraintEvaluator for Rule {
+        fn evaluate(
+            &self,
+            _: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+            _: f64,
+            _: f64,
+            _: Option<&[usize]>,
+        ) -> PyResult<ConstraintResult> {
+            unreachable!()
+        }
+        fn in_constraint_batch(
+            &self,
+            eph: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+            ras: &[f64],
+            _: &[f64],
+            indices: Option<&[usize]>,
+        ) -> PyResult<Array2<bool>> {
+            let n_times = batch_n_times(eph, indices)?;
+            self.cells.fetch_add(ras.len() * n_times, Ordering::Relaxed);
+            Ok(Array2::from_shape_fn((ras.len(), n_times), |(i, j)| {
+                self.violated(ras[i], indices.map_or(j, |rows| rows[j]))
+            }))
+        }
+        fn mask_diagonal(
+            &self,
+            _: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+            ras: &[f64],
+            _: &[f64],
+            indices: Option<&[usize]>,
+            _: Option<&[Option<f64>]>,
+        ) -> PyResult<Option<Vec<bool>>> {
+            self.cells.fetch_add(ras.len(), Ordering::Relaxed);
+            let rows = indices.expect("paired callers name their rows");
+            Ok(Some(
+                ras.iter()
+                    .zip(rows)
+                    .map(|(&ra, &row)| self.violated(ra, row))
+                    .collect(),
+            ))
+        }
+        fn is_expensive(&self) -> bool {
+            self.expensive
+        }
+        fn name(&self) -> String {
+            "SunProximity(test)".into()
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    type Counter = Arc<AtomicUsize>;
+
+    /// An expensive rule listed before a cheap one, and their counters.
+    fn children(cheap_modulus: usize) -> (Vec<Box<dyn ConstraintEvaluator>>, Counter, Counter) {
+        let (cheap, expensive) = (Counter::default(), Counter::default());
+        let rules: Vec<Box<dyn ConstraintEvaluator>> = vec![
+            Box::new(Rule {
+                modulus: 3,
+                expensive: true,
+                cells: expensive.clone(),
+            }),
+            Box::new(Rule {
+                modulus: cheap_modulus,
+                expensive: false,
+                cells: cheap.clone(),
+            }),
+        ];
+        (rules, cheap, expensive)
+    }
+
+    const RAS: [f64; 4] = [0.0, 1.0, 2.0, 3.0];
+    const DECS: [f64; 4] = [0.0; 4];
+    const ROWS: [usize; 3] = [4, 0, 1];
+
+    fn cheap_violated(i: usize, j: usize) -> bool {
+        (i + ROWS[j]).is_multiple_of(2)
+    }
+
+    fn expected(is_and: bool, i: usize, j: usize) -> bool {
+        fold_mask(
+            is_and,
+            cheap_violated(i, j),
+            (i + ROWS[j]).is_multiple_of(3),
+        )
+    }
+
+    #[test]
+    fn grid_masks_give_an_expensive_member_only_the_undecided_cells() {
+        let eph = TestEphemeris::new(5);
+        for is_and in [false, true] {
+            let (constraints, cheap, expensive) = children(2);
+            let mask = if is_and {
+                AndEvaluator { constraints }.in_constraint_batch(&eph, &RAS, &DECS, Some(&ROWS))
+            } else {
+                OrEvaluator { constraints }.in_constraint_batch(&eph, &RAS, &DECS, Some(&ROWS))
+            }
+            .unwrap();
+            let undecided = (0..12)
+                .filter(|c| cheap_violated(c / 3, c % 3) == is_and)
+                .count();
+            assert!(undecided > 0 && undecided < 12);
+            for ((i, j), &violated) in mask.indexed_iter() {
+                assert_eq!(violated, expected(is_and, i, j));
+            }
+            assert_eq!(cheap.load(Ordering::Relaxed), 12);
+            assert_eq!(expensive.load(Ordering::Relaxed), undecided);
+        }
+    }
+
+    #[test]
+    fn paired_masks_give_an_expensive_member_only_the_undecided_elements() {
+        let eph = TestEphemeris::new(5);
+        let ras: Vec<f64> = (0..12).map(|c| RAS[c / 3]).collect();
+        let rows: Vec<usize> = (0..12).map(|c| ROWS[c % 3]).collect();
+        for is_and in [false, true] {
+            let (constraints, cheap, expensive) = children(2);
+            let mask = if is_and {
+                AndEvaluator { constraints }.mask_diagonal(
+                    &eph,
+                    &ras,
+                    &[0.0; 12],
+                    Some(&rows),
+                    None,
+                )
+            } else {
+                OrEvaluator { constraints }.mask_diagonal(&eph, &ras, &[0.0; 12], Some(&rows), None)
+            }
+            .unwrap()
+            .unwrap();
+            let undecided = (0..12)
+                .filter(|c| cheap_violated(c / 3, c % 3) == is_and)
+                .count();
+            for (c, &violated) in mask.iter().enumerate() {
+                assert_eq!(violated, expected(is_and, c / 3, c % 3));
+            }
+            assert_eq!(cheap.load(Ordering::Relaxed), 12);
+            assert_eq!(expensive.load(Ordering::Relaxed), undecided);
+        }
+    }
+
+    #[test]
+    fn a_decided_grid_skips_the_expensive_member_and_an_open_one_uses_its_grid_kernel() {
+        let eph = TestEphemeris::new(5);
+        // Modulus 1: the cheap rule is violated everywhere, which decides an OR.
+        let (constraints, _, expensive) = children(1);
+        let mask = OrEvaluator { constraints }
+            .in_constraint_batch(&eph, &RAS, &DECS, Some(&ROWS))
+            .unwrap();
+        assert!(mask.iter().all(|&violated| violated));
+        assert_eq!(expensive.load(Ordering::Relaxed), 0);
+        // The same rule leaves every cell of an AND open: one whole-grid call.
+        let (constraints, _, expensive) = children(1);
+        let mask = AndEvaluator { constraints }
+            .in_constraint_batch(&eph, &RAS, &DECS, Some(&ROWS))
+            .unwrap();
+        for ((i, j), &violated) in mask.indexed_iter() {
+            assert_eq!(violated, (i + ROWS[j]).is_multiple_of(3));
+        }
+        assert_eq!(expensive.load(Ordering::Relaxed), 12);
+    }
+
+    #[test]
+    fn negation_and_nesting_keep_the_short_circuit() {
+        let eph = TestEphemeris::new(5);
+        let (constraints, _, expensive) = children(2);
+        let evaluator = NotEvaluator {
+            constraint: Box::new(OrEvaluator { constraints }),
+        };
+        assert!(evaluator.is_expensive());
+        let ras: Vec<f64> = (0..12).map(|c| RAS[c / 3]).collect();
+        let rows: Vec<usize> = (0..12).map(|c| ROWS[c % 3]).collect();
+        let mask = evaluator
+            .mask_diagonal(&eph, &ras, &[0.0; 12], Some(&rows), None)
+            .unwrap()
+            .unwrap();
+        for (c, &violated) in mask.iter().enumerate() {
+            assert_eq!(violated, !expected(false, c / 3, c % 3));
+        }
+        assert_eq!(expensive.load(Ordering::Relaxed), 6);
     }
 }

@@ -131,8 +131,31 @@ struct StatesAt {
     moon: Option<Array2<f64>>,
 }
 
+/// The body whose states a request needs besides the observer's.
+#[derive(Clone, Copy, PartialEq)]
+enum Held {
+    Earth,
+    Sun,
+    Moon,
+}
+
+impl Held {
+    /// `body` if the ephemeris holds its states.
+    fn parse(body: &str) -> Option<Self> {
+        use crate::utils::config::{EARTH_NAIF_ID, MOON_NAIF_ID, SUN_NAIF_ID};
+        match crate::utils::naif_ids::parse_body_identifier(body) {
+            Some(EARTH_NAIF_ID) => Some(Self::Earth),
+            Some(SUN_NAIF_ID) => Some(Self::Sun),
+            Some(MOON_NAIF_ID) => Some(Self::Moon),
+            _ => None,
+        }
+    }
+}
+
 impl StatesAt {
-    fn new(data: &EphemerisData, times: &[DateTime<Utc>]) -> PyResult<Self> {
+    /// The observer's states, with the Sun's and the Moon's only if asked for:
+    /// interpolating a table is most of the cost of a request.
+    fn new(data: &EphemerisData, times: &[DateTime<Utc>], sun: bool, moon: bool) -> PyResult<Self> {
         use crate::ephemeris::sampled_ephemeris::{locate_times, sample_states};
         let source_times = data.times.as_deref().ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err("No ephemeris timestamps available")
@@ -145,8 +168,8 @@ impl StatesAt {
                 .as_ref()
                 .map(sample)
                 .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No GCRS data available"))?,
-            sun: data.sun_gcrs.as_ref().map(sample),
-            moon: data.moon_gcrs.as_ref().map(sample),
+            sun: data.sun_gcrs.as_ref().filter(|_| sun).map(sample),
+            moon: data.moon_gcrs.as_ref().filter(|_| moon).map(sample),
         })
     }
 
@@ -161,9 +184,9 @@ impl StatesAt {
     /// position 1 au away is differenced over a fraction of a second. The
     /// Sun's velocity changes so slowly that a straight line between rows is
     /// both smooth and accurate (under 1e-9 km/s on a minute's step).
-    fn smoothed(data: &EphemerisData, times: &[DateTime<Utc>]) -> PyResult<Self> {
+    fn smoothed(data: &EphemerisData, times: &[DateTime<Utc>], moon: bool) -> PyResult<Self> {
         use crate::ephemeris::sampled_ephemeris::locate_times;
-        let mut states = Self::new(data, times)?;
+        let mut states = Self::new(data, times, true, moon)?;
         let (Some(source_times), Some(stored), Some(sun)) = (
             data.times.as_deref(),
             data.sun_gcrs.as_ref(),
@@ -216,16 +239,15 @@ impl StatesAt {
     }
 }
 
-/// Whether `body` is one the ephemeris holds states for, and which: `None`
-/// when it is not, `Some(None)` for the Earth (at the origin).
-fn held_body<'a>(states: &'a StatesAt, body: &str) -> PyResult<Option<Option<&'a Array2<f64>>>> {
-    use crate::utils::config::{EARTH_NAIF_ID, MOON_NAIF_ID, SUN_NAIF_ID};
-    Ok(match crate::utils::naif_ids::parse_body_identifier(body) {
-        Some(EARTH_NAIF_ID) => Some(None),
-        Some(SUN_NAIF_ID) => Some(Some(states.sun()?)),
-        Some(MOON_NAIF_ID) => Some(Some(states.moon()?)),
-        _ => None,
-    })
+impl StatesAt {
+    /// The states of a held body; `None` for the Earth, at the origin.
+    fn held(&self, body: Held) -> PyResult<Option<&Array2<f64>>> {
+        Ok(match body {
+            Held::Earth => None,
+            Held::Sun => Some(self.sun()?),
+            Held::Moon => Some(self.moon()?),
+        })
+    }
 }
 
 /// Observer-centred geometric states (N x 6, km and km/s, GCRS axes) of a body
@@ -241,14 +263,18 @@ fn geometric_body_states_at(
     spice_kernel: Option<&str>,
     use_horizons: bool,
 ) -> PyResult<Array2<f64>> {
-    let states = StatesAt::new(data, times)?;
-    let held = match spice_kernel {
-        None => held_body(&states, body)?,
-        Some(_) => None,
-    };
+    let held = Held::parse(body).filter(|_| spice_kernel.is_none());
+    let states = StatesAt::new(
+        data,
+        times,
+        held == Some(Held::Sun),
+        held == Some(Held::Moon),
+    )?;
     Ok(match held {
-        Some(None) => &states.observer * -1.0,
-        Some(Some(body)) => body - &states.observer,
+        Some(held) => match states.held(held)? {
+            None => &states.observer * -1.0,
+            Some(body) => body - &states.observer,
+        },
         None => {
             use crate::utils::celestial::calculate_body_by_id_or_name;
             use crate::utils::config::EARTH_NAIF_ID;
@@ -273,17 +299,15 @@ fn apparent_body_positions_at(
     spice_kernel: Option<&str>,
     for_differencing: bool,
 ) -> PyResult<Array2<f64>> {
+    let held = Held::parse(body).filter(|_| spice_kernel.is_none());
+    let moon = held == Some(Held::Moon);
     let states = if for_differencing {
-        StatesAt::smoothed(data, times)?
+        StatesAt::smoothed(data, times, moon)?
     } else {
-        StatesAt::new(data, times)?
-    };
-    let held = match spice_kernel {
-        None => held_body(&states, body)?,
-        Some(_) => None,
+        StatesAt::new(data, times, held.is_some(), moon)?
     };
     match held {
-        Some(body) => Ok(states.apparent(times, &[body])?.0.remove(0)),
+        Some(held) => Ok(states.apparent(times, &[states.held(held)?])?.0.remove(0)),
         None => crate::utils::apparent::apparent_body_positions(
             times,
             &states.observer,
@@ -327,17 +351,21 @@ fn apparent_body_states_at(
     let span = data.times.as_deref().and_then(|t| t.first().zip(t.last()));
     let step = Duration::microseconds(APPARENT_VELOCITY_STEP_MICROSECONDS);
     let h = APPARENT_VELOCITY_STEP_MICROSECONDS as f64 / 1e6;
-    // Per row: the three sample offsets (in steps) and their weights in the
-    // derivative.
-    let stencil = |time: &DateTime<Utc>| -> Option<([i32; 3], [f64; 3])> {
+    // Per row: the sample offsets (in steps) and their weights in the
+    // derivative. A centred difference does not use the time itself.
+    type Stencil = &'static [(i32, f64)];
+    const CENTRED: Stencil = &[(-1, -0.5), (1, 0.5)];
+    const FORWARD: Stencil = &[(0, -1.5), (1, 2.0), (2, -0.5)];
+    const BACKWARD: Stencil = &[(-2, 0.5), (-1, -2.0), (0, 1.5)];
+    let stencil = |time: &DateTime<Utc>| -> Option<Stencil> {
         let (first, last) = span?;
         let fits = |k: i32| *time + step * k >= *first && *time + step * k <= *last;
         if fits(-1) && fits(1) {
-            Some(([-1, 0, 1], [-0.5, 0.0, 0.5]))
+            Some(CENTRED)
         } else if fits(2) {
-            Some(([0, 1, 2], [-1.5, 2.0, -0.5]))
+            Some(FORWARD)
         } else if fits(-2) {
-            Some(([-2, -1, 0], [0.5, -2.0, 1.5]))
+            Some(BACKWARD)
         } else {
             None
         }
@@ -346,17 +374,21 @@ fn apparent_body_states_at(
     let samples: Vec<DateTime<Utc>> = times
         .iter()
         .zip(&stencils)
-        .filter_map(|(time, stencil)| stencil.map(|(offsets, _)| offsets.map(|k| *time + step * k)))
-        .flatten()
+        .flat_map(|(time, stencil)| {
+            stencil
+                .unwrap_or(&[])
+                .iter()
+                .map(move |&(k, _)| *time + step * k)
+        })
         .collect();
     let sampled = apparent_body_positions_at(data, body, &samples, spice_kernel, true)?;
     let mut rows = sampled.outer_iter();
     for (i, stencil) in stencils.iter().enumerate() {
-        let Some((_, weights)) = stencil else {
+        let Some(stencil) = stencil else {
             continue;
         };
         let mut velocity = [0.0; 3];
-        for weight in weights {
+        for (_, weight) in *stencil {
             let Some(position) = rows.next() else { break };
             for j in 0..3 {
                 velocity[j] += weight * position[j] / h;
@@ -390,7 +422,7 @@ pub(crate) fn apparent_targets_at(
             )));
         }
     }
-    let (_, corrections) = StatesAt::new(data, times)?.apparent(times, &[])?;
+    let (_, corrections) = StatesAt::new(data, times, true, false)?.apparent(times, &[])?;
     let pick = |values: &[f64], i: usize| values[i.min(values.len() - 1)];
     let mut out = Array2::zeros((n, 3));
     for i in 0..n {

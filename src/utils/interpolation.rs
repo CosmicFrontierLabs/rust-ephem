@@ -55,34 +55,60 @@ pub fn hermite_interpolate(
         // Normalized parameter [0, 1]
         let t = (query_t_sec - t0_val) / dt;
 
-        // Hermite basis functions
-        let h00 = (1.0 + 2.0 * t) * (1.0 - t).powi(2); // position at t0
-        let h10 = t * (1.0 - t).powi(2); // velocity at t0
-        let h01 = t.powi(2) * (3.0 - 2.0 * t); // position at t1
-        let h11 = t.powi(2) * (t - 1.0); // velocity at t1
-
-        // Interpolate position (columns 0-2) and velocity (columns 3-5) separately
-        for i in 0..3 {
-            // Position interpolation
-            let p0 = data_states[[idx, i]];
-            let p1 = data_states[[idx + 1, i]];
-            let v0 = data_states[[idx, i + 3]];
-            let v1 = data_states[[idx + 1, i + 3]];
-
-            result[[out_idx, i]] = h00 * p0 + h10 * dt * v0 + h01 * p1 + h11 * dt * v1;
-
-            // Velocity interpolation (derivative of position interpolation)
-            let dh00_dt = 6.0 * t * (t - 1.0) / dt;
-            let dh10_dt = (1.0 - 4.0 * t + 3.0 * t.powi(2)) / dt;
-            let dh01_dt = 6.0 * t * (1.0 - t) / dt;
-            let dh11_dt = (3.0 * t.powi(2) - 2.0 * t) / dt;
-
-            result[[out_idx, i + 3]] =
-                dh00_dt * p0 + dh10_dt * dt * v0 + dh01_dt * p1 + dh11_dt * dt * v1;
+        let before: [f64; 6] = std::array::from_fn(|k| data_states[[idx, k]]);
+        let after: [f64; 6] = std::array::from_fn(|k| data_states[[idx + 1, k]]);
+        for (k, value) in hermite_state(t, dt, &before, &after)
+            .into_iter()
+            .enumerate()
+        {
+            result[[out_idx, k]] = value;
         }
     }
 
     result
+}
+
+/// The cubic Hermite state at normalised parameter `t` in [0, 1] of an
+/// interval `dt` seconds long, between the states `before` and `after`
+/// (position xyz, velocity xyz).
+#[inline]
+fn hermite_state(t: f64, dt: f64, before: &[f64; 6], after: &[f64; 6]) -> [f64; 6] {
+    // Hermite basis functions
+    let h00 = (1.0 + 2.0 * t) * (1.0 - t).powi(2); // position at t0
+    let h10 = t * (1.0 - t).powi(2); // velocity at t0
+    let h01 = t.powi(2) * (3.0 - 2.0 * t); // position at t1
+    let h11 = t.powi(2) * (t - 1.0); // velocity at t1
+
+    // Derivatives of the basis functions, for the velocity
+    let dh00_dt = 6.0 * t * (t - 1.0) / dt;
+    let dh10_dt = (1.0 - 4.0 * t + 3.0 * t.powi(2)) / dt;
+    let dh01_dt = 6.0 * t * (1.0 - t) / dt;
+    let dh11_dt = (3.0 * t.powi(2) - 2.0 * t) / dt;
+
+    let mut state = [0.0; 6];
+    for i in 0..3 {
+        let (p0, p1, v0, v1) = (before[i], after[i], before[i + 3], after[i + 3]);
+        state[i] = h00 * p0 + h10 * dt * v0 + h01 * p1 + h11 * dt * v1;
+        state[i + 3] = dh00_dt * p0 + dh10_dt * dt * v0 + dh01_dt * p1 + dh11_dt * dt * v1;
+    }
+    state
+}
+
+/// `hermite_interpolate` of one time strictly inside one bracketing pair of
+/// samples, without the per-call tables: the same arithmetic, so the same
+/// result to the last bit.
+pub fn hermite_between(
+    query_time: &DateTime<Utc>,
+    time_before: &DateTime<Utc>,
+    time_after: &DateTime<Utc>,
+    before: &[f64; 6],
+    after: &[f64; 6],
+) -> [f64; 6] {
+    // `hermite_interpolate` measures from the first sample: the interval
+    // starts at 0.0 and has this length.
+    let dt = diff_seconds(time_after, time_before);
+    let t = diff_seconds(query_time, time_before) / dt;
+    hermite_state(t, dt, before, after)
 }
 
 /// Find the interval index for a query time
@@ -125,6 +151,37 @@ fn find_interval(data_times: &[f64], query_time: f64) -> usize {
 mod tests {
     use super::*;
     use chrono::Duration;
+
+    #[test]
+    fn hermite_between_is_hermite_interpolate_to_the_last_bit() {
+        let start = Utc::now();
+        let times = [start, start + Duration::microseconds(60_000_123)];
+        let mut states = Array2::<f64>::zeros((2, 6));
+        let rows = [
+            [1.47e8, -2.3e7, 6.1e6, -29.7, 0.31, 7.5],
+            [
+                1.47e8 - 1700.0,
+                -2.3e7 + 20.0,
+                6.1e6 + 450.0,
+                -29.6,
+                0.33,
+                7.4,
+            ],
+        ];
+        for (i, row) in rows.iter().enumerate() {
+            for (k, value) in row.iter().enumerate() {
+                states[[i, k]] = *value;
+            }
+        }
+        for micros in [1, 17, 12_345_678, 30_000_000, 59_999_999, 60_000_122] {
+            let query = start + Duration::microseconds(micros);
+            let expected = hermite_interpolate(&[query], &times, &states);
+            let actual = hermite_between(&query, &times[0], &times[1], &rows[0], &rows[1]);
+            for k in 0..6 {
+                assert_eq!(actual[k].to_bits(), expected[[0, k]].to_bits());
+            }
+        }
+    }
 
     #[test]
     fn test_hermite_interpolation_linear() {

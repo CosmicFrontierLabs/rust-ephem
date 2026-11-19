@@ -380,8 +380,14 @@ the constraint integrates the table over each body's illuminated disk.
 Where the model has no prediction (a body in the field, a limb inside the first
 cell of the table, a disk integral that did not converge) the values are NaN
 and the constraint is violated. It is far more expensive per pointing than a
-proximity rule, so in a combined tree it pays to apply cheap rules first and
-evaluate this one only where they pass. See the
+proximity rule. Combine it with the cheap rules in one constraint
+(``sun | earth_limb | stray``) and use a mask method
+(``in_constraint_batch``, ``in_constraint_elementwise``, ``in_constraint``):
+the cheap rules are then evaluated first and the stray light is computed only
+for the pointings they leave undecided, whatever the order they are written in.
+The same holds for ``&`` on pointings a cheap rule already satisfies. Methods
+that return values (``evaluate``, ``evaluate_grid``, ``evaluate_elementwise``)
+compute every rule everywhere. See the
 :py:class:`API reference <rust_ephem.constraints.StrayLightConstraint>` for the
 model, the attitude convention and the conversion factor.
 

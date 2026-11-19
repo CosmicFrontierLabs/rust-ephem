@@ -2432,6 +2432,9 @@ Limits of the option:
   time column at a time, with the targets corrected per column. That is about
   as fast as the geometric grid for large target sets and slower for a few
   targets at many times.
+* A mask grid (``in_constraint_batch``) whose tree holds a
+  ``StrayLightConstraint`` is evaluated cell by cell across the cores instead,
+  and takes as long as the geometric grid.
 * The stars of a ``BrightStarConstraint`` are displaced by the same aberration
   and deflection as the target, so whether a star is in the field is decided
   from the catalogue positions of both, where the common displacement cancels.

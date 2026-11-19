@@ -1716,7 +1716,20 @@ impl PyConstraint {
                     let (ras, decs) =
                         Self::extract_group_targets(&target_ras, &target_decs, group_indices);
                     let roll = EvaluationRoll::Fixed(rolls[group_indices[0]]);
-                    let mask = if apparent {
+                    let paired = if apparent {
+                        self.apparent_mask_paired(
+                            ephem_ref,
+                            time_indices.as_deref(),
+                            &ras,
+                            &decs,
+                            Some(roll.degrees()),
+                        )?
+                    } else {
+                        None
+                    };
+                    let mask = if let Some(mask) = paired {
+                        mask
+                    } else if apparent {
                         self.apparent_batch(
                             ephem_ref,
                             time_indices.as_deref(),
@@ -1751,6 +1764,15 @@ impl PyConstraint {
         } else {
             self.with_evaluation_ephemeris(bound, times, indices, |ephem_ref, time_indices| {
                 if apparent {
+                    if let Some(mask) = self.apparent_mask_paired(
+                        ephem_ref,
+                        time_indices.as_deref(),
+                        &target_ras,
+                        &target_decs,
+                        None,
+                    )? {
+                        return Ok(mask);
+                    }
                     return self.apparent_batch(
                         ephem_ref,
                         time_indices.as_deref(),
