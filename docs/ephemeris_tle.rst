@@ -110,6 +110,39 @@ UTC), as for the ``times=`` argument of the constraint methods.
     moon = sat.moon_pv_at(t)
     sun_from_sc = sun.position - sc.position   # km, GCRS
 
+``get_body_pv`` returns the state of a body relative to the observer directly,
+and takes the same ``times``. With ``apparent=True`` the position points where
+the body is seen: the light left the body one light time earlier, is bent by
+the Sun, and is aberrated by the observer's barycentric velocity (about 20
+arcseconds for the Sun). ``apparent_target_at`` applies the matching correction
+to catalogue targets. Together they give the angles that constraints report
+with ``apparent=True``:
+
+.. code-block:: python
+
+    import numpy as np
+
+    sun = sat.get_body_pv("sun", times=t, apparent=True)     # km and km/s, GCRS axes
+    target = sat.apparent_target_at(83.63, 22.01, t)         # (N, 3) unit vectors
+    cosine = np.sum(sun.position * target, axis=1) / np.linalg.norm(sun.position, axis=1)
+    sun_angle_deg = np.degrees(np.arccos(cosine))
+    # equals SunConstraint(...).evaluate_elementwise(..., apparent=True)
+    #        .constraint_values["sun_angle_deg"]
+
+The length of an apparent position is the light-time distance: from the
+observer at the requested time to the body where it was when the light left it.
+``body`` may also be ``"moon"``, ``"earth"``, or any body the loaded kernels
+cover (``"jupiter barycenter"``, ``"499"``). ``apparent=True`` needs a planetary
+kernel (``ensure_planetary_ephemeris()``).
+
+The apparent velocity is the rate of change of the apparent position. It is
+not the geometric velocity: from low Earth orbit the Sun's aberration shift is
+a few thousand km at 1 au and swings round with the orbital velocity, which
+adds several km/s. It is found by differencing the apparent position over half
+a second, so it inherits the observer's acceleration from the interpolated
+ephemeris: on a one-minute step in low orbit it is good to about 2 m/s for the
+Sun and 2 cm/s for the Moon and Earth, and better on a finer step.
+
 TLEEphemeris Notes
 ------------------
 - Position magnitudes should be in LEO range (6500–8000 km); velocity around
