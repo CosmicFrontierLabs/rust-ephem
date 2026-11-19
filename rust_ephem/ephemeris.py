@@ -121,41 +121,6 @@ class Ephemeris(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def body_position_at(
-        self,
-        body: str,
-        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
-        apparent: bool = False,
-    ) -> npt.NDArray[np.float64]:
-        """Vector from the observer to a body at arbitrary time(s).
-
-        Args:
-            body: ``"sun"``, ``"moon"``, ``"earth"``, or any body name or NAIF
-                ID the loaded kernels cover (``"jupiter"``, ``"499"``).
-            times: A datetime, an iterable of datetimes or a ``datetime64``
-                array (read as UTC). Times between grid points interpolate the
-                observer as ``gcrs_pv_at`` does.
-            apparent: If True, the direction the body's light arrives from:
-                reception light time, solar light deflection and the
-                aberration of the observer's barycentric velocity. These are
-                the directions constraints use with ``apparent=True``.
-
-        Returns:
-            ``(N, 3)`` array in km, GCRS axes, centred on the observer, rows in
-            input order. With ``apparent=False`` the length is the geometric
-            distance at ``times`` (for the Sun, ``sun_pv_at(t).position -
-            gcrs_pv_at(t).position``). With ``apparent=True`` it is the
-            light-time distance: from the observer at ``times`` to the body
-            where it was when the light left it.
-
-        Raises:
-            ValueError: If a time is outside the ephemeris span, the body is
-                unknown, or ``apparent=True`` and no planetary kernel covers
-                the times.
-        """
-        ...
-
-    @abc.abstractmethod
     def apparent_target_at(
         self,
         ras: float | Sequence[float] | npt.NDArray[np.float64],
@@ -167,8 +132,8 @@ class Ephemeris(abc.ABC):
         Applies the correction constraints apply to targets with
         ``apparent=True``: solar light deflection, then the aberration of the
         observer's barycentric velocity. The angle between a row of the result
-        and ``body_position_at(body, times, apparent=True)`` is the angle a
-        constraint reports for that body with ``apparent=True``.
+        and ``get_body_pv(body, times=times, apparent=True).position`` is the
+        angle a constraint reports for that body with ``apparent=True``.
 
         ``ras``, ``decs`` and ``times`` are paired row by row; any of them may
         be a single value used for every row.

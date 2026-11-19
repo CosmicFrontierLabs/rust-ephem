@@ -368,18 +368,6 @@ impl ParquetEphemeris {
         self.get_moon_pv_at(py, times)
     }
 
-    /// Vector from the observer to a body (N x 3, km, GCRS axes) at arbitrary time(s), geometric or apparent
-    #[pyo3(signature = (body, times, apparent=false))]
-    fn body_position_at(
-        &self,
-        py: Python,
-        body: &str,
-        times: &Bound<PyAny>,
-        apparent: bool,
-    ) -> PyResult<Py<PyAny>> {
-        self.get_body_position_at(py, body, times, apparent)
-    }
-
     /// Unit vectors (N x 3, GCRS axes) in which catalogue targets are seen at arbitrary time(s)
     fn apparent_target_at(
         &self,
@@ -590,15 +578,27 @@ impl ParquetEphemeris {
         EphemerisBase::moon_illumination(self, time_indices.as_deref())
     }
 
-    #[pyo3(signature = (body, spice_kernel=None, use_horizons=false))]
+    /// Position and velocity of a body relative to the observer (GCRS axes, km, km/s),
+    /// on the ephemeris grid or at arbitrary time(s), geometric or apparent
+    #[pyo3(signature = (body, spice_kernel=None, use_horizons=false, *, times=None, apparent=false))]
     fn get_body_pv(
         &self,
         py: Python,
         body: &str,
         spice_kernel: Option<String>,
         use_horizons: bool,
+        times: Option<&Bound<PyAny>>,
+        apparent: bool,
     ) -> PyResult<Py<PositionVelocityData>> {
-        <Self as EphemerisBase>::get_body_pv(self, py, body, spice_kernel.as_deref(), use_horizons)
+        <Self as EphemerisBase>::get_body_pv(
+            self,
+            py,
+            body,
+            spice_kernel.as_deref(),
+            use_horizons,
+            times,
+            apparent,
+        )
     }
 
     /// Get a body in observer-centred GCRS. With apparent=True, apply reception
