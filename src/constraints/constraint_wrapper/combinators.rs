@@ -30,6 +30,24 @@ fn next_value_prefix(
     })
 }
 
+/// A child's paired result as its negation reports it.
+fn negated_diagonal(mut result: DiagonalEvaluation) -> DiagonalEvaluation {
+    for value in &mut result.violated {
+        *value = !*value;
+    }
+    result.named = result
+        .named
+        .into_iter()
+        .map(|(key, values)| (format!("not.{key}"), values))
+        .collect();
+    result.cause_value_keys = result
+        .cause_value_keys
+        .into_iter()
+        .map(|(key, values)| (format!("not.{key}"), values))
+        .collect();
+    result
+}
+
 /// Merge values and cause namespaces with the same collision rules as the
 /// Cartesian API, but obtain every child's data in a single paired traversal.
 fn evaluate_children_diagonal(
@@ -40,6 +58,43 @@ fn evaluate_children_diagonal(
     indices: Option<&[usize]>,
     accept: impl Fn(usize) -> bool,
 ) -> PyResult<DiagonalEvaluation> {
+    let merged =
+        merge_children_diagonal(children, ephemeris, ras, decs, indices, accept, |child| {
+            child
+                .evaluate_diagonal(ephemeris, ras, decs, indices)
+                .map(Some)
+        })?;
+    Ok(merged.expect("every child was evaluated"))
+}
+
+/// `evaluate_children_diagonal` with a spacecraft roll per element. `None`
+/// when a child has no paired kernel for rolls: the tree is then evaluated
+/// grouped by (time, roll), which keeps a free-roll sweep coordinated.
+fn evaluate_children_diagonal_at_rolls(
+    children: &[Box<dyn ConstraintEvaluator>],
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    ras: &[f64],
+    decs: &[f64],
+    indices: Option<&[usize]>,
+    rolls: &[Option<f64>],
+    accept: impl Fn(usize) -> bool,
+) -> PyResult<Option<DiagonalEvaluation>> {
+    merge_children_diagonal(children, ephemeris, ras, decs, indices, accept, |child| {
+        child.evaluate_diagonal_at_rolls(ephemeris, ras, decs, indices, rolls)
+    })
+}
+
+/// Merge the paired results `evaluate` gives for each child; `None` as soon as
+/// one child has none.
+fn merge_children_diagonal(
+    children: &[Box<dyn ConstraintEvaluator>],
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    ras: &[f64],
+    decs: &[f64],
+    indices: Option<&[usize]>,
+    accept: impl Fn(usize) -> bool,
+    evaluate: impl Fn(&dyn ConstraintEvaluator) -> PyResult<Option<DiagonalEvaluation>>,
+) -> PyResult<Option<DiagonalEvaluation>> {
     diagonal::time_indices(ephemeris, ras, decs, indices)?;
     let mut counts = vec![0; ras.len()];
     let mut values = HashMap::new();
@@ -47,7 +102,9 @@ fn evaluate_children_diagonal(
     let mut cause_value_keys = HashMap::new();
     let mut value_tag_counts: HashMap<String, usize> = HashMap::new();
     for child in children {
-        let result = child.evaluate_diagonal(ephemeris, ras, decs, indices)?;
+        let Some(result) = evaluate(child.as_ref())? else {
+            return Ok(None);
+        };
         for (count, violated) in counts.iter_mut().zip(result.violated) {
             *count += usize::from(violated);
         }
@@ -77,12 +134,12 @@ fn evaluate_children_diagonal(
             insert_no_collision(&mut cause_value_keys, tag, keys);
         }
     }
-    Ok(DiagonalEvaluation {
+    Ok(Some(DiagonalEvaluation {
         violated: counts.into_iter().map(accept).collect(),
         named,
         values,
         cause_value_keys,
-    })
+    }))
 }
 
 /// Cache independent subtrees once, preserving each child's original cause
@@ -548,6 +605,25 @@ impl ConstraintEvaluator for AndEvaluator {
         evaluate_children_diagonal(&self.constraints, ephemeris, ras, decs, indices, |count| {
             count == self.constraints.len()
         })
+    }
+
+    fn evaluate_diagonal_at_rolls(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+        rolls: &[Option<f64>],
+    ) -> PyResult<Option<DiagonalEvaluation>> {
+        evaluate_children_diagonal_at_rolls(
+            &self.constraints,
+            ephemeris,
+            ras,
+            decs,
+            indices,
+            rolls,
+            |count| count == self.constraints.len(),
+        )
     }
 
     fn prepare_roll_sweep<'a>(
@@ -1028,6 +1104,25 @@ impl ConstraintEvaluator for OrEvaluator {
         evaluate_children_diagonal(&self.constraints, ephemeris, ras, decs, indices, |count| {
             count > 0
         })
+    }
+
+    fn evaluate_diagonal_at_rolls(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+        rolls: &[Option<f64>],
+    ) -> PyResult<Option<DiagonalEvaluation>> {
+        evaluate_children_diagonal_at_rolls(
+            &self.constraints,
+            ephemeris,
+            ras,
+            decs,
+            indices,
+            rolls,
+            |count| count > 0,
+        )
     }
 
     fn prepare_roll_sweep<'a>(
@@ -1533,23 +1628,23 @@ impl ConstraintEvaluator for NotEvaluator {
         decs: &[f64],
         indices: Option<&[usize]>,
     ) -> PyResult<DiagonalEvaluation> {
-        let mut result = self
+        self.constraint
+            .evaluate_diagonal(ephemeris, ras, decs, indices)
+            .map(negated_diagonal)
+    }
+
+    fn evaluate_diagonal_at_rolls(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+        rolls: &[Option<f64>],
+    ) -> PyResult<Option<DiagonalEvaluation>> {
+        Ok(self
             .constraint
-            .evaluate_diagonal(ephemeris, ras, decs, indices)?;
-        for value in &mut result.violated {
-            *value = !*value;
-        }
-        result.named = result
-            .named
-            .into_iter()
-            .map(|(key, values)| (format!("not.{key}"), values))
-            .collect();
-        result.cause_value_keys = result
-            .cause_value_keys
-            .into_iter()
-            .map(|(key, values)| (format!("not.{key}"), values))
-            .collect();
-        Ok(result)
+            .evaluate_diagonal_at_rolls(ephemeris, ras, decs, indices, rolls)?
+            .map(negated_diagonal))
     }
 
     fn prepare_roll_sweep<'a>(
@@ -1900,6 +1995,25 @@ impl ConstraintEvaluator for XorEvaluator {
         evaluate_children_diagonal(&self.constraints, ephemeris, ras, decs, indices, |count| {
             count == 1
         })
+    }
+
+    fn evaluate_diagonal_at_rolls(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+        rolls: &[Option<f64>],
+    ) -> PyResult<Option<DiagonalEvaluation>> {
+        evaluate_children_diagonal_at_rolls(
+            &self.constraints,
+            ephemeris,
+            ras,
+            decs,
+            indices,
+            rolls,
+            |count| count == 1,
+        )
     }
 
     fn prepare_roll_sweep<'a>(
@@ -2285,6 +2399,25 @@ impl ConstraintEvaluator for AtLeastEvaluator {
         evaluate_children_diagonal(&self.constraints, ephemeris, ras, decs, indices, |count| {
             count >= self.min_violated
         })
+    }
+
+    fn evaluate_diagonal_at_rolls(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+        rolls: &[Option<f64>],
+    ) -> PyResult<Option<DiagonalEvaluation>> {
+        evaluate_children_diagonal_at_rolls(
+            &self.constraints,
+            ephemeris,
+            ras,
+            decs,
+            indices,
+            rolls,
+            |count| count >= self.min_violated,
+        )
     }
 
     fn prepare_roll_sweep<'a>(
