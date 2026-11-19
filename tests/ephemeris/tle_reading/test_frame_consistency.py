@@ -77,7 +77,15 @@ def test_tle_frame_references_and_routes(
         position = tle.teme_pv.position[index]
         velocity = tle.teme_pv.velocity[index]
 
-        def transformed(seconds: float, to_gcrs: bool) -> NDArray[np.float64]:
+        def transformed(
+            seconds: float,
+            to_gcrs: bool,
+            time: Time = time,
+            xp: float = xp,
+            yp: float = yp,
+            position: NDArray[np.float64] = position,
+            velocity: NDArray[np.float64] = velocity,
+        ) -> NDArray[np.float64]:
             tt = (time.tt.jd1, time.tt.jd2 + seconds / 86400.0)
             ut1 = (time.ut1.jd1, time.ut1.jd2 + seconds / 86400.0)
             teme_itrs = erfa.c2tcio(

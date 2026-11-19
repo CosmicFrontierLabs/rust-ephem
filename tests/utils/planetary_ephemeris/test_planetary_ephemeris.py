@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Test suite for planetary ephemeris functions.
 Tests init_planetary_ephemeris, download_planetary_ephemeris, and related functionality.

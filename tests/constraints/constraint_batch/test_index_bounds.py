@@ -68,5 +68,6 @@ def test_out_of_bounds_indices_do_not_abort(
         capture_output=True,
         text=True,
         timeout=60,
+        check=False,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr

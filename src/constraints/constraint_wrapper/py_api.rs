@@ -36,8 +36,10 @@ use super::json_parser::parse_constraint_json;
 use super::json_to_py::json_to_pyobject;
 use super::roll_range::run_roll_sweep;
 use crate::constraints::elementwise::ElementwiseResult;
+use crate::constraints::grid::{GridEvaluation, GridResult};
 #[path = "py_api_helpers.rs"]
 mod py_api_helpers;
+use py_api_helpers::extract_f64s;
 
 /// Python-facing constraint evaluator
 ///
@@ -1425,7 +1427,7 @@ impl PyConstraint {
         let bound = ephemeris.bind(py);
         self.with_evaluation_ephemeris(bound, times, indices, |ephem_ref, time_indices| {
             if apparent {
-                let mut results = self.eval_batch_apparent(
+                let grid = self.grid_apparent(
                     ephem_ref,
                     &[target_ra],
                     &[target_dec],
@@ -1433,7 +1435,7 @@ impl PyConstraint {
                     n_roll_samples,
                     target_roll,
                 )?;
-                return Ok(results.remove(0));
+                return Ok(grid.target(0));
             }
             self.eval_with_ephemeris(
                 &*self.evaluator,
@@ -1487,25 +1489,17 @@ impl PyConstraint {
                 times,
                 indices,
                 |ephem_ref, time_indices| {
-                    if apparent {
-                        return self.eval_batch_apparent(
+                    Ok(self
+                        .grid(
                             ephem_ref,
                             &target_ras,
                             &target_decs,
                             time_indices.as_deref(),
                             n_roll_samples,
                             None,
-                        );
-                    }
-                    self.eval_batch_with_ephemeris(
-                        &*self.evaluator,
-                        ephem_ref,
-                        &target_ras,
-                        &target_decs,
-                        time_indices.clone(),
-                        n_roll_samples,
-                        None,
-                    )
+                            apparent,
+                        )?
+                        .into_results())
                 },
             );
         };
@@ -1517,26 +1511,17 @@ impl PyConstraint {
                 let roll = rolls[group_indices[0]];
                 let (ras, decs) =
                     Self::extract_group_targets(&target_ras, &target_decs, group_indices);
-                let group_results = if apparent {
-                    self.eval_batch_apparent(
+                let group_results = self
+                    .grid(
                         ephem_ref,
                         &ras,
                         &decs,
                         time_indices.as_deref(),
                         n_roll_samples,
                         Some(roll),
+                        apparent,
                     )?
-                } else {
-                    self.eval_batch_with_ephemeris(
-                        &*self.evaluator,
-                        ephem_ref,
-                        &ras,
-                        &decs,
-                        time_indices.clone(),
-                        n_roll_samples,
-                        Some(roll),
-                    )?
-                };
+                    .into_results();
                 if group_results.len() != group_indices.len() {
                     return Err(pyo3::exceptions::PyRuntimeError::new_err(
                         "Batch evaluation returned an incorrect number of results",
@@ -1559,6 +1544,111 @@ impl PyConstraint {
                 })
                 .collect()
         })
+    }
+
+    /// Evaluate the constraint for every target at every time and return the
+    /// grid as arrays.
+    ///
+    /// Same arguments, time handling, roll semantics and polarity as
+    /// `evaluate_batch`, without one result object per target: the mask, the
+    /// named values and the per-leaf masks stay `(n_targets, n_times)` arrays.
+    ///
+    /// Args:
+    ///     ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris, OEMEphemeris, FileEphemeris, or ParquetEphemeris
+    ///     target_ras (array-like): Right ascensions in degrees (ICRS/J2000)
+    ///     target_decs (array-like): Declinations in degrees (ICRS/J2000)
+    ///     times (datetime, list[datetime] or datetime64 array, optional): Times to evaluate
+    ///     indices (int or list[int], optional): Time indices to evaluate
+    ///     target_rolls (list[float | None], optional): Per-target spacecraft roll in
+    ///         degrees; ``None`` entries (or ``target_rolls=None``) sweep
+    ///         ``n_roll_samples`` rolls for roll-dependent constraints.
+    ///     n_roll_samples (int, optional): Roll angles swept in the free-roll case.
+    ///     apparent (bool, optional): Measure apparent rather than geometric angles.
+    ///
+    /// Returns:
+    ///     GridResult: ``constraint_array`` (n_targets, n_times) bool (True =
+    ///     violated, equal to ``in_constraint_batch``), ``visibility_flags``,
+    ///     ``constraint_values``, ``component_violated``, ``cause_value_keys``,
+    ///     ``constraint_name``, ``timestamp``, ``ras``, ``decs`` and ``target(i)``.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=false))]
+    fn evaluate_grid(
+        &self,
+        py: Python,
+        ephemeris: Py<PyAny>,
+        target_ras: &Bound<PyAny>,
+        target_decs: &Bound<PyAny>,
+        times: Option<&Bound<PyAny>>,
+        indices: Option<&Bound<PyAny>>,
+        target_rolls: Option<Vec<Option<f64>>>,
+        n_roll_samples: usize,
+        apparent: bool,
+    ) -> PyResult<GridResult> {
+        Self::validate_n_roll_samples(n_roll_samples)?;
+        let target_ras = extract_f64s(target_ras, "target_ras")?;
+        let target_decs = extract_f64s(target_decs, "target_decs")?;
+        let n_targets = target_ras.len();
+        if target_decs.len() != n_targets {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+        // Targets that share a roll (or the lack of one) are evaluated together.
+        let mut groups: std::collections::BTreeMap<Option<u64>, Vec<usize>> =
+            std::collections::BTreeMap::new();
+        match &target_rolls {
+            Some(rolls) => {
+                if rolls.len() != n_targets {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "target_rolls must have the same length as target_ras and target_decs",
+                    ));
+                }
+                for (index, roll) in rolls.iter().enumerate() {
+                    if let Some(roll) = roll {
+                        Self::validate_target_roll(*roll)?;
+                    }
+                    groups
+                        .entry(roll.map(f64::to_bits))
+                        .or_default()
+                        .push(index);
+                }
+            }
+            None => {
+                groups.insert(None, (0..n_targets).collect());
+            }
+        }
+        let bound = ephemeris.bind(py);
+        let grid =
+            self.with_evaluation_ephemeris(bound, times, indices, |ephem_ref, time_indices| {
+                let mut parts = Vec::with_capacity(groups.len());
+                for (roll, members) in &groups {
+                    let whole = members.len() == n_targets;
+                    let (ras, decs) = if whole {
+                        (target_ras.clone(), target_decs.clone())
+                    } else {
+                        Self::extract_group_targets(&target_ras, &target_decs, members)
+                    };
+                    parts.push((
+                        members.clone(),
+                        self.grid(
+                            ephem_ref,
+                            &ras,
+                            &decs,
+                            time_indices.as_deref(),
+                            n_roll_samples,
+                            roll.map(f64::from_bits),
+                            apparent,
+                        )?,
+                    ));
+                }
+                GridEvaluation::from_target_groups(self.evaluator.name(), n_targets, parts)
+                    .ok_or_else(|| {
+                        pyo3::exceptions::PyRuntimeError::new_err(
+                            "Grid evaluation produced no result",
+                        )
+                    })
+            })?;
+        Ok(GridResult::new(grid, target_ras, target_decs))
     }
 
     /// Check if targets are in-constraint for multiple RA/Dec positions (vectorized)
@@ -2270,13 +2360,15 @@ impl PyConstraint {
         &self,
         py: Python,
         ephemeris: Py<PyAny>,
-        target_ras: Vec<f64>,
-        target_decs: Vec<f64>,
+        target_ras: &Bound<PyAny>,
+        target_decs: &Bound<PyAny>,
         times: Option<&Bound<PyAny>>,
         target_rolls: Option<Vec<Option<f64>>>,
         n_roll_samples: usize,
         apparent: bool,
     ) -> PyResult<Py<PyAny>> {
+        let target_ras = extract_f64s(target_ras, "target_ras")?;
+        let target_decs = extract_f64s(target_decs, "target_decs")?;
         let (_, evaluation) = self.elementwise(
             py,
             &ephemeris,
@@ -2309,13 +2401,15 @@ impl PyConstraint {
         &self,
         py: Python,
         ephemeris: Py<PyAny>,
-        target_ras: Vec<f64>,
-        target_decs: Vec<f64>,
+        target_ras: &Bound<PyAny>,
+        target_decs: &Bound<PyAny>,
         times: Option<&Bound<PyAny>>,
         target_rolls: Option<Vec<Option<f64>>>,
         n_roll_samples: usize,
         apparent: bool,
     ) -> PyResult<ElementwiseResult> {
+        let target_ras = extract_f64s(target_ras, "target_ras")?;
+        let target_decs = extract_f64s(target_decs, "target_decs")?;
         let (element_times, evaluation) = self.elementwise(
             py,
             &ephemeris,

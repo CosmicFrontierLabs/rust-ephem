@@ -3,7 +3,6 @@ Test suite for MoonPhaseConstraint.
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
@@ -11,9 +10,6 @@ from pydantic import ValidationError
 
 import rust_ephem
 from rust_ephem.constraints import MoonPhaseConstraint
-
-if TYPE_CHECKING:
-    import rust_ephem
 
 
 def moon_ra_dec_deg(ephem: "rust_ephem.Ephemeris", index: int) -> tuple[float, float]:

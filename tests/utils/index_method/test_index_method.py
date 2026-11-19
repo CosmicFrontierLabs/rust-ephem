@@ -4,7 +4,7 @@ Tests for the index() method on all ephemeris types
 
 import os
 from datetime import datetime
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 import pytest
@@ -132,7 +132,7 @@ class TestIndexMethod:
 class TestIndexMethodSPICE:
     """Test index() method with SPICE ephemeris"""
 
-    pytestmark = [
+    pytestmark: ClassVar[list[pytest.MarkDecorator]] = [
         pytest.mark.skipif(
             SKIP_SPICE_TEST, reason=f"SPICE kernel file not found at {TEST_SPK_PATH}"
         ),

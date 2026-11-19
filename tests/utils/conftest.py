@@ -1,7 +1,6 @@
 """Pytest configuration for utils tests."""
 
 from datetime import datetime, timezone
-from typing import List, Tuple
 
 import pytest
 
@@ -73,7 +72,7 @@ def spice_ephemeris(ensure_planetary_data: None) -> rust_ephem.SPICEEphemeris:
 
 
 @pytest.fixture
-def test_times() -> List[datetime]:
+def test_times() -> list[datetime]:
     """Generate a sequence of test times."""
     from datetime import timedelta
 
@@ -82,7 +81,7 @@ def test_times() -> List[datetime]:
 
 
 @pytest.fixture
-def tle_lines() -> Tuple[str, str]:
+def tle_lines() -> tuple[str, str]:
     """Provide TLE data for testing"""
     return (
         "1 28485U 04047A   25287.56748435  .00035474  00000+0  70906-3 0  9995",

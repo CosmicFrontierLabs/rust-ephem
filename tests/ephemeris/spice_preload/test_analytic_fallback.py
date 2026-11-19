@@ -50,6 +50,7 @@ def run(home: Path) -> str:
         [sys.executable, "-c", SCRIPT],
         env=env,
         cwd=home,
+        check=False,
         capture_output=True,
         text=True,
     )

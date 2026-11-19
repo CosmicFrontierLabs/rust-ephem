@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Test suite for leap second implementation.
 Compares rust_ephem's TAI-UTC offsets against astropy.
@@ -6,7 +5,7 @@ Compares rust_ephem's TAI-UTC offsets against astropy.
 
 import datetime
 from datetime import timezone
-from typing import Any, Tuple
+from typing import Any
 
 import pytest
 
@@ -173,7 +172,7 @@ class TestEphemerisWithLeapSeconds:
     """Tests for ephemeris calculations with leap second corrections"""
 
     @pytest.fixture
-    def tle_lines(self) -> Tuple[str, str]:
+    def tle_lines(self) -> tuple[str, str]:
         """Provide TLE data for testing"""
         return (
             "1 28485U 04047A   25287.56748435  .00035474  00000+0  70906-3 0  9995",
@@ -191,7 +190,7 @@ class TestEphemerisWithLeapSeconds:
         assert ephem is not None, "Ephemeris should be created successfully"
 
     def test_ephemeris_propagation_with_leap_seconds(
-        self, tle_lines: Tuple[str, str]
+        self, tle_lines: tuple[str, str]
     ) -> None:
         """Test that ephemeris propagation works with leap second corrections"""
         tle1, tle2 = tle_lines
@@ -205,7 +204,7 @@ class TestEphemerisWithLeapSeconds:
         assert ephem.teme_pv.position is not None, "TEME position should be available"
 
     def test_ephemeris_gcrs_transformation_with_leap_seconds(
-        self, tle_lines: Tuple[str, str]
+        self, tle_lines: tuple[str, str]
     ) -> None:
         """Test GCRS transformation with leap second corrections"""
         tle1, tle2 = tle_lines
@@ -219,7 +218,7 @@ class TestEphemerisWithLeapSeconds:
         assert ephem.gcrs_pv.position is not None, "GCRS position should be available"
         assert ephem.gcrs_pv.velocity is not None, "GCRS velocity should be available"
 
-    def test_ephemeris_position_magnitude(self, tle_lines: Tuple[str, str]) -> None:
+    def test_ephemeris_position_magnitude(self, tle_lines: tuple[str, str]) -> None:
         """Test that GCRS position magnitude is reasonable for LEO"""
         tle1, tle2 = tle_lines
         begin = datetime.datetime(2025, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
@@ -235,7 +234,7 @@ class TestEphemerisWithLeapSeconds:
             f"Position magnitude should be in LEO range, got {pos_mag:.3f} km"
         )
 
-    def test_ephemeris_velocity_magnitude(self, tle_lines: Tuple[str, str]) -> None:
+    def test_ephemeris_velocity_magnitude(self, tle_lines: tuple[str, str]) -> None:
         """Test that GCRS velocity magnitude is reasonable for LEO"""
         tle1, tle2 = tle_lines
         begin = datetime.datetime(2025, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
@@ -252,7 +251,7 @@ class TestEphemerisWithLeapSeconds:
         )
 
     def test_ephemeris_with_multiple_timesteps(
-        self, tle_lines: Tuple[str, str]
+        self, tle_lines: tuple[str, str]
     ) -> None:
         """Test ephemeris with multiple time steps"""
         tle1, tle2 = tle_lines
