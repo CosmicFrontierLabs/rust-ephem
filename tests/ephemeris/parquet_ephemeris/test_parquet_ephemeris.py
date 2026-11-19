@@ -5,6 +5,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import duckdb
 import numpy as np
 import pytest
 
@@ -180,7 +181,7 @@ class TestErrors:
     """Tests for error handling and validation."""
 
     def test_missing_file_raises(self, tmp_path: Any) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(duckdb.Error, match="does_not_exist"):
             ParquetEphemeris(
                 str(tmp_path / "does_not_exist.parquet"),
                 BEGIN,

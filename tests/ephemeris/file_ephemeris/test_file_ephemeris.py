@@ -194,7 +194,7 @@ class TestUnitConversion:
     def test_velocity_unit_follows_position_unit(self, meters_file: str) -> None:
         """Metres without a velocity unit means metres per second: reading the
         velocities as km/s would wreck every interpolated state."""
-        kwargs: dict[str, Any] = dict(begin=BEGIN, end=END, step_size=STEP)
+        kwargs: dict[str, Any] = {"begin": BEGIN, "end": END, "step_size": STEP}
         implied = FileEphemeris(meters_file, position_unit="m", **kwargs)
         explicit = FileEphemeris(
             meters_file, position_unit="m", velocity_unit="m/s", **kwargs

@@ -1,8 +1,8 @@
 """Geometry and evaluation tests for the bright star avoidance constraint."""
 
 import math
+from collections.abc import Generator
 from datetime import datetime, timezone
-from typing import Generator
 
 import pytest
 

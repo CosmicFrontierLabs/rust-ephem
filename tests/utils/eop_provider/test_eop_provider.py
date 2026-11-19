@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Test suite for EOP (Earth Orientation Parameters) provider functions.
 Tests init_eop_provider, is_eop_available, and related functionality.

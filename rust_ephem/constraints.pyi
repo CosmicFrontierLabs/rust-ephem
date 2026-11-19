@@ -6,30 +6,25 @@ using Pydantic. These models can be serialized to/from JSON and used
 to configure the Rust constraint evaluators.
 """
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import Literal, TypeAlias
 
 import numpy as np
 import numpy.typing as npt
 from pydantic import BaseModel, TypeAdapter
 
 from ._rust_ephem import ElementwiseResult as ElementwiseResult
+from ._rust_ephem import GridResult as GridResult
 from ._rust_ephem import RouteResult as RouteResult
 from .ephemeris import Ephemeris
 
 DEFAULT_N_POINTS: int
 DEFAULT_N_ROLL_SAMPLES: int
 
-if TYPE_CHECKING:
-    from rust_ephem import VisibilityWindow
-
-if TYPE_CHECKING:
-    pass
+from rust_ephem import VisibilityWindow
 
 class RollReference(str, Enum):
     SUN = "sun"
@@ -55,7 +50,7 @@ class ConstraintResult(BaseModel):
     @property
     def constraint_array(self) -> list[bool]: ...
     @property
-    def constraint_values(self) -> dict[str, list[float]]: ...
+    def constraint_values(self) -> dict[str, npt.NDArray[np.float64]]: ...
     @property
     def cause_value_keys(self) -> dict[str, list[str]]: ...
     @property
@@ -156,6 +151,17 @@ class RustConstraintMixin(BaseModel):
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
     ) -> ElementwiseResult: ...
+    def evaluate_grid(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: Sequence[float] | npt.ArrayLike,
+        target_decs: Sequence[float] | npt.ArrayLike,
+        times: datetime | Sequence[datetime] | npt.NDArray[np.datetime64] | None = None,
+        indices: int | list[int] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
+    ) -> GridResult: ...
     def in_constraint(
         self,
         time: datetime | list[datetime] | npt.NDArray[np.datetime64],
@@ -214,7 +220,6 @@ class RustConstraintMixin(BaseModel):
                 result1 = sun_c.evaluate_moving_body(ephem, body="Jupiter")
                 result2 = moon_c.evaluate_moving_body(ephem, body="Jupiter")
         """
-        ...
     def and_(self, other: ConstraintConfig) -> AndConstraint: ...
     def or_(self, other: ConstraintConfig) -> OrConstraint: ...
     def xor_(self, other: ConstraintConfig) -> XorConstraint: ...
@@ -343,7 +348,7 @@ class BoresightOffsetConstraint(RustConstraintMixin):
     constraint: ConstraintConfig
     roll_deg: float = 0.0
     roll_clockwise: bool = False
-    roll_reference: RollReference = RollReference.NORTH
+    roll_reference: RollReference = ...
     pitch_deg: float = 0.0
     yaw_deg: float = 0.0
 
@@ -392,7 +397,7 @@ class StrayLightConstraint(RustConstraintMixin):
     sun_v_mag_1au: float = -26.74
     moon_v_mag_full: float = -12.73
 
-ConstraintConfig = (
+ConstraintConfig: TypeAlias = (
     SunConstraint
     | MoonConstraint
     | MoonLimbConstraint
