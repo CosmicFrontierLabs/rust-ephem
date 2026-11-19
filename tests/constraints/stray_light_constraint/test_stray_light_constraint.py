@@ -1079,6 +1079,71 @@ def test_combined_constraint_shares_the_roll(
         )
 
 
+def test_per_row_rolls_in_a_tree_of_roll_independent_rules(
+    constraint: StrayLightConstraint, ephem: Any, sample: tuple[Array, Array, Any]
+) -> None:
+    """With rules that ignore the roll, a tree is evaluated in one paired pass:
+    the result is each rule's own, combined."""
+    ra, dec, _, times = roll_inputs(ephem, sample, 40)
+    rolls: list[float | None] = [None if i % 3 == 0 else 17.0 * i for i in range(40)]
+    sun = re.SunConstraint(min_angle=60)
+    limb = re.EarthLimbConstraint(min_angle=15)
+    kwargs: dict[str, Any] = dict(times=times, target_rolls=rolls)
+    stray_alone = constraint.evaluate_elementwise(ephem, ra, dec, **kwargs)
+    # The roll means nothing to these two.
+    sun_alone = np.asarray(sun.in_constraint_elementwise(ephem, ra, dec, times=times))
+    limb_alone = np.asarray(limb.in_constraint_elementwise(ephem, ra, dec, times=times))
+    np.testing.assert_array_equal(
+        sun.in_constraint_elementwise(ephem, ra, dec, **kwargs), sun_alone
+    )
+    stray = np.asarray(stray_alone.constraint_array)
+    cases = {
+        "or": (constraint | sun | limb, stray | sun_alone | limb_alone),
+        "and_not": (constraint & ~sun, stray & ~sun_alone),
+        "xor": (constraint ^ limb, stray ^ limb_alone),
+    }
+    for name, (tree, expected) in cases.items():
+        result = tree.evaluate_elementwise(ephem, ra, dec, **kwargs)
+        np.testing.assert_array_equal(result.constraint_array, expected, err_msg=name)
+        np.testing.assert_array_equal(
+            tree.in_constraint_elementwise(ephem, ra, dec, **kwargs),
+            expected,
+            err_msg=name,
+        )
+        for key, values in stray_alone.constraint_values.items():
+            np.testing.assert_array_equal(
+                result.constraint_values[f"stray_light.{key}"],
+                values,
+                err_msg=f"{name} {key}",
+            )
+    assert stray.any() and not stray.all()
+
+
+def test_many_distinct_rolls_cost_about_the_same_as_none(
+    constraint: StrayLightConstraint, ephem: Any
+) -> None:
+    """Rows are independent, so distinct rolls and times need no grouping."""
+    import time as clock
+
+    rng = np.random.default_rng(9)
+    count = 600
+    ra = rng.uniform(0.0, 360.0, count)
+    dec = np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, count)))
+    times = [ephem.timestamp[int(i)] for i in rng.integers(0, N, count)]
+    rolls = list(rng.uniform(0.0, 360.0, count))
+
+    def best(**kwargs: Any) -> float:
+        elapsed = []
+        for _ in range(3):
+            start = clock.perf_counter()
+            constraint.evaluate_elementwise(ephem, ra, dec, times=times, **kwargs)
+            elapsed.append(clock.perf_counter() - start)
+        return min(elapsed)
+
+    # Grouped by (time, roll) this took tens of times longer than no roll.
+    assert best(target_rolls=rolls) < 5.0 * best() + 0.05
+
+
 def test_roll_range_gives_the_rolls_that_are_dark(
     roll_case: tuple[StrayLightConstraint, float, float, Any, Array], ephem: Any
 ) -> None:

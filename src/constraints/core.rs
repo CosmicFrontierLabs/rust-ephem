@@ -806,6 +806,35 @@ pub trait ConstraintEvaluator: Send + Sync {
         super::diagonal::evaluate(self, ephemeris, target_ras, target_decs, time_indices)
     }
 
+    /// Whether an explicit spacecraft roll can never change this evaluator's
+    /// result. Only leaves that do not look at the roll at all say so; the
+    /// default is the safe answer for everything else.
+    fn ignores_explicit_roll(&self) -> bool {
+        false
+    }
+
+    /// `evaluate_diagonal` with a spacecraft roll per element: `rolls[i]` is an
+    /// explicit roll for element `i`, or `None`.
+    ///
+    /// `Ok(None)` means there is no paired kernel for this tree with rolls, and
+    /// the caller evaluates the elements grouped by (time, roll) instead. An
+    /// implementation must give exactly what that grouped evaluation would.
+    fn evaluate_diagonal_at_rolls(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        _rolls: &[Option<f64>],
+    ) -> PyResult<Option<super::diagonal::DiagonalEvaluation>> {
+        if self.ignores_explicit_roll() {
+            return self
+                .evaluate_diagonal(ephemeris, target_ras, target_decs, time_indices)
+                .map(Some);
+        }
+        Ok(None)
+    }
+
     /// Continuous values at an explicit spacecraft roll. Most leaves expose
     /// roll-independent values; boresight nodes rotate targets before delegating.
     fn compute_named_values_at_roll(
