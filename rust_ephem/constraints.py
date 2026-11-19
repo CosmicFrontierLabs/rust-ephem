@@ -2162,12 +2162,27 @@ class StrayLightConstraint(RustConstraintMixin):
     that sum into the surface brightness of the uniform sky that would put the
     same light on the focal plane, which is compared with the zodi.
 
-    **Attitude.** The table's azimuth is tied to the Sun: at the nominal
-    attitude the Sun's direction, projected perpendicular to the boresight,
-    lies at table azimuth ``sun_azimuth_deg``. ``roll_offset_deg`` rolls the
-    spacecraft right-handed about the boresight from there, which adds to the
-    Sun's azimuth. A ``target_roll`` passed to an evaluation method is not used
-    by this constraint.
+    **Attitude.** Without a roll, the attitude is tied to the Sun: at the
+    nominal attitude the Sun's direction, projected perpendicular to the
+    boresight, lies at table azimuth ``sun_azimuth_deg``, and
+    ``roll_offset_deg`` rolls the spacecraft right-handed about the boresight
+    from there, which adds to the Sun's azimuth.
+
+    A ``target_roll`` (or a ``target_rolls`` entry) passed to an evaluation
+    method is the absolute spacecraft roll for that row, in the convention of
+    :class:`SolarRollConstraint` and :class:`BoresightOffsetConstraint`:
+    counter-clockwise about the boresight, with body +Y to the east and body
+    +Z to the north at roll zero. It replaces the nominal attitude, and
+    ``roll_offset_deg`` is not applied to that row. Rows whose roll is
+    ``None`` keep the nominal attitude. The table's azimuth-zero axis is body
+    +Y turned by ``sun_azimuth_deg``, and the nominal attitude is the
+    solar-optimal roll of a +Y panel plus ``roll_offset_deg``.
+
+    The roll actually used is reported as ``roll_deg`` in
+    ``constraint_values``, so the two descriptions convert through it: passing
+    it back as ``target_roll`` reproduces the result, and ``roll_deg + x``
+    reproduces ``roll_offset_deg=x``. :meth:`roll_range` returns the rolls at
+    which the constraint is satisfied.
 
     **Validity.** There is no prediction, and the constraint is violated, when
     a body's nearest limb is within ``in_field_deg`` of the boresight (direct
@@ -2182,8 +2197,8 @@ class StrayLightConstraint(RustConstraintMixin):
       to each body, ``sun_stray_light_ratio``, ``earth_stray_light_ratio`` and
       ``moon_stray_light_ratio`` (each NaN only when that body has no
       prediction), and ``zodi_v_mag_arcsec2``, the zodi they are taken against;
-    * for the pointing: ``roll_deg`` (position angle, north through east, of
-      the table's azimuth-zero axis), ``helio_ecliptic_longitude_deg`` (ecliptic
+    * for the pointing: ``roll_deg`` (the spacecraft roll used, 0-360, in the
+      convention of ``target_roll``), ``helio_ecliptic_longitude_deg`` (ecliptic
       longitude from the Sun, 0-360), ``ecliptic_latitude_deg`` and
       ``zodi_table_v_mag_arcsec2`` (the tabulated zodi there, whichever zodi the
       ratio uses);

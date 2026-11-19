@@ -421,6 +421,24 @@ pub(super) fn roll_sweep_vec(
                 .collect())
         }
 
+        // Stray light: the candidate roll is the attitude the model is run at,
+        // so each roll is its own evaluation of the same pointing.
+        Some("stray_light") => {
+            let evaluator = parse_constraint_json(config)?;
+            (0..n)
+                .map(|i| {
+                    let mask = evaluator.in_constraint_batch_at_roll(
+                        ephem,
+                        &target_ras[i..i + 1],
+                        &target_decs[i..i + 1],
+                        Some(&[time_idx]),
+                        crate::constraints::core::EvaluationRoll::Fixed(rolls[i]),
+                    )?;
+                    Ok(mask[[0, 0]])
+                })
+                .collect()
+        }
+
         _ => {
             // Leaf constraint (sun, moon, eclipse, …) or unsupported compound (xor,
             // at_least).  Build ONE evaluator, call in_constraint_batch once with all N
