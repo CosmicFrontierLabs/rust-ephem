@@ -108,6 +108,44 @@ pub(crate) fn pv_at(
     Py::new(py, split_pos_vel(&sampled))
 }
 
+/// Make sure Sun and Moon positions come from a planetary kernel when one is
+/// to hand, and say so when they cannot.
+///
+/// With no kernel initialised, a DE440/DE440s file already in the cache
+/// directory is loaded on demand (no download is attempted). Failing that, the
+/// analytic models are used and a `UserWarning` reports it: they are good to a
+/// few km for the Sun but only to a few hundred km for the Moon, which is easy
+/// to miss when the only symptom is a slightly different angle.
+fn prepare_planetary_ephemeris() {
+    use crate::ephemeris::spice_manager;
+    if spice_manager::is_planetary_ephemeris_initialized() {
+        return;
+    }
+    let reason = match spice_manager::best_available_planetary_path() {
+        Some(path) => match spice_manager::ensure_planetary_ephemeris(&path) {
+            Ok(()) => return,
+            Err(err) => format!(
+                "the kernel at '{}' could not be loaded ({err})",
+                path.display()
+            ),
+        },
+        None => "no planetary kernel is loaded or cached".to_string(),
+    };
+    let message = format!(
+        "Sun and Moon positions use analytic models because {reason}: the Moon may be off by \
+         ~200 km and the Sun by a few km. Call rust_ephem.ensure_planetary_ephemeris() before \
+         building an ephemeris for kernel accuracy."
+    );
+    Python::attach(|py| {
+        // A warning that cannot be issued (or was promoted to an error by the
+        // caller's filters) must not change how the ephemeris is built.
+        if let Ok(message) = std::ffi::CString::new(message) {
+            let category = py.get_type::<pyo3::exceptions::PyUserWarning>();
+            let _ = PyErr::warn(py, &category, &message, 1);
+        }
+    });
+}
+
 /// Generate a vector of timestamps from begin to end (inclusive) with step_size in seconds
 /// This is common logic shared between TLEEphemeris and SPICEEphemeris constructors.
 ///
@@ -320,6 +358,18 @@ pub trait EphemerisBase {
     /// the batch kernels to correct catalogue targets themselves (see
     /// `SampledEphemeris::apparent`); `None` for every ordinary ephemeris.
     fn target_corrections(&self) -> Option<&[crate::utils::apparent::ObserverAberration]> {
+        None
+    }
+
+    /// The target correction of each row when this is an apparent view (see
+    /// `SampledEphemeris::apparent`); `None` for every ordinary ephemeris.
+    ///
+    /// On such a view the targets handed to a kernel are already the proper
+    /// directions for the selected row, unless `target_corrections` says the
+    /// kernel is to correct catalogue targets itself. A leaf that compares the
+    /// target with other catalogue directions (bright stars) uses this to
+    /// return to the catalogue frame, where the common correction cancels.
+    fn target_aberrations(&self) -> Option<&[crate::utils::apparent::ObserverAberration]> {
         None
     }
 
@@ -1074,6 +1124,8 @@ pub trait EphemerisBase {
             .times
             .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available."))?;
+
+        prepare_planetary_ephemeris();
 
         // Use batch calculations for better performance
         let sun_out =

@@ -17,6 +17,7 @@ use crate::constraints::orbit_ram::OrbitRamConfig;
 use crate::constraints::saa::SAAConfig;
 use crate::constraints::sun_proximity::SunProximityConfig;
 use crate::ephemeris::ephemeris_common::EphemerisBase;
+use crate::ephemeris::sampled_ephemeris::SampledEphemeris;
 use crate::ephemeris::FileEphemeris;
 use crate::ephemeris::GroundEphemeris;
 use crate::ephemeris::OEMEphemeris;
@@ -59,7 +60,7 @@ impl PyConstraint {
     /// grow_margin=false for coast-sim's legacy candidate geometry. A route
     /// is validated on the specified sample grid, not continuously along arcs.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (ephemeris, start_ra, start_dec, end_ra, end_dec, time=None, index=None, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, samples=50, margin_deg=5.0, grow_margin=true))]
+    #[pyo3(signature = (ephemeris, start_ra, start_dec, end_ra, end_dec, time=None, index=None, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, samples=50, margin_deg=5.0, grow_margin=true, apparent=false))]
     fn route_around(
         &self,
         ephemeris: &Bound<'_, PyAny>,
@@ -74,12 +75,40 @@ impl PyConstraint {
         samples: usize,
         margin_deg: f64,
         grow_margin: bool,
+        apparent: bool,
     ) -> PyResult<super::route::RouteResult> {
         if let Some(roll) = target_roll {
             Self::validate_target_roll(roll)?;
         }
         self.with_ephemeris(ephemeris, |eph| {
             let index = super::route::sample_index(eph, time.as_ref(), index)?;
+            if apparent {
+                // Route in the sky the observer sees: the end points are taken
+                // to their proper directions, the bodies of the view are
+                // apparent, and the waypoint is returned to catalogue coordinates.
+                let (view, aberrations) = SampledEphemeris::apparent(eph, &[index])?;
+                let aberration = aberrations[0];
+                let (start_ra, start_dec) = aberration.apply_radec_deg(start_ra, start_dec);
+                let (end_ra, end_dec) = aberration.apply_radec_deg(end_ra, end_dec);
+                let mut result = super::route::route_around(
+                    self.evaluator.as_ref(),
+                    &view,
+                    start_ra,
+                    start_dec,
+                    end_ra,
+                    end_dec,
+                    0,
+                    target_roll,
+                    n_roll_samples,
+                    samples,
+                    margin_deg,
+                    grow_margin,
+                )?;
+                result.waypoint = result
+                    .waypoint
+                    .map(|(ra, dec)| aberration.remove_radec_deg(ra, dec));
+                return Ok(result);
+            }
             super::route::route_around(
                 self.evaluator.as_ref(),
                 eph,
@@ -1389,7 +1418,6 @@ impl PyConstraint {
         n_roll_samples: usize,
         apparent: bool,
     ) -> PyResult<ConstraintResult> {
-        self.validate_apparent(apparent)?;
         Self::validate_n_roll_samples(n_roll_samples)?;
         if let Some(roll) = target_roll {
             Self::validate_target_roll(roll)?;
@@ -1438,7 +1466,6 @@ impl PyConstraint {
         n_roll_samples: usize,
         apparent: bool,
     ) -> PyResult<Vec<ConstraintResult>> {
-        self.validate_apparent(apparent)?;
         Self::validate_n_roll_samples(n_roll_samples)?;
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1572,7 +1599,6 @@ impl PyConstraint {
         n_roll_samples: usize,
         apparent: bool,
     ) -> PyResult<Py<PyAny>> {
-        self.validate_apparent(apparent)?;
         Self::validate_n_roll_samples(n_roll_samples)?;
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1703,7 +1729,8 @@ impl PyConstraint {
     ///     - Higher `n_points` improves accuracy at higher computational cost.
     ///     - Spacecraft-roll sweeps scale with ``n_roll_samples``; each additional roll sample
     ///       increases evaluation time proportionally.
-    #[pyo3(signature = (ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES))]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=false))]
     fn instantaneous_field_of_regard(
         &self,
         py: Python,
@@ -1712,6 +1739,7 @@ impl PyConstraint {
         index: Option<usize>,
         n_points: usize,
         n_roll_samples: usize,
+        apparent: bool,
     ) -> PyResult<f64> {
         instantaneous_field_of_regard_impl(
             py,
@@ -1720,6 +1748,7 @@ impl PyConstraint {
             index,
             n_points,
             n_roll_samples,
+            apparent,
             &*self.evaluator,
             |bound, t| self.parse_times_to_indices(bound, t),
         )
@@ -1854,7 +1883,7 @@ impl PyConstraint {
     /// # Returns
     /// A boolean if a single time is provided, or a list of booleans if multiple times are provided
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES))]
+    #[pyo3(signature = (time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=false))]
     fn in_constraint(
         &self,
         py: Python,
@@ -1864,6 +1893,7 @@ impl PyConstraint {
         target_dec: f64,
         target_roll: Option<f64>,
         n_roll_samples: usize,
+        apparent: bool,
     ) -> PyResult<Py<PyAny>> {
         Self::validate_n_roll_samples(n_roll_samples)?;
         // Check if time is a single value or a sequence
@@ -1890,7 +1920,7 @@ impl PyConstraint {
             None,
             target_rolls,
             n_roll_samples,
-            false,
+            apparent,
         )?;
 
         // Extract the results for the single target (first row)
@@ -2044,7 +2074,7 @@ impl PyConstraint {
     ///     >>> # Using explicit coordinates for a comet
     ///     >>> result = constraint.evaluate_moving_body(ephem, target_ras=ras, target_decs=decs)
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (ephemeris, target_ras=None, target_decs=None, times=None, body=None, use_horizons=false, spice_kernel=None))]
+    #[pyo3(signature = (ephemeris, target_ras=None, target_decs=None, times=None, body=None, use_horizons=false, spice_kernel=None, apparent=false))]
     fn evaluate_moving_body(
         &self,
         py: Python,
@@ -2055,11 +2085,43 @@ impl PyConstraint {
         body: Option<&str>,
         use_horizons: bool,
         spice_kernel: Option<&str>,
+        apparent: bool,
     ) -> PyResult<MovingBodyResult> {
         let bound = ephemeris.bind(py);
         let all_times = self.with_ephemeris(bound, |ephem| ephem.get_times())?;
         let mut track_times = None;
-        let (ras, decs, indices) = if let Some(body_id) = body {
+        // A named body in apparent mode is placed where its light arrives from
+        // (light time, solar deflection and aberration), which already is the
+        // proper direction: it must not be corrected a second time below.
+        let apparent_body = apparent && body.is_some();
+        let (ras, decs, indices) = if let (true, Some(body_id)) = (apparent_body, body) {
+            if use_horizons {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "apparent=True needs the body in a SPICE kernel; it cannot be combined \
+                     with use_horizons=True",
+                ));
+            }
+            let positions = self.with_ephemeris(bound, |ephem| {
+                let observer = ephem.data().gcrs.as_ref().ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "Apparent evaluation needs observer positions and velocities",
+                    )
+                })?;
+                crate::utils::apparent::apparent_body_positions(
+                    &all_times,
+                    observer,
+                    body_id,
+                    spice_kernel,
+                )
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+            })?;
+            let (ras, decs) = positions
+                .rows()
+                .into_iter()
+                .map(|p| crate::utils::vector_math::vector_to_radec(&[p[0], p[1], p[2]]))
+                .unzip();
+            (ras, decs, (0..all_times.len()).collect::<Vec<_>>())
+        } else if let Some(body_id) = body {
             let kwargs = pyo3::types::PyDict::new(py);
             kwargs.set_item("use_horizons", use_horizons)?;
             if let Some(kernel) = spice_kernel {
@@ -2121,8 +2183,33 @@ impl PyConstraint {
         let timestamps =
             track_times.unwrap_or_else(|| indices.iter().map(|&i| all_times[i]).collect());
         let evaluation = self.with_ephemeris(bound, |ephem| {
+            if !apparent {
+                return self
+                    .evaluator
+                    .evaluate_diagonal(ephem, &ras, &decs, Some(&indices));
+            }
+            // One apparent row per distinct sample; a supplied track is taken
+            // to its proper direction for the observer state of its own row.
+            let mut rows = indices.clone();
+            rows.sort_unstable();
+            rows.dedup();
+            let (view, aberrations) = SampledEphemeris::apparent(ephem, &rows)?;
+            let local: Vec<usize> = indices
+                .iter()
+                .map(|row| rows.binary_search(row).unwrap_or_else(|i| i))
+                .collect();
+            if apparent_body {
+                return self
+                    .evaluator
+                    .evaluate_diagonal(&view, &ras, &decs, Some(&local));
+            }
+            let (proper_ras, proper_decs): (Vec<f64>, Vec<f64>) = local
+                .iter()
+                .enumerate()
+                .map(|(i, &row)| aberrations[row].apply_radec_deg(ras[i], decs[i]))
+                .unzip();
             self.evaluator
-                .evaluate_diagonal(ephem, &ras, &decs, Some(&indices))
+                .evaluate_diagonal(&view, &proper_ras, &proper_decs, Some(&local))
         })?;
         let violations = track_violations(
             &timestamps,

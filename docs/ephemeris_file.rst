@@ -102,7 +102,11 @@ your file uses different units.
 
 Supported position units: ``"km"`` (default), ``"m"``, ``"cm"``.
 
-Supported velocity units: ``"km/s"`` (default), ``"m/s"``, ``"cm/s"``.
+Supported velocity units: ``"km/s"``, ``"m/s"``, ``"cm/s"``.
+
+When no velocity unit is given (and the file does not state one), it follows
+the position unit: ``position_unit="m"`` alone means velocities in m/s. Pass
+``velocity_unit`` explicitly for a file that mixes, say, metres with km/s.
 
 Basic example
 -------------

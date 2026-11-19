@@ -439,6 +439,99 @@ def test_apparent_earth_limb_near_earth(
         np.testing.assert_array_equal(np.diag(grid), result.constraint_array)
 
 
+def apparent_frame(ephem: Any, row: int) -> Any:
+    """Astropy's GCRS frame of the observer state of one ephemeris row."""
+    return GCRS(
+        obstime=Time(ephem.timestamp[row]),
+        obsgeoloc=CartesianRepresentation(ephem.obsgeoloc[row] * u.km),
+        obsgeovel=CartesianRepresentation(ephem.obsgeovel[row] * u.km / u.s),
+    )
+
+
+def proper_direction(frame: Any, ras: Any, decs: Any) -> npt.NDArray[Any]:
+    """Unit vectors in which the observer of `frame` sees catalogue directions."""
+    seen = SkyCoord(ras * u.deg, decs * u.deg, frame="icrs").transform_to(frame)
+    return np.asarray(seen.cartesian.xyz.value).T
+
+
+def apparent_sun(ephem: Any, row: int) -> npt.NDArray[Any]:
+    """Unit vector of the apparent Sun for the observer state of one row."""
+    frame = apparent_frame(ephem, row)
+    position = CartesianRepresentation(ephem.obsgeoloc[row] * u.km)
+    with solar_system_ephemeris.set(str(KERNEL)):
+        emitted = _get_apparent_body_position(
+            "sun", frame.obstime, str(KERNEL), position
+        )
+        seen = SkyCoord(ICRS(emitted).transform_to(frame))
+    return np.asarray(seen.cartesian.xyz.value / seen.cartesian.norm().value)
+
+
+def radec(vectors: npt.NDArray[Any]) -> tuple[npt.NDArray[Any], npt.NDArray[Any]]:
+    vectors = np.atleast_2d(vectors)
+    return (
+        np.degrees(np.arctan2(vectors[:, 1], vectors[:, 0])) % 360,
+        np.degrees(np.arcsin(np.clip(vectors[:, 2], -1, 1))),
+    )
+
+
+def catalogue_of(frame: Any, proper: npt.NDArray[Any]) -> npt.NDArray[Any]:
+    """Catalogue unit vectors the observer of `frame` sees in `proper`."""
+    proper = np.atleast_2d(proper)
+    catalogue = proper.copy()
+    for _ in range(4):
+        catalogue += proper - proper_direction(frame, *radec(catalogue))
+        catalogue /= np.linalg.norm(catalogue, axis=1, keepdims=True)
+    return catalogue
+
+
+STAR = (90.0, 0.0)
+ROW = 10
+
+
+def star_field() -> tuple[npt.NDArray[Any], npt.NDArray[Any]]:
+    """Targets 4 arcsec inside and outside a 0.5 degree circle around STAR, on
+    eight bearings: closer to the edge than the ~20 arcsec of aberration."""
+    bearings = np.radians(np.arange(0, 360, 45))
+    offsets = (0.5 + np.array([-4.0, 4.0])[:, None] / 3600) * np.ones_like(bearings)
+    return (
+        (STAR[0] + offsets * np.sin(bearings)).ravel(),
+        (STAR[1] + offsets * np.cos(bearings)).ravel(),
+    )
+
+
+def test_apparent_bright_star_matches_astropy(spacecraft: Any) -> None:
+    """Star and target are displaced together, so the star is in the field
+    exactly when Astropy's apparent separation says so."""
+    ras, decs = star_field()
+    frame = apparent_frame(spacecraft, ROW)
+    target = proper_direction(frame, ras, decs)
+    star = proper_direction(frame, np.array([STAR[0]]), np.array([STAR[1]]))[0]
+    separation = np.degrees(np.arccos(np.clip(target @ star, -1, 1)))
+    expected = separation < 0.5
+    assert expected.any() and not expected.all()
+
+    constraint = re.BrightStarConstraint(stars=[STAR], fov_radius=0.5)
+    time = spacecraft.timestamp[ROW]
+    result = constraint.evaluate_elementwise(
+        spacecraft, ras, decs, times=[time] * len(ras), apparent=True
+    )
+    np.testing.assert_array_equal(result.constraint_array, expected)
+    np.testing.assert_allclose(
+        result.constraint_values["nearest_bright_star_angle_deg"],
+        separation,
+        atol=0.5 / 3600,
+        rtol=0,
+    )
+
+    # Had the target alone been corrected, the star left at its catalogue
+    # place, several of these targets would be on the wrong side of the edge.
+    catalogue_star = np.array(
+        [np.cos(np.radians(STAR[0])), np.sin(np.radians(STAR[0])), 0.0]
+    )
+    uncorrected = np.degrees(np.arccos(np.clip(target @ catalogue_star, -1, 1))) < 0.5
+    assert (uncorrected != expected).any()
+
+
 @pytest.mark.parametrize(
     "method",
     [
@@ -447,23 +540,228 @@ def test_apparent_earth_limb_near_earth(
         "in_constraint_batch",
         "evaluate_elementwise",
         "in_constraint_elementwise",
+        "in_constraint",
     ],
 )
-@pytest.mark.parametrize("tree", ["leaf", "and", "or", "not", "boresight"])
-def test_apparent_rejects_bright_stars(spacecraft: Any, method: str, tree: str) -> None:
-    star = re.BrightStarConstraint(stars=[(90.0, 0.0)], fov_radius=0.5)
-    sun = re.SunConstraint(min_angle=30)
-    constraint = {
+@pytest.mark.parametrize(
+    "tree", ["leaf", "and", "or", "not", "boresight", "polygon", "polygon_roll"]
+)
+def test_apparent_bright_star_in_every_method(
+    spacecraft: Any, method: str, tree: str
+) -> None:
+    """Every evaluation path accepts bright stars with apparent=True and gives
+    the catalogue-frame answer at the edge of the field."""
+    star = re.BrightStarConstraint(stars=[STAR], fov_radius=0.5)
+    square = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
+    sun = re.SunConstraint(min_angle=1)  # never violated by these targets
+    constraint: Any = {
         "leaf": star,
-        "and": sun & star,
+        "and": ~sun & star,
         "or": sun | star,
         "not": ~star,
-        "boresight": (sun | ~star).boresight_offset(yaw_deg=2),
+        "boresight": (sun | star).boresight_offset(roll_deg=30),
+        "polygon": re.BrightStarConstraint(stars=[STAR], fov_polygon=square),
+        "polygon_roll": re.BrightStarConstraint(
+            stars=[STAR], fov_polygon=square, roll_deg=0.0
+        ),
     }[tree]
-    args = (90.6, 0.0) if method == "evaluate" else ([90.6], [0.0])
-    # Geometric evaluation remains available.
-    getattr(constraint, method)(spacecraft, *args, times=[spacecraft.timestamp[0]])
-    with pytest.raises(ValueError, match="apparent=True.*BrightStarConstraint"):
-        getattr(constraint, method)(
-            spacecraft, *args, times=[spacecraft.timestamp[0]], apparent=True
+    time = spacecraft.timestamp[ROW]
+    ras, decs = star_field()
+    if tree.startswith("polygon"):
+        # The same edge test for a square field: due north, east, south, west.
+        ras, decs = ras[::2], decs[::2]
+
+    def run(index: int, **kw: Any) -> bool:
+        ra, dec = float(ras[index]), float(decs[index])
+        if method == "evaluate":
+            result = constraint.evaluate(spacecraft, ra, dec, times=[time], **kw)
+            return bool(result.constraint_array[0])
+        if method == "in_constraint":
+            return bool(constraint.in_constraint(time, spacecraft, ra, dec, **kw))
+        result = getattr(constraint, method)(
+            spacecraft, [ra], [dec], times=[time], **kw
         )
+        if method == "evaluate_batch":
+            return bool(result[0].constraint_array[0])
+        if method == "evaluate_elementwise":
+            return bool(result.constraint_array[0])
+        return bool(np.asarray(result).ravel()[0])
+
+    geometric = [run(i) for i in range(len(ras))]
+    assert len(set(geometric)) == 2
+    assert [run(i, apparent=True) for i in range(len(ras))] == geometric
+
+
+def test_apparent_in_constraint_matches_batch(spacecraft: Any) -> None:
+    """in_constraint(apparent=True) is the row of the apparent batch grid, and
+    flips a target that sits between the geometric and apparent limits."""
+    ras, decs = targets(2000, seed=11)
+    time = spacecraft.timestamp[ROW]
+    probe = re.SunConstraint(min_angle=0.0)
+    geometric = probe.evaluate_elementwise(
+        spacecraft, ras, decs, times=[time] * len(ras)
+    ).constraint_values["sun_angle_deg"]
+    apparent = probe.evaluate_elementwise(
+        spacecraft, ras, decs, times=[time] * len(ras), apparent=True
+    ).constraint_values["sun_angle_deg"]
+    i = int(np.argmax(np.abs(apparent - geometric)))
+    limit = float((apparent[i] + geometric[i]) / 2)
+    constraint = re.SunConstraint(min_angle=limit)
+    ra, dec = float(ras[i]), float(decs[i])
+
+    assert constraint.in_constraint(time, spacecraft, ra, dec) == (geometric[i] < limit)
+    assert constraint.in_constraint(time, spacecraft, ra, dec, apparent=True) == (
+        apparent[i] < limit
+    )
+    times = list(spacecraft.timestamp[:20])
+    several = constraint.in_constraint(times, spacecraft, ra, dec, apparent=True)
+    grid = constraint.in_constraint_batch(
+        spacecraft, [ra], [dec], times=times, apparent=True
+    )
+    assert several == grid[0].tolist()
+
+
+def test_apparent_field_of_regard_matches_astropy(spacecraft: Any) -> None:
+    """The apparent field of regard is the sky clear of the apparent Sun."""
+    n_points = 2_000_000
+    k = np.arange(n_points) + 0.5
+    z = 1.0 - 2.0 * k / n_points
+    phi = np.arange(n_points) * (np.pi * (3.0 - np.sqrt(5.0)))
+    radius = np.sqrt(1.0 - z * z)
+    samples = np.stack([radius * np.cos(phi), radius * np.sin(phi), z], axis=1)
+
+    constraint = re.SunConstraint(min_angle=60)
+    time = spacecraft.timestamp[ROW]
+
+    def clear(sun: npt.NDArray[Any]) -> int:
+        return int(np.count_nonzero(samples @ sun <= np.cos(np.radians(60))))
+
+    def samples_clear(**kw: Any) -> float:
+        area = constraint.instantaneous_field_of_regard(
+            spacecraft, time=time, n_points=n_points, **kw
+        )
+        return area / (4 * np.pi) * n_points
+
+    expected = clear(apparent_sun(spacecraft, ROW))
+    geometric_sun = spacecraft.sun_pv.position[ROW] - spacecraft.gcrs_pv.position[ROW]
+    expected_geometric = clear(geometric_sun / np.linalg.norm(geometric_sun))
+    # Moving the cap by ~20 arcsec swaps samples along its edge but hardly
+    # changes how many are clear, so the counts are compared exactly.
+    assert expected != expected_geometric
+    assert round(samples_clear(apparent=True)) == expected
+    assert round(samples_clear()) == expected_geometric
+    by_index = constraint.instantaneous_field_of_regard(
+        spacecraft, index=ROW, n_points=n_points, apparent=True
+    )
+    assert by_index == pytest.approx(
+        samples_clear(apparent=True) / n_points * 4 * np.pi
+    )
+
+
+@pytest.mark.parametrize("margin_arcsec", [-3.0, 3.0])
+def test_apparent_route_around_uses_apparent_sun(
+    spacecraft: Any, margin_arcsec: float
+) -> None:
+    """A slew whose closest approach to the apparent Sun is 3 arcsec inside or
+    outside the limit is blocked or clear accordingly."""
+    limit = 50.0
+    sun = apparent_sun(spacecraft, ROW)
+    frame = apparent_frame(spacecraft, ROW)
+    east = np.cross([0.0, 0.0, 1.0], sun)
+    east /= np.linalg.norm(east)
+    north = np.cross(sun, east)
+    closest_angle = np.radians(limit + margin_arcsec / 3600)
+    closest = np.cos(closest_angle) * sun + np.sin(closest_angle) * east
+    # The great circle through `closest` that is tangent to the cone around the
+    # Sun; with 50 samples the midpoint, the closest approach, is sampled.
+    ends = np.array(
+        [np.cos(a) * closest + np.sin(a) * north for a in np.radians([-25.0, 25.0])]
+    )
+    (start_ra, end_ra), (start_dec, end_dec) = radec(catalogue_of(frame, ends))
+    constraint = re.SunConstraint(min_angle=limit)
+    route = constraint.route_around(
+        spacecraft,
+        float(start_ra),
+        float(start_dec),
+        float(end_ra),
+        float(end_dec),
+        index=ROW,
+        apparent=True,
+    )
+    assert route.violated == (margin_arcsec < 0)
+    if route.violated:
+        assert route.first_violation == pytest.approx(0.5)
+        assert route.waypoint is not None
+        # The waypoint is a catalogue position, clear when evaluated as one.
+        assert not constraint.in_constraint(
+            spacecraft.timestamp[ROW], spacecraft, *route.waypoint, apparent=True
+        )
+
+
+def test_apparent_moving_body(spacecraft: Any) -> None:
+    """A named body is placed where its light arrives from; a supplied track is
+    corrected like any other target."""
+    rows = np.arange(N)
+    constraint = re.SunConstraint(min_angle=30)
+    result = constraint.evaluate_moving_body(
+        spacecraft, body="Jupiter barycenter", apparent=True
+    )
+    times = Time(spacecraft.timestamp[rows])
+    position = CartesianRepresentation(spacecraft.obsgeoloc[rows].T * u.km)
+    velocity = CartesianRepresentation(spacecraft.obsgeovel[rows].T * u.km / u.s)
+    frame = GCRS(obstime=times, obsgeoloc=position, obsgeovel=velocity)
+    with solar_system_ephemeris.set(str(KERNEL)):
+        seen = {
+            body: SkyCoord(
+                ICRS(
+                    _get_apparent_body_position(body, times, str(KERNEL), position)
+                ).transform_to(frame)
+            )
+            for body in ("sun", "jupiter")
+        }
+    tolerance = 1e-3 / 3600
+    np.testing.assert_allclose(
+        result.constraint_values["sun_angle_deg"][:N],
+        seen["jupiter"].separation(seen["sun"]).deg,
+        atol=tolerance,
+        rtol=0,
+    )
+    apparent_place = SkyCoord(
+        np.array(result.ras[:N]) * u.deg, np.array(result.decs[:N]) * u.deg
+    )
+    assert (
+        apparent_place.separation(
+            SkyCoord(seen["jupiter"].ra, seen["jupiter"].dec)
+        ).arcsec.max()
+        < 1e-3
+    )
+    geometric = constraint.evaluate_moving_body(spacecraft, body="Jupiter barycenter")
+    assert (
+        np.abs(
+            np.array(geometric.constraint_values["sun_angle_deg"])
+            - np.array(result.constraint_values["sun_angle_deg"])
+        ).max()
+        > 1 / 3600
+    )
+    with pytest.raises(ValueError, match="use_horizons"):
+        constraint.evaluate_moving_body(
+            spacecraft, body="Jupiter barycenter", use_horizons=True, apparent=True
+        )
+
+    # A supplied track: the same as pairing each position with its time.
+    n = len(spacecraft.timestamp)
+    ras, decs = targets(n, seed=3)
+    track = constraint.evaluate_moving_body(
+        spacecraft, target_ras=ras, target_decs=decs, apparent=True
+    )
+    paired = constraint.evaluate_elementwise(
+        spacecraft, ras, decs, times=spacecraft.timestamp, apparent=True
+    )
+    np.testing.assert_array_equal(track.constraint_array, paired.constraint_array)
+    np.testing.assert_allclose(
+        track.constraint_values["sun_angle_deg"],
+        paired.constraint_values["sun_angle_deg"],
+        atol=1e-12,
+        rtol=0,
+    )
+    np.testing.assert_allclose(track.ras, ras)

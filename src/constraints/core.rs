@@ -15,7 +15,7 @@ use ndarray::Array2;
 use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 /// Short, stable tag for a leaf/combinator constraint's `values`/`component_violated`
 /// key prefix, derived from the text before the first `(` in its `name()`. Falls back
@@ -212,10 +212,13 @@ pub struct ConstraintResult {
     /// (cause tags are flat and nesting-stable; value keys are hierarchical and
     /// path-based) so are not derivable from one another by string matching — use
     /// this instead of guessing.
-    #[pyo3(get)]
-    pub cause_value_keys: HashMap<String, Vec<String>>,
-    /// Evaluation times as Rust DateTime<Utc>, not directly exposed to Python
-    pub times: Vec<DateTime<Utc>>,
+    ///
+    /// Shared between the results of one batch: it depends only on the
+    /// constraint tree, not on the target.
+    pub cause_value_keys: Arc<HashMap<String, Vec<String>>>,
+    /// Evaluation times as Rust DateTime<Utc>, not directly exposed to Python.
+    /// Shared between the results of one batch.
+    pub times: Arc<[DateTime<Utc>]>,
     /// Step size in seconds between timestamps (for O(1) index lookup)
     step_seconds: i64,
     /// Cached Python timestamp array (not directly exposed, use getter)
@@ -232,8 +235,9 @@ impl ConstraintResult {
         violations: Vec<ConstraintViolation>,
         all_satisfied: bool,
         constraint_name: String,
-        times: Vec<DateTime<Utc>>,
+        times: impl Into<Arc<[DateTime<Utc>]>>,
     ) -> Self {
+        let times = times.into();
         // Compute step size from first two timestamps (0 if fewer than 2 times)
         let step_seconds = if times.len() >= 2 {
             (times[1] - times[0]).num_seconds()
@@ -246,7 +250,7 @@ impl ConstraintResult {
             constraint_name,
             constraint_values: HashMap::new(),
             component_violated: HashMap::new(),
-            cause_value_keys: HashMap::new(),
+            cause_value_keys: Arc::default(),
             times,
             step_seconds,
             timestamp_cache: OnceLock::new(),
@@ -271,14 +275,23 @@ impl ConstraintResult {
     }
 
     /// Attach the cause-tag → constraint_values-key mapping computed during evaluation.
-    pub fn with_cause_value_keys(mut self, cause_value_keys: HashMap<String, Vec<String>>) -> Self {
-        self.cause_value_keys = cause_value_keys;
+    pub fn with_cause_value_keys(
+        mut self,
+        cause_value_keys: impl Into<Arc<HashMap<String, Vec<String>>>>,
+    ) -> Self {
+        self.cause_value_keys = cause_value_keys.into();
         self
     }
 }
 
 #[pymethods]
 impl ConstraintResult {
+    /// Map from a `start_cause`/`end_cause` tag to its `constraint_values` key(s).
+    #[getter]
+    fn cause_value_keys(&self) -> HashMap<String, Vec<String>> {
+        (*self.cause_value_keys).clone()
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "ConstraintResult(constraint='{}', violations={}, all_satisfied={})",
@@ -389,7 +402,7 @@ impl ConstraintResult {
 
         // Build list of Python datetime objects
         let py_list = pyo3::types::PyList::empty(py);
-        for dt in &self.times {
+        for dt in self.times.iter() {
             let py_dt = utc_to_python_datetime(py, dt)?;
             py_list.append(py_dt)?;
         }
@@ -1531,8 +1544,9 @@ pub(crate) fn track_violations<F>(
 where
     F: FnMut(usize) -> (bool, f64),
 {
-    // Pre-allocate with reasonable capacity estimate
-    let mut violations = Vec::with_capacity(4);
+    // No up-front capacity: most targets of a wide batch have no violation
+    // window at all, and an unused allocation per target adds up.
+    let mut violations = Vec::new();
     let mut current_violation: Option<(usize, f64)> = None;
 
     for i in 0..times.len() {
@@ -1670,7 +1684,7 @@ mod tests {
         eprintln!("timestamps,windows,before_ms,after_ms,speedup");
         for n_windows in [1, 100, 1000] {
             let stride = n_times / n_windows;
-            let times = (0..n_times)
+            let times: Vec<_> = (0..n_times)
                 .map(|i| epoch + Duration::seconds(i as i64))
                 .collect();
             let violations = (0..n_windows)

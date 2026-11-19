@@ -309,9 +309,7 @@ pub fn calculate_body_positions_spice(
     target_id: i32,
     center_id: i32,
 ) -> Array2<f64> {
-    // Import ANISE types
     use anise::prelude::*;
-    use hifitime::Epoch as HifiEpoch;
 
     // Prefer a centrally-initialized planetary almanac if available
     use crate::ephemeris::spice_manager;
@@ -343,12 +341,33 @@ pub fn calculate_body_positions_spice(
         Arc::new(Almanac::default().with_spk(spk))
     };
 
-    // Prepare output array
-    let n = times.len();
-    let mut out = Array2::<f64>::zeros((n, 6));
+    spice_states(&almanac, times, target_id, center_id).unwrap_or_else(|(dt, e)| {
+        panic!(
+            "Failed to get state for body {target_id} relative to {center_id} at {dt}: {e}. \
+             Ensure SPK file contains ephemeris data for both bodies."
+        )
+    })
+}
 
-    for (i, dt) in times.iter().enumerate() {
-        // Convert DateTime<Utc> to hifitime Epoch
+/// Fewest timestamps worth spreading over the cores for kernel lookups.
+const SPICE_PARALLEL_MIN_TIMES: usize = 2048;
+
+/// Geometric states of `target_id` relative to `center_id` in the J2000 (GCRS)
+/// orientation, one `[x, y, z, vx, vy, vz]` row (km, km/s) per timestamp.
+/// On failure returns the first failing timestamp of a block and the reason.
+fn spice_states(
+    almanac: &anise::prelude::Almanac,
+    times: &[DateTime<Utc>],
+    target_id: i32,
+    center_id: i32,
+) -> Result<Array2<f64>, (DateTime<Utc>, String)> {
+    use anise::prelude::*;
+    use hifitime::Epoch as HifiEpoch;
+    use rayon::prelude::*;
+
+    let target_frame = Frame::from_ephem_j2000(target_id);
+    let center_frame = Frame::from_ephem_j2000(center_id);
+    let fill = |(row, dt): (&mut [f64; 6], &DateTime<Utc>)| {
         let epoch = HifiEpoch::from_gregorian_utc(
             dt.year(),
             dt.month() as u8,
@@ -358,32 +377,36 @@ pub fn calculate_body_positions_spice(
             dt.second() as u8,
             dt.timestamp_subsec_nanos(),
         );
-
-        // Create frames for target and center bodies using J2000 orientation (GCRS)
-        let target_frame = Frame::from_ephem_j2000(target_id);
-        let center_frame = Frame::from_ephem_j2000(center_id);
-
         let state = almanac
             .translate_geometric(target_frame, center_frame, epoch)
-            .unwrap_or_else(|e| {
-                panic!(
-                    "Failed to get state for body {target_id} relative to {center_id} at {dt}: {e:?}. \
-                     Ensure SPK file contains ephemeris data for both bodies."
-                )
-            });
-
-        // Extract position and velocity
+            .map_err(|e| (*dt, format!("{e:?}")))?;
         // ANISE returns position in km and velocity in km/s
-        let mut row = out.row_mut(i);
-        row[0] = state.radius_km.x;
-        row[1] = state.radius_km.y;
-        row[2] = state.radius_km.z;
-        row[3] = state.velocity_km_s.x;
-        row[4] = state.velocity_km_s.y;
-        row[5] = state.velocity_km_s.z;
-    }
+        *row = [
+            state.radius_km.x,
+            state.radius_km.y,
+            state.radius_km.z,
+            state.velocity_km_s.x,
+            state.velocity_km_s.y,
+            state.velocity_km_s.z,
+        ];
+        Ok(())
+    };
 
-    out
+    let mut out = Array2::<f64>::zeros((times.len(), 6));
+    let rows = out
+        .as_slice_mut()
+        .expect("freshly allocated arrays are in standard layout")
+        .as_chunks_mut::<6>()
+        .0;
+    if times.len() >= SPICE_PARALLEL_MIN_TIMES {
+        rows.par_iter_mut()
+            .zip(times.par_iter())
+            .with_min_len(256)
+            .try_for_each(fill)?;
+    } else {
+        rows.iter_mut().zip(times).try_for_each(fill)?;
+    }
+    Ok(out)
 }
 
 /// Non-panicking variant: calculate body positions using SPICE, returning Result
@@ -393,48 +416,15 @@ pub fn calculate_body_positions_spice_result(
     center_id: i32,
     spice_kernel: Option<&str>,
 ) -> Result<Array2<f64>, String> {
-    use anise::prelude::*;
-    use hifitime::Epoch as HifiEpoch;
-
     let almanac = planetary_almanac(spice_kernel)?;
-    let n = times.len();
-    let mut out = Array2::<f64>::zeros((n, 6));
-
-    for (i, dt) in times.iter().enumerate() {
-        let epoch = HifiEpoch::from_gregorian_utc(
-            dt.year(),
-            dt.month() as u8,
-            dt.day() as u8,
-            dt.hour() as u8,
-            dt.minute() as u8,
-            dt.second() as u8,
-            dt.timestamp_subsec_nanos(),
-        );
-
-        let target_frame = Frame::from_ephem_j2000(target_id);
-        let center_frame = Frame::from_ephem_j2000(center_id);
-
-        let state = almanac
-            .translate_geometric(target_frame, center_frame, epoch)
-            .map_err(|e| {
-                format!(
-                    "SPICE could not provide body {target_id} relative to {center_id} at {dt}: {e:?}. \
-                     This often means the current kernel does not include that NAIF ID. \
-                     If you're using de440s.bsp, try a planetary barycenter (e.g., 'Jupiter barycenter' or '5') \
-                     or install a full kernel like de440.bsp."
-                )
-            })?;
-
-        let mut row = out.row_mut(i);
-        row[0] = state.radius_km.x;
-        row[1] = state.radius_km.y;
-        row[2] = state.radius_km.z;
-        row[3] = state.velocity_km_s.x;
-        row[4] = state.velocity_km_s.y;
-        row[5] = state.velocity_km_s.z;
-    }
-
-    Ok(out)
+    spice_states(&almanac, times, target_id, center_id).map_err(|(dt, e)| {
+        format!(
+            "SPICE could not provide body {target_id} relative to {center_id} at {dt}: {e}. \
+             This often means the current kernel does not include that NAIF ID. \
+             If you're using de440s.bsp, try a planetary barycenter (e.g., 'Jupiter barycenter' or '5') \
+             or install a full kernel like de440.bsp."
+        )
+    })
 }
 
 /// Select the same planetary kernel for geometric and apparent queries.
