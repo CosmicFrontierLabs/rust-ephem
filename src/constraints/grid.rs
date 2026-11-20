@@ -134,6 +134,9 @@ pub struct GridResult {
     grid: GridEvaluation,
     ras: Vec<f64>,
     decs: Vec<f64>,
+    /// The `component_violated` tags in the order the rules were written.
+    #[pyo3(get)]
+    component_order: Vec<String>,
     constraint_array_cache: OnceLock<Py<PyAny>>,
     visibility_flags_cache: OnceLock<Py<PyAny>>,
     constraint_values_cache: OnceLock<Py<PyAny>>,
@@ -142,11 +145,17 @@ pub struct GridResult {
 }
 
 impl GridResult {
-    pub fn new(grid: GridEvaluation, ras: Vec<f64>, decs: Vec<f64>) -> Self {
+    pub fn new(
+        grid: GridEvaluation,
+        ras: Vec<f64>,
+        decs: Vec<f64>,
+        component_order: Vec<String>,
+    ) -> Self {
         Self {
             grid,
             ras,
             decs,
+            component_order,
             constraint_array_cache: OnceLock::new(),
             visibility_flags_cache: OnceLock::new(),
             constraint_values_cache: OnceLock::new(),
@@ -154,6 +163,40 @@ impl GridResult {
             timestamp_cache: OnceLock::new(),
         }
     }
+}
+
+/// For each cell, the place in `order` of the first rule violated there, or
+/// `order.len()` where the constraint is satisfied or no rule is flagged.
+/// `column` gives a rule's mask, cell for cell with `violated`.
+pub(crate) fn first_violated_indices<'a>(
+    order: &[String],
+    violated: &[bool],
+    column: impl Fn(&str) -> Option<&'a [bool]>,
+) -> Vec<usize> {
+    let mut first = vec![order.len(); violated.len()];
+    for (place, tag) in order.iter().enumerate().rev() {
+        let Some(column) = column(tag) else { continue };
+        for ((first, &flagged), &violated) in first.iter_mut().zip(column).zip(violated) {
+            if flagged && violated {
+                *first = place;
+            }
+        }
+    }
+    first
+}
+
+/// The labels `first_violated_indices` stands for, as a NumPy string array:
+/// the rule's tag, or an empty string.
+pub(crate) fn first_violated_labels<'py>(
+    py: Python<'py>,
+    order: &[String],
+    indices: Vec<usize>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let mut labels: Vec<&str> = order.iter().map(String::as_str).collect();
+    labels.push("");
+    py.import("numpy")?
+        .call_method1("array", (labels,))?
+        .call_method1("__getitem__", (indices.into_pyarray(py),))
 }
 
 /// Mark a freshly built NumPy array read-only: it is about to be cached and
@@ -269,6 +312,28 @@ impl GridResult {
             Ok(dict.into_any().unbind())
         })?;
         dict_copy(py, dict)
+    }
+
+    /// numpy str array (n_targets, n_times): the tag of the first rule, in
+    /// the order the rules were written, that is violated where the
+    /// constraint is; an empty string where the constraint is satisfied.
+    #[getter]
+    fn first_violated(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let grid = &self.grid;
+        let violated = grid.violated.as_standard_layout();
+        let named: HashMap<&str, _> = grid
+            .named
+            .iter()
+            .map(|(tag, mask)| (tag.as_str(), mask.as_standard_layout()))
+            .collect();
+        let indices = first_violated_indices(
+            &self.component_order,
+            violated.as_slice().expect("standard layout"),
+            |tag| named.get(tag).and_then(|mask| mask.as_slice()),
+        );
+        Ok(first_violated_labels(py, &self.component_order, indices)?
+            .call_method1("reshape", (grid.violated.dim(),))?
+            .unbind())
     }
 
     /// numpy float array (n_targets,) of target right ascensions in degrees.

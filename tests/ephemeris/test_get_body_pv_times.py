@@ -408,3 +408,72 @@ def test_apparent_velocity_at_the_ends_of_the_span(
 def test_apparent_rejects_horizons(tle: rust_ephem.TLEEphemeris) -> None:
     with pytest.raises(ValueError, match="use_horizons=True is not supported"):
         tle.get_body_pv("moon", use_horizons=True, apparent=True)
+
+
+@pytest.mark.parametrize("apparent", [False, True])
+@pytest.mark.parametrize("at_times", [False, True])
+def test_several_bodies_are_each_what_one_call_returns(
+    ephem: Observer, apparent: bool, at_times: bool
+) -> None:
+    """Held bodies and one read from the kernel, in an order that is not the
+    order they are solved in."""
+    names = ["Moon", "venus", "earth", "sun"]
+    times = TIMES if at_times else None
+    several = ephem.get_body_pv(names, times=times, apparent=apparent)
+    assert list(several) == names
+    for name in names:
+        alone = ephem.get_body_pv(name, times=times, apparent=apparent)
+        np.testing.assert_array_equal(several[name].position, alone.position)
+        np.testing.assert_array_equal(
+            several[name].velocity, alone.velocity, strict=True
+        )
+        assert several[name].position.shape == alone.position.shape
+    as_tuple = ephem.get_body_pv(tuple(names), times=times, apparent=apparent)
+    np.testing.assert_array_equal(as_tuple["sun"].position, several["sun"].position)
+
+
+def test_several_bodies_with_a_named_kernel(tle: rust_ephem.TLEEphemeris) -> None:
+    several = tle.get_body_pv(["sun", "moon"], str(KERNEL), times=TIMES)
+    for name in ("sun", "moon"):
+        alone = tle.get_body_pv(name, str(KERNEL), times=TIMES)
+        np.testing.assert_array_equal(several[name].position, alone.position)
+        np.testing.assert_array_equal(several[name].velocity, alone.velocity)
+
+
+def test_one_body_in_a_list_is_still_a_dict(tle: rust_ephem.TLEEphemeris) -> None:
+    result = tle.get_body_pv(["sun"], times=TIMES)
+    assert list(result) == ["sun"]
+    assert tle.get_body_pv([], times=TIMES) == {}
+    with pytest.raises(TypeError, match="name or NAIF ID string, or a sequence"):
+        tle.get_body_pv(10, times=TIMES)  # type: ignore[call-overload]
+    with pytest.raises(ValueError):
+        tle.get_body_pv(["sun", "not a body"], times=TIMES)
+
+
+@pytest.mark.parametrize("apparent", [False, True])
+def test_ra_dec_and_distance_are_those_of_the_position(
+    ephem: Observer, apparent: bool
+) -> None:
+    for name in ("sun", "moon", "earth"):
+        state = ephem.get_body_pv(name, times=TIMES, apparent=apparent)
+        position = state.position
+        distance = np.linalg.norm(position, axis=1)
+        np.testing.assert_allclose(state.distance, distance, rtol=1e-15)
+        assert ((state.ra_deg >= 0.0) & (state.ra_deg < 360.0)).all()
+        ra, dec = np.radians(state.ra_deg), np.radians(state.dec_deg)
+        direction = np.stack(
+            [np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)], axis=1
+        )
+        np.testing.assert_allclose(
+            direction, position / distance[:, None], rtol=0, atol=1e-14
+        )
+        assert state.ra_deg.shape == state.dec_deg.shape == (len(TIMES),)
+
+
+def test_ra_dec_of_the_sun_match_the_ephemeris_properties(
+    tle: rust_ephem.TLEEphemeris,
+) -> None:
+    """On the grid, ``get_body_pv("sun")`` is the Sun the ephemeris reports."""
+    state = tle.get_body_pv("sun")
+    np.testing.assert_allclose(state.ra_deg, tle.sun_ra_deg, rtol=0, atol=1e-9)
+    np.testing.assert_allclose(state.dec_deg, tle.sun_dec_deg, rtol=0, atol=1e-9)

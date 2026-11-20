@@ -258,31 +258,52 @@ impl StatesAt {
 /// `sun_pv_at - gcrs_pv_at`. Anything else is read from the kernels.
 fn geometric_body_states_at(
     data: &EphemerisData,
-    body: &str,
+    bodies: &[&str],
     times: &[DateTime<Utc>],
     spice_kernel: Option<&str>,
     use_horizons: bool,
-) -> PyResult<Array2<f64>> {
-    let held = Held::parse(body).filter(|_| spice_kernel.is_none());
+) -> PyResult<Vec<Array2<f64>>> {
+    let held = held_bodies(bodies, spice_kernel);
     let states = StatesAt::new(
         data,
         times,
-        held == Some(Held::Sun),
-        held == Some(Held::Moon),
+        held.contains(&Some(Held::Sun)),
+        held.contains(&Some(Held::Moon)),
     )?;
-    Ok(match held {
-        Some(held) => match states.held(held)? {
-            None => &states.observer * -1.0,
-            Some(body) => body - &states.observer,
-        },
-        None => {
-            use crate::utils::celestial::calculate_body_by_id_or_name;
-            use crate::utils::config::EARTH_NAIF_ID;
-            calculate_body_by_id_or_name(times, body, EARTH_NAIF_ID, spice_kernel, use_horizons)
-                .map_err(pyo3::exceptions::PyValueError::new_err)?
-                - &states.observer
-        }
-    })
+    bodies
+        .iter()
+        .zip(&held)
+        .map(|(body, held)| {
+            Ok(match held {
+                Some(held) => match states.held(*held)? {
+                    None => &states.observer * -1.0,
+                    Some(body) => body - &states.observer,
+                },
+                None => {
+                    use crate::utils::celestial::calculate_body_by_id_or_name;
+                    use crate::utils::config::EARTH_NAIF_ID;
+                    calculate_body_by_id_or_name(
+                        times,
+                        body,
+                        EARTH_NAIF_ID,
+                        spice_kernel,
+                        use_horizons,
+                    )
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?
+                        - &states.observer
+                }
+            })
+        })
+        .collect()
+}
+
+/// Which of `bodies` the ephemeris holds states for. None of them when a
+/// kernel is named: every body is then read from it.
+fn held_bodies(bodies: &[&str], spice_kernel: Option<&str>) -> Vec<Option<Held>> {
+    bodies
+        .iter()
+        .map(|body| Held::parse(body).filter(|_| spice_kernel.is_none()))
+        .collect()
 }
 
 /// Observer-centred apparent positions (N x 3, km, GCRS axes) of a body at
@@ -294,28 +315,45 @@ fn geometric_body_states_at(
 /// see. Anything else is solved against the kernels.
 fn apparent_body_positions_at(
     data: &EphemerisData,
-    body: &str,
+    bodies: &[&str],
     times: &[DateTime<Utc>],
     spice_kernel: Option<&str>,
     for_differencing: bool,
-) -> PyResult<Array2<f64>> {
-    let held = Held::parse(body).filter(|_| spice_kernel.is_none());
-    let moon = held == Some(Held::Moon);
+) -> PyResult<Vec<Array2<f64>>> {
+    let held = held_bodies(bodies, spice_kernel);
+    let moon = held.contains(&Some(Held::Moon));
     let states = if for_differencing {
         StatesAt::smoothed(data, times, moon)?
     } else {
-        StatesAt::new(data, times, held.is_some(), moon)?
+        StatesAt::new(data, times, held.iter().any(Option::is_some), moon)?
     };
-    match held {
-        Some(held) => Ok(states.apparent(times, &[states.held(held)?])?.0.remove(0)),
-        None => crate::utils::apparent::apparent_body_positions(
-            times,
-            &states.observer,
-            body,
-            spice_kernel,
-        )
-        .map_err(pyo3::exceptions::PyValueError::new_err),
+    // The held bodies are solved together; each is solved on its own terms,
+    // so its positions do not depend on what else was asked for.
+    let tables = held
+        .iter()
+        .flatten()
+        .map(|held| states.held(*held))
+        .collect::<PyResult<Vec<_>>>()?;
+    let mut solved = if tables.is_empty() {
+        Vec::new()
+    } else {
+        states.apparent(times, &tables)?.0
     }
+    .into_iter();
+    bodies
+        .iter()
+        .zip(&held)
+        .map(|(body, held)| match held {
+            Some(_) => Ok(solved.next().expect("one solution per held body")),
+            None => crate::utils::apparent::apparent_body_positions(
+                times,
+                &states.observer,
+                body,
+                spice_kernel,
+            )
+            .map_err(pyo3::exceptions::PyValueError::new_err),
+        })
+        .collect()
 }
 
 /// Half-width of the stencil that differentiates an apparent position. Small
@@ -339,14 +377,20 @@ const APPARENT_VELOCITY_STEP_MICROSECONDS: i64 = 250_000;
 /// a few microarcseconds per second in direction.
 fn apparent_body_states_at(
     data: &EphemerisData,
-    body: &str,
+    bodies: &[&str],
     times: &[DateTime<Utc>],
     spice_kernel: Option<&str>,
-) -> PyResult<Array2<f64>> {
+) -> PyResult<Vec<Array2<f64>>> {
     let n = times.len();
-    let mut out = Array2::from_elem((n, 6), f64::NAN);
-    let positions = apparent_body_positions_at(data, body, times, spice_kernel, false)?;
-    out.slice_mut(s![.., 0..3]).assign(&positions);
+    let mut out: Vec<Array2<f64>> =
+        apparent_body_positions_at(data, bodies, times, spice_kernel, false)?
+            .into_iter()
+            .map(|positions| {
+                let mut states = Array2::from_elem((n, 6), f64::NAN);
+                states.slice_mut(s![.., 0..3]).assign(&positions);
+                states
+            })
+            .collect();
 
     let span = data.times.as_deref().and_then(|t| t.first().zip(t.last()));
     let step = Duration::microseconds(APPARENT_VELOCITY_STEP_MICROSECONDS);
@@ -381,21 +425,23 @@ fn apparent_body_states_at(
                 .map(move |&(k, _)| *time + step * k)
         })
         .collect();
-    let sampled = apparent_body_positions_at(data, body, &samples, spice_kernel, true)?;
-    let mut rows = sampled.outer_iter();
-    for (i, stencil) in stencils.iter().enumerate() {
-        let Some(stencil) = stencil else {
-            continue;
-        };
-        let mut velocity = [0.0; 3];
-        for (_, weight) in *stencil {
-            let Some(position) = rows.next() else { break };
-            for j in 0..3 {
-                velocity[j] += weight * position[j] / h;
+    let sampled = apparent_body_positions_at(data, bodies, &samples, spice_kernel, true)?;
+    for (out, sampled) in out.iter_mut().zip(&sampled) {
+        let mut rows = sampled.outer_iter();
+        for (i, stencil) in stencils.iter().enumerate() {
+            let Some(stencil) = stencil else {
+                continue;
+            };
+            let mut velocity = [0.0; 3];
+            for (_, weight) in *stencil {
+                let Some(position) = rows.next() else { break };
+                for j in 0..3 {
+                    velocity[j] += weight * position[j] / h;
+                }
             }
-        }
-        for j in 0..3 {
-            out[[i, j + 3]] = velocity[j];
+            for j in 0..3 {
+                out[[i, j + 3]] = velocity[j];
+            }
         }
     }
     Ok(out)
@@ -1538,12 +1584,44 @@ pub trait EphemerisBase {
     fn get_body_pv(
         &self,
         py: Python,
-        body_identifier: &str,
+        body: &Bound<PyAny>,
         spice_kernel: Option<&str>,
         use_horizons: bool,
         times: Option<&Bound<PyAny>>,
         apparent: bool,
-    ) -> PyResult<Py<PositionVelocityData>> {
+    ) -> PyResult<Py<PyAny>> {
+        // One name gives one result; a sequence of names gives a dict of them.
+        let single = body.extract::<String>().ok();
+        let names: Vec<String> = match &single {
+            Some(name) => vec![name.clone()],
+            None => body.extract().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err(
+                    "body must be a name or NAIF ID string, or a sequence of them",
+                )
+            })?,
+        };
+        let bodies: Vec<&str> = names.iter().map(String::as_str).collect();
+        let states = self.body_states(&bodies, spice_kernel, use_horizons, times, apparent)?;
+        if single.is_some() {
+            return Ok(Py::new(py, split_pos_vel(&states[0]))?.into_any());
+        }
+        let result = pyo3::types::PyDict::new(py);
+        for (name, states) in names.iter().zip(&states) {
+            result.set_item(name, Py::new(py, split_pos_vel(states))?)?;
+        }
+        Ok(result.into_any().unbind())
+    }
+
+    /// Observer-centred states (N x 6, km and km/s) of each of `bodies`: what
+    /// `get_body_pv` returns for it.
+    fn body_states(
+        &self,
+        bodies: &[&str],
+        spice_kernel: Option<&str>,
+        use_horizons: bool,
+        times: Option<&Bound<PyAny>>,
+        apparent: bool,
+    ) -> PyResult<Vec<Array2<f64>>> {
         use crate::utils::celestial::calculate_body_by_id_or_name;
         use crate::utils::config::EARTH_NAIF_ID;
 
@@ -1557,18 +1635,11 @@ pub trait EphemerisBase {
                 Some(times) => crate::utils::time_utils::python_datetimes_to_utc(times)?,
                 None => self.get_times()?,
             };
-            let states = if apparent {
-                apparent_body_states_at(self.data(), body_identifier, &times, spice_kernel)?
+            return if apparent {
+                apparent_body_states_at(self.data(), bodies, &times, spice_kernel)
             } else {
-                geometric_body_states_at(
-                    self.data(),
-                    body_identifier,
-                    &times,
-                    spice_kernel,
-                    use_horizons,
-                )?
+                geometric_body_states_at(self.data(), bodies, &times, spice_kernel, use_horizons)
             };
-            return Py::new(py, split_pos_vel(&states));
         }
 
         let times = self
@@ -1576,28 +1647,27 @@ pub trait EphemerisBase {
             .times
             .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available."))?;
-
-        // Calculate body position relative to Earth center
-        let body_geocentric = calculate_body_by_id_or_name(
-            times,
-            body_identifier,
-            EARTH_NAIF_ID,
-            spice_kernel,
-            use_horizons,
-        )
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-
         // Get observer's geocentric position
         let observer_geocentric = self.data().gcrs.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(
                 "No GCRS data available. Ephemeris should compute GCRS during initialization.",
             )
         })?;
-
-        // Calculate body position relative to observer: body - observer
-        let body_observer_centric = &body_geocentric - observer_geocentric;
-
-        Py::new(py, split_pos_vel(&body_observer_centric))
+        bodies
+            .iter()
+            .map(|body| {
+                // Body position relative to Earth center, then to the observer.
+                let body_geocentric = calculate_body_by_id_or_name(
+                    times,
+                    body,
+                    EARTH_NAIF_ID,
+                    spice_kernel,
+                    use_horizons,
+                )
+                .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(&body_geocentric - observer_geocentric)
+            })
+            .collect()
     }
 
     /// Get SkyCoord object for any body identified by NAIF ID or name

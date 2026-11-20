@@ -1623,7 +1623,10 @@ constants, so this one number is all the radiometry the constraint needs.
      the table
    - ``UNCONVERGED`` (4): the disk integral did not converge
 
-   ``is_valid`` is true for ``OK`` and ``DARK``.
+   ``is_valid`` is true for ``OK`` and ``DARK``. ``label`` is the lower-case
+   name of a status (``"in_field"``), and ``StrayLightStatus.labels(values)``
+   names every entry of a ``sun_status``, ``earth_status`` or ``moon_status``
+   array of any shape, with an empty string for an entry that is not a status.
 
    **Example:**
 
@@ -1968,13 +1971,59 @@ All Pydantic constraint models inherit these methods:
       )
       print(violations.shape)  # (3, n_times)
 
-.. py:method:: in_constraint_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
+.. py:method:: violated_count(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False, fraction=False)
+
+   Count the times at which each target is in-constraint: the row sums of
+   :py:meth:`in_constraint_batch` for the same arguments. The
+   ``(n_targets, n_times)`` mask is not built; targets are evaluated a block at
+   a time and only each one's count is kept, so memory does not grow with the
+   number of targets.
+
+   :param fraction: Return the violated fraction of the times instead of the
+      count. The visible fraction is one minus it.
+   :type fraction: bool
+   :returns: int64 array of shape ``(n_targets,)``, or a float array with
+      ``fraction=True``
+   :rtype: numpy.ndarray
+
+   .. code-block:: python
+
+      visible = 1.0 - constraint.violated_count(ephem, ras, decs, fraction=True)
+
+.. py:method:: visibility_windows(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
+
+   Find the visibility windows of each target: the runs of consecutive
+   evaluated times at which it is not in-constraint, which are the runs of
+   ``False`` in its row of :py:meth:`in_constraint_batch`. The mask is not
+   built.
+
+   :returns: One int64 array per target, of shape ``(n_windows, 2)``: the index
+      of the first and of the last time of each window, both inclusive, into
+      the evaluated times. A target that is never visible has shape ``(0, 2)``.
+   :rtype: list[numpy.ndarray]
+
+   .. code-block:: python
+
+      windows = constraint.visibility_windows(ephem, ras, decs, times=times)
+      starts, ends = times[windows[0][:, 0]], times[windows[0][:, 1]]
+
+.. py:method:: in_constraint_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False, roll_offsets=None)
 
    Paired evaluation: element ``i`` is ``(target_ras[i], target_decs[i])`` at ``times[i]``.
    Equal to the diagonal of :py:meth:`in_constraint_batch` (same roll semantics and
    polarity), at O(N) cost. ``times`` may be a list of datetimes or a ``datetime64``
    array; see :py:meth:`Constraint.in_constraint_elementwise` for the time rules.
 
+   :param roll_offsets: Per-element spacecraft roll in degrees from the nominal
+      roll of that element, in place of ``target_rolls`` (the two cannot be
+      combined). The nominal roll turns body +Y toward the Sun (the
+      solar-optimal roll of a +Y panel) for the element's own target and time.
+      Element ``i`` is evaluated at ``nominal_i + roll_offsets[i]`` as if that
+      roll had been passed in ``target_rolls``, so one call replaces a call to
+      read the nominal roll and a second to apply the offset. ``None`` entries
+      are elements without a roll. For a ``StrayLightConstraint`` an entry
+      takes the place of ``roll_offset_deg`` for its element.
+   :type roll_offsets: list[float | None] or None
    :returns: 1D numpy boolean array of shape (N,), ``True`` where violated
    :rtype: numpy.ndarray
 
@@ -2005,12 +2054,26 @@ All Pydantic constraint models inherit these methods:
       grid.component_violated["earth_limb"]          # which rule blocks each cell
       grid.target(3).visibility                      # windows of one target, on demand
 
-.. py:method:: evaluate_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
+.. py:method:: evaluate_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False, roll_offsets=None)
 
    Like :py:meth:`in_constraint_elementwise`, returning an ``ElementwiseResult`` whose
    ``constraint_values`` match the corresponding :py:meth:`evaluate_batch` entries.
 
    :rtype: ElementwiseResult
+
+   .. code-block:: python
+
+      # Each row 15 degrees from its own nominal roll, in one call.
+      rows = constraint.evaluate_elementwise(
+          ephem, ras, decs, times=times, roll_offsets=[15.0] * len(ras)
+      )
+      rows.first_violated          # "sun", "earth_limb", ... or "" per row
+
+**Times.** Wherever a method takes ``time`` or ``times``, it accepts a
+``datetime``, a list of them, a NumPy ``datetime64`` array (read as UTC) or an
+astropy ``Time``. A ``Time`` in any scale is converted to UTC and rounded to
+the microsecond, so one built from an MJD or by adding seconds still lands on
+the ephemeris rows it was meant to.
 
 .. py:method:: in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
 
@@ -2180,6 +2243,14 @@ GridResult
      values, with the keys ``evaluate_batch()`` reports
    - ``component_violated`` (dict[str, numpy.ndarray of bool]): per-rule
      violation masks keyed by cause tag (``sun``, ``not.moon``, ...)
+   - ``component_order`` (list[str]): the cause tags in the order the rules
+     were written; a repeated rule is numbered as it is met (``sun``,
+     ``sun_2``)
+   - ``first_violated`` (numpy.ndarray of str): for each cell, the first rule
+     in ``component_order`` that is violated where the constraint is; an empty
+     string where the constraint is satisfied, or where it is violated with no
+     rule flagged (a negated rule that is itself satisfied). Also on
+     ``ElementwiseResult``, per row.
    - ``cause_value_keys`` (dict[str, list[str]]): cause tag to value key(s)
    - ``constraint_name`` (str)
    - ``timestamp`` (numpy.ndarray of datetime): the ``n_times`` evaluated times
@@ -2921,6 +2992,13 @@ its cost is close to that of ``in_constraint_batch()``:
 
    grid = constraint.evaluate_grid(ephem, target_ras, target_decs)
    sun_angle = grid.constraint_values["sun.sun_angle_deg"]   # (10000, n_times)
+
+When only a summary of each target is wanted, ``violated_count()`` and
+``visibility_windows()`` return it without the mask: the number (or fraction)
+of times each target is in-constraint, and the first and last time index of
+each of its visibility windows. They take about as long as
+``in_constraint_batch()`` and hold a few million cells at a time, whatever the
+number of targets.
 
 ``evaluate_batch()`` returns one result object per target, which is the right
 shape when each target's violation windows are needed and a costly one when

@@ -1161,6 +1161,10 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         Ok(BatchWithCauses { violated, named })
     }
 
+    fn cause_tags(&self) -> Vec<String> {
+        self.constraint.cause_tags()
+    }
+
     /// Maps this wrapper's (pass-through) cause tag(s) to their `constraint_values`
     /// key(s), mirroring `in_constraint_batch_with_causes`' unprefixed passthrough so a
     /// wrapped leaf's cause tag (e.g. `sun`) — not `boresight_offset` — is what

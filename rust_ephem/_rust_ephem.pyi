@@ -8,11 +8,13 @@ from typing import (
     Protocol,
     TypeAlias,
     TypedDict,
+    overload,
     runtime_checkable,
 )
 
 import numpy as np
 import numpy.typing as npt
+from astropy.time import Time  # type: ignore[import-untyped]
 
 from .constraints import DEFAULT_N_POINTS, DEFAULT_N_ROLL_SAMPLES
 from .ephemeris import Ephemeris
@@ -60,6 +62,18 @@ class PositionVelocityData:
     @property
     def velocity(self) -> npt.NDArray[np.float64]:
         """Velocity array (N x 3) in km/s"""
+
+    @property
+    def ra_deg(self) -> npt.NDArray[np.float64]:
+        """Right ascension of each position vector in degrees (N,), 0 to 360"""
+
+    @property
+    def dec_deg(self) -> npt.NDArray[np.float64]:
+        """Declination of each position vector in degrees (N,)"""
+
+    @property
+    def distance(self) -> npt.NDArray[np.float64]:
+        """Length of each position vector in kilometers (N,)"""
 
     @property
     def position_unit(self) -> str:
@@ -295,6 +309,17 @@ class GridResult:
         """Per-leaf violation masks, keyed by cause tag (e.g. ``sun``, ``not.moon``)."""
 
     @property
+    def component_order(self) -> list[str]:
+        """The ``component_violated`` tags in the order the rules were written."""
+
+    @property
+    def first_violated(self) -> npt.NDArray[np.str_]:
+        """(n_targets, n_times) str array: the tag of the first rule, in ``component_order``,
+        that is violated where the constraint is. An empty string where the
+        constraint is satisfied, or where it is violated with no rule flagged
+        (a negated rule that is itself satisfied, for instance)."""
+
+    @property
     def cause_value_keys(self) -> dict[str, list[str]]:
         """Map from a ``component_violated`` cause tag to its ``constraint_values`` key(s)."""
 
@@ -345,6 +370,17 @@ class ElementwiseResult:
     @property
     def component_violated(self) -> dict[str, npt.NDArray[np.bool_]]:
         """Per-leaf violation masks, keyed by cause tag (e.g. ``sun``, ``not.moon``)."""
+
+    @property
+    def component_order(self) -> list[str]:
+        """The ``component_violated`` tags in the order the rules were written."""
+
+    @property
+    def first_violated(self) -> npt.NDArray[np.str_]:
+        """(N,) str array: the tag of the first rule, in ``component_order``,
+        that is violated where the constraint is. An empty string where the
+        constraint is satisfied, or where it is violated with no rule flagged
+        (a negated rule that is itself satisfied, for instance)."""
 
     @property
     def cause_value_keys(self) -> dict[str, list[str]]:
@@ -789,7 +825,11 @@ class Constraint:
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
-        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         target_roll: float | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -833,7 +873,11 @@ class Constraint:
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         target_rolls: list[float] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -867,7 +911,11 @@ class Constraint:
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         target_rolls: list[float] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -906,15 +954,69 @@ class Constraint:
             provided, all ephemeris times are evaluated.
         """
 
+    def violated_count(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: npt.ArrayLike,
+        target_decs: npt.ArrayLike,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
+        indices: int | list[int] | None = None,
+        target_rolls: list[float] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
+    ) -> tuple[npt.NDArray[np.int64], int]:
+        """Number of times at which each target violates the constraint.
+
+        The row sums of ``in_constraint_batch`` for the same arguments, without
+        the (n_targets, n_times) mask: targets are evaluated a block at a time.
+
+        Returns:
+            The (n_targets,) int64 counts, and the number of times evaluated.
+        """
+
+    def visibility_windows(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: npt.ArrayLike,
+        target_decs: npt.ArrayLike,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
+        indices: int | list[int] | None = None,
+        target_rolls: list[float] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
+    ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64], int]:
+        """Runs of consecutive times at which each target does not violate the
+        constraint: the visibility windows of every row of
+        ``in_constraint_batch``, without the (n_targets, n_times) mask.
+
+        Returns:
+            The (n_targets,) int64 number of windows of each target; the
+            (n_windows, 2) int64 first and last time index of each window, the
+            windows of target 0 first; and the number of times evaluated.
+        """
+
     def in_constraint_elementwise(
         self,
         ephemeris: Ephemeris,
         target_ras: npt.ArrayLike,
         target_decs: npt.ArrayLike,
-        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         target_rolls: list[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
+        roll_offsets: list[float | None] | None = None,
     ) -> npt.NDArray[np.bool_]:
         """Check targets paired elementwise with times (no target x time grid).
 
@@ -933,6 +1035,10 @@ class Constraint:
             target_rolls: Optional per-element spacecraft roll in degrees; ``None``
                 entries sweep rolls for roll-dependent constraints.
             n_roll_samples: Roll angles swept in the free-roll case.
+            roll_offsets: Optional per-element spacecraft roll in degrees from
+                the element's nominal roll (body +Y toward the Sun), in place
+                of ``target_rolls``; ``None`` entries are elements without a
+                roll.
 
         Returns:
             (N,) bool array, True where the constraint is violated.
@@ -946,7 +1052,11 @@ class Constraint:
         ephemeris: Ephemeris,
         target_ras: npt.ArrayLike,
         target_decs: npt.ArrayLike,
-        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         target_rolls: list[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -959,16 +1069,21 @@ class Constraint:
         ephemeris: Ephemeris,
         target_ras: npt.ArrayLike,
         target_decs: npt.ArrayLike,
-        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         target_rolls: list[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
+        roll_offsets: list[float | None] | None = None,
     ) -> ElementwiseResult:
         """Like :meth:`in_constraint_elementwise`, plus per-element ``constraint_values``."""
 
     def in_constraint(
         self,
-        time: datetime | list[datetime] | npt.NDArray[np.datetime64],
+        time: datetime | list[datetime] | npt.NDArray[np.datetime64] | Time,
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
@@ -1057,7 +1172,11 @@ class Constraint:
         ephemeris: Ephemeris,
         target_ras: list[float] | None = None,
         target_decs: list[float] | None = None,
-        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         body: str | None = None,
         use_horizons: bool = False,
         spice_kernel: str | None = None,
@@ -1313,7 +1432,7 @@ class TLEEphemeris(Ephemeris):
         """Moon position and velocity in GCRS frame"""
 
     def gcrs_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
 
@@ -1328,17 +1447,17 @@ class TLEEphemeris(Ephemeris):
         """
 
     def itrs_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
 
     def sun_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
 
     def moon_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
 
@@ -1346,7 +1465,7 @@ class TLEEphemeris(Ephemeris):
         self,
         ras: float | Sequence[float] | npt.NDArray[np.float64],
         decs: float | Sequence[float] | npt.NDArray[np.float64],
-        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time,
     ) -> npt.NDArray[np.float64]:
         """Directions in which catalogue targets are seen at arbitrary time(s).
 
@@ -1678,20 +1797,42 @@ class TLEEphemeris(Ephemeris):
     def earth_dec_rad(self) -> npt.NDArray[np.float64]:
         """Declination of the Earth in radians. Extracts column 1 from earth_ra_dec_rad."""
 
+    @overload
+    def get_body_pv(
+        self,
+        body: list[str] | tuple[str, ...],
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        times: datetime
+        | Iterable[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = ...,
+        apparent: bool = ...,
+    ) -> dict[str, PositionVelocityData]: ...
+    @overload
     def get_body_pv(
         self,
         body: str,
         spice_kernel: str | None = ...,
         use_horizons: bool = ...,
         *,
-        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = ...,
+        times: datetime
+        | Iterable[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = ...,
         apparent: bool = ...,
     ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body relative to the observer.
 
         Args:
-            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499')
+            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499'),
+                or a list or tuple of them. Several bodies are worked out
+                from one sampling of the ephemeris, and each result is what
+                asking for that body alone returns.
             spice_kernel: Optional path to SPICE kernel
             use_horizons: Geometric queries only: fall back to the JPL
                 Horizons API when SPICE fails.
@@ -1706,7 +1847,9 @@ class TLEEphemeris(Ephemeris):
 
         Returns:
             Position (km) and velocity (km/s) in GCRS axes, centred on the
-            observer.
+            observer; ``ra_deg``, ``dec_deg`` and ``distance`` give the same
+            position as angles and a length. For a list or tuple of bodies, a
+            dict of these keyed by the names as they were given.
 
             With ``apparent=False`` they are geometric. With ``times`` given,
             the Sun, Moon and Earth come from the states the ephemeris holds,
@@ -1963,7 +2106,7 @@ class SPICEEphemeris(Ephemeris):
         """Moon position and velocity in GCRS frame"""
 
     def gcrs_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
 
@@ -1978,17 +2121,17 @@ class SPICEEphemeris(Ephemeris):
         """
 
     def itrs_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
 
     def sun_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
 
     def moon_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
 
@@ -1996,7 +2139,7 @@ class SPICEEphemeris(Ephemeris):
         self,
         ras: float | Sequence[float] | npt.NDArray[np.float64],
         decs: float | Sequence[float] | npt.NDArray[np.float64],
-        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time,
     ) -> npt.NDArray[np.float64]:
         """Directions in which catalogue targets are seen at arbitrary time(s).
 
@@ -2288,20 +2431,42 @@ class SPICEEphemeris(Ephemeris):
             List of Moon illumination fractions
         """
 
+    @overload
+    def get_body_pv(
+        self,
+        body: list[str] | tuple[str, ...],
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        times: datetime
+        | Iterable[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = ...,
+        apparent: bool = ...,
+    ) -> dict[str, PositionVelocityData]: ...
+    @overload
     def get_body_pv(
         self,
         body: str,
         spice_kernel: str | None = ...,
         use_horizons: bool = ...,
         *,
-        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = ...,
+        times: datetime
+        | Iterable[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = ...,
         apparent: bool = ...,
     ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body relative to the observer.
 
         Args:
-            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499')
+            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499'),
+                or a list or tuple of them. Several bodies are worked out
+                from one sampling of the ephemeris, and each result is what
+                asking for that body alone returns.
             spice_kernel: Optional path to SPICE kernel
             use_horizons: Geometric queries only: fall back to the JPL
                 Horizons API when SPICE fails.
@@ -2316,7 +2481,9 @@ class SPICEEphemeris(Ephemeris):
 
         Returns:
             Position (km) and velocity (km/s) in GCRS axes, centred on the
-            observer.
+            observer; ``ra_deg``, ``dec_deg`` and ``distance`` give the same
+            position as angles and a length. For a list or tuple of bodies, a
+            dict of these keyed by the names as they were given.
 
             With ``apparent=False`` they are geometric. With ``times`` given,
             the Sun, Moon and Earth come from the states the ephemeris holds,
@@ -2520,7 +2687,7 @@ class OEMEphemeris(Ephemeris):
         """Moon position and velocity in GCRS frame"""
 
     def gcrs_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
 
@@ -2535,17 +2702,17 @@ class OEMEphemeris(Ephemeris):
         """
 
     def itrs_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
 
     def sun_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
 
     def moon_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
 
@@ -2553,7 +2720,7 @@ class OEMEphemeris(Ephemeris):
         self,
         ras: float | Sequence[float] | npt.NDArray[np.float64],
         decs: float | Sequence[float] | npt.NDArray[np.float64],
-        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time,
     ) -> npt.NDArray[np.float64]:
         """Directions in which catalogue targets are seen at arbitrary time(s).
 
@@ -2845,20 +3012,42 @@ class OEMEphemeris(Ephemeris):
             List of Moon illumination fractions
         """
 
+    @overload
+    def get_body_pv(
+        self,
+        body: list[str] | tuple[str, ...],
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        times: datetime
+        | Iterable[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = ...,
+        apparent: bool = ...,
+    ) -> dict[str, PositionVelocityData]: ...
+    @overload
     def get_body_pv(
         self,
         body: str,
         spice_kernel: str | None = ...,
         use_horizons: bool = ...,
         *,
-        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = ...,
+        times: datetime
+        | Iterable[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = ...,
         apparent: bool = ...,
     ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body relative to the observer.
 
         Args:
-            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499')
+            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499'),
+                or a list or tuple of them. Several bodies are worked out
+                from one sampling of the ephemeris, and each result is what
+                asking for that body alone returns.
             spice_kernel: Optional path to SPICE kernel
             use_horizons: Geometric queries only: fall back to the JPL
                 Horizons API when SPICE fails.
@@ -2873,7 +3062,9 @@ class OEMEphemeris(Ephemeris):
 
         Returns:
             Position (km) and velocity (km/s) in GCRS axes, centred on the
-            observer.
+            observer; ``ra_deg``, ``dec_deg`` and ``distance`` give the same
+            position as angles and a length. For a list or tuple of bodies, a
+            dict of these keyed by the names as they were given.
 
             With ``apparent=False`` they are geometric. With ``times`` given,
             the Sun, Moon and Earth come from the states the ephemeris holds,
@@ -3140,7 +3331,7 @@ class FileEphemeris(Ephemeris):
         """Moon position/velocity in GCRS frame."""
 
     def gcrs_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
 
@@ -3155,17 +3346,17 @@ class FileEphemeris(Ephemeris):
         """
 
     def itrs_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
 
     def sun_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
 
     def moon_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
 
@@ -3173,7 +3364,7 @@ class FileEphemeris(Ephemeris):
         self,
         ras: float | Sequence[float] | npt.NDArray[np.float64],
         decs: float | Sequence[float] | npt.NDArray[np.float64],
-        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time,
     ) -> npt.NDArray[np.float64]:
         """Directions in which catalogue targets are seen at arbitrary time(s).
 
@@ -3358,20 +3549,42 @@ class FileEphemeris(Ephemeris):
     def moon_illumination(self, time_indices: list[int] | None = None) -> list[float]:
         """Calculate Moon illumination fraction for all (or selected) ephemeris times."""
 
+    @overload
+    def get_body_pv(
+        self,
+        body: list[str] | tuple[str, ...],
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        times: datetime
+        | Iterable[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = ...,
+        apparent: bool = ...,
+    ) -> dict[str, PositionVelocityData]: ...
+    @overload
     def get_body_pv(
         self,
         body: str,
         spice_kernel: str | None = ...,
         use_horizons: bool = ...,
         *,
-        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = ...,
+        times: datetime
+        | Iterable[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = ...,
         apparent: bool = ...,
     ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body relative to the observer.
 
         Args:
-            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499')
+            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499'),
+                or a list or tuple of them. Several bodies are worked out
+                from one sampling of the ephemeris, and each result is what
+                asking for that body alone returns.
             spice_kernel: Optional path to SPICE kernel
             use_horizons: Geometric queries only: fall back to the JPL
                 Horizons API when SPICE fails.
@@ -3386,7 +3599,9 @@ class FileEphemeris(Ephemeris):
 
         Returns:
             Position (km) and velocity (km/s) in GCRS axes, centred on the
-            observer.
+            observer; ``ra_deg``, ``dec_deg`` and ``distance`` give the same
+            position as angles and a length. For a list or tuple of bodies, a
+            dict of these keyed by the names as they were given.
 
             With ``apparent=False`` they are geometric. With ``times`` given,
             the Sun, Moon and Earth come from the states the ephemeris holds,
@@ -3618,22 +3833,22 @@ class ParquetEphemeris(Ephemeris):
     @property
     def moon_pv(self) -> PositionVelocityData: ...
     def gcrs_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData: ...
     def itrs_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData: ...
     def sun_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData: ...
     def moon_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData: ...
     def apparent_target_at(
         self,
         ras: float | Sequence[float] | npt.NDArray[np.float64],
         decs: float | Sequence[float] | npt.NDArray[np.float64],
-        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time,
     ) -> npt.NDArray[np.float64]: ...
     @property
     def obsgeoloc(self) -> Any: ...
@@ -3721,7 +3936,11 @@ class ParquetEphemeris(Ephemeris):
         spice_kernel: str | None = ...,
         use_horizons: bool = ...,
         *,
-        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = ...,
+        times: datetime
+        | Iterable[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = ...,
         apparent: bool = ...,
     ) -> PositionVelocityData: ...
     def get_body(
@@ -3857,7 +4076,7 @@ class GroundEphemeris(Ephemeris):
         """Position and velocity data for Moon"""
 
     def gcrs_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
 
@@ -3872,17 +4091,17 @@ class GroundEphemeris(Ephemeris):
         """
 
     def itrs_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
 
     def sun_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
 
     def moon_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time
     ) -> PositionVelocityData:
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
 
@@ -3890,7 +4109,7 @@ class GroundEphemeris(Ephemeris):
         self,
         ras: float | Sequence[float] | npt.NDArray[np.float64],
         decs: float | Sequence[float] | npt.NDArray[np.float64],
-        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time,
     ) -> npt.NDArray[np.float64]:
         """Directions in which catalogue targets are seen at arbitrary time(s).
 
@@ -4224,20 +4443,42 @@ class GroundEphemeris(Ephemeris):
             List of Moon illumination fractions
         """
 
+    @overload
+    def get_body_pv(
+        self,
+        body: list[str] | tuple[str, ...],
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        times: datetime
+        | Iterable[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = ...,
+        apparent: bool = ...,
+    ) -> dict[str, PositionVelocityData]: ...
+    @overload
     def get_body_pv(
         self,
         body: str,
         spice_kernel: str | None = ...,
         use_horizons: bool = ...,
         *,
-        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = ...,
+        times: datetime
+        | Iterable[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = ...,
         apparent: bool = ...,
     ) -> PositionVelocityData:
         """
         Get position and velocity of a celestial body relative to the observer.
 
         Args:
-            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499')
+            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499'),
+                or a list or tuple of them. Several bodies are worked out
+                from one sampling of the ephemeris, and each result is what
+                asking for that body alone returns.
             spice_kernel: Optional path to SPICE kernel
             use_horizons: Geometric queries only: fall back to the JPL
                 Horizons API when SPICE fails.
@@ -4252,7 +4493,9 @@ class GroundEphemeris(Ephemeris):
 
         Returns:
             Position (km) and velocity (km/s) in GCRS axes, centred on the
-            observer.
+            observer; ``ra_deg``, ``dec_deg`` and ``distance`` give the same
+            position as angles and a length. For a list or tuple of bodies, a
+            dict of these keyed by the names as they were given.
 
             With ``apparent=False`` they are geometric. With ``times`` given,
             the Sun, Moon and Earth come from the states the ephemeris holds,

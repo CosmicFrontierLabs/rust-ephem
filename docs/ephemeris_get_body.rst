@@ -42,6 +42,15 @@ Basic Usage
     print(f"Moon distance: {np.linalg.norm(moon_pv.position[0]):.0f} km")
     print(f"Mars distance: {np.linalg.norm(mars_pv.position[0]):.0f} km")
 
+    # Several bodies in one call: a dict keyed by the names as given. Each
+    # entry is what a call for that body alone returns.
+    bodies = ephem.get_body_pv(["Earth", "Moon", "Sun"])
+
+    # The position as angles (degrees) and a length (km), one per row
+    moon = bodies["Moon"]
+    print(f"Moon RA/Dec: {moon.ra_deg[0]:.3f}, {moon.dec_deg[0]:.3f}")
+    print(f"Moon distance: {moon.distance[0]:.0f} km")
+
     # Get body as astropy SkyCoord (includes observer location)
     sun_sc = ephem.get_body("Sun")
     print(f"Sun RA/Dec: {sun_sc[0].ra}, {sun_sc[0].dec}")

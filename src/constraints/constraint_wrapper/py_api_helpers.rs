@@ -29,6 +29,13 @@ const APPARENT_PARALLEL_MIN_CELLS: usize = 20_000;
 /// Paired elements above which their per-element set-up is shared across the cores.
 const ELEMENTWISE_PARALLEL_MIN_ROWS: usize = 8192;
 
+/// The explicit roll of every target, and the targets that share each roll.
+pub(super) type GroupedRolls<'a> = (&'a [f64], &'a std::collections::BTreeMap<u64, Vec<usize>>);
+
+/// Cells of the target x time grid evaluated at a time when only a summary
+/// of each target's row is kept.
+const REDUCE_BLOCK_CELLS: usize = 1 << 22;
+
 /// Cells of an apparent grid evaluated as paired elements in one call.
 const APPARENT_PAIRED_BLOCK_CELLS: usize = 1 << 20;
 
@@ -203,6 +210,7 @@ impl PyConstraint {
         target_decs: &[f64],
         times: Option<&Bound<PyAny>>,
         target_rolls: Option<&[Option<f64>]>,
+        roll_offsets: Option<&[Option<f64>]>,
         n_roll_samples: usize,
         with_values: bool,
         apparent: bool,
@@ -213,6 +221,34 @@ impl PyConstraint {
                 "target_ras and target_decs must have the same length",
             ));
         }
+        if let Some(offsets) = roll_offsets {
+            if target_rolls.is_some() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Cannot specify both 'target_rolls' and 'roll_offsets'",
+                ));
+            }
+            if offsets.len() != target_ras.len() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "roll_offsets must have the same length as target_ras and target_decs",
+                ));
+            }
+            if offsets.iter().flatten().any(|offset| !offset.is_finite()) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "roll_offsets must be finite numbers",
+                ));
+            }
+        }
+        // Offsets become rolls once the geometry they are measured from is
+        // known: the ephemeris the elements are evaluated on, apparent or not.
+        let rolls_on = |ephem: &dyn EphemerisBase, ras: &[f64], decs: &[f64], rows: &[usize]| {
+            roll_offsets
+                .map(|offsets| {
+                    crate::constraints::solar_roll::rolls_from_nominal(
+                        ephem, ras, decs, rows, offsets,
+                    )
+                })
+                .transpose()
+        };
         if let Some(rolls) = target_rolls {
             if rolls.len() != target_ras.len() {
                 return Err(pyo3::exceptions::PyValueError::new_err(
@@ -259,31 +295,191 @@ impl PyConstraint {
                         } else {
                             (0..local.len()).map(correct).unzip()
                         };
+                    let rolls = rolls_on(&view, &ras, &decs, &local)?;
                     let evaluation = evaluate_elements(
                         &*self.evaluator,
                         &view,
                         &ras,
                         &decs,
                         &local,
-                        target_rolls,
+                        rolls.as_deref().or(target_rolls),
                         n_roll_samples,
                         with_values,
                     )?;
                     return Ok((element_times, evaluation));
                 }
+                let rolls = rolls_on(ephem, target_ras, target_decs, indices)?;
                 let evaluation = evaluate_elements(
                     &*self.evaluator,
                     ephem,
                     target_ras,
                     target_decs,
                     indices,
-                    target_rolls,
+                    rolls.as_deref().or(target_rolls),
                     n_roll_samples,
                     with_values,
                 )?;
                 Ok((element_times, evaluation))
             },
         )
+    }
+
+    /// The target x time violation grid `in_constraint_batch` returns, on an
+    /// ephemeris already resolved to the requested times.
+    ///
+    /// `rolls` is the explicit spacecraft roll of every target with the
+    /// targets grouped by roll (`build_roll_groups`); `None` leaves the roll
+    /// free.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn mask_rows(
+        &self,
+        ephemeris: &dyn EphemerisBase,
+        time_indices: Option<&[usize]>,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        rolls: Option<GroupedRolls>,
+        n_roll_samples: usize,
+        apparent: bool,
+    ) -> PyResult<ndarray::Array2<bool>> {
+        let evaluator = &*self.evaluator;
+        let Some((rolls, groups)) = rolls else {
+            if apparent {
+                if let Some(mask) = self.apparent_mask_paired(
+                    ephemeris,
+                    time_indices,
+                    target_ras,
+                    target_decs,
+                    None,
+                )? {
+                    return Ok(mask);
+                }
+                return self.apparent_batch(
+                    ephemeris,
+                    time_indices,
+                    target_ras,
+                    target_decs,
+                    !evaluator.is_roll_dependent(),
+                    |view, ras, decs, selected| {
+                        evaluator.in_constraint_batch_constrained_at_every_roll(
+                            view,
+                            ras,
+                            decs,
+                            Some(selected),
+                            n_roll_samples,
+                        )
+                    },
+                );
+            }
+            return evaluator.in_constraint_batch_constrained_at_every_roll(
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices,
+                n_roll_samples,
+            );
+        };
+        let n_times = match time_indices {
+            Some(indices) => indices.len(),
+            None => ephemeris.get_times()?.len(),
+        };
+        let mut result = ndarray::Array2::from_elem((target_ras.len(), n_times), false);
+        for members in groups.values() {
+            let (ras, decs) = Self::extract_group_targets(target_ras, target_decs, members);
+            let roll = EvaluationRoll::Fixed(rolls[members[0]]);
+            let paired = if apparent {
+                self.apparent_mask_paired(
+                    ephemeris,
+                    time_indices,
+                    &ras,
+                    &decs,
+                    Some(roll.degrees()),
+                )?
+            } else {
+                None
+            };
+            let mask = if let Some(mask) = paired {
+                mask
+            } else if apparent {
+                self.apparent_batch(
+                    ephemeris,
+                    time_indices,
+                    &ras,
+                    &decs,
+                    false,
+                    |view, ras, decs, selected| {
+                        evaluator.in_constraint_batch_at_roll(view, ras, decs, Some(selected), roll)
+                    },
+                )?
+            } else {
+                evaluator.in_constraint_batch_at_roll(ephemeris, &ras, &decs, time_indices, roll)?
+            };
+            for (local, &target) in members.iter().enumerate() {
+                result.row_mut(target).assign(&mask.row(local));
+            }
+        }
+        Ok(result)
+    }
+
+    /// Hand `reduce` each row of the grid `in_constraint_batch` returns, in
+    /// target order, without holding the grid: targets are evaluated in blocks
+    /// of about `REDUCE_BLOCK_CELLS` cells. Returns the number of times.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn reduce_rows(
+        &self,
+        py: Python,
+        ephemeris: &Py<PyAny>,
+        target_ras: &Bound<PyAny>,
+        target_decs: &Bound<PyAny>,
+        times: Option<&Bound<PyAny>>,
+        indices: Option<&Bound<PyAny>>,
+        target_rolls: Option<Vec<f64>>,
+        n_roll_samples: usize,
+        apparent: bool,
+        mut reduce: impl FnMut(ndarray::ArrayView1<bool>),
+    ) -> PyResult<usize> {
+        Self::validate_n_roll_samples(n_roll_samples)?;
+        let target_ras = extract_f64s(target_ras, "target_ras")?;
+        let target_decs = extract_f64s(target_decs, "target_decs")?;
+        let n_targets = target_ras.len();
+        if target_decs.len() != n_targets {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+        if let Some(rolls) = &target_rolls {
+            if rolls.len() != n_targets {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "target_rolls must have the same length as target_ras and target_decs",
+                ));
+            }
+            rolls
+                .iter()
+                .try_for_each(|&roll| Self::validate_target_roll(roll))?;
+        }
+        let bound = ephemeris.bind(py);
+        self.with_evaluation_ephemeris(bound, times, indices, |ephem_ref, time_indices| {
+            let n_times = match &time_indices {
+                Some(indices) => indices.len(),
+                None => ephem_ref.get_times()?.len(),
+            };
+            let block = (REDUCE_BLOCK_CELLS / n_times.max(1)).max(1);
+            for first in (0..n_targets).step_by(block) {
+                let targets = first..(first + block).min(n_targets);
+                let rolls = target_rolls.as_deref().map(|rolls| &rolls[targets.clone()]);
+                let groups = rolls.map(Self::build_roll_groups).transpose()?;
+                let mask = self.mask_rows(
+                    ephem_ref,
+                    time_indices.as_deref(),
+                    &target_ras[targets.clone()],
+                    &target_decs[targets],
+                    rolls.zip(groups.as_ref()),
+                    n_roll_samples,
+                    apparent,
+                )?;
+                mask.rows().into_iter().for_each(&mut reduce);
+            }
+            Ok(n_times)
+        })
     }
 
     /// The apparent target x time violation grid of a tree with an expensive

@@ -1648,7 +1648,12 @@ impl PyConstraint {
                         )
                     })
             })?;
-        Ok(GridResult::new(grid, target_ras, target_decs))
+        Ok(GridResult::new(
+            grid,
+            target_ras,
+            target_decs,
+            self.evaluator.cause_tags(),
+        ))
     }
 
     /// Check if targets are in-constraint for multiple RA/Dec positions (vectorized)
@@ -1704,105 +1709,137 @@ impl PyConstraint {
             ));
         }
         let bound = ephemeris.bind(py);
-        let result = if let Some(rolls) = target_rolls {
-            let groups = Self::build_roll_groups(&rolls)?;
+        let groups = target_rolls
+            .as_deref()
+            .map(Self::build_roll_groups)
+            .transpose()?;
+        let result =
             self.with_evaluation_ephemeris(bound, times, indices, |ephem_ref, time_indices| {
-                let n_times = match &time_indices {
-                    Some(idx) => idx.len(),
-                    None => ephem_ref.get_times()?.len(),
-                };
-                let mut result = ndarray::Array2::from_elem((target_ras.len(), n_times), false);
-                for group_indices in groups.values() {
-                    let (ras, decs) =
-                        Self::extract_group_targets(&target_ras, &target_decs, group_indices);
-                    let roll = EvaluationRoll::Fixed(rolls[group_indices[0]]);
-                    let paired = if apparent {
-                        self.apparent_mask_paired(
-                            ephem_ref,
-                            time_indices.as_deref(),
-                            &ras,
-                            &decs,
-                            Some(roll.degrees()),
-                        )?
-                    } else {
-                        None
-                    };
-                    let mask = if let Some(mask) = paired {
-                        mask
-                    } else if apparent {
-                        self.apparent_batch(
-                            ephem_ref,
-                            time_indices.as_deref(),
-                            &ras,
-                            &decs,
-                            false,
-                            |view, ras, decs, selected| {
-                                self.evaluator.in_constraint_batch_at_roll(
-                                    view,
-                                    ras,
-                                    decs,
-                                    Some(selected),
-                                    roll,
-                                )
-                            },
-                        )?
-                    } else {
-                        self.evaluator.in_constraint_batch_at_roll(
-                            ephem_ref,
-                            &ras,
-                            &decs,
-                            time_indices.as_deref(),
-                            roll,
-                        )?
-                    };
-                    for (local, &idx) in group_indices.iter().enumerate() {
-                        result.row_mut(idx).assign(&mask.row(local));
-                    }
-                }
-                Ok(result)
-            })?
-        } else {
-            self.with_evaluation_ephemeris(bound, times, indices, |ephem_ref, time_indices| {
-                if apparent {
-                    if let Some(mask) = self.apparent_mask_paired(
-                        ephem_ref,
-                        time_indices.as_deref(),
-                        &target_ras,
-                        &target_decs,
-                        None,
-                    )? {
-                        return Ok(mask);
-                    }
-                    return self.apparent_batch(
-                        ephem_ref,
-                        time_indices.as_deref(),
-                        &target_ras,
-                        &target_decs,
-                        !self.evaluator.is_roll_dependent(),
-                        |view, ras, decs, selected| {
-                            self.evaluator
-                                .in_constraint_batch_constrained_at_every_roll(
-                                    view,
-                                    ras,
-                                    decs,
-                                    Some(selected),
-                                    n_roll_samples,
-                                )
-                        },
-                    );
-                }
-                self.evaluator
-                    .in_constraint_batch_constrained_at_every_roll(
-                        ephem_ref,
-                        &target_ras,
-                        &target_decs,
-                        time_indices.as_deref(),
-                        n_roll_samples,
-                    )
-            })?
-        };
+                self.mask_rows(
+                    ephem_ref,
+                    time_indices.as_deref(),
+                    &target_ras,
+                    &target_decs,
+                    target_rolls.as_deref().zip(groups.as_ref()),
+                    n_roll_samples,
+                    apparent,
+                )
+            })?;
         use numpy::IntoPyArray;
         Ok(result.into_pyarray(py).into())
+    }
+
+    /// Number of times at which each target is in-constraint
+    ///
+    /// The row sums of ``in_constraint_batch``, without building the
+    /// (n_targets, n_times) mask: targets are evaluated a block at a time.
+    ///
+    /// Args:
+    ///     As ``in_constraint_batch``.
+    ///
+    /// Returns:
+    ///     tuple[numpy.ndarray, int]: int64 array of shape (n_targets,) with the
+    ///     number of times each target VIOLATES the constraint, and the number
+    ///     of times evaluated.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=false))]
+    fn violated_count(
+        &self,
+        py: Python,
+        ephemeris: Py<PyAny>,
+        target_ras: &Bound<PyAny>,
+        target_decs: &Bound<PyAny>,
+        times: Option<&Bound<PyAny>>,
+        indices: Option<&Bound<PyAny>>,
+        target_rolls: Option<Vec<f64>>,
+        n_roll_samples: usize,
+        apparent: bool,
+    ) -> PyResult<(Py<PyAny>, usize)> {
+        let mut counts: Vec<i64> = Vec::new();
+        let n_times = self.reduce_rows(
+            py,
+            &ephemeris,
+            target_ras,
+            target_decs,
+            times,
+            indices,
+            target_rolls,
+            n_roll_samples,
+            apparent,
+            |row| counts.push(row.iter().filter(|&&violated| violated).count() as i64),
+        )?;
+        use numpy::IntoPyArray;
+        Ok((counts.into_pyarray(py).into_any().unbind(), n_times))
+    }
+
+    /// Runs of consecutive times at which each target is NOT in-constraint
+    ///
+    /// The visibility windows of every row of ``in_constraint_batch``, without
+    /// building the (n_targets, n_times) mask: targets are evaluated a block
+    /// at a time.
+    ///
+    /// Args:
+    ///     As ``in_constraint_batch``.
+    ///
+    /// Returns:
+    ///     tuple[numpy.ndarray, numpy.ndarray, int]: int64 array of shape
+    ///     (n_targets,) with the number of windows of each target; int64 array
+    ///     of shape (n_windows, 2) with the first and last time index of each
+    ///     window, the windows of target 0 first; and the number of times
+    ///     evaluated.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=false))]
+    fn visibility_windows(
+        &self,
+        py: Python,
+        ephemeris: Py<PyAny>,
+        target_ras: &Bound<PyAny>,
+        target_decs: &Bound<PyAny>,
+        times: Option<&Bound<PyAny>>,
+        indices: Option<&Bound<PyAny>>,
+        target_rolls: Option<Vec<f64>>,
+        n_roll_samples: usize,
+        apparent: bool,
+    ) -> PyResult<(Py<PyAny>, Py<PyAny>, usize)> {
+        let mut counts: Vec<i64> = Vec::new();
+        let mut bounds: Vec<i64> = Vec::new();
+        let n_times = self.reduce_rows(
+            py,
+            &ephemeris,
+            target_ras,
+            target_decs,
+            times,
+            indices,
+            target_rolls,
+            n_roll_samples,
+            apparent,
+            |row| {
+                let before = bounds.len();
+                let mut start = None;
+                for (index, &violated) in row.iter().enumerate() {
+                    match (violated, start) {
+                        (false, None) => start = Some(index),
+                        (true, Some(first)) => {
+                            bounds.extend([first as i64, index as i64 - 1]);
+                            start = None;
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(first) = start {
+                    bounds.extend([first as i64, row.len() as i64 - 1]);
+                }
+                counts.push(((bounds.len() - before) / 2) as i64);
+            },
+        )?;
+        use numpy::IntoPyArray;
+        let windows = ndarray::Array2::from_shape_vec((bounds.len() / 2, 2), bounds)
+            .expect("two bounds per window");
+        Ok((
+            counts.into_pyarray(py).into_any().unbind(),
+            windows.into_pyarray(py).into_any().unbind(),
+            n_times,
+        ))
     }
 
     /// Compute instantaneous field of regard for this constraint in steradians.
@@ -2369,6 +2406,10 @@ impl PyConstraint {
     ///         ``n_roll_samples`` rolls for roll-dependent constraints, exactly as
     ///         ``in_constraint_batch``.
     ///     n_roll_samples (int, optional): Roll angles swept in the free-roll case.
+    ///     roll_offsets (list[float | None], optional): Per-element spacecraft roll
+    ///         in degrees from the nominal roll of that element (body +Y toward
+    ///         the Sun), in place of ``target_rolls``. ``None`` entries are
+    ///         elements without a roll.
     ///
     /// Returns:
     ///     numpy.ndarray: 1D boolean array of shape (N,), True where the constraint
@@ -2377,7 +2418,7 @@ impl PyConstraint {
     /// Raises:
     ///     ValueError: On length mismatches or times outside the ephemeris range.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=false))]
+    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=false, roll_offsets=None))]
     fn in_constraint_elementwise(
         &self,
         py: Python,
@@ -2388,6 +2429,7 @@ impl PyConstraint {
         target_rolls: Option<Vec<Option<f64>>>,
         n_roll_samples: usize,
         apparent: bool,
+        roll_offsets: Option<Vec<Option<f64>>>,
     ) -> PyResult<Py<PyAny>> {
         let target_ras = extract_f64s(target_ras, "target_ras")?;
         let target_decs = extract_f64s(target_decs, "target_decs")?;
@@ -2398,6 +2440,7 @@ impl PyConstraint {
             &target_decs,
             times,
             target_rolls.as_deref(),
+            roll_offsets.as_deref(),
             n_roll_samples,
             false,
             apparent,
@@ -2418,7 +2461,7 @@ impl PyConstraint {
     ///     ``visibility_flags``, ``constraint_values``, ``component_violated``,
     ///     ``cause_value_keys``, ``timestamp``, ``ras`` and ``decs``.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=false))]
+    #[pyo3(signature = (ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=false, roll_offsets=None))]
     fn evaluate_elementwise(
         &self,
         py: Python,
@@ -2429,6 +2472,7 @@ impl PyConstraint {
         target_rolls: Option<Vec<Option<f64>>>,
         n_roll_samples: usize,
         apparent: bool,
+        roll_offsets: Option<Vec<Option<f64>>>,
     ) -> PyResult<ElementwiseResult> {
         let target_ras = extract_f64s(target_ras, "target_ras")?;
         let target_decs = extract_f64s(target_decs, "target_decs")?;
@@ -2439,6 +2483,7 @@ impl PyConstraint {
             &target_decs,
             times,
             target_rolls.as_deref(),
+            roll_offsets.as_deref(),
             n_roll_samples,
             true,
             apparent,
@@ -2449,6 +2494,7 @@ impl PyConstraint {
             target_ras,
             target_decs,
             evaluation,
+            self.evaluator.cause_tags(),
         ))
     }
 

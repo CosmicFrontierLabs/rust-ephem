@@ -9,6 +9,7 @@ import numpy.typing as npt
 
 if TYPE_CHECKING:
     from astropy.coordinates import SkyCoord  # type: ignore[import-untyped]
+    from astropy.time import Time  # type: ignore[import-untyped]
     from astropy.units import Quantity  # type: ignore[import-untyped]
 
 from ._rust_ephem import (
@@ -88,7 +89,7 @@ class Ephemeris(abc.ABC):
 
     @abc.abstractmethod
     def gcrs_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time"
     ) -> PositionVelocityData:
         """Observer GCRS position/velocity at arbitrary time(s).
 
@@ -101,21 +102,21 @@ class Ephemeris(abc.ABC):
 
     @abc.abstractmethod
     def itrs_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time"
     ) -> PositionVelocityData:
         """Observer ITRS position/velocity at arbitrary time(s); see ``gcrs_pv_at``."""
         ...
 
     @abc.abstractmethod
     def sun_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time"
     ) -> PositionVelocityData:
         """Sun GCRS position/velocity at arbitrary time(s); see ``gcrs_pv_at``."""
         ...
 
     @abc.abstractmethod
     def moon_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time"
     ) -> PositionVelocityData:
         """Moon GCRS position/velocity at arbitrary time(s); see ``gcrs_pv_at``."""
         ...
@@ -125,7 +126,7 @@ class Ephemeris(abc.ABC):
         self,
         ras: float | Sequence[float] | npt.NDArray[np.float64],
         decs: float | Sequence[float] | npt.NDArray[np.float64],
-        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+        times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time",
     ) -> npt.NDArray[np.float64]:
         """Directions in which catalogue targets are seen at arbitrary time(s).
 

@@ -1033,6 +1033,17 @@ pub trait ConstraintEvaluator: Send + Sync {
         Ok(HashMap::from([(own_tag, value_keys)]))
     }
 
+    /// The cause tags of this constraint in the order its rules were written:
+    /// the keys `in_constraint_batch_with_causes` and
+    /// `compute_cause_value_keys` report, which reach the caller unordered.
+    ///
+    /// Default (leaf constraints): this constraint's own tag. Combinators list
+    /// their children's tags in child order, with the renaming their merges
+    /// apply to tags that collide.
+    fn cause_tags(&self) -> Vec<String> {
+        vec![value_key_prefix(&self.name())]
+    }
+
     /// Check if targets are in-constraint for multiple RA/Dec positions (vectorized)
     ///
     /// # Arguments
