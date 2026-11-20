@@ -99,20 +99,201 @@ pub fn python_datetimes_to_utc(times: &Bound<PyAny>) -> PyResult<Vec<DateTime<Ut
 /// `Time` in any scale is converted to UTC. Its instants are rounded to the
 /// microsecond: astropy holds a time as two doubles, and the nanoseconds it
 /// reports carry rounding of that size.
+///
+/// The instants are computed from the two doubles of the UTC time (`jd1` and
+/// `jd2`), not read from `Time.datetime64`. astropy builds that array from one
+/// ISO string per element, about 1.7 us each, and keeps it on the object, so
+/// only the first use of a `Time` pays for it. The result here is the one that
+/// path gives, to the microsecond.
+///
+/// # Errors
+/// `ValueError` for an instant that is not finite or lies within a leap
+/// second, which a UTC `datetime64` cannot hold.
 fn astropy_time_to_datetime64<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> {
     if !(obj.hasattr("jd1")? && obj.hasattr("scale")? && obj.hasattr("utc")?) {
         return Ok(None);
     }
-    let np = obj.py().import("numpy")?;
+    let py = obj.py();
+    let np = py.import("numpy")?;
+    let utc = obj.getattr("utc")?;
+    let jd1 = utc.getattr("jd1")?;
+    let shape = np.call_method1("shape", (&jd1,))?;
+    let part = |value: Bound<'py, PyAny>| -> PyResult<Vec<f64>> {
+        let flat = np
+            .call_method1("asarray", (value, "float64"))?
+            .call_method1("ravel", ())?;
+        let flat = flat
+            .cast::<numpy::PyArray1<f64>>()
+            .map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("Could not read the Time's Julian dates")
+            })?
+            .readonly();
+        Ok(flat.as_array().to_vec())
+    };
+    let jd1 = part(jd1)?;
+    let jd2 = part(utc.getattr("jd2")?)?;
+    if jd1
+        .iter()
+        .zip(&jd2)
+        .any(|(a, b)| a + b < LEAP_SECOND_ERA_JD)
+    {
+        // Before 1972 UTC ran at a varying rate against atomic time and its
+        // days had lengths of their own, which astropy takes from ERFA. Such
+        // times are read from the strings, as all times once were.
+        return astropy_time_to_datetime64_from_strings(&utc).map(Some);
+    }
+    let mut lengths = DayLengths::default();
+    let micros = jd1
+        .iter()
+        .zip(&jd2)
+        .enumerate()
+        .map(|(i, (&a, &b))| {
+            utc_jd_to_unix_micros(a, b, &mut lengths).map_err(|reason| {
+                pyo3::exceptions::PyValueError::new_err(format!("times[{i}] {reason}"))
+            })
+        })
+        .collect::<PyResult<Vec<i64>>>()?;
+    numpy::PyArray1::from_vec(py, micros)
+        .call_method1("reshape", (shape,))?
+        .call_method1("astype", ("datetime64[us]",))
+        .map(Some)
+}
+
+/// The UTC instants of an astropy `Time` already in UTC, read from its
+/// `datetime64`, which astropy builds from one ISO string per element and
+/// reports to the nanosecond; rounded to the microsecond.
+fn astropy_time_to_datetime64_from_strings<'py>(
+    utc: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let np = utc.py().import("numpy")?;
     let nanos = np
-        .call_method1("asarray", (obj.getattr("utc")?.getattr("datetime64")?,))?
+        .call_method1("asarray", (utc.getattr("datetime64")?,))?
         .call_method1("astype", ("datetime64[ns]",))?
         .call_method1("astype", ("int64",))?;
     let micros = np.call_method1(
         "floor_divide",
         (np.call_method1("add", (nanos, 500))?, 1000),
     )?;
-    micros.call_method1("astype", ("datetime64[us]",)).map(Some)
+    micros.call_method1("astype", ("datetime64[us]",))
+}
+
+/// Julian date of 1970-01-01T00:00:00 UTC.
+const UNIX_EPOCH_JD: f64 = 2_440_587.5;
+/// Julian date of 1972-01-01T00:00:00 UTC, from which UTC keeps the SI second
+/// and differs from atomic time by whole leap seconds.
+const LEAP_SECOND_ERA_JD: f64 = 2_441_317.5;
+/// Days from 0001-01-01 (day 1 of the common era) to 1970-01-01.
+const UNIX_EPOCH_DAYS_FROM_CE: i64 = 719_163;
+const MICROS_PER_DAY: i64 = 86_400_000_000;
+const NANOS_PER_SECOND: f64 = 1e9;
+
+/// The length in SI seconds of UTC days, by days since 1970-01-01: 86,400,
+/// or 86,401 for a day that ends with a leap second. Each day asked about is
+/// kept, since the times of one array share a few days.
+#[derive(Default)]
+struct DayLengths {
+    known: std::collections::HashMap<i64, f64>,
+}
+
+impl DayLengths {
+    fn seconds(&mut self, day: i64) -> Option<f64> {
+        if let Some(seconds) = self.known.get(&day) {
+            return Some(*seconds);
+        }
+        let midnight = |day: i64| -> Option<Epoch> {
+            let date = chrono::NaiveDate::from_num_days_from_ce_opt(
+                i32::try_from(day.checked_add(UNIX_EPOCH_DAYS_FROM_CE)?).ok()?,
+            )?;
+            Some(Epoch::from_gregorian_utc_at_midnight(
+                date.year(),
+                date.month() as u8,
+                date.day() as u8,
+            ))
+        };
+        // TAI minus UTC at the midnight that ends the day, less that at the
+        // midnight that begins it, is the leap second the day ends with.
+        let leap = midnight(day.checked_add(1)?)?.leap_seconds(true)?
+            - midnight(day)?.leap_seconds(true)?;
+        let seconds = SECONDS_PER_DAY + leap;
+        self.known.insert(day, seconds);
+        Some(seconds)
+    }
+}
+
+/// Microseconds from 1970-01-01T00:00:00 UTC, as `datetime64` counts them
+/// (86,400 s to every day), of a UTC instant given as a two-part Julian date
+/// in astropy's convention: on a day that ends with a leap second the day
+/// fraction covers 86,401 s.
+///
+/// The arithmetic is that of ERFA's `jd2cal` and `d2dtf`, which astropy uses
+/// to write the ISO string behind `Time.datetime64`: the day fraction is
+/// summed from the two parts with a compensated sum, scaled to the day's
+/// length, rounded to the nanosecond, and then to the microsecond. Each step
+/// rounds as that path does, so the result is the same microsecond.
+///
+/// Returns the reason, for an error message, where the instant is not finite,
+/// out of range, or within a leap second.
+fn utc_jd_to_unix_micros(
+    jd1: f64,
+    jd2: f64,
+    lengths: &mut DayLengths,
+) -> Result<i64, &'static str> {
+    if !(jd1.is_finite() && jd2.is_finite()) {
+        return Err("is not a finite time");
+    }
+    // Whole days and the fraction of each part, in [-0.5, 0.5].
+    let (whole1, whole2) = (jd1.round(), jd2.round());
+    let mut julian_day = whole1 + whole2;
+    // The fraction from midnight: the two fractions and the half day from
+    // noon, where the Julian day begins, in a compensated sum.
+    let mut sum = 0.5;
+    let mut lost = 0.0;
+    for part in [jd1 - whole1, jd2 - whole2] {
+        let next = sum + part;
+        lost += if sum.abs() >= part.abs() {
+            (sum - next) + part
+        } else {
+            (part - next) + sum
+        };
+        sum = next;
+        if sum >= 1.0 {
+            julian_day += 1.0;
+            sum -= 1.0;
+        }
+    }
+    let mut fraction = sum + lost;
+    if fraction < 0.0 {
+        julian_day -= 1.0;
+        fraction += 1.0;
+    }
+    if fraction >= 1.0 {
+        julian_day += 1.0;
+        fraction -= 1.0;
+    }
+    // The civil day begins half a day before the Julian day number.
+    let days = julian_day - 0.5 - UNIX_EPOCH_JD;
+    if days.abs() > f64::from(i32::MAX) {
+        return Err("is out of range");
+    }
+    let day = days as i64;
+    let seconds_in_day = lengths.seconds(day).ok_or("is out of range")?;
+    if seconds_in_day != SECONDS_PER_DAY {
+        fraction += fraction * (seconds_in_day - SECONDS_PER_DAY) / SECONDS_PER_DAY;
+    }
+    let nanos = (NANOS_PER_SECOND * (SECONDS_PER_DAY * fraction)).round() as i64;
+    let micros = (nanos + 500).div_euclid(1000);
+    let day_micros = (seconds_in_day * 1e6).round() as i64;
+    let micros = if micros >= day_micros {
+        // Rounded up to the end of the day: the first instant of the next.
+        MICROS_PER_DAY
+    } else if micros >= MICROS_PER_DAY {
+        return Err("is within a leap second, which a UTC datetime cannot hold");
+    } else {
+        micros
+    };
+    day.checked_mul(MICROS_PER_DAY)
+        .and_then(|start| start.checked_add(micros))
+        .ok_or("is out of range")
 }
 
 /// `datetime64` entries above which the conversion is shared across the cores.
@@ -275,5 +456,86 @@ mod precision_tests {
         let a = datetime_to_jd_tt(&before);
         let b = datetime_to_jd_tt(&after);
         assert!((((b.0 - a.0) + (b.1 - a.1)) * SECONDS_PER_DAY - 2.0).abs() < 1e-10);
+    }
+}
+
+#[cfg(test)]
+mod astropy_time_tests {
+    use super::*;
+
+    /// Microseconds from the Unix epoch of a UTC date and time of day.
+    fn micros(stamp: &str) -> i64 {
+        stamp.parse::<DateTime<Utc>>().unwrap().timestamp_micros()
+    }
+
+    fn convert(jd1: f64, jd2: f64) -> Result<i64, &'static str> {
+        utc_jd_to_unix_micros(jd1, jd2, &mut DayLengths::default())
+    }
+
+    #[test]
+    fn a_day_with_a_leap_second_is_longer() {
+        let mut lengths = DayLengths::default();
+        let day = |stamp: &str| micros(stamp) / MICROS_PER_DAY;
+        assert_eq!(lengths.seconds(day("2016-12-30T00:00:00Z")), Some(86_400.0));
+        assert_eq!(lengths.seconds(day("2016-12-31T00:00:00Z")), Some(86_401.0));
+        assert_eq!(lengths.seconds(day("2017-01-01T00:00:00Z")), Some(86_400.0));
+    }
+
+    #[test]
+    fn the_two_parts_may_be_split_anywhere() {
+        // 2029-01-01T06:00:00, as a Julian date and as an MJD after its epoch.
+        let expected = micros("2029-01-01T06:00:00Z");
+        assert_eq!(convert(2_462_137.75, 0.0), Ok(expected));
+        assert_eq!(convert(2_462_138.0, -0.25), Ok(expected));
+        assert_eq!(convert(2_400_000.5, 62_137.25), Ok(expected));
+        // Before 1972 a day's length is not known here; the caller reads
+        // such times another way.
+        assert!(convert(UNIX_EPOCH_JD, 0.0).is_err());
+        assert_eq!(
+            convert(LEAP_SECOND_ERA_JD, 0.0),
+            Ok(micros("1972-01-01T00:00:00Z"))
+        );
+    }
+
+    #[test]
+    fn a_time_is_rounded_to_the_microsecond() {
+        let noon = micros("2029-01-01T12:00:00Z");
+        let microsecond = 1e-6 / SECONDS_PER_DAY;
+        assert_eq!(convert(2_462_138.0, 0.4 * microsecond), Ok(noon));
+        assert_eq!(convert(2_462_138.0, 0.6 * microsecond), Ok(noon + 1));
+        assert_eq!(convert(2_462_138.0, -0.6 * microsecond), Ok(noon - 1));
+    }
+
+    #[test]
+    fn the_fraction_of_a_leap_second_day_spans_its_length() {
+        // On 2016-12-31 a day fraction covers 86,401 s.
+        let midnight = 2_457_753.5;
+        let fraction = |seconds: f64| seconds / 86_401.0;
+        assert_eq!(
+            convert(midnight, fraction(43_200.0)),
+            Ok(micros("2016-12-31T12:00:00Z"))
+        );
+        assert_eq!(
+            convert(midnight, fraction(86_399.5)),
+            Ok(micros("2016-12-31T23:59:59.5Z"))
+        );
+        // Within the leap second there is no UTC datetime.
+        assert!(convert(midnight, fraction(86_400.5)).is_err());
+        // The day after begins where the long day ends.
+        assert_eq!(
+            convert(midnight + 1.0, 0.0),
+            Ok(micros("2017-01-01T00:00:00Z"))
+        );
+        assert_eq!(
+            convert(midnight, 1.0 - 1e-13),
+            Ok(micros("2017-01-01T00:00:00Z"))
+        );
+    }
+
+    #[test]
+    fn a_time_that_is_not_finite_is_refused() {
+        assert!(convert(f64::NAN, 0.0).is_err());
+        assert!(convert(2_462_138.0, f64::INFINITY).is_err());
+        assert!(convert(1e300, 0.0).is_err());
     }
 }

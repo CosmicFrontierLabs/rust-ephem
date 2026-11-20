@@ -143,3 +143,111 @@ def test_times_outside_the_ephemeris_are_rejected(ephem: TLEEphemeris) -> None:
         ephem.gcrs_pv_at(late)
     with pytest.raises(ValueError, match="outside ephemeris range"):
         constraint().in_constraint_batch(ephem, [0.0], [0.0], times=late)
+
+
+def _as_datetime64_does(when: Time) -> Times:
+    """The instants of ``when`` as ``Time.datetime64`` reports them, rounded
+    to the microsecond: the path the conversion used before."""
+    nanos = np.asarray(when.utc.datetime64).astype("datetime64[ns]").astype("int64")
+    micros: Times = np.floor_divide(nanos + 500, 1000).astype("datetime64[us]")
+    return micros
+
+
+def _long_ephemeris(begin: datetime, days: int) -> TLEEphemeris:
+    return TLEEphemeris(TLE1, TLE2, begin, begin + timedelta(days=days), 600)
+
+
+@pytest.mark.parametrize("built_from", ["mjd", "unix", "tt"])
+def test_a_time_from_floats_gives_what_its_datetime64_does(
+    ensure_planetary_data: None, built_from: str
+) -> None:
+    """The instants are computed from the ``Time``'s two doubles. They are
+    the microseconds its ``datetime64`` gives, for every one of many times
+    off the grid."""
+    ephem = _long_ephemeris(datetime(2029, 1, 1, tzinfo=timezone.utc), 3)
+    offsets = np.random.default_rng(11).uniform(0.0, 2.99, 20_000)
+    if built_from == "unix":
+        when = Time(1861920000.0 + offsets * 86400.0, format="unix")
+    else:
+        scale = "tt" if built_from == "tt" else "utc"
+        when = Time(62137.01 + offsets, format="mjd", scale=scale)
+    expected = ephem.gcrs_pv_at(_as_datetime64_does(when))
+    # A new Time of the same instants: nothing is kept on it yet.
+    result = ephem.gcrs_pv_at(when.copy())
+    np.testing.assert_array_equal(result.position, expected.position)
+    np.testing.assert_array_equal(result.velocity, expected.velocity)
+
+
+def test_a_time_on_a_leap_second_day_gives_what_its_datetime64_does(
+    ensure_planetary_data: None,
+) -> None:
+    """On 2016-12-31 the day is 86,401 s long and a ``Time``'s day fraction
+    covers all of it."""
+    ephem = _long_ephemeris(datetime(2016, 12, 30, tzinfo=timezone.utc), 4)
+    # Up to half a second before the leap second, and the day after.
+    fractions = np.random.default_rng(12).uniform(0.0, 86399.5 / 86401.0, 5_000)
+    when = Time(
+        np.concatenate([57753.0 + fractions, 57754.0 + fractions]), format="mjd"
+    )
+    expected = ephem.gcrs_pv_at(_as_datetime64_does(when))
+    result = ephem.gcrs_pv_at(when.copy())
+    np.testing.assert_array_equal(result.position, expected.position)
+
+
+def test_a_time_before_1972_gives_what_its_datetime64_does(
+    ensure_planetary_data: None,
+) -> None:
+    """Before 1972 UTC days had lengths of their own. Such a ``Time`` is
+    still read from its ``datetime64``."""
+    ephem = _long_ephemeris(datetime(1965, 6, 1, tzinfo=timezone.utc), 2)
+    when = Time(
+        38912.0 + np.random.default_rng(14).uniform(0.01, 1.99, 500), format="mjd"
+    )
+    expected = ephem.gcrs_pv_at(_as_datetime64_does(when))
+    np.testing.assert_array_equal(
+        ephem.gcrs_pv_at(when.copy()).position, expected.position
+    )
+
+
+def test_a_time_within_a_leap_second_is_refused(ensure_planetary_data: None) -> None:
+    ephem = _long_ephemeris(datetime(2016, 12, 30, tzinfo=timezone.utc), 4)
+    with pytest.raises(ValueError, match="leap second"):
+        ephem.gcrs_pv_at(Time("2016-12-31T23:59:60.5", scale="utc"))
+
+
+def test_a_time_keeps_its_shape(ephem: TLEEphemeris) -> None:
+    times = instants(on_grid=False)
+    when = Time(times.astype("datetime64[ns]"), scale="utc")
+    grid = Time(
+        np.stack([when.jd1, when.jd1]), np.stack([when.jd2, when.jd2]), format="jd"
+    )
+    assert grid.shape == (2, 5)
+    both = ephem.gcrs_pv_at(grid)
+    once = ephem.gcrs_pv_at(times)
+    np.testing.assert_array_equal(both.position[:5], once.position)
+    np.testing.assert_array_equal(both.position[5:], once.position)
+
+
+def test_a_new_time_costs_little_more_than_datetime64(
+    ensure_planetary_data: None,
+) -> None:
+    """``Time.datetime64`` is built from one string per element and then kept
+    on the object, so only a ``Time`` that has not been used before shows its
+    cost. Each timed call here is given a ``Time`` built for it."""
+    import time
+
+    ephem = _long_ephemeris(datetime(2029, 1, 1, tzinfo=timezone.utc), 3)
+    rng = np.random.default_rng(13)
+
+    def new_time() -> Time:
+        return Time(62137.01 + rng.uniform(0.0, 2.99, 10_000), format="mjd")
+
+    def seconds(times: object) -> float:
+        began = time.perf_counter()
+        ephem.gcrs_pv_at(times)
+        return time.perf_counter() - began
+
+    as_time = min(seconds(new_time()) for _ in range(5))
+    as_datetime64 = min(seconds(_as_datetime64_does(new_time())) for _ in range(5))
+    # Through the strings a new Time took about nine times the datetime64 call.
+    assert as_time < 3.0 * as_datetime64 + 0.002
