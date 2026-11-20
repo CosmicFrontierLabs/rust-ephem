@@ -2,7 +2,7 @@
 model, on a synthetic point-source transmittance table."""
 
 from datetime import datetime, timedelta, timezone
-from functools import lru_cache
+from functools import cache
 from typing import Any, Literal
 
 import numpy as np
@@ -188,7 +188,7 @@ def lambert_integral(x: float, alpha_deg: Array, n: int = 400) -> Array:
     return np.array(out)
 
 
-@lru_cache(maxsize=None)
+@cache
 def lambert_row(index: int) -> Array:
     """log10 of the phase law at x = index / 100 for alpha = 0, 2.5, ..., 180."""
     values = lambert_integral(index * 0.01, np.arange(0.0, 180.001, 2.5))
@@ -624,7 +624,7 @@ def test_symmetric_table_ignores_the_sign_of_the_sun_azimuth(
 ) -> None:
     """Folding makes the Sun's own contribution even in its azimuth; the Earth
     and Moon sit elsewhere in the table, so theirs changes."""
-    kwargs: dict[str, Any] = dict(pst=table, conversion_factor=CONVERSION)
+    kwargs: dict[str, Any] = {"pst": table, "conversion_factor": CONVERSION}
     ra, dec, rows = np.array([200.0, 40.0]), np.array([30.0, -50.0]), [100, 700]
     plus = evaluate(
         StrayLightConstraint(sun_azimuth_deg=50, **kwargs), ephem, ra, dec, rows
@@ -737,9 +737,11 @@ def test_zodi_table_gap_is_a_violation(
         float(np.degrees(np.arctan2(b[1], b[0])) % 360),
         float(np.degrees(np.arcsin(b[2]))),
     )
-    kwargs: dict[str, Any] = dict(
-        pst=table, conversion_factor=CONVERSION, max_ratio=1e300
-    )
+    kwargs: dict[str, Any] = {
+        "pst": table,
+        "conversion_factor": CONVERSION,
+        "max_ratio": 1e300,
+    }
     constant = evaluate(StrayLightConstraint(**kwargs), ephem, ra, dec, [row])
     tabulated = evaluate(
         StrayLightConstraint(zodi="table", **kwargs), ephem, ra, dec, [row]
@@ -940,9 +942,11 @@ def test_roll_plus_x_reproduces_roll_offset_x(
     offset: float,
 ) -> None:
     ra, dec, _, times = roll_inputs(ephem, sample)
-    kwargs: dict[str, Any] = dict(
-        pst=table, conversion_factor=CONVERSION, sun_azimuth_deg=180
-    )
+    kwargs: dict[str, Any] = {
+        "pst": table,
+        "conversion_factor": CONVERSION,
+        "sun_azimuth_deg": 180,
+    }
     nominal = StrayLightConstraint(**kwargs)
     rolled = StrayLightConstraint(roll_offset_deg=offset, **kwargs)
     base = np.asarray(
@@ -1089,7 +1093,7 @@ def test_per_row_rolls_in_a_tree_of_roll_independent_rules(
     rolls: list[float | None] = [None if i % 3 == 0 else 17.0 * i for i in range(40)]
     sun = re.SunConstraint(min_angle=60)
     limb = re.EarthLimbConstraint(min_angle=15)
-    kwargs: dict[str, Any] = dict(times=times, target_rolls=rolls)
+    kwargs: dict[str, Any] = {"times": times, "target_rolls": rolls}
     stray_alone = constraint.evaluate_elementwise(ephem, ra, dec, **kwargs)
     # The roll means nothing to these two.
     sun_alone = np.asarray(sun.in_constraint_elementwise(ephem, ra, dec, times=times))
@@ -1208,24 +1212,27 @@ class TestPointSourceTransmittance:
     @pytest.mark.parametrize(
         "kwargs, message",
         [
-            (dict(off_axis_deg=[0.0]), "at least two"),
-            (dict(off_axis_deg=[0.0, 10.0, 5.0]), "strictly increasing"),
-            (dict(off_axis_deg=[-5.0, 10.0, 20.0]), r"\[0, 180\]"),
-            (dict(azimuth_deg=[0.0, 200.0]), "symmetric table"),
-            (dict(azimuth_deg=[90.0, 0.0]), "strictly increasing"),
-            (dict(azimuth_deg=[0.0, 400.0], azimuth_symmetric=False), "less than 360"),
-            (dict(log10_pst=[[-1.0, -2.0], [-2.0, -3.0]]), "shape"),
-            (dict(log10_pst=[[None, None]] * 3), "no finite value"),
+            ({"off_axis_deg": [0.0]}, "at least two"),
+            ({"off_axis_deg": [0.0, 10.0, 5.0]}, "strictly increasing"),
+            ({"off_axis_deg": [-5.0, 10.0, 20.0]}, r"\[0, 180\]"),
+            ({"azimuth_deg": [0.0, 200.0]}, "symmetric table"),
+            ({"azimuth_deg": [90.0, 0.0]}, "strictly increasing"),
+            (
+                {"azimuth_deg": [0.0, 400.0], "azimuth_symmetric": False},
+                "less than 360",
+            ),
+            ({"log10_pst": [[-1.0, -2.0], [-2.0, -3.0]]}, "shape"),
+            ({"log10_pst": [[None, None]] * 3}, "no finite value"),
         ],
     )
     def test_rejects_malformed_tables(
         self, kwargs: dict[str, Any], message: str
     ) -> None:
-        base: dict[str, Any] = dict(
-            off_axis_deg=[0.0, 10.0, 20.0],
-            azimuth_deg=[0.0, 180.0],
-            log10_pst=[[-1.0, -2.0], [-2.0, -3.0], [-3.0, -4.0]],
-        )
+        base: dict[str, Any] = {
+            "off_axis_deg": [0.0, 10.0, 20.0],
+            "azimuth_deg": [0.0, 180.0],
+            "log10_pst": [[-1.0, -2.0], [-2.0, -3.0], [-3.0, -4.0]],
+        }
         with pytest.raises(ValidationError, match=message):
             PointSourceTransmittance(**{**base, **kwargs})
 
@@ -1242,13 +1249,13 @@ class TestStrayLightConstraintModel:
     @pytest.mark.parametrize(
         "kwargs",
         [
-            dict(conversion_factor=0.0),
-            dict(conversion_factor=float("nan")),
-            dict(max_ratio=-1.0),
-            dict(in_field_deg=-0.1),
-            dict(earth_albedo=0.0),
-            dict(zodi="sky"),
-            dict(roll_offset_deg=float("inf")),
+            {"conversion_factor": 0.0},
+            {"conversion_factor": float("nan")},
+            {"max_ratio": -1.0},
+            {"in_field_deg": -0.1},
+            {"earth_albedo": 0.0},
+            {"zodi": "sky"},
+            {"roll_offset_deg": float("inf")},
         ],
     )
     def test_rejects_bad_values(
