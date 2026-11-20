@@ -15,7 +15,7 @@ use ndarray::Array2;
 use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 /// Short, stable tag for a leaf/combinator constraint's `values`/`component_violated`
 /// key prefix, derived from the text before the first `(` in its `name()`. Falls back
@@ -39,6 +39,7 @@ pub(crate) fn value_key_prefix(name: &str) -> String {
         "EarthLimb" => "earth_limb",
         "BrightStar" => "bright_star",
         "SolarRollConstraint" => "solar_roll",
+        "StrayLight" => "stray_light",
         "AND" => "and",
         "OR" => "or",
         "NOT" => "not",
@@ -200,8 +201,8 @@ pub struct ConstraintResult {
     #[pyo3(get)]
     pub constraint_name: String,
     /// Named continuous values computed during evaluation (e.g. `sun_angle_deg`),
-    /// one array per key, aligned with `times`/`timestamp`.
-    #[pyo3(get)]
+    /// one array per key, aligned with `times`/`timestamp`. Exposed to Python
+    /// through a getter that converts them once.
     pub constraint_values: HashMap<String, Vec<f64>>,
     /// Per-leaf-constraint violation mask (namespaced the same way as
     /// `constraint_values`' keys), aligned with `times`. Used to attribute
@@ -212,10 +213,13 @@ pub struct ConstraintResult {
     /// (cause tags are flat and nesting-stable; value keys are hierarchical and
     /// path-based) so are not derivable from one another by string matching — use
     /// this instead of guessing.
-    #[pyo3(get)]
-    pub cause_value_keys: HashMap<String, Vec<String>>,
-    /// Evaluation times as Rust DateTime<Utc>, not directly exposed to Python
-    pub times: Vec<DateTime<Utc>>,
+    ///
+    /// Shared between the results of one batch: it depends only on the
+    /// constraint tree, not on the target.
+    pub cause_value_keys: Arc<HashMap<String, Vec<String>>>,
+    /// Evaluation times as Rust DateTime<Utc>, not directly exposed to Python.
+    /// Shared between the results of one batch.
+    pub times: Arc<[DateTime<Utc>]>,
     /// Step size in seconds between timestamps (for O(1) index lookup)
     step_seconds: i64,
     /// Cached Python timestamp array (not directly exposed, use getter)
@@ -224,6 +228,8 @@ pub struct ConstraintResult {
     constraint_vec_cache: OnceLock<Vec<bool>>,
     /// Cached constraint array (Python-side, not directly exposed, use getter)
     constraint_array_cache: OnceLock<Py<PyAny>>,
+    /// Cached `constraint_values` (Python-side: a dict of NumPy arrays)
+    constraint_values_cache: OnceLock<Py<PyAny>>,
 }
 
 impl ConstraintResult {
@@ -232,8 +238,9 @@ impl ConstraintResult {
         violations: Vec<ConstraintViolation>,
         all_satisfied: bool,
         constraint_name: String,
-        times: Vec<DateTime<Utc>>,
+        times: impl Into<Arc<[DateTime<Utc>]>>,
     ) -> Self {
+        let times = times.into();
         // Compute step size from first two timestamps (0 if fewer than 2 times)
         let step_seconds = if times.len() >= 2 {
             (times[1] - times[0]).num_seconds()
@@ -246,12 +253,13 @@ impl ConstraintResult {
             constraint_name,
             constraint_values: HashMap::new(),
             component_violated: HashMap::new(),
-            cause_value_keys: HashMap::new(),
+            cause_value_keys: Arc::default(),
             times,
             step_seconds,
             timestamp_cache: OnceLock::new(),
             constraint_vec_cache: OnceLock::new(),
             constraint_array_cache: OnceLock::new(),
+            constraint_values_cache: OnceLock::new(),
         }
     }
 
@@ -271,14 +279,51 @@ impl ConstraintResult {
     }
 
     /// Attach the cause-tag → constraint_values-key mapping computed during evaluation.
-    pub fn with_cause_value_keys(mut self, cause_value_keys: HashMap<String, Vec<String>>) -> Self {
-        self.cause_value_keys = cause_value_keys;
+    pub fn with_cause_value_keys(
+        mut self,
+        cause_value_keys: impl Into<Arc<HashMap<String, Vec<String>>>>,
+    ) -> Self {
+        self.cause_value_keys = cause_value_keys.into();
         self
     }
 }
 
 #[pymethods]
 impl ConstraintResult {
+    /// Map from a `start_cause`/`end_cause` tag to its `constraint_values` key(s).
+    #[getter]
+    fn cause_value_keys(&self) -> HashMap<String, Vec<String>> {
+        (*self.cause_value_keys).clone()
+    }
+
+    /// dict[str, numpy float array]: the named continuous values, one array
+    /// per key, aligned with `timestamp`.
+    ///
+    /// The arrays are built on first access and shared by later ones, so they
+    /// are read-only. Converting every key to a new list on each access cost
+    /// more than the evaluation when a caller collected one key over the
+    /// results of a batch.
+    #[getter]
+    fn constraint_values(&self, py: Python) -> PyResult<Py<PyAny>> {
+        use numpy::IntoPyArray;
+
+        let cached = match self.constraint_values_cache.get() {
+            Some(cached) => cached,
+            None => {
+                let dict = pyo3::types::PyDict::new(py);
+                for (key, values) in &self.constraint_values {
+                    let array = values.clone().into_pyarray(py);
+                    super::grid::freeze(&array);
+                    dict.set_item(key, array)?;
+                }
+                self.constraint_values_cache
+                    .get_or_init(|| dict.into_any().unbind())
+            }
+        };
+        // A fresh dict, so a caller editing its keys leaves the cache alone.
+        Ok(cached.bind(py).call_method0("copy")?.unbind())
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "ConstraintResult(constraint='{}', violations={}, all_satisfied={})",
@@ -389,7 +434,7 @@ impl ConstraintResult {
 
         // Build list of Python datetime objects
         let py_list = pyo3::types::PyList::empty(py);
-        for dt in &self.times {
+        for dt in self.times.iter() {
             let py_dt = utc_to_python_datetime(py, dt)?;
             py_list.append(py_dt)?;
         }
@@ -792,6 +837,35 @@ pub trait ConstraintEvaluator: Send + Sync {
         super::diagonal::evaluate(self, ephemeris, target_ras, target_decs, time_indices)
     }
 
+    /// Whether an explicit spacecraft roll can never change this evaluator's
+    /// result. Only leaves that do not look at the roll at all say so; the
+    /// default is the safe answer for everything else.
+    fn ignores_explicit_roll(&self) -> bool {
+        false
+    }
+
+    /// `evaluate_diagonal` with a spacecraft roll per element: `rolls[i]` is an
+    /// explicit roll for element `i`, or `None`.
+    ///
+    /// `Ok(None)` means there is no paired kernel for this tree with rolls, and
+    /// the caller evaluates the elements grouped by (time, roll) instead. An
+    /// implementation must give exactly what that grouped evaluation would.
+    fn evaluate_diagonal_at_rolls(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        _rolls: &[Option<f64>],
+    ) -> PyResult<Option<super::diagonal::DiagonalEvaluation>> {
+        if self.ignores_explicit_roll() {
+            return self
+                .evaluate_diagonal(ephemeris, target_ras, target_decs, time_indices)
+                .map(Some);
+        }
+        Ok(None)
+    }
+
     /// Continuous values at an explicit spacecraft roll. Most leaves expose
     /// roll-independent values; boresight nodes rotate targets before delegating.
     fn compute_named_values_at_roll(
@@ -950,11 +1024,24 @@ pub trait ConstraintEvaluator: Send + Sync {
         time_indices: Option<&[usize]>,
     ) -> PyResult<HashMap<String, Vec<String>>> {
         let own_tag = value_key_prefix(&self.name());
-        let value_keys: Vec<String> = self
+        let mut value_keys: Vec<String> = self
             .compute_named_values(ephemeris, target_ras, target_decs, time_indices)?
             .into_keys()
             .collect();
+        // A leaf with several values lists them in the same order every time.
+        value_keys.sort();
         Ok(HashMap::from([(own_tag, value_keys)]))
+    }
+
+    /// The cause tags of this constraint in the order its rules were written:
+    /// the keys `in_constraint_batch_with_causes` and
+    /// `compute_cause_value_keys` report, which reach the caller unordered.
+    ///
+    /// Default (leaf constraints): this constraint's own tag. Combinators list
+    /// their children's tags in child order, with the renaming their merges
+    /// apply to tags that collide.
+    fn cause_tags(&self) -> Vec<String> {
+        vec![value_key_prefix(&self.name())]
     }
 
     /// Check if targets are in-constraint for multiple RA/Dec positions (vectorized)
@@ -992,6 +1079,47 @@ pub trait ConstraintEvaluator: Send + Sync {
         _time_indices: Option<&[usize]>,
     ) -> PyResult<Option<Array2<bool>>> {
         Ok(None)
+    }
+
+    /// Whether one cell of this evaluator costs far more than the comparison
+    /// of an angle with a limit (an integral over a disk, say). A mask-only
+    /// evaluation of `a | b` or `a & b` then evaluates the cheap members
+    /// first and hands an expensive one only the cells they left undecided.
+    /// Combinators are expensive if any child is.
+    fn is_expensive(&self) -> bool {
+        false
+    }
+
+    /// The violation mask of `evaluate_diagonal` (or, with `rolls`, of
+    /// `evaluate_diagonal_at_rolls`) alone: element `i` is `target_i` at
+    /// `time_indices[i]`. `Ok(None)` as for `evaluate_diagonal_at_rolls`.
+    ///
+    /// The default computes the values too and drops them. Evaluators whose
+    /// values cost more than their mask, and combinators that can skip
+    /// elements other members have already decided, override it.
+    fn mask_diagonal(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        rolls: Option<&[Option<f64>]>,
+    ) -> PyResult<Option<Vec<bool>>> {
+        Ok(match rolls {
+            None => Some(
+                self.evaluate_diagonal(ephemeris, target_ras, target_decs, time_indices)?
+                    .violated,
+            ),
+            Some(rolls) => self
+                .evaluate_diagonal_at_rolls(
+                    ephemeris,
+                    target_ras,
+                    target_decs,
+                    time_indices,
+                    rolls,
+                )?
+                .map(|evaluation| evaluation.violated),
+        })
     }
 
     /// Returns `true` if this constraint's FoR result changes depending on the spacecraft
@@ -1328,18 +1456,18 @@ pub(crate) fn target_corrections_at(
 /// Fewest target x time cells worth spreading over the cores.
 const APPARENT_PARALLEL_MIN_CELLS: usize = 20_000;
 
-/// The violation grid (targets x times) of a rule on the apparent cosine
-/// between each catalogue target and the body direction of each time
-/// (`bodies`, unit vectors on an apparent view), with the target correction of
-/// that time. `violated(t, cos)` is the rule. Rows are filled across the cores
-/// for large grids: the correction is the one per-cell cost of apparent
-/// evaluation.
-pub(crate) fn apparent_cosine_grid(
+/// A grid (targets x times) of some function of the apparent cosine between
+/// each catalogue target and the body direction of each time (`bodies`, unit
+/// vectors on an apparent view), with the target correction of that time.
+/// `cell(t, cos)` is the function: a rule for a violation mask, an angle for a
+/// value. Rows are filled across the cores for large grids: the correction is
+/// the one per-cell cost of apparent evaluation.
+pub(crate) fn apparent_cosine_grid<T: Copy + Default + Send>(
     target_unit_vectors: &Array2<f64>,
     bodies: &[[f64; 3]],
     corrections: &[crate::utils::apparent::ObserverAberration],
-    violated: impl Fn(usize, f64) -> bool + Sync,
-) -> Array2<bool> {
+    violated: impl Fn(usize, f64) -> T + Sync,
+) -> Array2<T> {
     use rayon::prelude::*;
 
     let (n_targets, n_times) = (target_unit_vectors.nrows(), bodies.len());
@@ -1348,8 +1476,8 @@ pub(crate) fn apparent_cosine_grid(
         .zip(bodies)
         .map(|(correction, &body)| correction.toward(body))
         .collect();
-    let mut cells = vec![false; n_targets * n_times];
-    let fill = |(i, row): (usize, &mut [bool])| {
+    let mut cells = vec![T::default(); n_targets * n_times];
+    let fill = |(i, row): (usize, &mut [T])| {
         let target = [
             target_unit_vectors[[i, 0]],
             target_unit_vectors[[i, 1]],
@@ -1461,6 +1589,40 @@ macro_rules! impl_proximity_evaluator {
 ///
 /// # Returns
 /// (M x N) array (targets x times) of angles in degrees.
+/// `compute_angle_deg_batch` for the rows of `ephemeris` selected by
+/// `time_indices`. On an apparent view that leaves target corrections to the
+/// kernels, the angles are the apparent ones, as the batch masks are.
+pub(crate) fn compute_angle_deg_batch_on(
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    time_indices: Option<&[usize]>,
+    target_ras: &[f64],
+    target_decs: &[f64],
+    body_positions: &Array2<f64>,
+    observer_positions: &Array2<f64>,
+) -> Array2<f64> {
+    let Some(corrections) = target_corrections_at(ephemeris, time_indices) else {
+        return compute_angle_deg_batch(
+            target_ras,
+            target_decs,
+            body_positions,
+            observer_positions,
+        );
+    };
+    let bodies: Vec<[f64; 3]> = (0..body_positions.nrows())
+        .map(|t| {
+            crate::utils::vector_math::normalize_vector(&std::array::from_fn(|j| {
+                body_positions[[t, j]] - observer_positions[[t, j]]
+            }))
+        })
+        .collect();
+    apparent_cosine_grid(
+        &crate::utils::vector_math::radec_to_unit_vectors_batch(target_ras, target_decs),
+        &bodies,
+        &corrections,
+        |_, cos_angle| cos_angle.clamp(-1.0, 1.0).acos().to_degrees(),
+    )
+}
+
 pub(crate) fn compute_angle_deg_batch(
     target_ras: &[f64],
     target_decs: &[f64],
@@ -1531,8 +1693,9 @@ pub(crate) fn track_violations<F>(
 where
     F: FnMut(usize) -> (bool, f64),
 {
-    // Pre-allocate with reasonable capacity estimate
-    let mut violations = Vec::with_capacity(4);
+    // No up-front capacity: most targets of a wide batch have no violation
+    // window at all, and an unused allocation per target adds up.
+    let mut violations = Vec::new();
     let mut current_violation: Option<(usize, f64)> = None;
 
     for i in 0..times.len() {
@@ -1670,7 +1833,7 @@ mod tests {
         eprintln!("timestamps,windows,before_ms,after_ms,speedup");
         for n_windows in [1, 100, 1000] {
             let stride = n_times / n_windows;
-            let times = (0..n_times)
+            let times: Vec<_> = (0..n_times)
                 .map(|i| epoch + Duration::seconds(i as i64))
                 .collect();
             let violations = (0..n_windows)

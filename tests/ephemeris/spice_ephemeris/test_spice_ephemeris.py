@@ -20,6 +20,7 @@ Requirements:
 
 import os
 import sys
+from typing import ClassVar
 
 import pytest
 
@@ -31,7 +32,7 @@ SKIP_TEST = not os.path.exists(TEST_SPK_PATH)
 
 
 class TestSPICEEphemeris:
-    pytestmark = [
+    pytestmark: ClassVar[list[pytest.MarkDecorator]] = [
         pytest.mark.skipif(
             SKIP_TEST, reason=f"SPICE kernel file not found at {TEST_SPK_PATH}"
         ),

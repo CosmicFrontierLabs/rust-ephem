@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -23,14 +23,18 @@ from pydantic import (
     Field,
     PrivateAttr,
     TypeAdapter,
+    field_validator,
     model_validator,
 )
 
 import rust_ephem
 
 from ._rust_ephem import ConstraintResult as _RustConstraintResult
-from ._rust_ephem import ElementwiseResult, RouteResult
+from ._rust_ephem import ElementwiseResult, GridResult, RouteResult
 from .ephemeris import Ephemeris
+
+if TYPE_CHECKING:
+    from astropy.time import Time  # type: ignore[import-untyped]
 
 #: Default number of roll-angle samples used when sweeping spacecraft roll in
 #: :meth:`~RustConstraintMixin.instantaneous_field_of_regard` when ``target_roll``
@@ -77,28 +81,47 @@ class ConstraintResult(BaseModel):
     _rust_result_ref: _RustConstraintResult | None = PrivateAttr(default=None)
 
     @classmethod
-    def _from_rust_result(
-        cls, rust_result: _RustConstraintResult
-    ) -> "ConstraintResult":
+    def _from_rust_result(cls, rust_result: _RustConstraintResult) -> ConstraintResult:
         """Wrap a single-evaluation Rust ``ConstraintResult``.
 
         Keeps a lazy reference to it for timestamps/constraint_array/visibility
         instead of eagerly copying those (potentially large) arrays into Python.
         """
-        result = cls(
-            violations=[
-                ConstraintViolation(
-                    start_time=v.start_time,
-                    end_time=v.end_time,
-                    max_severity=v.max_severity,
-                    description=v.description,
-                )
-                for v in rust_result.violations
-            ],
-            all_satisfied=rust_result.all_satisfied,
-            constraint_name=rust_result.constraint_name,
+        # The values come from the Rust result, already of the declared types.
+        # Running them through pydantic (``__init__`` or ``model_construct``)
+        # costs a few microseconds per result, which dominated a many-target
+        # ``evaluate_batch``; the instance state pydantic would have produced
+        # is set directly instead.
+        all_satisfied = rust_result.all_satisfied
+        result = object.__new__(cls)
+        object.__setattr__(
+            result,
+            "__dict__",
+            {
+                "violations": []
+                if all_satisfied
+                else [
+                    ConstraintViolation(
+                        start_time=v.start_time,
+                        end_time=v.end_time,
+                        max_severity=v.max_severity,
+                        description=v.description,
+                    )
+                    for v in rust_result.violations
+                ],
+                "all_satisfied": all_satisfied,
+                "constraint_name": rust_result.constraint_name,
+            },
         )
-        result._rust_result_ref = rust_result
+        object.__setattr__(
+            result,
+            "__pydantic_fields_set__",
+            {"violations", "all_satisfied", "constraint_name"},
+        )
+        object.__setattr__(result, "__pydantic_extra__", None)
+        object.__setattr__(
+            result, "__pydantic_private__", {"_rust_result_ref": rust_result}
+        )
         return result
 
     @property
@@ -124,11 +147,13 @@ class ConstraintResult(BaseModel):
         return []
 
     @property
-    def constraint_values(self) -> dict[str, list[float]]:
+    def constraint_values(self) -> dict[str, npt.NDArray[np.float64]]:
         """Named continuous values computed during evaluation (e.g. ``sun_angle_deg``).
 
-        One array per key, aligned with ``timestamps``. Empty for constraints that
-        don't expose a natural scalar (e.g. polygon-based constraints).
+        One read-only NumPy array per key, aligned with ``timestamps``. The
+        arrays are built on first access and shared by later ones. Empty for
+        constraints that don't expose a natural scalar (e.g. polygon-based
+        constraints).
         """
         if self._rust_result_ref is not None:
             return self._rust_result_ref.constraint_values
@@ -151,7 +176,7 @@ class ConstraintResult(BaseModel):
         return {}
 
     @property
-    def visibility(self) -> list["rust_ephem.VisibilityWindow"]:
+    def visibility(self) -> list[rust_ephem.VisibilityWindow]:
         """Visibility windows when the constraint is satisfied (target visible)."""
         if self._rust_result_ref is not None:
             return self._rust_result_ref.visibility
@@ -188,10 +213,6 @@ class ConstraintResult(BaseModel):
 
     def __repr__(self) -> str:
         return f"ConstraintResult(constraint='{self.constraint_name}', violations={len(self.violations)}, all_satisfied={self.all_satisfied})"
-
-
-if TYPE_CHECKING:
-    pass
 
 
 class RollReference(str, Enum):
@@ -247,7 +268,11 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
@@ -274,7 +299,11 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
@@ -445,9 +474,12 @@ class RustConstraintMixin(BaseModel):
                 # compose, so target_roll simply overwrites it. A circular FoV
                 # (no fov_polygon) or a plain body proximity check ignores roll
                 # and is left untouched.
-                if node.get("fov_polygon") is not None:
-                    if target_roll is not None and not sweep_roll:
-                        node["roll_deg"] = float(target_roll)
+                if (
+                    node.get("fov_polygon") is not None
+                    and target_roll is not None
+                    and not sweep_roll
+                ):
+                    node["roll_deg"] = float(target_roll)
                 return
 
             if node_type in {"and", "or", "xor", "at_least"}:
@@ -490,7 +522,11 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
-        times: datetime | list[datetime] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         target_roll: float | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -553,7 +589,11 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -634,7 +674,11 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -739,42 +783,200 @@ class RustConstraintMixin(BaseModel):
             ),
         )
 
+    def _roll_groups(
+        self,
+        target_ras: Sequence[float] | npt.ArrayLike,
+        target_decs: Sequence[float] | npt.ArrayLike,
+        target_rolls: Sequence[float | None] | None,
+    ) -> tuple[
+        npt.NDArray[np.float64],
+        npt.NDArray[np.float64],
+        list[tuple[npt.NDArray[np.intp], Any, list[float] | None]],
+    ]:
+        """Split targets as :meth:`in_constraint_batch` does: those without a
+        roll go to the backend that leaves the roll free, the others to the
+        fixed-roll backend with their rolls. Returns the coordinates and, for
+        each group, its target indices, backend and rolls."""
+        ras = np.asarray(target_ras, dtype=np.float64)
+        decs = np.asarray(target_decs, dtype=np.float64)
+        if ras.ndim != 1 or ras.shape != decs.shape:
+            raise ValueError("target_ras and target_decs must have the same length")
+        if target_rolls is None:
+            everything = np.arange(len(ras))
+            return (
+                ras,
+                decs,
+                [(everything, self._resolve_evaluation_constraint(None), None)],
+            )
+        if len(target_rolls) != len(ras):
+            raise ValueError(
+                "target_rolls must have the same length as target_ras and target_decs"
+            )
+        free = np.array(
+            [i for i, roll in enumerate(target_rolls) if roll is None], dtype=np.intp
+        )
+        fixed = np.array(
+            [i for i, roll in enumerate(target_rolls) if roll is not None],
+            dtype=np.intp,
+        )
+        groups: list[tuple[npt.NDArray[np.intp], Any, list[float] | None]] = []
+        if len(free):
+            groups.append((free, self._resolve_evaluation_constraint(None), None))
+        if len(fixed):
+            rolls = [float(roll) for roll in target_rolls if roll is not None]
+            groups.append((fixed, self._get_cached_rust_constraint(), rolls))
+        return ras, decs, groups
+
+    def violated_count(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: Sequence[float] | npt.ArrayLike,
+        target_decs: Sequence[float] | npt.ArrayLike,
+        times: datetime | Sequence[datetime] | npt.NDArray[Any] | Time | None = None,
+        indices: int | list[int] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
+        fraction: bool = False,
+    ) -> npt.NDArray[np.int64] | npt.NDArray[np.float64]:
+        """Count the times at which each target is in-constraint.
+
+        The row sums of :meth:`in_constraint_batch`, for the same arguments,
+        without the ``(n_targets, n_times)`` mask: targets are evaluated a
+        block at a time and only each one's count is kept, so memory does not
+        grow with the number of targets.
+
+        Args:
+            fraction: Return the violated fraction of the times instead of the
+                count (NaN when no time is evaluated). The visible fraction is
+                one minus it.
+
+        The other arguments are those of :meth:`in_constraint_batch`.
+
+        Returns:
+            int64 array of shape ``(n_targets,)``, the number of times at which
+            each target violates the constraint; or, with ``fraction=True``, a
+            float array of that number divided by the number of times.
+        """
+        if n_roll_samples <= 0:
+            raise ValueError("n_roll_samples must be a positive integer")
+        ras, decs, groups = self._roll_groups(target_ras, target_decs, target_rolls)
+        counts = np.zeros(len(ras), dtype=np.int64)
+        n_times = 0
+        for members, backend, rolls in groups:
+            counts[members], n_times = backend.violated_count(
+                ephemeris,
+                ras[members],
+                decs[members],
+                self._elementwise_times(times),
+                indices,
+                target_rolls=rolls,
+                n_roll_samples=n_roll_samples,
+                apparent=apparent,
+            )
+        if not fraction:
+            return counts
+        if n_times == 0:
+            return np.full(len(ras), np.nan)
+        return counts / float(n_times)
+
+    def visibility_windows(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: Sequence[float] | npt.ArrayLike,
+        target_decs: Sequence[float] | npt.ArrayLike,
+        times: datetime | Sequence[datetime] | npt.NDArray[Any] | Time | None = None,
+        indices: int | list[int] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
+    ) -> list[npt.NDArray[np.int64]]:
+        """Find the visibility windows of each target.
+
+        A window is a run of consecutive evaluated times at which the target
+        does not violate the constraint: a run of ``False`` in the target's row
+        of :meth:`in_constraint_batch`, for the same arguments. The mask itself
+        is not built: targets are evaluated a block at a time and only the
+        bounds of each one's runs are kept.
+
+        The arguments are those of :meth:`in_constraint_batch`.
+
+        Returns:
+            One int64 array per target, of shape ``(n_windows, 2)``: the index
+            of the first and of the last time of each window, in time order.
+            Both are inclusive, and index the evaluated times (``times``,
+            ``indices``, or every ephemeris timestamp), so ``times[w[:, 0]]``
+            and ``times[w[:, 1]]`` are the window starts and ends. A target
+            that is never visible has an array of shape ``(0, 2)``.
+        """
+        if n_roll_samples <= 0:
+            raise ValueError("n_roll_samples must be a positive integer")
+        ras, decs, groups = self._roll_groups(target_ras, target_decs, target_rolls)
+        windows: list[npt.NDArray[np.int64]] = [
+            np.empty((0, 2), dtype=np.int64) for _ in range(len(ras))
+        ]
+        for members, backend, rolls in groups:
+            counts, bounds, _ = backend.visibility_windows(
+                ephemeris,
+                ras[members],
+                decs[members],
+                self._elementwise_times(times),
+                indices,
+                target_rolls=rolls,
+                n_roll_samples=n_roll_samples,
+                apparent=apparent,
+            )
+            if len(members) == 0:
+                continue
+            pieces = np.split(bounds, np.cumsum(counts)[:-1])
+            for member, piece in zip(members.tolist(), pieces, strict=True):
+                windows[member] = piece
+        return windows
+
     @staticmethod
     def _elementwise_times(
-        times: datetime | Sequence[datetime] | npt.NDArray[Any] | None,
-    ) -> datetime | list[datetime] | None:
-        """Normalise elementwise ``times`` (datetime64 arrays -> UTC datetimes)."""
+        times: datetime | Sequence[datetime] | npt.NDArray[Any] | Time | None,
+    ) -> datetime | list[datetime] | npt.NDArray[np.datetime64] | Time | None:
+        """Normalise elementwise ``times``. A ``datetime64`` array or an astropy
+        ``Time`` is passed through as it is: the Rust side reads it directly,
+        without a Python ``datetime`` per element."""
         if isinstance(times, np.ndarray) and np.issubdtype(times.dtype, np.datetime64):
-            return cast(
-                list[datetime], times.astype("datetime64[us]").astype(object).tolist()
-            )
-        if times is None or isinstance(times, datetime):
+            return cast(npt.NDArray[np.datetime64], times)
+        if times is None or isinstance(times, datetime) or hasattr(times, "jd1"):
             return times
         return list(times)
 
     def _elementwise_backend(
-        self, target_rolls: Sequence[float | None] | None
-    ) -> tuple[Any, list[float | None] | None]:
+        self,
+        target_rolls: Sequence[float | None] | None,
+        roll_offsets: Sequence[float | None] | None = None,
+    ) -> tuple[Any, list[float | None] | None, list[float | None] | None]:
         """Pick the Rust constraint with the same roll semantics as the batch APIs.
 
         Free-roll entries on a roll-dependent tree need the sweep backend; a fully
         fixed-roll call uses the definition-only backend, as ``in_constraint_batch``
-        does. Fixed rolls evaluate identically on either backend.
+        does. Fixed rolls evaluate identically on either backend. An offset from
+        the nominal roll fixes the roll of its element as an explicit roll does.
         """
+        if target_rolls is not None and roll_offsets is not None:
+            raise ValueError("Cannot specify both 'target_rolls' and 'roll_offsets'")
         rolls = None if target_rolls is None else list(target_rolls)
-        if rolls is not None and all(roll is not None for roll in rolls):
-            return self._get_cached_rust_constraint(), rolls
-        return self._resolve_evaluation_constraint(None), rolls
+        offsets = None if roll_offsets is None else list(roll_offsets)
+        given = rolls if offsets is None else offsets
+        if given is not None and all(roll is not None for roll in given):
+            return self._get_cached_rust_constraint(), rolls, offsets
+        return self._resolve_evaluation_constraint(None), rolls, offsets
 
     def in_constraint_elementwise(
         self,
         ephemeris: Ephemeris,
         target_ras: Sequence[float] | npt.ArrayLike,
         target_decs: Sequence[float] | npt.ArrayLike,
-        times: datetime | Sequence[datetime] | npt.NDArray[Any] | None = None,
+        times: datetime | Sequence[datetime] | npt.NDArray[Any] | Time | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
+        roll_offsets: Sequence[float | None] | None = None,
     ) -> npt.NDArray[np.bool_]:
         """Check targets paired elementwise with times (no target x time grid).
 
@@ -806,6 +1008,18 @@ class RustConstraintMixin(BaseModel):
                 (``ensure_planetary_ephemeris()``). The default, ``False``, keeps
                 the geometric convention. See "Geometric and apparent angles" in
                 the constraints documentation for what is and is not corrected.
+            roll_offsets: Optional per-element spacecraft roll, in degrees from
+                the nominal roll of that element, in place of ``target_rolls``
+                (the two cannot be combined). The nominal roll is the one that
+                turns body +Y toward the Sun, the solar-optimal roll of a +Y
+                panel, for the element's own target and time; with
+                ``apparent=True`` it is taken from the apparent directions.
+                Element ``i`` is evaluated at ``nominal_i + roll_offsets[i]``
+                exactly as if that roll had been passed in ``target_rolls``, so
+                one call replaces a call to read the nominal roll and a second
+                to apply the offset. ``None`` entries are elements without a
+                roll. For a :class:`StrayLightConstraint` an entry takes the
+                place of ``roll_offset_deg`` for its element.
 
         Returns:
             1D boolean array of shape (N,), ``True`` where the constraint is
@@ -814,17 +1028,18 @@ class RustConstraintMixin(BaseModel):
         Raises:
             ValueError: On length mismatches or times outside the ephemeris range.
         """
-        backend, rolls = self._elementwise_backend(target_rolls)
+        backend, rolls, offsets = self._elementwise_backend(target_rolls, roll_offsets)
         return cast(
             npt.NDArray[np.bool_],
             backend.in_constraint_elementwise(
                 ephemeris,
-                np.asarray(target_ras, dtype=float).tolist(),
-                np.asarray(target_decs, dtype=float).tolist(),
+                np.asarray(target_ras, dtype=np.float64),
+                np.asarray(target_decs, dtype=np.float64),
                 self._elementwise_times(times),
                 target_rolls=rolls,
                 n_roll_samples=n_roll_samples,
                 apparent=apparent,
+                roll_offsets=offsets,
             ),
         )
 
@@ -833,15 +1048,17 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: Sequence[float] | npt.ArrayLike,
         target_decs: Sequence[float] | npt.ArrayLike,
-        times: datetime | Sequence[datetime] | npt.NDArray[Any] | None = None,
+        times: datetime | Sequence[datetime] | npt.NDArray[Any] | Time | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
+        roll_offsets: Sequence[float | None] | None = None,
     ) -> ElementwiseResult:
         """Evaluate targets paired elementwise with times, with per-element values.
 
-        Same pairing, time handling, roll semantics, ``apparent`` option and
-        polarity as :meth:`in_constraint_elementwise`. With ``apparent=True`` the
+        Same pairing, time handling, roll semantics (``target_rolls`` or
+        ``roll_offsets``), ``apparent`` option and polarity as
+        :meth:`in_constraint_elementwise`. With ``apparent=True`` the
         ``constraint_values`` are the apparent angles; ``ras`` and ``decs`` remain
         the catalogue coordinates passed in.
 
@@ -850,17 +1067,94 @@ class RustConstraintMixin(BaseModel):
             (N,) bool (``True`` = violated), ``visibility_flags``,
             ``constraint_values`` (dict of (N,) float arrays with the same keys
             :meth:`evaluate_batch` reports, e.g. ``sun.sun_angle_deg`` inside a
-            combinator), ``component_violated``, ``cause_value_keys``,
+            combinator), ``component_violated``, ``component_order`` (its keys
+            in the order the rules were written), ``first_violated`` ((N,) str
+            array: the first rule in that order violated where the constraint
+            is, ``""`` where it is satisfied), ``cause_value_keys``,
             ``timestamp``, ``ras`` and ``decs``.
         """
-        backend, rolls = self._elementwise_backend(target_rolls)
+        backend, rolls, offsets = self._elementwise_backend(target_rolls, roll_offsets)
         return cast(
             ElementwiseResult,
             backend.evaluate_elementwise(
                 ephemeris,
-                np.asarray(target_ras, dtype=float).tolist(),
-                np.asarray(target_decs, dtype=float).tolist(),
+                np.asarray(target_ras, dtype=np.float64),
+                np.asarray(target_decs, dtype=np.float64),
                 self._elementwise_times(times),
+                target_rolls=rolls,
+                n_roll_samples=n_roll_samples,
+                apparent=apparent,
+                roll_offsets=offsets,
+            ),
+        )
+
+    def evaluate_grid(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: Sequence[float] | npt.ArrayLike,
+        target_decs: Sequence[float] | npt.ArrayLike,
+        times: datetime
+        | Sequence[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
+        indices: int | list[int] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
+    ) -> GridResult:
+        """Evaluate every target at every time and return the grid as arrays.
+
+        Same arguments, time handling, roll semantics, ``apparent`` option and
+        polarity as :meth:`evaluate_batch`, but without building one result per
+        target: the mask, the named values and the per-rule masks come back as
+        ``(n_targets, n_times)`` arrays. Use it when the values of the whole
+        grid are wanted; use :meth:`in_constraint_batch` for the mask alone and
+        :meth:`evaluate_batch` when every target's violation windows are.
+
+        Args:
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris,
+                OEMEphemeris, FileEphemeris, or ParquetEphemeris
+            target_ras: Right ascensions in degrees (ICRS/J2000), length M
+            target_decs: Declinations in degrees (ICRS/J2000), length M
+            times: Optional time(s) within the ephemeris range; between stored
+                samples, geometry is interpolated at the requested time.
+            indices: Optional specific time index/indices to evaluate
+            target_rolls: Optional per-target spacecraft roll (degrees); ``None``
+                entries (or ``target_rolls=None``) sweep ``n_roll_samples`` rolls
+                for roll-dependent constraints, as in :meth:`in_constraint_batch`.
+            n_roll_samples: Roll angles swept in the free-roll case.
+            apparent: Measure angles as the observer sees them rather than
+                geometrically (see :meth:`in_constraint_batch`).
+
+        Returns:
+            :class:`~rust_ephem.GridResult` with ``constraint_array``
+            ``(M, N)`` bool (``True`` = violated; equal to
+            :meth:`in_constraint_batch`), ``visibility_flags``,
+            ``constraint_values`` (dict of ``(M, N)`` float arrays with the keys
+            :meth:`evaluate_batch` reports), ``component_violated`` (dict of
+            ``(M, N)`` bool arrays keyed by cause tag), ``component_order``
+            (its keys in the order the rules were written), ``first_violated``
+            (``(M, N)`` str array: the first rule in that order violated where
+            the constraint is, ``""`` where it is satisfied),
+            ``cause_value_keys``, ``constraint_name``, ``timestamp`` (length N), ``ras`` and ``decs``
+            (length M). ``result.target(i)`` builds the
+            :class:`ConstraintResult`-like result of one target, with its
+            violation and visibility windows, on demand. The arrays are
+            read-only.
+        """
+        if n_roll_samples <= 0:
+            raise ValueError("n_roll_samples must be a positive integer")
+        backend, rolls, _ = self._elementwise_backend(target_rolls)
+        grid_times = self._elementwise_times(times)
+        return cast(
+            GridResult,
+            backend.evaluate_grid(
+                ephemeris,
+                np.asarray(target_ras, dtype=np.float64),
+                np.asarray(target_decs, dtype=np.float64),
+                grid_times,
+                indices,
                 target_rolls=rolls,
                 n_roll_samples=n_roll_samples,
                 apparent=apparent,
@@ -869,12 +1163,13 @@ class RustConstraintMixin(BaseModel):
 
     def in_constraint(
         self,
-        time: datetime | list[datetime] | npt.NDArray[np.datetime64],
+        time: datetime | list[datetime] | npt.NDArray[np.datetime64] | Time,
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
         target_roll: float | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> bool | list[bool]:
         """Check if target is in-constraint at given time(s).
 
@@ -905,6 +1200,9 @@ class RustConstraintMixin(BaseModel):
             n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
                 and the constraint is roll-dependent.  Uniformly spaced over [0°, 360°).
                 Default :data:`DEFAULT_N_ROLL_SAMPLES` (360 ≈ 1° resolution).
+            apparent: Measure angles as the observer sees them rather than
+                geometrically (see :meth:`in_constraint_batch`). Needs a planetary
+                SPICE kernel. Default ``False``.
 
         Returns:
             True if constraint is violated at the given time(s) (in-constraint).
@@ -927,6 +1225,7 @@ class RustConstraintMixin(BaseModel):
                 target_dec,
                 target_roll,
                 n_roll_samples,
+                apparent,
             ),
         )
 
@@ -979,6 +1278,7 @@ class RustConstraintMixin(BaseModel):
         samples: int = 50,
         margin_deg: float = 5.0,
         grow_margin: bool = True,
+        apparent: bool = False,
     ) -> RouteResult:
         """Find a single waypoint around a sampled constraint crossing.
 
@@ -1004,6 +1304,11 @@ class RustConstraintMixin(BaseModel):
         length of both legs, not the extra distance. A violated result without
         a waypoint means no candidate validated. Antipodal arcs use a stable,
         deterministic plane; negligible slews do not produce waypoints.
+
+        With ``apparent=True`` the route is found in the sky as the observer
+        sees it (apparent Earth, Sun and Moon; end points taken to their proper
+        directions, as in :meth:`in_constraint_batch`). The waypoint is still
+        returned in catalogue (ICRS) coordinates. Needs a planetary SPICE kernel.
         """
         constraint = cast(
             rust_ephem.Constraint, self._resolve_evaluation_constraint(target_roll)
@@ -1021,6 +1326,7 @@ class RustConstraintMixin(BaseModel):
             samples=samples,
             margin_deg=margin_deg,
             grow_margin=grow_margin,
+            apparent=apparent,
         )
 
     def instantaneous_field_of_regard(
@@ -1031,6 +1337,7 @@ class RustConstraintMixin(BaseModel):
         n_points: int = DEFAULT_N_POINTS,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         target_roll: float | None = None,
+        apparent: bool = False,
     ) -> float:
         """Compute instantaneous field of regard in steradians.
 
@@ -1059,6 +1366,10 @@ class RustConstraintMixin(BaseModel):
             target_roll: Spacecraft roll angle (degrees) about the boresight +X axis.
                 When ``None`` (default), FoR sweeps all possible roll angles for
                 boresight-offset constraints with non-zero pitch/yaw.
+            apparent: Place the Earth, Sun and Moon where the observer sees them
+                (light time, solar deflection, aberration), so the result is the
+                clear solid angle of the apparent sky. Needs a planetary SPICE
+                kernel. Default ``False`` (geometric).
 
         Returns:
             Visible solid angle in steradians (range [0, 4π])
@@ -1079,6 +1390,7 @@ class RustConstraintMixin(BaseModel):
                 index=index,
                 n_points=n_points,
                 n_roll_samples=n_roll_samples,
+                apparent=apparent,
             )
         )
 
@@ -1087,11 +1399,16 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float] | npt.ArrayLike | None = None,
         target_decs: list[float] | npt.ArrayLike | None = None,
-        times: datetime | list[datetime] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         body: str | int | None = None,
         use_horizons: bool = False,
         spice_kernel: str | None = None,
         target_roll: float | None = None,
+        apparent: bool = False,
     ) -> MovingVisibilityResult:
         """Evaluate constraint for a moving body (varying RA/Dec over time).
 
@@ -1116,6 +1433,15 @@ class RustConstraintMixin(BaseModel):
             use_horizons: If True, query JPL Horizons for body positions (default: False)
             spice_kernel: Path or URL to a SPICE kernel file for body positions.
                 Can be a local path or URL (e.g., from JPL Horizons SPK files).
+            apparent: Measure angles as the observer sees them. The Earth, Sun
+                and Moon are apparent, as in :meth:`in_constraint_batch`. A
+                ``body`` is placed where its light arrives from (light time,
+                solar deflection, aberration) and the returned ``ras``/``decs``
+                are those apparent coordinates; this needs the body in a SPICE
+                kernel and cannot be combined with ``use_horizons``. A supplied
+                track is corrected for deflection and aberration only (it should
+                already allow for light time) and is returned as supplied.
+                Default ``False`` (geometric).
 
         Returns:
             MovingVisibilityResult with per-timestamp violation flags, visibility flags,
@@ -1153,6 +1479,7 @@ class RustConstraintMixin(BaseModel):
             body_str,
             use_horizons,
             spice_kernel,
+            apparent,
         )
 
         # Convert Rust VisibilityWindow objects to VisibilityWindowResult
@@ -1437,7 +1764,7 @@ class BodyConstraint(RustConstraintMixin):
     )
 
     @model_validator(mode="after")
-    def check_fov(self) -> "BodyConstraint":
+    def check_fov(self) -> BodyConstraint:
         has_angle = self.min_angle is not None
         has_polygon = self.fov_polygon is not None
         if not has_angle and not has_polygon:
@@ -1981,7 +2308,7 @@ class BrightStarConstraint(RustConstraintMixin):
     )
 
     @model_validator(mode="after")
-    def check_fov(self) -> "BrightStarConstraint":
+    def check_fov(self) -> BrightStarConstraint:
         has_radius = self.fov_radius is not None
         has_polygon = self.fov_polygon is not None
         if not has_radius and not has_polygon:
@@ -1995,30 +2322,388 @@ class BrightStarConstraint(RustConstraintMixin):
         return self
 
 
+class PointSourceTransmittance(BaseModel):
+    """A telescope's point-source transmittance (PST) table.
+
+    ``PST(theta, phi) = E_focal / E_aperture``: the mean focal-plane irradiance
+    produced by a collimated source of unit irradiance arriving from off-axis
+    angle ``theta`` and azimuth ``phi`` about the boresight. The table holds
+    ``log10(PST)`` and is interpolated bilinearly in the logarithm.
+
+    Lookups outside the table:
+
+    * Beyond the last off-axis angle, and in cells given as ``None`` or NaN,
+      the PST is the lowest value in the table (the floor of the raytrace).
+    * Below the first off-axis angle the first row is used.
+    * With ``azimuth_symmetric=True`` (the default) the response is taken to be
+      mirror symmetric about its azimuth-zero plane: the columns cover part or
+      all of 0-180 degrees and any azimuth is folded onto that range. With
+      ``False`` the columns span a full turn and wrap around.
+
+    Use :meth:`from_pst` to build one from linear PST values.
+
+    Attributes:
+        off_axis_deg: Off-axis angles of the rows (degrees), strictly
+            increasing, within [0, 180]. At least two.
+        azimuth_deg: Azimuths of the columns (degrees), strictly increasing. A
+            single column describes a PST that does not depend on azimuth.
+        log10_pst: ``log10(PST)``, shape ``(len(off_axis_deg), len(azimuth_deg))``.
+        azimuth_symmetric: Fold azimuths onto 0-180 degrees (see above).
+    """
+
+    off_axis_deg: list[float] = Field(
+        ..., description="Off-axis angles of the rows (degrees), strictly increasing"
+    )
+    azimuth_deg: list[float] = Field(
+        ..., description="Azimuths of the columns (degrees), strictly increasing"
+    )
+    log10_pst: list[list[float | None]] = Field(
+        ...,
+        description="log10(PST), one row per off-axis angle; None for an empty cell",
+    )
+    azimuth_symmetric: bool = Field(
+        default=True,
+        description="Fold azimuths onto 0-180 degrees (mirror-symmetric response)",
+    )
+
+    @field_validator("off_axis_deg", "azimuth_deg", mode="before")
+    @classmethod
+    def _axis_to_list(cls, value: Any) -> Any:
+        return np.asarray(value, dtype=float).tolist()
+
+    @field_validator("log10_pst", mode="before")
+    @classmethod
+    def _grid_to_list(cls, value: Any) -> Any:
+        grid = np.asarray(
+            [[np.nan if cell is None else cell for cell in row] for row in value],
+            dtype=float,
+        )
+        if grid.ndim != 2:
+            raise ValueError("log10_pst must be a 2-D table")
+        return [
+            [float(cell) if np.isfinite(cell) else None for cell in row] for row in grid
+        ]
+
+    @model_validator(mode="after")
+    def _check_table(self) -> PointSourceTransmittance:
+        def increasing(axis: list[float]) -> bool:
+            return bool(np.all(np.isfinite(axis)) and np.all(np.diff(axis) > 0))
+
+        if len(self.off_axis_deg) < 2 or not increasing(self.off_axis_deg):
+            raise ValueError(
+                "off_axis_deg must hold at least two finite, strictly increasing angles"
+            )
+        if self.off_axis_deg[0] < 0.0 or self.off_axis_deg[-1] > 180.0:
+            raise ValueError("off_axis_deg must lie within [0, 180] degrees")
+        if len(self.azimuth_deg) < 1 or not increasing(self.azimuth_deg):
+            raise ValueError(
+                "azimuth_deg must hold at least one finite, strictly increasing angle"
+            )
+        if self.azimuth_symmetric and (
+            self.azimuth_deg[0] < 0.0 or self.azimuth_deg[-1] > 180.0
+        ):
+            raise ValueError(
+                "azimuth_deg must lie within [0, 180] degrees for a symmetric table"
+            )
+        if (
+            not self.azimuth_symmetric
+            and self.azimuth_deg[-1] - self.azimuth_deg[0] >= 360.0
+        ):
+            raise ValueError("azimuth_deg must span less than 360 degrees")
+        shape = (len(self.off_axis_deg), len(self.azimuth_deg))
+        if len(self.log10_pst) != shape[0] or any(
+            len(row) != shape[1] for row in self.log10_pst
+        ):
+            raise ValueError(
+                f"log10_pst must have shape {shape}: one row per off-axis angle, "
+                "one column per azimuth"
+            )
+        if all(cell is None for row in self.log10_pst for cell in row):
+            raise ValueError("log10_pst holds no finite value")
+        return self
+
+    @classmethod
+    def from_pst(
+        cls,
+        off_axis_deg: npt.ArrayLike,
+        azimuth_deg: npt.ArrayLike,
+        pst: npt.ArrayLike,
+        azimuth_symmetric: bool = True,
+    ) -> PointSourceTransmittance:
+        """Build a table from linear PST values.
+
+        Args:
+            off_axis_deg: Off-axis angles of the rows (degrees).
+            azimuth_deg: Azimuths of the columns (degrees).
+            pst: PST values, shape ``(len(off_axis_deg), len(azimuth_deg))``.
+                Zero, negative and NaN entries are treated as empty cells.
+            azimuth_symmetric: See the class documentation.
+        """
+        values = np.asarray(pst, dtype=float)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            log = np.where(values > 0.0, np.log10(values), np.nan)
+        return cls(
+            off_axis_deg=np.asarray(off_axis_deg, dtype=float).tolist(),
+            azimuth_deg=np.asarray(azimuth_deg, dtype=float).tolist(),
+            log10_pst=log.tolist(),
+            azimuth_symmetric=azimuth_symmetric,
+        )
+
+
+class StrayLightStatus(int, Enum):
+    """Why a body has, or has not, a stray-light prediction: the meaning of the
+    ``sun_status``, ``earth_status`` and ``moon_status`` values of
+    :class:`StrayLightConstraint`."""
+
+    #: A converged prediction.
+    OK = 0
+    #: No sunlit surface is visible. The quoted contribution is an upper bound
+    #: on one that is physically negligible; it counts as a prediction.
+    DARK = 1
+    #: The nearest limb is within ``in_field_deg`` of the boresight.
+    IN_FIELD = 2
+    #: The nearest limb is inside the first off-axis cell of the table.
+    FIRST_CELL = 3
+    #: The disk integral did not converge.
+    UNCONVERGED = 4
+
+    @property
+    def is_valid(self) -> bool:
+        """Whether the body's contribution is a usable prediction."""
+        return self in (StrayLightStatus.OK, StrayLightStatus.DARK)
+
+    @property
+    def label(self) -> str:
+        """The lower-case name of this status, e.g. ``"in_field"``."""
+        return self.name.lower()
+
+    @classmethod
+    def labels(cls, values: npt.ArrayLike) -> npt.NDArray[np.str_]:
+        """Name every entry of an array of status values.
+
+        ``values`` is a ``sun_status``, ``earth_status`` or ``moon_status``
+        array of any shape, as ``constraint_values`` reports it. Returns a
+        string array of the same shape holding each entry's :attr:`label`
+        (``"ok"``, ``"dark"``, ``"in_field"``, ``"first_cell"`` or
+        ``"unconverged"``), and an empty string for an entry that is not a
+        status (NaN, for instance).
+        """
+        codes = np.asarray(values, dtype=np.float64)
+        names = np.array([status.label for status in cls] + [""])
+        place = np.full(codes.shape, len(cls), dtype=np.intp)
+        for position, status in enumerate(cls):
+            place[codes == status.value] = position
+        return cast(npt.NDArray[np.str_], names[place])
+
+
+class StrayLightConstraint(RustConstraintMixin):
+    """Stray-light constraint: scattered light against the zodiacal background.
+
+    Violated when out-of-field light from the Sun, Earth and Moon, scattered
+    onto the focal plane, exceeds ``max_ratio`` times the zodiacal background,
+    or when the model cannot make a prediction for the pointing.
+
+    For each body the model takes its disk-integrated V magnitude at the
+    observer (distance and phase), multiplies the corresponding flux by the
+    brightness-weighted mean of the telescope's point-source transmittance
+    over the body's resolved disk (Lambertian illumination with the terminator
+    for the Earth and Moon), and sums the three. ``conversion_factor`` turns
+    that sum into the surface brightness of the uniform sky that would put the
+    same light on the focal plane, which is compared with the zodi.
+
+    **Attitude.** Without a roll, the attitude is tied to the Sun: at the
+    nominal attitude the Sun's direction, projected perpendicular to the
+    boresight, lies at table azimuth ``sun_azimuth_deg``, and
+    ``roll_offset_deg`` rolls the spacecraft right-handed about the boresight
+    from there, which adds to the Sun's azimuth.
+
+    A ``target_roll`` (or a ``target_rolls`` entry) passed to an evaluation
+    method is the absolute spacecraft roll for that row, in the convention of
+    :class:`SolarRollConstraint` and :class:`BoresightOffsetConstraint`:
+    counter-clockwise about the boresight, with body +Y to the east and body
+    +Z to the north at roll zero. It replaces the nominal attitude, and
+    ``roll_offset_deg`` is not applied to that row. Rows whose roll is
+    ``None`` keep the nominal attitude. The table's azimuth-zero axis is body
+    +Y turned by ``sun_azimuth_deg``, and the nominal attitude is the
+    solar-optimal roll of a +Y panel plus ``roll_offset_deg``.
+
+    The roll actually used is reported as ``roll_deg`` in
+    ``constraint_values``, so the two descriptions convert through it: passing
+    it back as ``target_roll`` reproduces the result, and ``roll_deg + x``
+    reproduces ``roll_offset_deg=x``. :meth:`roll_range` returns the rolls at
+    which the constraint is satisfied.
+
+    **Validity.** There is no prediction, and the constraint is violated, when
+    a body's nearest limb is within ``in_field_deg`` of the boresight (direct
+    light), when that limb lies inside the first off-axis cell of the table,
+    when the disk integral does not converge, or when the tabulated zodi has no
+    entry for the pointing. ``constraint_values`` are NaN in those cases.
+
+    **Values.** ``constraint_values`` holds everything the model works out, so
+    nothing has to be recomputed outside it:
+
+    * ``stray_light_ratio`` (scattered light over zodi) and the parts of it due
+      to each body, ``sun_stray_light_ratio``, ``earth_stray_light_ratio`` and
+      ``moon_stray_light_ratio`` (each NaN only when that body has no
+      prediction), and ``zodi_v_mag_arcsec2``, the zodi they are taken against;
+    * for the pointing: ``roll_deg`` (the spacecraft roll used, 0-360, in the
+      convention of ``target_roll``), ``helio_ecliptic_longitude_deg`` (ecliptic
+      longitude from the Sun, 0-360), ``ecliptic_latitude_deg`` and
+      ``zodi_table_v_mag_arcsec2`` (the tabulated zodi there, whichever zodi the
+      ratio uses);
+    * for each body, with the prefix ``sun_``, ``earth_`` or ``moon_`` (for
+      example ``earth_v_mag``): ``v_mag``; ``phase_deg`` (NaN for the Sun);
+      ``distance_km``; ``angular_radius_deg``; ``separation_deg`` and
+      ``limb_deg`` (boresight to the centre and to the nearest limb);
+      ``azimuth_deg`` (table azimuth of the centre, -180 to 180);
+      ``pst_center`` and ``pst_mean`` (PST toward the centre and its
+      brightness-weighted mean over the disk); ``lit_fraction``;
+      ``quadrature_error``; and ``status`` (a :class:`StrayLightStatus` value).
+
+    The per-body values are filled in even where the body has no prediction. A
+    body's scattered flux in V = 0 sources is ``10**(-0.4 * v_mag) * pst_mean``.
+
+    **Conversion factor.** The two sides of the ratio start in different
+    units. The scattered light is an irradiance on the focal plane,
+    ``sum(flux * <PST>)``, with each body's flux in units of a V = 0 source.
+    The zodi is a surface brightness: V = 0 sources per square arcsecond of
+    sky. ``conversion_factor`` is the surface brightness of the uniform sky
+    that produces one unit of focal-plane irradiance, and it is a property of
+    the telescope:
+
+    * A uniform sky of radiance ``L`` per steradian puts an irradiance of
+      ``L * pi / (4 N**2)`` on the focal plane of a telescope of focal ratio
+      ``N`` (a faster telescope concentrates the sky more).
+    * A surface brightness ``S`` per square arcsecond is a radiance of
+      ``S * A**2`` per steradian, where ``A = 3600 * 180 / pi = 206264.8`` is
+      the number of arcseconds in a radian, so ``A**2`` is the number of square
+      arcseconds in a steradian.
+    * If the sky's light passes through optics the PST does not already
+      include (or the reverse), the ratio of the two throughputs enters too.
+
+    Setting the sky's irradiance equal to one unit and solving for ``S``::
+
+        arcsec_per_radian = 3600 * 180 / pi
+        conversion_factor = (
+            4 * N**2 / (pi * arcsec_per_radian**2)
+            * scatter_throughput / sky_throughput
+        )
+
+    For an f/10 telescope with equal throughputs this is about 3.0e-9. For a
+    grey PST and solar-colour sources a bandpass scales both sides by the same
+    constants, so this one number is all the radiometry the constraint needs.
+
+    Attributes:
+        type: Always "stray_light"
+        pst: The telescope's point-source transmittance table.
+        conversion_factor: Equivalent sky surface brightness (V = 0 sources per
+            square arcsecond) per unit of PST-weighted flux (V = 0 sources).
+        max_ratio: Largest allowed scattered light / zodi ratio (default 3).
+        roll_offset_deg: Roll about the boresight from the nominal attitude
+            (degrees, default 0).
+        sun_azimuth_deg: Table azimuth of the Sun at the nominal attitude
+            (degrees, default 0).
+        zodi: ``"constant"`` (default) compares with ``zodi_v_mag_arcsec2``
+            everywhere; ``"table"`` uses the zodiacal light of Leinert et al.
+            (1998) against ecliptic position relative to the Sun, which has no
+            entry within about 60 degrees of the Sun near the ecliptic.
+        zodi_v_mag_arcsec2: Surface brightness of the constant zodi, V mag per
+            square arcsecond (default 22.5).
+        in_field_deg: A body whose nearest limb is closer to the boresight than
+            this is in the field (degrees, default 0.3).
+        earth_albedo: Geometric albedo of the Earth in V (default 0.24).
+        sun_v_mag_1au: V magnitude of the Sun at 1 au (default -26.74).
+        moon_v_mag_full: V magnitude of the full Moon at 384,400 km
+            (default -12.73).
+    """
+
+    type: Literal["stray_light"] = "stray_light"
+    pst: PointSourceTransmittance = Field(
+        ..., description="Point-source transmittance table of the telescope"
+    )
+    conversion_factor: float = Field(
+        ...,
+        gt=0.0,
+        allow_inf_nan=False,
+        description=(
+            "Equivalent sky surface brightness (V = 0 sources per arcsec^2) per "
+            "unit of PST-weighted flux (V = 0 sources)"
+        ),
+    )
+    max_ratio: float = Field(
+        default=3.0,
+        gt=0.0,
+        allow_inf_nan=False,
+        description="Largest allowed scattered light / zodi ratio",
+    )
+    roll_offset_deg: float = Field(
+        default=0.0,
+        allow_inf_nan=False,
+        description="Roll about the boresight from the nominal attitude (degrees)",
+    )
+    sun_azimuth_deg: float = Field(
+        default=0.0,
+        allow_inf_nan=False,
+        description="Table azimuth of the Sun at the nominal attitude (degrees)",
+    )
+    zodi: Literal["constant", "table"] = Field(
+        default="constant",
+        description="Zodiacal reference: a constant, or tabulated against the Sun",
+    )
+    zodi_v_mag_arcsec2: float = Field(
+        default=22.5,
+        allow_inf_nan=False,
+        description="Surface brightness of the constant zodi (V mag per arcsec^2)",
+    )
+    in_field_deg: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=180.0,
+        description="Limb distance from the boresight below which a body is in the field (degrees)",
+    )
+    earth_albedo: float = Field(
+        default=0.24,
+        gt=0.0,
+        allow_inf_nan=False,
+        description="Geometric albedo of the Earth in V",
+    )
+    sun_v_mag_1au: float = Field(
+        default=-26.74,
+        allow_inf_nan=False,
+        description="V magnitude of the Sun at 1 au",
+    )
+    moon_v_mag_full: float = Field(
+        default=-12.73,
+        allow_inf_nan=False,
+        description="V magnitude of the full Moon at 384,400 km",
+    )
+
+
 # Union type for all constraints
-ConstraintConfig = Union[
-    SunConstraint,
-    MoonConstraint,
-    MoonLimbConstraint,
-    EclipseConstraint,
-    EarthLimbConstraint,
-    BodyConstraint,
-    DaytimeConstraint,
-    AirmassConstraint,
-    MoonPhaseConstraint,
-    SolarRollConstraint,
-    OrbitRamConstraint,
-    OrbitPoleConstraint,
-    SAAConstraint,
-    AltAzConstraint,
-    BrightStarConstraint,
-    AndConstraint,
-    OrConstraint,
-    XorConstraint,
-    AtLeastConstraint,
-    NotConstraint,
-    BoresightOffsetConstraint,
-]
+ConstraintConfig = (
+    SunConstraint
+    | MoonConstraint
+    | MoonLimbConstraint
+    | EclipseConstraint
+    | EarthLimbConstraint
+    | BodyConstraint
+    | DaytimeConstraint
+    | AirmassConstraint
+    | MoonPhaseConstraint
+    | SolarRollConstraint
+    | StrayLightConstraint
+    | OrbitRamConstraint
+    | OrbitPoleConstraint
+    | SAAConstraint
+    | AltAzConstraint
+    | BrightStarConstraint
+    | AndConstraint
+    | OrConstraint
+    | XorConstraint
+    | AtLeastConstraint
+    | NotConstraint
+    | BoresightOffsetConstraint
+)
 
 
 # Update forward references after ConstraintConfig is defined

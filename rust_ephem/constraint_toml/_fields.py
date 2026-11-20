@@ -15,6 +15,7 @@ from typing import Any
 
 import annotated_types
 import tomlkit
+from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
 from ..constraints import RustConstraintMixin
@@ -80,11 +81,19 @@ def _choices_note(annotation: Any) -> str | None:
 
 def _normalize_scalar(value: Any) -> Any:
     """Convert a field value (or Pydantic default) into a plain, TOML/repr-friendly
-    scalar: enums become their ``.value``, tuples become lists, recursively."""
+    scalar: enums become their ``.value``, tuples become lists, recursively.
+    A nested (non-constraint) model, such as a table of numbers, becomes a
+    table of its fields."""
     if isinstance(value, Enum):
         return value.value
+    if isinstance(value, BaseModel):
+        return {
+            name: _normalize_scalar(getattr(value, name))
+            for name in type(value).model_fields
+        }
     if isinstance(value, (tuple, list)):
-        return [_normalize_scalar(v) for v in value]
+        # TOML has no null: an empty entry of a numeric table is written as nan.
+        return [float("nan") if v is None else _normalize_scalar(v) for v in value]
     return value
 
 
@@ -145,7 +154,13 @@ def _write_leaf_fields(model: RustConstraintMixin, tbl: Any) -> None:
     tbl.add("type", model.type)  # type: ignore[attr-defined]
     tbl.add(tomlkit.nl())
 
-    for name, field_info in type(model).model_fields.items():
-        if name == "type" or _is_constraint_field(field_info):
-            continue
-        _write_field(tbl, name, field_info, getattr(model, name))
+    fields = [
+        (name, field_info, getattr(model, name))
+        for name, field_info in type(model).model_fields.items()
+        if name != "type" and not _is_constraint_field(field_info)
+    ]
+    # A nested model is written as a sub-table, and TOML assigns every key
+    # after a table header to that table: such fields go last.
+    fields.sort(key=lambda field: isinstance(field[2], BaseModel))
+    for name, field_info, value in fields:
+        _write_field(tbl, name, field_info, value)

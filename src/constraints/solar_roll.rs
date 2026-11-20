@@ -99,25 +99,11 @@ pub fn roll_is_unconstrained(
     sun_along_boresight || panel_proj <= NEAR_ZERO
 }
 
-/// Compute the north-referenced spacecraft roll (degrees, CCW positive) that maximises
-/// solar illumination of the panel with the given body-frame normal.
-///
-/// North-referenced body frame (same convention as `boresight_rotate` in roll_range.rs):
-///   x = boresight (target direction)
-///   z = celestial north projected onto the plane perpendicular to x
-///   y = z × x  (recomputed for orthonormality)
-///
-/// At roll θ the body Y-axis is:  y_ref·cos(θ) + z_ref·sin(θ)
-/// For panel normal n = [nx, ny, nz] (body frame, x = boresight), the panel
-/// illumination is maximised at:
-///   θ_opt = atan2(sun_z, sun_y) - atan2(nz, ny)
-/// The +Y default (ny=1, nz=0) recovers the original formula.
-pub fn solar_optimal_roll_deg(
-    target: &[f64; 3],
-    sun_unit: &[f64; 3],
-    panel_normal: [f64; 3],
-) -> f64 {
-    let x_axis = *target;
+/// Roll-zero axes of the north-referenced body frame for boresight `x_axis`:
+/// `(y, z)` with `z` celestial north projected perpendicular to the boresight
+/// and `y = z x boresight`. At spacecraft roll `theta` (CCW about the
+/// boresight) body +Y is `y cos(theta) + z sin(theta)`.
+pub fn north_referenced_axes(x_axis: [f64; 3]) -> ([f64; 3], [f64; 3]) {
     let z_ref = [0.0_f64, 0.0, 1.0];
 
     let zref_dot_x = dot3(x_axis, z_ref);
@@ -146,6 +132,28 @@ pub fn solar_optimal_roll_deg(
     let y_raw = cross3(z_axis, x_axis);
     let y_axis = normalize3(y_raw).unwrap_or([0.0, 1.0, 0.0]);
     let z_axis = cross3(x_axis, y_axis); // recomputed for strict orthonormality
+    (y_axis, z_axis)
+}
+
+/// Compute the north-referenced spacecraft roll (degrees, CCW positive) that maximises
+/// solar illumination of the panel with the given body-frame normal.
+///
+/// North-referenced body frame (same convention as `boresight_rotate` in roll_range.rs):
+///   x = boresight (target direction)
+///   z = celestial north projected onto the plane perpendicular to x
+///   y = z × x  (recomputed for orthonormality)
+///
+/// At roll θ the body Y-axis is:  y_ref·cos(θ) + z_ref·sin(θ)
+/// For panel normal n = [nx, ny, nz] (body frame, x = boresight), the panel
+/// illumination is maximised at:
+///   θ_opt = atan2(sun_z, sun_y) - atan2(nz, ny)
+/// The +Y default (ny=1, nz=0) recovers the original formula.
+pub fn solar_optimal_roll_deg(
+    target: &[f64; 3],
+    sun_unit: &[f64; 3],
+    panel_normal: [f64; 3],
+) -> f64 {
+    let (y_axis, z_axis) = north_referenced_axes(*target);
 
     let sun_y = dot3(*sun_unit, y_axis);
     let sun_z = dot3(*sun_unit, z_axis);
@@ -153,6 +161,46 @@ pub fn solar_optimal_roll_deg(
     // Shift by the angle of the panel normal in the body Y-Z plane.
     let panel_angle = f64::atan2(panel_normal[2], panel_normal[1]);
     (f64::atan2(sun_z, sun_y) - panel_angle).to_degrees()
+}
+
+/// The nominal spacecraft roll (degrees) for a boresight and the vector from
+/// the observer to the Sun: body +Y toward the Sun, the solar-optimal roll of
+/// a +Y panel.
+pub fn nominal_roll_deg(boresight: [f64; 3], sun: [f64; 3]) -> f64 {
+    let scale = 1.0 / norm3(sun);
+    let sun_unit = [sun[0] * scale, sun[1] * scale, sun[2] * scale];
+    solar_optimal_roll_deg(&boresight, &sun_unit, default_panel_normal())
+}
+
+/// Spacecraft rolls from offsets measured from the nominal roll: element `i`
+/// points at (`ras[i]`, `decs[i]`) at ephemeris row `rows[i]`, and
+/// `offsets[i]` degrees from its nominal roll (`nominal_roll_deg`). An element
+/// without an offset has no roll.
+pub fn rolls_from_nominal(
+    ephemeris: &dyn EphemerisBase,
+    ras: &[f64],
+    decs: &[f64],
+    rows: &[usize],
+    offsets: &[Option<f64>],
+) -> PyResult<Vec<Option<f64>>> {
+    let missing = |what: &str| {
+        pyo3::exceptions::PyValueError::new_err(format!("No {what} positions available"))
+    };
+    let data = ephemeris.data();
+    let observer = data.gcrs.as_ref().ok_or_else(|| missing("GCRS"))?;
+    let sun = data.sun_gcrs.as_ref().ok_or_else(|| missing("Sun"))?;
+    Ok(offsets
+        .iter()
+        .enumerate()
+        .map(|(i, offset)| {
+            offset.map(|offset| {
+                let row = rows[i];
+                let to_sun: [f64; 3] = std::array::from_fn(|k| sun[[row, k]] - observer[[row, k]]);
+                let boresight = crate::utils::vector_math::radec_to_unit_vector(ras[i], decs[i]);
+                nominal_roll_deg(boresight, to_sun) + offset
+            })
+        })
+        .collect())
 }
 
 /// Shortest angular arc between two roll angles (result in [0, 180]).

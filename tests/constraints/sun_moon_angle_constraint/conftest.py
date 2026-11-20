@@ -1,7 +1,8 @@
 """Fixtures for sun_moon_angle_constraint tests."""
 
+from collections.abc import Generator
 from datetime import datetime, timezone
-from typing import Any, Generator
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt

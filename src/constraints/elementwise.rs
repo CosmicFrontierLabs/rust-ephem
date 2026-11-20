@@ -99,8 +99,35 @@ pub fn evaluate_elements(
 
     // Fast path: the whole input is served by the paired kernel. Also used for
     // an empty input so the value/cause schema is still reported.
-    if n == 0 || (!roll_dependent && (0..n).all(|i| roll_of(i).is_none())) {
+    let no_rolls = !roll_dependent && (0..n).all(|i| roll_of(i).is_none());
+    if n == 0 || (no_rolls && with_values) {
         return evaluator.evaluate_diagonal(ephemeris, ras, decs, Some(indices));
+    }
+
+    // The mask alone: a tree may then skip its values, and the elements its
+    // cheaper members have already decided.
+    if !with_values && (no_rolls || rolls.is_some()) {
+        let rolls = if no_rolls { None } else { rolls };
+        if let Some(violated) =
+            evaluator.mask_diagonal(ephemeris, ras, decs, Some(indices), rolls)?
+        {
+            return Ok(DiagonalEvaluation {
+                violated,
+                named: HashMap::new(),
+                values: HashMap::new(),
+                cause_value_keys: HashMap::new(),
+            });
+        }
+    }
+
+    // A tree with a paired kernel for per-element rolls needs no grouping:
+    // one pass, whatever the number of distinct rolls and times.
+    if let Some(rolls) = rolls {
+        if let Some(result) =
+            evaluator.evaluate_diagonal_at_rolls(ephemeris, ras, decs, Some(indices), rolls)?
+        {
+            return Ok(result);
+        }
     }
 
     let mut acc = Accumulator::new(n);
@@ -232,6 +259,9 @@ pub struct ElementwiseResult {
     constraint_vec: Vec<bool>,
     constraint_values: HashMap<String, Vec<f64>>,
     component_violated: HashMap<String, Vec<bool>>,
+    /// The `component_violated` tags in the order the rules were written.
+    #[pyo3(get)]
+    component_order: Vec<String>,
 }
 
 impl ElementwiseResult {
@@ -241,6 +271,7 @@ impl ElementwiseResult {
         ras: Vec<f64>,
         decs: Vec<f64>,
         evaluation: DiagonalEvaluation,
+        component_order: Vec<String>,
     ) -> Self {
         Self {
             constraint_name,
@@ -251,6 +282,7 @@ impl ElementwiseResult {
             constraint_vec: evaluation.violated,
             constraint_values: evaluation.values,
             component_violated: evaluation.named,
+            component_order,
         }
     }
 }
@@ -313,6 +345,19 @@ impl ElementwiseResult {
             dict.set_item(key, values.clone().into_pyarray(py))?;
         }
         Ok(dict.into_any().unbind())
+    }
+
+    /// numpy str array (N,): the tag of the first rule, in the order the
+    /// rules were written, that is violated where the constraint is; an empty
+    /// string where the constraint is satisfied.
+    #[getter]
+    fn first_violated(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let indices = super::grid::first_violated_indices(
+            &self.component_order,
+            &self.constraint_vec,
+            |tag| self.component_violated.get(tag).map(Vec::as_slice),
+        );
+        Ok(super::grid::first_violated_labels(py, &self.component_order, indices)?.unbind())
     }
 
     /// numpy float array (N,) of target right ascensions in degrees.

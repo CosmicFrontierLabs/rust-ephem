@@ -102,7 +102,11 @@ your file uses different units.
 
 Supported position units: ``"km"`` (default), ``"m"``, ``"cm"``.
 
-Supported velocity units: ``"km/s"`` (default), ``"m/s"``, ``"cm/s"``.
+Supported velocity units: ``"km/s"``, ``"m/s"``, ``"cm/s"``.
+
+When no velocity unit is given (and the file does not state one), it follows
+the position unit: ``position_unit="m"`` alone means velocities in m/s. Pass
+``velocity_unit`` explicitly for a file that mixes, say, metres with km/s.
 
 Basic example
 -------------
@@ -239,6 +243,21 @@ transforms, Sun/Moon):
     )
 
     assert eph.file_path is None
+
+``velocities`` may be omitted when only positions are to hand:
+
+.. code-block:: python
+
+    eph = re.FileEphemeris.from_arrays(times, r_km, step_size=60)
+
+They are then the derivative of the cubic spline through the positions (the
+same spline as ``scipy.interpolate.CubicSpline``), in the position unit per
+second. The samples must be close together compared with the time over which
+the path curves. The error grows as the cube of the sample spacing and is
+largest at the first and last samples: for a low Earth orbit sampled every
+60 s it is about 1 mm/s inside the span and 0.4 m/s at its ends (2 mm/s at the
+ends when sampled every 10 s), and for a geostationary orbit under 0.1 mm/s.
+Supply the velocities when they are known.
 
 ``times`` may also be a NumPy ``datetime64`` array (interpreted as UTC). Units
 and frame are given with the same keywords as the file constructor's overrides,

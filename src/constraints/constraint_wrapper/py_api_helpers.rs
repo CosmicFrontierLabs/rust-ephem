@@ -4,6 +4,7 @@ use crate::constraints::core::{
 };
 use crate::constraints::diagonal::DiagonalEvaluation;
 use crate::constraints::elementwise::evaluate_elements;
+use crate::constraints::grid::GridEvaluation;
 use crate::ephemeris::ephemeris_common::EphemerisBase;
 use crate::ephemeris::sampled_ephemeris::{locate_times, SampledEphemeris};
 use crate::ephemeris::FileEphemeris;
@@ -25,28 +26,48 @@ const APPARENT_BLOCK_VALUES: usize = 8_000_000;
 /// Fewest target x time cells in a block worth spreading over the cores.
 const APPARENT_PARALLEL_MIN_CELLS: usize = 20_000;
 
-impl PyConstraint {
-    pub(super) fn validate_apparent(&self, apparent: bool) -> PyResult<()> {
-        if !apparent {
-            return Ok(());
-        }
-        fn contains_bright_star(config: &serde_json::Value) -> bool {
-            config["type"] == "bright_star"
-                || config.get("constraint").is_some_and(contains_bright_star)
-                || config["constraints"]
-                    .as_array()
-                    .is_some_and(|children| children.iter().any(contains_bright_star))
-        }
-        let config = serde_json::from_str(&self.config_json)
-            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-        if contains_bright_star(&config) {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "apparent=True is not supported for BrightStarConstraint or trees containing it: catalogue stars are not corrected",
-            ));
-        }
-        Ok(())
-    }
+/// Paired elements above which their per-element set-up is shared across the cores.
+const ELEMENTWISE_PARALLEL_MIN_ROWS: usize = 8192;
 
+/// The explicit roll of every target, and the targets that share each roll.
+pub(super) type GroupedRolls<'a> = (&'a [f64], &'a std::collections::BTreeMap<u64, Vec<usize>>);
+
+/// Cells of the target x time grid evaluated at a time when only a summary
+/// of each target's row is kept.
+const REDUCE_BLOCK_CELLS: usize = 1 << 22;
+
+/// Cells of an apparent grid evaluated as paired elements in one call.
+const APPARENT_PAIRED_BLOCK_CELLS: usize = 1 << 20;
+
+/// Read a 1-D sequence of numbers as `f64`s. A NumPy array is copied in one
+/// step; anything else goes through `numpy.asarray`, so lists, tuples and
+/// arrays of other dtypes are accepted alike.
+pub(super) fn extract_f64s(values: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<f64>> {
+    use numpy::{PyArray1, PyArrayMethods};
+
+    let invalid = |reason: String| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "{name} must be a 1-D sequence of numbers: {reason}"
+        ))
+    };
+    let array = match values.cast::<PyArray1<f64>>() {
+        Ok(array) => array.clone(),
+        Err(_) => {
+            let converted = values
+                .py()
+                .import("numpy")?
+                .call_method1("asarray", (values, "float64"))
+                .map_err(|err| invalid(err.to_string()))?;
+            converted
+                .cast_into::<PyArray1<f64>>()
+                .map_err(|_| invalid("it is not one-dimensional".to_string()))?
+        }
+    };
+    let values = array.readonly().as_array().to_vec();
+    Ok(values)
+}
+
+impl PyConstraint {
     pub(super) fn parse_datetime_input(times: &Bound<PyAny>) -> PyResult<Vec<DateTime<Utc>>> {
         crate::utils::time_utils::python_datetimes_to_utc(times)
     }
@@ -125,7 +146,7 @@ impl PyConstraint {
     where
         F: FnMut(&dyn EphemerisBase, &[usize], Vec<DateTime<Utc>>) -> PyResult<T>,
     {
-        let requested = times.map(Self::parse_datetime_input).transpose()?;
+        let mut requested = times.map(Self::parse_datetime_input).transpose()?;
         if let Some(ref requested) = requested {
             if requested.len() != n_elements {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -140,7 +161,7 @@ impl PyConstraint {
             let source_times = source.data().times.as_deref().ok_or_else(|| {
                 pyo3::exceptions::PyValueError::new_err("No ephemeris timestamps available")
             })?;
-            let Some(ref requested) = requested else {
+            let Some(requested) = requested.take() else {
                 if n_elements != source_times.len() {
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(
                         "times=None pairs element i with ephemeris timestamp i, so \
@@ -153,20 +174,29 @@ impl PyConstraint {
                 let indices: Vec<usize> = (0..n_elements).collect();
                 return f(source, &indices, source_times.to_vec());
             };
+            // Elements usually share few distinct times, all on the grid:
+            // each is then found directly, with nothing to sort.
+            let find = |time: &DateTime<Utc>| source_times.binary_search(time).ok();
+            let on_grid: Option<Vec<usize>> = if requested.len() >= ELEMENTWISE_PARALLEL_MIN_ROWS {
+                requested.par_iter().map(find).collect()
+            } else {
+                requested.iter().map(find).collect()
+            };
+            if let Some(indices) = on_grid {
+                return f(source, &indices, requested);
+            }
             let mut unique = requested.clone();
-            unique.sort_unstable();
+            unique.par_sort_unstable();
             unique.dedup();
             let locations = locate_times(source_times, &unique)?;
-            let element_rows: Vec<usize> = requested
-                .iter()
-                .map(|time| unique.binary_search(time).unwrap_or_else(|i| i))
-                .collect();
-            if let Ok(exact) = locations.iter().copied().collect::<Result<Vec<_>, _>>() {
-                let indices: Vec<usize> = element_rows.iter().map(|&u| exact[u]).collect();
-                return f(source, &indices, requested.clone());
-            }
+            let row = |time: &DateTime<Utc>| unique.binary_search(time).unwrap_or_else(|i| i);
+            let element_rows: Vec<usize> = if requested.len() >= ELEMENTWISE_PARALLEL_MIN_ROWS {
+                requested.par_iter().map(row).collect()
+            } else {
+                requested.iter().map(row).collect()
+            };
             let sampled = SampledEphemeris::new(source, &unique, &locations)?;
-            f(&sampled, &element_rows, requested.clone())
+            f(&sampled, &element_rows, requested)
         })
     }
 
@@ -180,17 +210,45 @@ impl PyConstraint {
         target_decs: &[f64],
         times: Option<&Bound<PyAny>>,
         target_rolls: Option<&[Option<f64>]>,
+        roll_offsets: Option<&[Option<f64>]>,
         n_roll_samples: usize,
         with_values: bool,
         apparent: bool,
     ) -> PyResult<(Vec<DateTime<Utc>>, DiagonalEvaluation)> {
-        self.validate_apparent(apparent)?;
         Self::validate_n_roll_samples(n_roll_samples)?;
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "target_ras and target_decs must have the same length",
             ));
         }
+        if let Some(offsets) = roll_offsets {
+            if target_rolls.is_some() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Cannot specify both 'target_rolls' and 'roll_offsets'",
+                ));
+            }
+            if offsets.len() != target_ras.len() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "roll_offsets must have the same length as target_ras and target_decs",
+                ));
+            }
+            if offsets.iter().flatten().any(|offset| !offset.is_finite()) {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "roll_offsets must be finite numbers",
+                ));
+            }
+        }
+        // Offsets become rolls once the geometry they are measured from is
+        // known: the ephemeris the elements are evaluated on, apparent or not.
+        let rolls_on = |ephem: &dyn EphemerisBase, ras: &[f64], decs: &[f64], rows: &[usize]| {
+            roll_offsets
+                .map(|offsets| {
+                    crate::constraints::solar_roll::rolls_from_nominal(
+                        ephem, ras, decs, rows, offsets,
+                    )
+                })
+                .transpose()
+        };
         if let Some(rolls) = target_rolls {
             if rolls.len() != target_ras.len() {
                 return Err(pyo3::exceptions::PyValueError::new_err(
@@ -211,46 +269,284 @@ impl PyConstraint {
                 if apparent {
                     // One apparent row per distinct time; each target is aberrated
                     // for the observer state of its own time.
-                    let mut rows = indices.to_vec();
-                    rows.sort_unstable();
-                    rows.dedup();
+                    let n_source = ephem.get_times()?.len();
+                    if let Some(row) = indices.iter().find(|&&row| row >= n_source) {
+                        return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                            "index {row} out of bounds for ephemeris with {n_source} timestamps"
+                        )));
+                    }
+                    // The distinct rows in order, and each one's place among them.
+                    let mut place = vec![usize::MAX; n_source];
+                    for &row in indices {
+                        place[row] = 0;
+                    }
+                    let rows: Vec<usize> = (0..n_source).filter(|&row| place[row] == 0).collect();
+                    for (position, &row) in rows.iter().enumerate() {
+                        place[row] = position;
+                    }
                     let (view, aberrations) = SampledEphemeris::apparent(ephem, &rows)?;
-                    let local: Vec<usize> = indices
-                        .iter()
-                        .map(|row| rows.binary_search(row).unwrap_or_else(|i| i))
-                        .collect();
-                    let (ras, decs): (Vec<f64>, Vec<f64>) = local
-                        .iter()
-                        .enumerate()
-                        .map(|(i, &row)| {
-                            aberrations[row].apply_radec_deg(target_ras[i], target_decs[i])
-                        })
-                        .unzip();
+                    let local: Vec<usize> = indices.iter().map(|&row| place[row]).collect();
+                    let correct = |i: usize| {
+                        aberrations[local[i]].apply_radec_deg(target_ras[i], target_decs[i])
+                    };
+                    let (ras, decs): (Vec<f64>, Vec<f64>) =
+                        if local.len() >= ELEMENTWISE_PARALLEL_MIN_ROWS {
+                            (0..local.len()).into_par_iter().map(correct).unzip()
+                        } else {
+                            (0..local.len()).map(correct).unzip()
+                        };
+                    let rolls = rolls_on(&view, &ras, &decs, &local)?;
                     let evaluation = evaluate_elements(
                         &*self.evaluator,
                         &view,
                         &ras,
                         &decs,
                         &local,
-                        target_rolls,
+                        rolls.as_deref().or(target_rolls),
                         n_roll_samples,
                         with_values,
                     )?;
                     return Ok((element_times, evaluation));
                 }
+                let rolls = rolls_on(ephem, target_ras, target_decs, indices)?;
                 let evaluation = evaluate_elements(
                     &*self.evaluator,
                     ephem,
                     target_ras,
                     target_decs,
                     indices,
-                    target_rolls,
+                    rolls.as_deref().or(target_rolls),
                     n_roll_samples,
                     with_values,
                 )?;
                 Ok((element_times, evaluation))
             },
         )
+    }
+
+    /// The target x time violation grid `in_constraint_batch` returns, on an
+    /// ephemeris already resolved to the requested times.
+    ///
+    /// `rolls` is the explicit spacecraft roll of every target with the
+    /// targets grouped by roll (`build_roll_groups`); `None` leaves the roll
+    /// free.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn mask_rows(
+        &self,
+        ephemeris: &dyn EphemerisBase,
+        time_indices: Option<&[usize]>,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        rolls: Option<GroupedRolls>,
+        n_roll_samples: usize,
+        apparent: bool,
+    ) -> PyResult<ndarray::Array2<bool>> {
+        let evaluator = &*self.evaluator;
+        let Some((rolls, groups)) = rolls else {
+            if apparent {
+                if let Some(mask) = self.apparent_mask_paired(
+                    ephemeris,
+                    time_indices,
+                    target_ras,
+                    target_decs,
+                    None,
+                )? {
+                    return Ok(mask);
+                }
+                return self.apparent_batch(
+                    ephemeris,
+                    time_indices,
+                    target_ras,
+                    target_decs,
+                    !evaluator.is_roll_dependent(),
+                    |view, ras, decs, selected| {
+                        evaluator.in_constraint_batch_constrained_at_every_roll(
+                            view,
+                            ras,
+                            decs,
+                            Some(selected),
+                            n_roll_samples,
+                        )
+                    },
+                );
+            }
+            return evaluator.in_constraint_batch_constrained_at_every_roll(
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices,
+                n_roll_samples,
+            );
+        };
+        let n_times = match time_indices {
+            Some(indices) => indices.len(),
+            None => ephemeris.get_times()?.len(),
+        };
+        let mut result = ndarray::Array2::from_elem((target_ras.len(), n_times), false);
+        for members in groups.values() {
+            let (ras, decs) = Self::extract_group_targets(target_ras, target_decs, members);
+            let roll = EvaluationRoll::Fixed(rolls[members[0]]);
+            let paired = if apparent {
+                self.apparent_mask_paired(
+                    ephemeris,
+                    time_indices,
+                    &ras,
+                    &decs,
+                    Some(roll.degrees()),
+                )?
+            } else {
+                None
+            };
+            let mask = if let Some(mask) = paired {
+                mask
+            } else if apparent {
+                self.apparent_batch(
+                    ephemeris,
+                    time_indices,
+                    &ras,
+                    &decs,
+                    false,
+                    |view, ras, decs, selected| {
+                        evaluator.in_constraint_batch_at_roll(view, ras, decs, Some(selected), roll)
+                    },
+                )?
+            } else {
+                evaluator.in_constraint_batch_at_roll(ephemeris, &ras, &decs, time_indices, roll)?
+            };
+            for (local, &target) in members.iter().enumerate() {
+                result.row_mut(target).assign(&mask.row(local));
+            }
+        }
+        Ok(result)
+    }
+
+    /// Hand `reduce` each row of the grid `in_constraint_batch` returns, in
+    /// target order, without holding the grid: targets are evaluated in blocks
+    /// of about `REDUCE_BLOCK_CELLS` cells. Returns the number of times.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn reduce_rows(
+        &self,
+        py: Python,
+        ephemeris: &Py<PyAny>,
+        target_ras: &Bound<PyAny>,
+        target_decs: &Bound<PyAny>,
+        times: Option<&Bound<PyAny>>,
+        indices: Option<&Bound<PyAny>>,
+        target_rolls: Option<Vec<f64>>,
+        n_roll_samples: usize,
+        apparent: bool,
+        mut reduce: impl FnMut(ndarray::ArrayView1<bool>),
+    ) -> PyResult<usize> {
+        Self::validate_n_roll_samples(n_roll_samples)?;
+        let target_ras = extract_f64s(target_ras, "target_ras")?;
+        let target_decs = extract_f64s(target_decs, "target_decs")?;
+        let n_targets = target_ras.len();
+        if target_decs.len() != n_targets {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+        if let Some(rolls) = &target_rolls {
+            if rolls.len() != n_targets {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "target_rolls must have the same length as target_ras and target_decs",
+                ));
+            }
+            rolls
+                .iter()
+                .try_for_each(|&roll| Self::validate_target_roll(roll))?;
+        }
+        let bound = ephemeris.bind(py);
+        self.with_evaluation_ephemeris(bound, times, indices, |ephem_ref, time_indices| {
+            let n_times = match &time_indices {
+                Some(indices) => indices.len(),
+                None => ephem_ref.get_times()?.len(),
+            };
+            let block = (REDUCE_BLOCK_CELLS / n_times.max(1)).max(1);
+            for first in (0..n_targets).step_by(block) {
+                let targets = first..(first + block).min(n_targets);
+                let rolls = target_rolls.as_deref().map(|rolls| &rolls[targets.clone()]);
+                let groups = rolls.map(Self::build_roll_groups).transpose()?;
+                let mask = self.mask_rows(
+                    ephem_ref,
+                    time_indices.as_deref(),
+                    &target_ras[targets.clone()],
+                    &target_decs[targets],
+                    rolls.zip(groups.as_ref()),
+                    n_roll_samples,
+                    apparent,
+                )?;
+                mask.rows().into_iter().for_each(&mut reduce);
+            }
+            Ok(n_times)
+        })
+    }
+
+    /// The apparent target x time violation grid of a tree with an expensive
+    /// member, evaluated as paired elements: every cell in one pass across the
+    /// cores, each tree member seeing only the cells the cheaper ones left
+    /// undecided. `apparent_batch` hands such a tree one time column at a
+    /// time, which keeps it on one core and repeats its setup per column.
+    ///
+    /// `roll` is the explicit spacecraft roll of the grid, if any. `None` when
+    /// this does not apply (a cheap tree, a free roll on a roll-dependent tree,
+    /// or no paired kernel), and `apparent_batch` is to be used.
+    pub(super) fn apparent_mask_paired(
+        &self,
+        ephemeris: &dyn EphemerisBase,
+        time_indices: Option<&[usize]>,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        roll: Option<f64>,
+    ) -> PyResult<Option<ndarray::Array2<bool>>> {
+        let evaluator = &*self.evaluator;
+        if !evaluator.is_expensive() || (roll.is_none() && evaluator.is_roll_dependent()) {
+            return Ok(None);
+        }
+        let rows: Vec<usize> = match time_indices {
+            Some(indices) => indices.to_vec(),
+            None => (0..ephemeris.get_times()?.len()).collect(),
+        };
+        let (view, aberrations) = SampledEphemeris::apparent(ephemeris, &rows)?;
+        let (n_targets, n_times) = (target_ras.len(), rows.len());
+        let mut result = ndarray::Array2::from_elem((n_targets, n_times), false);
+        if n_targets == 0 || n_times == 0 {
+            return Ok(Some(result));
+        }
+        // Whole targets per call, so the paired lists stay bounded.
+        let targets_per_block = (APPARENT_PAIRED_BLOCK_CELLS / n_times).max(1);
+        let local: Vec<usize> = (0..targets_per_block.min(n_targets))
+            .flat_map(|_| 0..n_times)
+            .collect();
+        for (block, (ras, decs)) in target_ras
+            .chunks(targets_per_block)
+            .zip(target_decs.chunks(targets_per_block))
+            .enumerate()
+        {
+            let cells = ras.len() * n_times;
+            let (cell_ras, cell_decs): (Vec<f64>, Vec<f64>) = (0..cells)
+                .into_par_iter()
+                .map(|c| {
+                    aberrations[c % n_times].apply_radec_deg(ras[c / n_times], decs[c / n_times])
+                })
+                .unzip();
+            let rolls = roll.map(|roll| vec![Some(roll); cells]);
+            let Some(mask) = evaluator.mask_diagonal(
+                &view,
+                &cell_ras,
+                &cell_decs,
+                Some(&local[..cells]),
+                rolls.as_deref(),
+            )?
+            else {
+                return Ok(None);
+            };
+            let first = block * targets_per_block;
+            for (c, violated) in mask.into_iter().enumerate() {
+                result[[first + c / n_times, c % n_times]] = violated;
+            }
+        }
+        Ok(Some(result))
     }
 
     /// Target x time violation grid with apparent geometry: the bodies of each
@@ -353,10 +649,16 @@ impl PyConstraint {
         Ok(result)
     }
 
-    /// `evaluate` / `evaluate_batch` with apparent geometry: one result per
-    /// target, each the paired evaluation of that target, corrected for every
-    /// time, against the apparent view of those times.
-    pub(super) fn eval_batch_apparent(
+    /// The grid with apparent geometry: the bodies of each time are apparent
+    /// (`SampledEphemeris::apparent`) and every target is corrected for that
+    /// time's observer state.
+    ///
+    /// A tree whose kernels correct targets themselves is evaluated in one
+    /// grid call, as `apparent_batch` does for the mask alone. Any other tree
+    /// needs each target corrected per time before it is handed over, which is
+    /// done along the shorter side of the grid: per time column for a wide
+    /// grid, per target for a long one.
+    pub(super) fn grid_apparent(
         &self,
         ephemeris: &dyn EphemerisBase,
         target_ras: &[f64],
@@ -364,26 +666,96 @@ impl PyConstraint {
         time_indices: Option<&[usize]>,
         n_roll_samples: usize,
         target_roll: Option<f64>,
-    ) -> PyResult<Vec<ConstraintResult>> {
+    ) -> PyResult<GridEvaluation> {
+        let evaluator = &*self.evaluator;
         let rows: Vec<usize> = match time_indices {
             Some(indices) => indices.to_vec(),
             None => (0..ephemeris.get_times()?.len()).collect(),
         };
         let (view, aberrations) = SampledEphemeris::apparent(ephemeris, &rows)?;
-        let times = view.get_times()?;
-        let local: Vec<usize> = (0..rows.len()).collect();
-        let rolls = target_roll.map(|roll| vec![Some(roll); rows.len()]);
-        let name = self.evaluator.name_at_roll(target_roll);
-        target_ras
-            .iter()
-            .zip(target_decs)
-            .map(|(&ra, &dec)| {
+        let (n_targets, n_times) = (target_ras.len(), rows.len());
+        if evaluator.applies_target_corrections() && !evaluator.is_roll_dependent() {
+            let view = view.with_target_corrections(aberrations);
+            return Self::grid_geometric(
+                evaluator,
+                &view,
+                target_ras,
+                target_decs,
+                None,
+                n_roll_samples,
+                target_roll,
+            );
+        }
+        if n_targets == 0 || n_times == 0 {
+            // Nothing to correct: the kernels report the empty grid's schema.
+            return Self::grid_geometric(
+                evaluator,
+                &view,
+                target_ras,
+                target_decs,
+                None,
+                n_roll_samples,
+                target_roll,
+            );
+        }
+
+        let times: std::sync::Arc<[DateTime<Utc>]> = view.get_times()?.into();
+        let mut violated = ndarray::Array2::from_elem((n_targets, n_times), false);
+        let mut named: HashMap<String, ndarray::Array2<bool>> = HashMap::new();
+        let mut values: HashMap<String, ndarray::Array2<f64>> = HashMap::new();
+        if n_targets > n_times {
+            // Wide: one time at a time, every target corrected for it.
+            for (column, aberration) in aberrations.iter().enumerate() {
+                let correct = |(&ra, &dec): (&f64, &f64)| aberration.apply_radec_deg(ra, dec);
+                let (ras, decs): (Vec<f64>, Vec<f64>) = if n_targets >= APPARENT_PARALLEL_MIN_CELLS
+                {
+                    target_ras
+                        .par_iter()
+                        .zip(target_decs.par_iter())
+                        .map(correct)
+                        .unzip()
+                } else {
+                    target_ras.iter().zip(target_decs).map(correct).unzip()
+                };
+                let part = Self::grid_geometric(
+                    evaluator,
+                    &view,
+                    &ras,
+                    &decs,
+                    Some(&[column]),
+                    n_roll_samples,
+                    target_roll,
+                )?;
+                violated.column_mut(column).assign(&part.violated.column(0));
+                for (key, array) in part.named {
+                    named
+                        .entry(key)
+                        .or_insert_with(|| ndarray::Array2::from_elem((n_targets, n_times), false))
+                        .column_mut(column)
+                        .assign(&array.column(0));
+                }
+                for (key, array) in part.values {
+                    values
+                        .entry(key)
+                        .or_insert_with(|| {
+                            ndarray::Array2::from_elem((n_targets, n_times), f64::NAN)
+                        })
+                        .column_mut(column)
+                        .assign(&array.column(0));
+                }
+            }
+        } else {
+            // Long: one target at a time, corrected for every time and
+            // evaluated as paired elements.
+            let local: Vec<usize> = (0..n_times).collect();
+            let rolls = target_roll.map(|roll| vec![Some(roll); n_times]);
+            for (row, (&ra, &dec)) in target_ras.iter().zip(target_decs).enumerate() {
                 let (ras, decs): (Vec<f64>, Vec<f64>) = aberrations
                     .iter()
                     .map(|aberration| aberration.apply_radec_deg(ra, dec))
                     .unzip();
                 let evaluation = evaluate_elements(
-                    &*self.evaluator,
+                    evaluator,
                     &view,
                     &ras,
                     &decs,
@@ -392,25 +764,35 @@ impl PyConstraint {
                     n_roll_samples,
                     true,
                 )?;
-                let violations = track_violations(
-                    &times,
-                    |i| {
-                        (
-                            evaluation.violated[i],
-                            if evaluation.violated[i] { 1.0 } else { 0.0 },
-                        )
-                    },
-                    |_i, _is_open| name.clone(),
-                );
-                let all_satisfied = violations.is_empty();
-                Ok(
-                    ConstraintResult::new(violations, all_satisfied, name.clone(), times.clone())
-                        .with_constraint_values(evaluation.values)
-                        .with_component_violated(evaluation.named)
-                        .with_cause_value_keys(evaluation.cause_value_keys),
-                )
-            })
-            .collect()
+                for (cell, flag) in violated.row_mut(row).iter_mut().zip(evaluation.violated) {
+                    *cell = flag;
+                }
+                for (key, flags) in evaluation.named {
+                    let array = named
+                        .entry(key)
+                        .or_insert_with(|| ndarray::Array2::from_elem((n_targets, n_times), false));
+                    for (cell, flag) in array.row_mut(row).iter_mut().zip(flags) {
+                        *cell = flag;
+                    }
+                }
+                for (key, numbers) in evaluation.values {
+                    let array = values.entry(key).or_insert_with(|| {
+                        ndarray::Array2::from_elem((n_targets, n_times), f64::NAN)
+                    });
+                    for (cell, number) in array.row_mut(row).iter_mut().zip(numbers) {
+                        *cell = number;
+                    }
+                }
+            }
+        }
+        Ok(GridEvaluation {
+            name: evaluator.name_at_roll(target_roll),
+            times,
+            violated,
+            named,
+            values,
+            cause_value_keys: std::sync::Arc::new(Self::cause_value_keys_for(evaluator, &view)?),
+        })
     }
 
     pub(super) fn validate_target_roll(roll: f64) -> PyResult<()> {
@@ -496,10 +878,7 @@ impl PyConstraint {
     ) -> HashMap<String, Vec<T>> {
         matrices
             .iter()
-            .map(|(key, arr)| {
-                let row: Vec<T> = (0..arr.ncols()).map(|i| arr[[target_index, i]]).collect();
-                (key.clone(), row)
-            })
+            .map(|(key, arr)| (key.clone(), arr.row(target_index).to_vec()))
             .collect()
     }
 
@@ -608,17 +987,19 @@ impl PyConstraint {
         .with_cause_value_keys(cause_value_keys))
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn eval_batch_with_ephemeris(
-        &self,
+    /// The grid of the tree: the combined mask, the per-leaf masks and the
+    /// named values of every target at the selected times, with the roll
+    /// semantics of `evaluate_batch` (`target_roll = None` sweeps the rolls of a
+    /// roll-dependent tree).
+    pub(super) fn grid_geometric(
         evaluator: &dyn ConstraintEvaluator,
         ephemeris: &dyn EphemerisBase,
         target_ras: &[f64],
         target_decs: &[f64],
-        time_indices: Option<Vec<usize>>,
+        time_indices: Option<&[usize]>,
         n_roll_samples: usize,
         target_roll: Option<f64>,
-    ) -> PyResult<Vec<ConstraintResult>> {
+    ) -> PyResult<GridEvaluation> {
         // See `eval_with_ephemeris`: one coordinated sweep produces both the
         // violation array and the cause masks consistent with it.
         let swept = if let Some(roll) = target_roll {
@@ -626,7 +1007,7 @@ impl PyConstraint {
                 ephemeris,
                 target_ras,
                 target_decs,
-                time_indices.as_deref(),
+                time_indices,
                 Some(EvaluationRoll::Fixed(roll)),
             )?
         } else {
@@ -635,60 +1016,65 @@ impl PyConstraint {
                 ephemeris,
                 target_ras,
                 target_decs,
-                time_indices.as_deref(),
+                time_indices,
                 n_roll_samples,
             )?
         };
-        let violation_array = swept.violated;
+        Ok(GridEvaluation {
+            name: evaluator.name_at_roll(target_roll),
+            // Times, the cause-key mapping and the name are the same for every
+            // target: built once and shared.
+            times: ephemeris.get_times_at_indices(time_indices)?.into(),
+            violated: swept.violated,
+            named: swept.named,
+            // Named continuous values, once for all targets (not swept across
+            // roll angles).
+            values: evaluator.compute_named_values_at_roll(
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices,
+                target_roll,
+            )?,
+            // The mapping depends only on the evaluator's structure, not on
+            // the target positions.
+            cause_value_keys: std::sync::Arc::new(Self::cause_value_keys_for(
+                evaluator, ephemeris,
+            )?),
+        })
+    }
 
-        let all_times = ephemeris.get_times()?;
-        let times: Vec<_> = if let Some(ref indices) = time_indices {
-            indices.iter().map(|&i| all_times[i]).collect()
+    /// The grid, geometric or apparent.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn grid(
+        &self,
+        ephemeris: &dyn EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        n_roll_samples: usize,
+        target_roll: Option<f64>,
+        apparent: bool,
+    ) -> PyResult<GridEvaluation> {
+        if apparent {
+            self.grid_apparent(
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices,
+                n_roll_samples,
+                target_roll,
+            )
         } else {
-            all_times.to_vec()
-        };
-
-        // Compute named continuous values once for all targets (not swept across roll angles).
-        let values_map = evaluator.compute_named_values_at_roll(
-            ephemeris,
-            target_ras,
-            target_decs,
-            time_indices.as_deref(),
-            target_roll,
-        )?;
-
-        // Shared across all targets: the mapping depends only on the evaluator's
-        // structure, not on the target positions.
-        let cause_value_keys = Self::cause_value_keys_for(evaluator, ephemeris)?;
-
-        let mut results = Vec::with_capacity(target_ras.len());
-        for target_index in 0..target_ras.len() {
-            let violated: Vec<bool> = (0..violation_array.ncols())
-                .map(|i| violation_array[[target_index, i]])
-                .collect();
-
-            let violations = track_violations(
-                &times,
-                |i| (violated[i], if violated[i] { 1.0 } else { 0.0 }),
-                |_i, _is_open| evaluator.name_at_roll(target_roll),
-            );
-
-            let all_satisfied = violations.is_empty();
-            let values = Self::extract_target_row(&values_map, target_index);
-            let component_violated = Self::extract_target_row(&swept.named, target_index);
-            results.push(
-                ConstraintResult::new(
-                    violations,
-                    all_satisfied,
-                    evaluator.name_at_roll(target_roll),
-                    times.clone(),
-                )
-                .with_constraint_values(values)
-                .with_component_violated(component_violated)
-                .with_cause_value_keys(cause_value_keys.clone()),
-            );
+            Self::grid_geometric(
+                &*self.evaluator,
+                ephemeris,
+                target_ras,
+                target_decs,
+                time_indices,
+                n_roll_samples,
+                target_roll,
+            )
         }
-
-        Ok(results)
     }
 }

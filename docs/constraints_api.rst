@@ -670,6 +670,25 @@ Evaluation Methods
       # One pointing per row, each at its own (possibly off-grid) time
       blocked = constraint.in_constraint_elementwise(ephem, ras, decs, times)
 
+.. py:method:: Constraint.evaluate_grid(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
+
+   Evaluate every target at every time and return the grid as arrays.
+
+   Same arguments, time handling, roll semantics, ``apparent`` option and
+   polarity as ``evaluate_batch``, without building one result per target: the
+   mask, the named values and the per-rule masks come back as
+   ``(n_targets, n_times)`` arrays. Use it when the values of the whole grid are
+   wanted; ``in_constraint_batch`` for the mask alone; ``evaluate_batch`` when
+   every target's violation windows are.
+
+   :param target_rolls: Per-target spacecraft roll in degrees; ``None`` entries
+      (or ``target_rolls=None``) sweep ``n_roll_samples`` rolls for
+      roll-dependent constraints
+   :type target_rolls: list[float | None] or None
+   :returns: The grid: ``constraint_array`` (equal to ``in_constraint_batch``),
+      ``constraint_values``, ``component_violated`` and the rest
+   :rtype: GridResult
+
 .. py:method:: Constraint.evaluate_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
 
    Same pairing, time handling, roll semantics and polarity as
@@ -688,7 +707,7 @@ Evaluation Methods
       blocked = result.constraint_array
       sun_angle = result.constraint_values["sun.sun_angle_deg"]
 
-.. py:method:: Constraint.in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+.. py:method:: Constraint.in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
 
    Check if the target satisfies the constraint at given time(s).
 
@@ -777,7 +796,7 @@ Evaluation Methods
       for lo, hi in ranges:
           print(f"Valid rolls: {lo:.1f}° – {hi:.1f}°")
 
-.. py:method:: Constraint.instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+.. py:method:: Constraint.instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
 
    Compute instantaneous field of regard in steradians.
 
@@ -1399,6 +1418,254 @@ Two FoV shapes are supported:
       # Evaluate at a specific roll (position angle in degrees, east of north)
       result = c.evaluate(ephem, target_ra, target_dec, target_roll=45.0)
 
+StrayLightConstraint
+^^^^^^^^^^^^^^^^^^^^
+
+Stray-light constraint - violated when out-of-field light from the Sun, Earth
+and Moon, scattered onto the focal plane, exceeds a multiple of the zodiacal
+background, or when the model has no prediction for the pointing.
+
+The telescope is described by a point-source transmittance (PST) table that
+you supply: ``PST(theta, phi) = E_focal / E_aperture``, the mean focal-plane
+irradiance produced by a collimated source of unit irradiance arriving from
+off-axis angle ``theta`` and azimuth ``phi`` about the boresight. No telescope
+data ships with ``rust-ephem``.
+
+For each body the model:
+
+1. computes its disk-integrated V magnitude at the observer: the Sun from its
+   distance; the Earth as a Lambert sphere of the given albedo, with the phase
+   law evaluated at the observer's finite distance; the Moon from its distance
+   and Allen's empirical phase law;
+2. averages the PST over the body's resolved disk, each sample weighted by its
+   solid angle and, for the Earth and Moon, by the Lambertian illumination of
+   the surface point it sees, so the terminator is resolved. The sampling grid
+   is doubled until two levels agree to 2% and at least one sample is sunlit;
+3. multiplies the two, giving the scattered flux in units of a V = 0 source.
+
+The sum over the bodies, times ``conversion_factor``, is the surface brightness
+of the uniform sky that would put the same light on the focal plane. Its ratio
+to the zodiacal surface brightness is ``stray_light_ratio``; the constraint is
+violated when that exceeds ``max_ratio``.
+
+**Attitude.** The table's azimuth is tied to the Sun. A source in direction
+``p`` has azimuth ``atan2(p.x, p.y)`` about the boresight ``b``, with ``y`` the
+table's azimuth-zero axis and ``x = y x b``. At the nominal attitude the Sun's
+direction, projected perpendicular to the boresight, lies at azimuth
+``sun_azimuth_deg``: 0 if the table is measured from the Sun's side, 180 if
+from the side away from it. ``roll_offset_deg`` rolls the spacecraft
+right-handed about the boresight from there and adds to the Sun's azimuth.
+
+**Explicit rolls.** A ``target_roll`` (or a ``target_rolls`` entry) passed to
+an evaluation method is the absolute spacecraft roll for that row, in the
+convention of ``SolarRollConstraint`` and ``BoresightOffsetConstraint``:
+counter-clockwise about the boresight, with body +Y to the east and body +Z to
+the north at roll zero. It replaces the nominal attitude, and
+``roll_offset_deg`` is not applied to that row; rows whose roll is ``None`` keep
+the nominal attitude. In those terms the table's azimuth-zero axis is body +Y
+turned by ``sun_azimuth_deg``, and the nominal attitude is the solar-optimal
+roll of a +Y panel plus ``roll_offset_deg``.
+
+The roll actually used comes back as ``roll_deg``, so the two descriptions
+convert through it:
+
+.. code-block:: python
+
+   nominal = stray.evaluate_elementwise(ephem, ras, decs, times=times)
+   roll = np.asarray(nominal.constraint_values["roll_deg"])
+
+   # The same result, and the result 10 degrees either side of nominal
+   same = stray.evaluate_elementwise(ephem, ras, decs, times=times, target_rolls=list(roll))
+   plus = stray.evaluate_elementwise(ephem, ras, decs, times=times, target_rolls=list(roll + 10))
+
+   # Rolls at which one pointing is clear at one time
+   stray.roll_range(time, ephem, ra, dec)
+
+In a combined constraint every component is evaluated at the same roll. A
+free-roll sweep (``target_roll=None`` on a tree with roll-dependent
+components) does not move this constraint off its nominal attitude.
+
+**Validity.** A body gives no prediction when:
+
+- its nearest limb is within ``in_field_deg`` of the boresight (direct light,
+  a pointing violation rather than a stray-light level);
+- that limb lies inside the first off-axis cell of the table, where the table
+  is an order-of-magnitude guide only;
+- the disk integral does not converge (a thin crescent across a steep part of
+  the table).
+
+A body that shows no sunlit surface at all is valid: its quoted contribution is
+an upper bound on one that is physically negligible. With ``zodi="table"`` the
+zodi itself has no entry within about 60 degrees of the Sun near the ecliptic.
+In every one of these cases the constraint is violated and the affected
+``constraint_values`` are NaN: no prediction is treated as unknown, never as
+dark.
+
+**Conversion factor.** The two sides of the ratio start in different units.
+The scattered light is an irradiance on the focal plane,
+``sum(flux * <PST>)``, with each body's flux in units of a V = 0 source. The
+zodi is a surface brightness: V = 0 sources per square arcsecond of sky.
+``conversion_factor`` is the surface brightness of the uniform sky that
+produces one unit of focal-plane irradiance. It is a property of the telescope,
+so it has no default:
+
+- A uniform sky of radiance ``L`` per steradian puts an irradiance of
+  ``L * pi / (4 N**2)`` on the focal plane of a telescope of focal ratio ``N``
+  (a faster telescope concentrates the sky more).
+- A surface brightness ``S`` per square arcsecond is a radiance of ``S * A**2``
+  per steradian, where ``A = 3600 * 180 / pi = 206264.8`` is the number of
+  arcseconds in a radian, so ``A**2`` is the number of square arcseconds in a
+  steradian.
+- If the sky's light passes through optics that the PST does not already
+  include (or the reverse), the ratio of the two throughputs enters too.
+
+Setting the sky's irradiance equal to one unit and solving for ``S``:
+
+.. code-block:: python
+
+   ARCSEC_PER_RADIAN = 3600 * 180 / np.pi   # 206264.8
+
+   conversion_factor = (
+       4 * f_number**2 / (np.pi * ARCSEC_PER_RADIAN**2)
+       * scatter_throughput / sky_throughput
+   )
+
+For an f/10 telescope with equal throughputs this is about 3.0e-9. For a grey
+PST and solar-colour sources a bandpass scales both sides by the same
+constants, so this one number is all the radiometry the constraint needs.
+
+.. py:class:: PointSourceTransmittance(off_axis_deg, azimuth_deg, log10_pst, azimuth_symmetric=True)
+
+   A PST table, interpolated bilinearly in ``log10(PST)``.
+
+   :param list off_axis_deg: Off-axis angles of the rows in degrees, strictly increasing, within [0, 180]; at least two
+   :param list azimuth_deg: Azimuths of the columns in degrees, strictly increasing. A single column describes a PST that does not depend on azimuth
+   :param list log10_pst: ``log10(PST)``, shape ``(len(off_axis_deg), len(azimuth_deg))``. ``None`` or NaN marks an empty cell
+   :param bool azimuth_symmetric: ``True`` (default): the response is mirror symmetric about its azimuth-zero plane, the columns lie within 0-180 degrees, and any azimuth is folded onto that range. ``False``: the columns span a full turn and wrap around
+
+   Outside the table: empty cells and off-axis angles beyond the last row take
+   the lowest value in the table; angles below the first row use the first row.
+
+   .. py:classmethod:: from_pst(off_axis_deg, azimuth_deg, pst, azimuth_symmetric=True)
+
+      Build a table from linear PST values. Zero, negative and NaN entries
+      become empty cells.
+
+.. py:class:: StrayLightConstraint(pst, conversion_factor, *, max_ratio=3.0, roll_offset_deg=0.0, sun_azimuth_deg=0.0, zodi="constant", zodi_v_mag_arcsec2=22.5, in_field_deg=0.3, earth_albedo=0.24, sun_v_mag_1au=-26.74, moon_v_mag_full=-12.73)
+
+   :param PointSourceTransmittance pst: The telescope's PST table (required)
+   :param float conversion_factor: Equivalent sky surface brightness (V = 0 sources per square arcsecond) per unit of PST-weighted flux (V = 0 sources); required, positive
+   :param float max_ratio: Largest allowed scattered light / zodi ratio
+   :param float roll_offset_deg: Roll about the boresight from the nominal attitude, degrees
+   :param float sun_azimuth_deg: Table azimuth of the Sun at the nominal attitude, degrees
+   :param str zodi: ``"constant"``: compare with ``zodi_v_mag_arcsec2`` everywhere. ``"table"``: the zodiacal light of Leinert et al. (1998), as tabulated in the HST WFC3 Instrument Handbook, against ecliptic latitude and longitude from the Sun
+   :param float zodi_v_mag_arcsec2: Surface brightness of the constant zodi, V mag per square arcsecond
+   :param float in_field_deg: A body whose nearest limb is closer to the boresight than this is in the field, degrees
+   :param float earth_albedo: Geometric albedo of the Earth in V (0.24 is the measured whole-disk value; 0.40 corresponds to the older V = -3.9 at 1 au)
+   :param float sun_v_mag_1au: V magnitude of the Sun at 1 au
+   :param float moon_v_mag_full: V magnitude of the full Moon at 384,400 km
+
+   **Attributes:**
+
+   - ``type``: Always ``"stray_light"`` (Literal)
+   - the parameters above
+
+   **Constraint values.** ``constraint_values`` holds everything the model
+   works out, so nothing has to be recomputed outside it.
+
+   The result:
+
+   - ``stray_light_ratio``: scattered light over zodi; NaN without a prediction
+   - ``sun_stray_light_ratio``, ``earth_stray_light_ratio``,
+     ``moon_stray_light_ratio``: the part due to each body; NaN only when that
+     body has no prediction
+   - ``zodi_v_mag_arcsec2``: the zodi the ratio is taken against
+
+   The pointing:
+
+   - ``roll_deg``: the spacecraft roll used (0-360), in the convention of
+     ``target_roll``: the explicit roll, or the nominal one
+   - ``helio_ecliptic_longitude_deg`` (ecliptic longitude from the Sun, 0-360),
+     ``ecliptic_latitude_deg`` and ``zodi_table_v_mag_arcsec2`` (the tabulated
+     zodi at the pointing, whichever zodi the ratio uses)
+
+   Each body, with the prefix ``sun_``, ``earth_`` or ``moon_`` (for example
+   ``earth_v_mag``):
+
+   - ``v_mag``: disk-integrated V magnitude at the observer
+   - ``phase_deg``: Sun-body-observer angle (NaN for the Sun)
+   - ``distance_km``, ``angular_radius_deg``
+   - ``separation_deg``, ``limb_deg``: boresight to the centre and to the
+     nearest limb
+   - ``azimuth_deg``: table azimuth of the centre, -180 to 180
+   - ``pst_center``, ``pst_mean``: PST toward the centre, and its
+     brightness-weighted mean over the disk
+   - ``lit_fraction``: sunlit fraction of the disk samples
+   - ``quadrature_error``: relative change between the last two levels of the
+     disk integral (for a disk with no sunlit sample, the relative spread of
+     the PST across it)
+   - ``status``: a :py:class:`StrayLightStatus` value
+
+   The per-body values are reported even where the body has no prediction. A
+   body's scattered flux in V = 0 sources is ``10**(-0.4 * v_mag) * pst_mean``,
+   and its part of the ratio is that times ``conversion_factor`` over the zodi
+   flux ``10**(-0.4 * zodi_v_mag_arcsec2)``.
+
+.. py:class:: StrayLightStatus
+
+   Integer enum behind ``sun_status``, ``earth_status`` and ``moon_status``.
+
+   - ``OK`` (0): a converged prediction
+   - ``DARK`` (1): no sunlit surface is visible; the quoted contribution is an
+     upper bound on a negligible one, and counts as a prediction
+   - ``IN_FIELD`` (2): the nearest limb is within ``in_field_deg`` of the boresight
+   - ``FIRST_CELL`` (3): the nearest limb is inside the first off-axis cell of
+     the table
+   - ``UNCONVERGED`` (4): the disk integral did not converge
+
+   ``is_valid`` is true for ``OK`` and ``DARK``. ``label`` is the lower-case
+   name of a status (``"in_field"``), and ``StrayLightStatus.labels(values)``
+   names every entry of a ``sun_status``, ``earth_status`` or ``moon_status``
+   array of any shape, with an empty string for an entry that is not a status.
+
+   **Example:**
+
+   .. code-block:: python
+
+      import numpy as np
+      from rust_ephem import PointSourceTransmittance, StrayLightConstraint, SunConstraint
+
+      # Your telescope's table: rows are off-axis angles, columns azimuths.
+      pst = PointSourceTransmittance(
+          off_axis_deg=off_axis_deg,   # e.g. 0, 5, ..., 150
+          azimuth_deg=azimuth_deg,     # e.g. 0, 15, ..., 180
+          log10_pst=log10_pst,         # NaN where the raytrace found nothing
+      )
+      # Sky surface brightness per unit focal-plane irradiance: see
+      # "Conversion factor" above. 206264.8 arcseconds in a radian.
+      f_number = 10.0
+      arcsec_per_radian = 3600 * 180 / np.pi
+      stray = StrayLightConstraint(
+          pst=pst,
+          conversion_factor=4 * f_number**2 / (np.pi * arcsec_per_radian**2),
+          max_ratio=3.0,
+          sun_azimuth_deg=180.0,       # table measured from the anti-Sun side
+      )
+
+      # One row per (target, time) pair
+      result = stray.evaluate_elementwise(ephem, ras, decs, times=times)
+      ratio = result.constraint_values["stray_light_ratio"]
+      sun_part = result.constraint_values["sun_stray_light_ratio"]
+
+      # Combine with pointing rules as usual
+      rules = SunConstraint(min_angle=45) | stray
+      blocked = rules.in_constraint_batch(ephem, ras, decs, times=times)
+
+   The ephemeris should have a planetary kernel loaded
+   (``ensure_planetary_ephemeris()``) so the Sun and Moon are placed
+   accurately. The model is meant for observers in space: from the ground the
+   Earth fills half the sky and no pointing has a prediction.
+
 
 Catalog Utilities
 -----------------
@@ -1704,24 +1971,111 @@ All Pydantic constraint models inherit these methods:
       )
       print(violations.shape)  # (3, n_times)
 
-.. py:method:: in_constraint_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
+.. py:method:: violated_count(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False, fraction=False)
+
+   Count the times at which each target is in-constraint: the row sums of
+   :py:meth:`in_constraint_batch` for the same arguments. The
+   ``(n_targets, n_times)`` mask is not built; targets are evaluated a block at
+   a time and only each one's count is kept, so memory does not grow with the
+   number of targets.
+
+   :param fraction: Return the violated fraction of the times instead of the
+      count. The visible fraction is one minus it.
+   :type fraction: bool
+   :returns: int64 array of shape ``(n_targets,)``, or a float array with
+      ``fraction=True``
+   :rtype: numpy.ndarray
+
+   .. code-block:: python
+
+      visible = 1.0 - constraint.violated_count(ephem, ras, decs, fraction=True)
+
+.. py:method:: visibility_windows(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
+
+   Find the visibility windows of each target: the runs of consecutive
+   evaluated times at which it is not in-constraint, which are the runs of
+   ``False`` in its row of :py:meth:`in_constraint_batch`. The mask is not
+   built.
+
+   :returns: One int64 array per target, of shape ``(n_windows, 2)``: the index
+      of the first and of the last time of each window, both inclusive, into
+      the evaluated times. A target that is never visible has shape ``(0, 2)``.
+   :rtype: list[numpy.ndarray]
+
+   .. code-block:: python
+
+      windows = constraint.visibility_windows(ephem, ras, decs, times=times)
+      starts, ends = times[windows[0][:, 0]], times[windows[0][:, 1]]
+
+.. py:method:: in_constraint_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False, roll_offsets=None)
 
    Paired evaluation: element ``i`` is ``(target_ras[i], target_decs[i])`` at ``times[i]``.
    Equal to the diagonal of :py:meth:`in_constraint_batch` (same roll semantics and
    polarity), at O(N) cost. ``times`` may be a list of datetimes or a ``datetime64``
    array; see :py:meth:`Constraint.in_constraint_elementwise` for the time rules.
 
+   :param roll_offsets: Per-element spacecraft roll in degrees from the nominal
+      roll of that element, in place of ``target_rolls`` (the two cannot be
+      combined). The nominal roll turns body +Y toward the Sun (the
+      solar-optimal roll of a +Y panel) for the element's own target and time.
+      Element ``i`` is evaluated at ``nominal_i + roll_offsets[i]`` as if that
+      roll had been passed in ``target_rolls``, so one call replaces a call to
+      read the nominal roll and a second to apply the offset. ``None`` entries
+      are elements without a roll. For a ``StrayLightConstraint`` an entry
+      takes the place of ``roll_offset_deg`` for its element.
+   :type roll_offsets: list[float | None] or None
    :returns: 1D numpy boolean array of shape (N,), ``True`` where violated
    :rtype: numpy.ndarray
 
-.. py:method:: evaluate_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
+.. py:method:: evaluate_grid(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
+
+   Evaluate every target at every time and return the grid as arrays.
+
+   Same arguments, time handling, roll semantics, ``apparent`` option and
+   polarity as ``evaluate_batch``, without building one result per target: the
+   mask, the named values and the per-rule masks come back as
+   ``(n_targets, n_times)`` arrays. Use it when the values of the whole grid are
+   wanted; ``in_constraint_batch`` for the mask alone; ``evaluate_batch`` when
+   every target's violation windows are.
+
+   :param target_rolls: Per-target spacecraft roll in degrees; ``None`` entries
+      (or ``target_rolls=None``) sweep ``n_roll_samples`` rolls for
+      roll-dependent constraints
+   :type target_rolls: list[float | None] or None
+   :returns: The grid: ``constraint_array`` (equal to ``in_constraint_batch``),
+      ``constraint_values``, ``component_violated`` and the rest
+   :rtype: GridResult
+
+   .. code-block:: python
+
+      grid = constraint.evaluate_grid(ephem, ras, decs, times=times, apparent=True)
+      grid.constraint_array                          # (n_targets, n_times) bool
+      grid.constraint_values["sun.sun_angle_deg"]    # (n_targets, n_times) float
+      grid.component_violated["earth_limb"]          # which rule blocks each cell
+      grid.target(3).visibility                      # windows of one target, on demand
+
+.. py:method:: evaluate_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False, roll_offsets=None)
 
    Like :py:meth:`in_constraint_elementwise`, returning an ``ElementwiseResult`` whose
    ``constraint_values`` match the corresponding :py:meth:`evaluate_batch` entries.
 
    :rtype: ElementwiseResult
 
-.. py:method:: in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)
+   .. code-block:: python
+
+      # Each row 15 degrees from its own nominal roll, in one call.
+      rows = constraint.evaluate_elementwise(
+          ephem, ras, decs, times=times, roll_offsets=[15.0] * len(ras)
+      )
+      rows.first_violated          # "sun", "earth_limb", ... or "" per row
+
+**Times.** Wherever a method takes ``time`` or ``times``, it accepts a
+``datetime``, a list of them, a NumPy ``datetime64`` array (read as UTC) or an
+astropy ``Time``. A ``Time`` in any scale is converted to UTC and rounded to
+the microsecond, so one built from an MJD or by adding seconds still lands on
+the ephemeris rows it was meant to.
+
+.. py:method:: in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
 
    Check if target violates the constraint at given time(s).
 
@@ -1772,7 +2126,7 @@ All Pydantic constraint models inherit these methods:
       Empty list if no roll is valid.
    :rtype: list[tuple[float, float]]
 
-.. py:method:: instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, target_roll=None)
+.. py:method:: instantaneous_field_of_regard(ephemeris, time=None, index=None, n_points=DEFAULT_N_POINTS, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, target_roll=None, apparent=False)
 
    Compute instantaneous field of regard in steradians.
 
@@ -1870,6 +2224,45 @@ RouteResult
    - ``waypoint`` (tuple[float, float] | None): Validated ICRS RA/Dec in degrees.
    - ``detour_deg`` (float | None): Total length of the two validated legs.
 
+GridResult
+^^^^^^^^^^
+
+.. py:class:: GridResult
+
+   Result of ``evaluate_grid()``: every target at every time, as
+   ``(n_targets, n_times)`` arrays. Each array is built on first access, shared
+   by later ones, and read-only.
+
+   **Attributes:**
+
+   - ``shape`` (tuple[int, int]): ``(n_targets, n_times)``
+   - ``constraint_array`` (numpy.ndarray of bool): True where the constraint is
+     violated; equal to ``in_constraint_batch()``
+   - ``visibility_flags`` (numpy.ndarray of bool): its inverse
+   - ``constraint_values`` (dict[str, numpy.ndarray]): the named continuous
+     values, with the keys ``evaluate_batch()`` reports
+   - ``component_violated`` (dict[str, numpy.ndarray of bool]): per-rule
+     violation masks keyed by cause tag (``sun``, ``not.moon``, ...)
+   - ``component_order`` (list[str]): the cause tags in the order the rules
+     were written; a repeated rule is numbered as it is met (``sun``,
+     ``sun_2``)
+   - ``first_violated`` (numpy.ndarray of str): for each cell, the first rule
+     in ``component_order`` that is violated where the constraint is; an empty
+     string where the constraint is satisfied, or where it is violated with no
+     rule flagged (a negated rule that is itself satisfied). Also on
+     ``ElementwiseResult``, per row.
+   - ``cause_value_keys`` (dict[str, list[str]]): cause tag to value key(s)
+   - ``constraint_name`` (str)
+   - ``timestamp`` (numpy.ndarray of datetime): the ``n_times`` evaluated times
+   - ``ras``, ``decs`` (numpy.ndarray): the ``n_targets`` target coordinates
+
+   .. py:method:: target(index)
+
+      The result of one target, with its violation and visibility windows,
+      built on demand from row ``index``.
+
+      :rtype: ConstraintResult
+
 ConstraintResult
 ^^^^^^^^^^^^^^^^
 
@@ -1884,9 +2277,10 @@ Result of constraint evaluation containing all violation information.
    - ``constraint_name`` (str): Name/description of the constraint
    - ``timestamps`` (numpy.ndarray | list[datetime]): Evaluation times (cached, lazy)
    - ``constraint_array`` (list[bool]): Boolean array where True = violated (cached, lazy)
-   - ``constraint_values`` (dict[str, list[float]]): Named continuous values computed
-     during evaluation (e.g. ``sun_angle_deg``), one array per key, aligned with
-     ``timestamps``. See :ref:`constraint-values` below.
+   - ``constraint_values`` (dict[str, numpy.ndarray]): Named continuous values computed
+     during evaluation (e.g. ``sun_angle_deg``), one read-only float array per
+     key, aligned with ``timestamps``; built on first access and shared by later
+     ones. See :ref:`constraint-values` below.
    - ``cause_value_keys`` (dict[str, list[str]]): Map from a ``start_cause``/
      ``end_cause`` tag to the ``constraint_values`` key(s) it corresponds to. See
      :ref:`visibility-window-cause` below.
@@ -1944,8 +2338,10 @@ under an obvious key name, so you can inspect *why* a constraint was violated
 (or how close it came to being violated) without re-deriving the geometry
 yourself.
 
-``constraint_values`` is a ``dict[str, list[float]]``: one array per named
-quantity, aligned index-for-index with ``result.timestamps``. It is populated
+``constraint_values`` is a ``dict[str, numpy.ndarray]``: one read-only float
+array per named quantity, aligned index-for-index with ``result.timestamps``.
+For a whole grid of targets and times, :py:meth:`evaluate_grid` returns the
+same quantities as ``(n_targets, n_times)`` arrays in one call. It is populated
 by :py:meth:`evaluate`, :py:meth:`evaluate_batch`, and
 :py:meth:`evaluate_moving_body` - **not** by :py:meth:`in_constraint_batch` or
 :py:meth:`in_constraint`, which stay on the fast boolean-only path.
@@ -2002,6 +2398,13 @@ by :py:meth:`evaluate`, :py:meth:`evaluate_batch`, and
    * - ``BrightStarConstraint``
      - ``nearest_bright_star_angle_deg``
      - Circle mode only (``fov_radius``); omitted in ``fov_polygon`` mode
+   * - ``StrayLightConstraint``
+     - ``stray_light_ratio``, ``sun_stray_light_ratio``,
+       ``earth_stray_light_ratio``, ``moon_stray_light_ratio``,
+       ``zodi_v_mag_arcsec2``, and the model's intermediates for the pointing
+       and each body (see ``StrayLightConstraint``)
+     - Scattered light over zodi, in total and per body; NaN where the model
+       has no prediction (which also counts as violated)
    * - ``SolarRollConstraint``
      - ``solar_optimal_roll_deg``
      - The computed optimal roll itself: meaningful whether ``roll_deg`` is
@@ -2051,9 +2454,11 @@ angle differs from the one a moving observer sees by the difference of the
 two aberrations: up to about 41 arcseconds for a body and target on opposite
 sides of the observer's direction of motion.
 
-``evaluate()``, ``evaluate_batch()``, ``in_constraint_batch()``,
-``in_constraint_elementwise()`` and ``evaluate_elementwise()`` accept
-``apparent=True`` to measure the angle as the observer sees it:
+Every evaluation method accepts ``apparent=True`` to measure the angle as the
+observer sees it: ``evaluate()``, ``evaluate_batch()``, ``evaluate_grid()``, ``in_constraint()``,
+``in_constraint_batch()``, ``in_constraint_elementwise()``,
+``evaluate_elementwise()``, ``evaluate_moving_body()``,
+``instantaneous_field_of_regard()`` and ``route_around()``:
 
 .. code-block:: python
 
@@ -2098,11 +2503,26 @@ Limits of the option:
   time column at a time, with the targets corrected per column. That is about
   as fast as the geometric grid for large target sets and slower for a few
   targets at many times.
-* Catalogue stars (``BrightStarConstraint``) are not corrected. Using
-  ``apparent=True`` with this constraint, including inside a logical tree or a
-  boresight offset, raises ``ValueError``.
-* ``in_constraint()``, field-of-regard, routing and moving-body evaluation keep
-  the geometric convention.
+* A mask grid (``in_constraint_batch``) whose tree holds a
+  ``StrayLightConstraint`` is evaluated cell by cell across the cores instead,
+  and takes as long as the geometric grid.
+* The stars of a ``BrightStarConstraint`` are displaced by the same aberration
+  and deflection as the target, so whether a star is in the field is decided
+  from the catalogue positions of both, where the common displacement cancels.
+  What is left out is its variation across the field: under 0.4 arcseconds per
+  degree between star and boresight.
+* ``instantaneous_field_of_regard(apparent=True)`` places the Earth, Sun and
+  Moon where they are seen and reports the clear solid angle of that apparent
+  sky. The area changes very little; the directions that make it up move with
+  the bodies.
+* ``route_around(apparent=True)`` routes in the apparent sky and returns the
+  waypoint in catalogue (ICRS) coordinates, like its inputs.
+* ``evaluate_moving_body(body=..., apparent=True)`` places the body where its
+  light arrives from and returns those apparent ``ras`` / ``decs``. It needs
+  the body in a SPICE kernel and cannot be combined with ``use_horizons``. A
+  supplied ``target_ras`` / ``target_decs`` track is corrected for deflection
+  and aberration only, so it should already allow for light time.
+* ``roll_range()`` keeps the geometric convention.
 
 .. _visibility-window-cause:
 
@@ -2563,6 +2983,27 @@ For evaluating many targets, use ``in_constraint_batch()``:
    violations = constraint.in_constraint_batch(ephem, target_ras, target_decs)
 
    # violations.shape = (10000, n_times)
+
+When the values are wanted as well as the mask, use ``evaluate_grid()``. It
+runs the same grid computation and returns ``(n_targets, n_times)`` arrays, so
+its cost is close to that of ``in_constraint_batch()``:
+
+.. code-block:: python
+
+   grid = constraint.evaluate_grid(ephem, target_ras, target_decs)
+   sun_angle = grid.constraint_values["sun.sun_angle_deg"]   # (10000, n_times)
+
+When only a summary of each target is wanted, ``violated_count()`` and
+``visibility_windows()`` return it without the mask: the number (or fraction)
+of times each target is in-constraint, and the first and last time index of
+each of its visibility windows. They take about as long as
+``in_constraint_batch()`` and hold a few million cells at a time, whatever the
+number of targets.
+
+``evaluate_batch()`` returns one result object per target, which is the right
+shape when each target's violation windows are needed and a costly one when
+only arrays are: building 16,200 results and reading a value from each takes
+about a hundred times longer than ``evaluate_grid()`` on the same cells.
 
 **Performance by constraint type:**
 

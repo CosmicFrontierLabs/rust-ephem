@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Test script to verify RA/Dec convenience properties for Sun, Moon, and Earth.
 

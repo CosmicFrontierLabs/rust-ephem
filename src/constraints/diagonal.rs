@@ -28,6 +28,20 @@ impl DiagonalEvaluation {
     }
 }
 
+/// Elements above which a paired kernel is shared across the cores.
+pub const PARALLEL_MIN_ELEMENTS: usize = 8192;
+
+/// `one(i)` for every element `i` below `count`, in order. Elements are
+/// independent, so a large input is spread across the cores.
+pub fn each_element<T: Send>(count: usize, one: impl Fn(usize) -> T + Sync) -> Vec<T> {
+    use rayon::prelude::*;
+    if count >= PARALLEL_MIN_ELEMENTS {
+        (0..count).into_par_iter().map(&one).collect()
+    } else {
+        (0..count).map(one).collect()
+    }
+}
+
 pub fn time_indices(
     ephemeris: &dyn EphemerisBase,
     ras: &[f64],
@@ -142,6 +156,8 @@ pub fn evaluate<T: ConstraintEvaluator + ?Sized>(
 pub(crate) struct SampleEphemeris {
     data: EphemerisData,
     apparent_observer: Option<Array2<f64>>,
+    /// The target correction of the sampled row of an apparent view.
+    target_aberration: Option<[crate::utils::apparent::ObserverAberration; 1]>,
     itrs: Option<Array2<f64>>,
     itrs_skycoord: OnceLock<Py<PyAny>>,
 }
@@ -172,6 +188,9 @@ impl SampleEphemeris {
             data,
             // A sample of an apparent view is itself one.
             apparent_observer: ephemeris.apparent_observer().map(row),
+            target_aberration: ephemeris
+                .target_aberrations()
+                .map(|aberrations| [aberrations[index]]),
             itrs: ephemeris.get_itrs_data().map(row),
             itrs_skycoord: OnceLock::new(),
         }
@@ -184,6 +203,9 @@ impl EphemerisBase for SampleEphemeris {
     }
     fn apparent_observer(&self) -> Option<&Array2<f64>> {
         self.apparent_observer.as_ref()
+    }
+    fn target_aberrations(&self) -> Option<&[crate::utils::apparent::ObserverAberration]> {
+        self.target_aberration.as_ref().map(|one| one.as_slice())
     }
     fn data_mut(&mut self) -> &mut EphemerisData {
         &mut self.data
@@ -221,9 +243,8 @@ pub fn proximity(
 ) -> DiagonalEvaluation {
     let min_cos = min_angle.to_radians().cos();
     let max_cos = max_angle.map(|max| max.to_radians().cos());
-    let mut violated = Vec::with_capacity(ras.len());
-    let mut angles = Vec::with_capacity(ras.len());
-    for (i, &t) in indices.iter().enumerate() {
+    let (violated, angles): (Vec<bool>, Vec<f64>) = each_element(ras.len(), |i| {
+        let t = indices[i];
         let target = crate::utils::vector_math::radec_to_unit_vector(ras[i], decs[i]);
         let rel = [
             body[[t, 0]] - observer[[t, 0]],
@@ -233,11 +254,15 @@ pub fn proximity(
         let norm = crate::utils::vector_math::vector_magnitude(&rel);
         let unit = [rel[0] / norm, rel[1] / norm, rel[2] / norm];
         let cosine = crate::utils::vector_math::dot_product(&target, &unit);
-        violated.push(cosine > min_cos || max_cos.is_some_and(|max| cosine < max));
         // Match compute_angle_deg_batch's fallback for a zero body vector.
         let value_cosine = if norm > 0.0 { cosine } else { target[0] };
-        angles.push(value_cosine.clamp(-1.0, 1.0).acos().to_degrees());
-    }
+        (
+            cosine > min_cos || max_cos.is_some_and(|max| cosine < max),
+            value_cosine.clamp(-1.0, 1.0).acos().to_degrees(),
+        )
+    })
+    .into_iter()
+    .unzip();
     DiagonalEvaluation::leaf(
         name,
         violated,
@@ -316,6 +341,7 @@ mod tests {
         data.gcrs = Some(Array2::from_shape_fn((n, 6), |(i, _)| i as f64));
         let ephemeris = SampleEphemeris {
             apparent_observer: None,
+            target_aberration: None,
             data,
             itrs: None,
             itrs_skycoord: OnceLock::new(),

@@ -108,6 +108,418 @@ pub(crate) fn pv_at(
     Py::new(py, split_pos_vel(&sampled))
 }
 
+/// A float or a sequence/array of floats, flattened.
+fn floats(values: &Bound<PyAny>, what: &str) -> PyResult<Vec<f64>> {
+    if let Ok(value) = values.extract::<f64>() {
+        return Ok(vec![value]);
+    }
+    if let Ok(array) = values.extract::<numpy::PyReadonlyArrayDyn<f64>>() {
+        return Ok(array.as_array().iter().copied().collect());
+    }
+    values.extract::<Vec<f64>>().map_err(|_| {
+        pyo3::exceptions::PyTypeError::new_err(format!(
+            "{what} must be a float or a sequence of floats"
+        ))
+    })
+}
+
+/// Observer, Sun and Moon states of `data` at arbitrary times: the rows
+/// constraint evaluation with `times=` works from.
+struct StatesAt {
+    observer: Array2<f64>,
+    sun: Option<Array2<f64>>,
+    moon: Option<Array2<f64>>,
+}
+
+/// The body whose states a request needs besides the observer's.
+#[derive(Clone, Copy, PartialEq)]
+enum Held {
+    Earth,
+    Sun,
+    Moon,
+}
+
+impl Held {
+    /// `body` if the ephemeris holds its states.
+    fn parse(body: &str) -> Option<Self> {
+        use crate::utils::config::{EARTH_NAIF_ID, MOON_NAIF_ID, SUN_NAIF_ID};
+        match crate::utils::naif_ids::parse_body_identifier(body) {
+            Some(EARTH_NAIF_ID) => Some(Self::Earth),
+            Some(SUN_NAIF_ID) => Some(Self::Sun),
+            Some(MOON_NAIF_ID) => Some(Self::Moon),
+            _ => None,
+        }
+    }
+}
+
+impl StatesAt {
+    /// The observer's states, with the Sun's and the Moon's only if asked for:
+    /// interpolating a table is most of the cost of a request.
+    fn new(data: &EphemerisData, times: &[DateTime<Utc>], sun: bool, moon: bool) -> PyResult<Self> {
+        use crate::ephemeris::sampled_ephemeris::{locate_times, sample_states};
+        let source_times = data.times.as_deref().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("No ephemeris timestamps available")
+        })?;
+        let locations = locate_times(source_times, times)?;
+        let sample = |states: &Array2<f64>| sample_states(states, source_times, times, &locations);
+        Ok(Self {
+            observer: data
+                .gcrs
+                .as_ref()
+                .map(sample)
+                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No GCRS data available"))?,
+            sun: data.sun_gcrs.as_ref().filter(|_| sun).map(sample),
+            moon: data.moon_gcrs.as_ref().filter(|_| moon).map(sample),
+        })
+    }
+
+    /// The same states, but with the Sun's velocity interpolated linearly
+    /// between the stored rows, for differencing in time.
+    ///
+    /// The cubic that interpolates the Sun's state takes its velocity from
+    /// differences of positions 1.5e8 km long, so between rows that velocity
+    /// carries rounding noise of about `1e-7 km/s / step in seconds`. It sets
+    /// the aberration, where the noise is a hundred-millionth of an
+    /// arcsecond: harmless to a direction, but centimetres per second once a
+    /// position 1 au away is differenced over a fraction of a second. The
+    /// Sun's velocity changes so slowly that a straight line between rows is
+    /// both smooth and accurate (under 1e-9 km/s on a minute's step).
+    fn smoothed(data: &EphemerisData, times: &[DateTime<Utc>], moon: bool) -> PyResult<Self> {
+        use crate::ephemeris::sampled_ephemeris::locate_times;
+        let mut states = Self::new(data, times, true, moon)?;
+        let (Some(source_times), Some(stored), Some(sun)) = (
+            data.times.as_deref(),
+            data.sun_gcrs.as_ref(),
+            states.sun.as_mut(),
+        ) else {
+            return Ok(states);
+        };
+        let seconds = |d: Duration| d.num_microseconds().unwrap_or(0) as f64 / 1e6;
+        for (i, location) in locate_times(source_times, times)?.into_iter().enumerate() {
+            if let Err(right) = location {
+                let (before, after) = (source_times[right - 1], source_times[right]);
+                let f = seconds(times[i] - before) / seconds(after - before);
+                for j in 3..6 {
+                    sun[[i, j]] = stored[[right - 1, j]] * (1.0 - f) + stored[[right, j]] * f;
+                }
+            }
+        }
+        Ok(states)
+    }
+
+    fn sun(&self) -> PyResult<&Array2<f64>> {
+        self.sun
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No Sun data available"))
+    }
+
+    fn moon(&self) -> PyResult<&Array2<f64>> {
+        self.moon
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No Moon data available"))
+    }
+
+    /// Apparent positions of `bodies` (`None` is the Earth) and the target
+    /// correction of each row, exactly as `SampledEphemeris::apparent` builds
+    /// them for constraint evaluation.
+    fn apparent(
+        &self,
+        times: &[DateTime<Utc>],
+        bodies: &[Option<&Array2<f64>>],
+    ) -> PyResult<(
+        Vec<Array2<f64>>,
+        Vec<crate::utils::apparent::ObserverAberration>,
+    )> {
+        use crate::utils::apparent::{apparent_from_states, earth_barycentric_velocities};
+        let sun = self.sun()?;
+        let earth_velocity = earth_barycentric_velocities(times, sun, None)
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        apparent_from_states(&self.observer, sun, &earth_velocity, bodies)
+            .map_err(pyo3::exceptions::PyValueError::new_err)
+    }
+}
+
+impl StatesAt {
+    /// The states of a held body; `None` for the Earth, at the origin.
+    fn held(&self, body: Held) -> PyResult<Option<&Array2<f64>>> {
+        Ok(match body {
+            Held::Earth => None,
+            Held::Sun => Some(self.sun()?),
+            Held::Moon => Some(self.moon()?),
+        })
+    }
+}
+
+/// Observer-centred geometric states (N x 6, km and km/s, GCRS axes) of a body
+/// at arbitrary times.
+///
+/// With no kernel named, the Earth, Sun and Moon come from the states the
+/// ephemeris holds, interpolated like the observer, so the result is exactly
+/// `sun_pv_at - gcrs_pv_at`. Anything else is read from the kernels.
+fn geometric_body_states_at(
+    data: &EphemerisData,
+    bodies: &[&str],
+    times: &[DateTime<Utc>],
+    spice_kernel: Option<&str>,
+    use_horizons: bool,
+) -> PyResult<Vec<Array2<f64>>> {
+    let held = held_bodies(bodies, spice_kernel);
+    let states = StatesAt::new(
+        data,
+        times,
+        held.contains(&Some(Held::Sun)),
+        held.contains(&Some(Held::Moon)),
+    )?;
+    bodies
+        .iter()
+        .zip(&held)
+        .map(|(body, held)| {
+            Ok(match held {
+                Some(held) => match states.held(*held)? {
+                    None => &states.observer * -1.0,
+                    Some(body) => body - &states.observer,
+                },
+                None => {
+                    use crate::utils::celestial::calculate_body_by_id_or_name;
+                    use crate::utils::config::EARTH_NAIF_ID;
+                    calculate_body_by_id_or_name(
+                        times,
+                        body,
+                        EARTH_NAIF_ID,
+                        spice_kernel,
+                        use_horizons,
+                    )
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?
+                        - &states.observer
+                }
+            })
+        })
+        .collect()
+}
+
+/// Which of `bodies` the ephemeris holds states for. None of them when a
+/// kernel is named: every body is then read from it.
+fn held_bodies(bodies: &[&str], spice_kernel: Option<&str>) -> Vec<Option<Held>> {
+    bodies
+        .iter()
+        .map(|body| Held::parse(body).filter(|_| spice_kernel.is_none()))
+        .collect()
+}
+
+/// Observer-centred apparent positions (N x 3, km, GCRS axes) of a body at
+/// arbitrary times: where its light arrives from, at the light-time distance.
+///
+/// With no kernel named, the Earth, Sun and Moon are solved from the states
+/// the ephemeris holds by the routine constraint evaluation uses
+/// (`SampledEphemeris::apparent`), so the directions are the ones constraints
+/// see. Anything else is solved against the kernels.
+fn apparent_body_positions_at(
+    data: &EphemerisData,
+    bodies: &[&str],
+    times: &[DateTime<Utc>],
+    spice_kernel: Option<&str>,
+    for_differencing: bool,
+) -> PyResult<Vec<Array2<f64>>> {
+    let held = held_bodies(bodies, spice_kernel);
+    let moon = held.contains(&Some(Held::Moon));
+    let states = if for_differencing {
+        StatesAt::smoothed(data, times, moon)?
+    } else {
+        StatesAt::new(data, times, held.iter().any(Option::is_some), moon)?
+    };
+    // The held bodies are solved together; each is solved on its own terms,
+    // so its positions do not depend on what else was asked for.
+    let tables = held
+        .iter()
+        .flatten()
+        .map(|held| states.held(*held))
+        .collect::<PyResult<Vec<_>>>()?;
+    let mut solved = if tables.is_empty() {
+        Vec::new()
+    } else {
+        states.apparent(times, &tables)?.0
+    }
+    .into_iter();
+    bodies
+        .iter()
+        .zip(&held)
+        .map(|(body, held)| match held {
+            Some(_) => Ok(solved.next().expect("one solution per held body")),
+            None => crate::utils::apparent::apparent_body_positions(
+                times,
+                &states.observer,
+                body,
+                spice_kernel,
+            )
+            .map_err(pyo3::exceptions::PyValueError::new_err),
+        })
+        .collect()
+}
+
+/// Half-width of the stencil that differentiates an apparent position. Small
+/// enough that the curvature of a low orbit contributes under 0.1 mm/s, large
+/// enough that rounding in the Sun's position (1.5e8 km) contributes no more.
+const APPARENT_VELOCITY_STEP_MICROSECONDS: i64 = 250_000;
+
+/// Observer-centred apparent states (N x 6, km and km/s, GCRS axes) of a body
+/// at arbitrary times.
+///
+/// The velocity is the rate of change of the apparent position, which is not
+/// the geometric velocity: the light time, the aberration (through the
+/// observer's acceleration) and the deflection all change with time. It is the
+/// second-order finite difference of the apparent position, centred where the
+/// ephemeris covers both sides and one-sided at the ends of its span. An
+/// ephemeris too short for the stencil gets NaN velocities.
+///
+/// The observer's acceleration is that of the interpolated ephemeris, which
+/// steps at each stored row; through the aberration this limits the velocity
+/// of a body at 1 au seen from low orbit on a one-minute step to about 1 m/s,
+/// a few microarcseconds per second in direction.
+fn apparent_body_states_at(
+    data: &EphemerisData,
+    bodies: &[&str],
+    times: &[DateTime<Utc>],
+    spice_kernel: Option<&str>,
+) -> PyResult<Vec<Array2<f64>>> {
+    let n = times.len();
+    let mut out: Vec<Array2<f64>> =
+        apparent_body_positions_at(data, bodies, times, spice_kernel, false)?
+            .into_iter()
+            .map(|positions| {
+                let mut states = Array2::from_elem((n, 6), f64::NAN);
+                states.slice_mut(s![.., 0..3]).assign(&positions);
+                states
+            })
+            .collect();
+
+    let span = data.times.as_deref().and_then(|t| t.first().zip(t.last()));
+    let step = Duration::microseconds(APPARENT_VELOCITY_STEP_MICROSECONDS);
+    let h = APPARENT_VELOCITY_STEP_MICROSECONDS as f64 / 1e6;
+    // Per row: the sample offsets (in steps) and their weights in the
+    // derivative. A centred difference does not use the time itself.
+    type Stencil = &'static [(i32, f64)];
+    const CENTRED: Stencil = &[(-1, -0.5), (1, 0.5)];
+    const FORWARD: Stencil = &[(0, -1.5), (1, 2.0), (2, -0.5)];
+    const BACKWARD: Stencil = &[(-2, 0.5), (-1, -2.0), (0, 1.5)];
+    let stencil = |time: &DateTime<Utc>| -> Option<Stencil> {
+        let (first, last) = span?;
+        let fits = |k: i32| *time + step * k >= *first && *time + step * k <= *last;
+        if fits(-1) && fits(1) {
+            Some(CENTRED)
+        } else if fits(2) {
+            Some(FORWARD)
+        } else if fits(-2) {
+            Some(BACKWARD)
+        } else {
+            None
+        }
+    };
+    let stencils: Vec<_> = times.iter().map(stencil).collect();
+    let samples: Vec<DateTime<Utc>> = times
+        .iter()
+        .zip(&stencils)
+        .flat_map(|(time, stencil)| {
+            stencil
+                .unwrap_or(&[])
+                .iter()
+                .map(move |&(k, _)| *time + step * k)
+        })
+        .collect();
+    let sampled = apparent_body_positions_at(data, bodies, &samples, spice_kernel, true)?;
+    for (out, sampled) in out.iter_mut().zip(&sampled) {
+        let mut rows = sampled.outer_iter();
+        for (i, stencil) in stencils.iter().enumerate() {
+            let Some(stencil) = stencil else {
+                continue;
+            };
+            let mut velocity = [0.0; 3];
+            for (_, weight) in *stencil {
+                let Some(position) = rows.next() else { break };
+                for j in 0..3 {
+                    velocity[j] += weight * position[j] / h;
+                }
+            }
+            for j in 0..3 {
+                out[[i, j + 3]] = velocity[j];
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Proper unit vectors (N x 3, GCRS axes) of catalogue targets at arbitrary
+/// times: `EphemerisBase::get_apparent_target_at`. Each of `ras`, `decs` and
+/// `times` has one entry per row or a single entry used for every row.
+pub(crate) fn apparent_targets_at(
+    data: &EphemerisData,
+    ras: &[f64],
+    decs: &[f64],
+    times: &[DateTime<Utc>],
+) -> PyResult<Array2<f64>> {
+    let n = ras.len().max(decs.len()).max(times.len());
+    for (len, what) in [
+        (ras.len(), "ras"),
+        (decs.len(), "decs"),
+        (times.len(), "times"),
+    ] {
+        if len != n && len != 1 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "{what} has {len} entries; expected 1 or {n} to match the other arguments"
+            )));
+        }
+    }
+    let (_, corrections) = StatesAt::new(data, times, true, false)?.apparent(times, &[])?;
+    let pick = |values: &[f64], i: usize| values[i.min(values.len() - 1)];
+    let mut out = Array2::zeros((n, 3));
+    for i in 0..n {
+        let (ra, dec) = (pick(ras, i).to_radians(), pick(decs, i).to_radians());
+        let catalogue = [dec.cos() * ra.cos(), dec.cos() * ra.sin(), dec.sin()];
+        let proper = corrections[i.min(corrections.len() - 1)].apply(catalogue);
+        for j in 0..3 {
+            out[[i, j]] = proper[j];
+        }
+    }
+    Ok(out)
+}
+
+/// Make sure Sun and Moon positions come from a planetary kernel when one is
+/// to hand, and say so when they cannot.
+///
+/// With no kernel initialised, a DE440/DE440s file already in the cache
+/// directory is loaded on demand (no download is attempted). Failing that, the
+/// analytic models are used and a `UserWarning` reports it: they are good to a
+/// few km for the Sun but only to a few hundred km for the Moon, which is easy
+/// to miss when the only symptom is a slightly different angle.
+fn prepare_planetary_ephemeris() {
+    use crate::ephemeris::spice_manager;
+    if spice_manager::is_planetary_ephemeris_initialized() {
+        return;
+    }
+    let reason = match spice_manager::best_available_planetary_path() {
+        Some(path) => match spice_manager::ensure_planetary_ephemeris(&path) {
+            Ok(()) => return,
+            Err(err) => format!(
+                "the kernel at '{}' could not be loaded ({err})",
+                path.display()
+            ),
+        },
+        None => "no planetary kernel is loaded or cached".to_string(),
+    };
+    let message = format!(
+        "Sun and Moon positions use analytic models because {reason}: the Moon may be off by \
+         ~200 km and the Sun by a few km. Call rust_ephem.ensure_planetary_ephemeris() before \
+         building an ephemeris for kernel accuracy."
+    );
+    Python::attach(|py| {
+        // A warning that cannot be issued (or was promoted to an error by the
+        // caller's filters) must not change how the ephemeris is built.
+        if let Ok(message) = std::ffi::CString::new(message) {
+            let category = py.get_type::<pyo3::exceptions::PyUserWarning>();
+            let _ = PyErr::warn(py, &category, &message, 1);
+        }
+    });
+}
+
 /// Generate a vector of timestamps from begin to end (inclusive) with step_size in seconds
 /// This is common logic shared between TLEEphemeris and SPICEEphemeris constructors.
 ///
@@ -320,6 +732,18 @@ pub trait EphemerisBase {
     /// the batch kernels to correct catalogue targets themselves (see
     /// `SampledEphemeris::apparent`); `None` for every ordinary ephemeris.
     fn target_corrections(&self) -> Option<&[crate::utils::apparent::ObserverAberration]> {
+        None
+    }
+
+    /// The target correction of each row when this is an apparent view (see
+    /// `SampledEphemeris::apparent`); `None` for every ordinary ephemeris.
+    ///
+    /// On such a view the targets handed to a kernel are already the proper
+    /// directions for the selected row, unless `target_corrections` says the
+    /// kernel is to correct catalogue targets itself. A leaf that compares the
+    /// target with other catalogue directions (bright stars) uses this to
+    /// return to the catalogue frame, where the common correction cancels.
+    fn target_aberrations(&self) -> Option<&[crate::utils::apparent::ObserverAberration]> {
         None
     }
 
@@ -647,6 +1071,21 @@ pub trait EphemerisBase {
             times,
             "Moon",
         )
+    }
+
+    /// Unit vectors (N x 3, GCRS axes) in which catalogue targets are seen at
+    /// arbitrary time(s): the correction `apparent=True` applies to targets.
+    fn get_apparent_target_at(
+        &self,
+        py: Python,
+        ras: &Bound<PyAny>,
+        decs: &Bound<PyAny>,
+        times: &Bound<PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        let times = crate::utils::time_utils::python_datetimes_to_utc(times)?;
+        let (ras, decs) = (floats(ras, "ras")?, floats(decs, "decs")?);
+        let targets = apparent_targets_at(self.data(), &ras, &decs, &times)?;
+        Ok(targets.into_pyarray(py).into_any().unbind())
     }
 
     // ========== Constraint helper methods ==========
@@ -1075,6 +1514,8 @@ pub trait EphemerisBase {
             .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available."))?;
 
+        prepare_planetary_ephemeris();
+
         // Use batch calculations for better performance
         let sun_out =
             calculate_sun_positions(times).map_err(pyo3::exceptions::PyValueError::new_err)?;
@@ -1125,6 +1566,10 @@ pub trait EphemerisBase {
     ///
     /// # Arguments
     /// * `body_identifier` - NAIF ID (as string) or body name (e.g., "Jupiter", "mars", "301")
+    /// * `times` - Arbitrary time(s) to evaluate at instead of the ephemeris
+    ///   grid; the observer is interpolated as in `get_gcrs_pv_at`
+    /// * `apparent` - Return the state as seen (reception light time, solar
+    ///   deflection, observer aberration): see `apparent_body_states_at`
     ///
     /// # Returns
     /// `PositionVelocityData` containing position and velocity arrays in km and km/s
@@ -1135,43 +1580,94 @@ pub trait EphemerisBase {
     /// jupiter = eph.get_body("Jupiter")  # By name
     /// mars = eph.get_body("499")  # By NAIF ID
     /// ```
+    #[allow(clippy::too_many_arguments)]
     fn get_body_pv(
         &self,
         py: Python,
-        body_identifier: &str,
+        body: &Bound<PyAny>,
         spice_kernel: Option<&str>,
         use_horizons: bool,
-    ) -> PyResult<Py<PositionVelocityData>> {
+        times: Option<&Bound<PyAny>>,
+        apparent: bool,
+    ) -> PyResult<Py<PyAny>> {
+        // One name gives one result; a sequence of names gives a dict of them.
+        let single = body.extract::<String>().ok();
+        let names: Vec<String> = match &single {
+            Some(name) => vec![name.clone()],
+            None => body.extract().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err(
+                    "body must be a name or NAIF ID string, or a sequence of them",
+                )
+            })?,
+        };
+        let bodies: Vec<&str> = names.iter().map(String::as_str).collect();
+        let states = self.body_states(&bodies, spice_kernel, use_horizons, times, apparent)?;
+        if single.is_some() {
+            return Ok(Py::new(py, split_pos_vel(&states[0]))?.into_any());
+        }
+        let result = pyo3::types::PyDict::new(py);
+        for (name, states) in names.iter().zip(&states) {
+            result.set_item(name, Py::new(py, split_pos_vel(states))?)?;
+        }
+        Ok(result.into_any().unbind())
+    }
+
+    /// Observer-centred states (N x 6, km and km/s) of each of `bodies`: what
+    /// `get_body_pv` returns for it.
+    fn body_states(
+        &self,
+        bodies: &[&str],
+        spice_kernel: Option<&str>,
+        use_horizons: bool,
+        times: Option<&Bound<PyAny>>,
+        apparent: bool,
+    ) -> PyResult<Vec<Array2<f64>>> {
         use crate::utils::celestial::calculate_body_by_id_or_name;
         use crate::utils::config::EARTH_NAIF_ID;
+
+        if times.is_some() || apparent {
+            if apparent && use_horizons {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "apparent=True requires SPICE kernels; use_horizons=True is not supported",
+                ));
+            }
+            let times = match times {
+                Some(times) => crate::utils::time_utils::python_datetimes_to_utc(times)?,
+                None => self.get_times()?,
+            };
+            return if apparent {
+                apparent_body_states_at(self.data(), bodies, &times, spice_kernel)
+            } else {
+                geometric_body_states_at(self.data(), bodies, &times, spice_kernel, use_horizons)
+            };
+        }
 
         let times = self
             .data()
             .times
             .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("No times available."))?;
-
-        // Calculate body position relative to Earth center
-        let body_geocentric = calculate_body_by_id_or_name(
-            times,
-            body_identifier,
-            EARTH_NAIF_ID,
-            spice_kernel,
-            use_horizons,
-        )
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-
         // Get observer's geocentric position
         let observer_geocentric = self.data().gcrs.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(
                 "No GCRS data available. Ephemeris should compute GCRS during initialization.",
             )
         })?;
-
-        // Calculate body position relative to observer: body - observer
-        let body_observer_centric = &body_geocentric - observer_geocentric;
-
-        Py::new(py, split_pos_vel(&body_observer_centric))
+        bodies
+            .iter()
+            .map(|body| {
+                // Body position relative to Earth center, then to the observer.
+                let body_geocentric = calculate_body_by_id_or_name(
+                    times,
+                    body,
+                    EARTH_NAIF_ID,
+                    spice_kernel,
+                    use_horizons,
+                )
+                .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(&body_geocentric - observer_geocentric)
+            })
+            .collect()
     }
 
     /// Get SkyCoord object for any body identified by NAIF ID or name

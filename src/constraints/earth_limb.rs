@@ -116,19 +116,22 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         let observer = ephemeris.data().gcrs.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err("No GCRS positions available")
         })?;
-        let mut violated = Vec::with_capacity(target_ras.len());
-        let mut angles = Vec::with_capacity(target_ras.len());
-        for (i, &t) in indices.iter().enumerate() {
-            let position = [observer[[t, 0]], observer[[t, 1]], observer[[t, 2]]];
-            let distance = vector_magnitude(&position);
-            let (min_cos, max_cos) = self.cos_bounds(distance);
-            let center = normalize_vector(&[-position[0], -position[1], -position[2]]);
-            let target = radec_to_unit_vector(target_ras[i], target_decs[i]);
-            let cosine = dot_product(&target, &center);
-            violated.push(cosine > min_cos || max_cos.is_some_and(|max| cosine < max));
-            angles
-                .push(cosine.clamp(-1.0, 1.0).acos().to_degrees() - self.limb_offset_deg(distance));
-        }
+        let (violated, angles): (Vec<bool>, Vec<f64>) =
+            super::diagonal::each_element(target_ras.len(), |i| {
+                let t = indices[i];
+                let position = [observer[[t, 0]], observer[[t, 1]], observer[[t, 2]]];
+                let distance = vector_magnitude(&position);
+                let (min_cos, max_cos) = self.cos_bounds(distance);
+                let center = normalize_vector(&[-position[0], -position[1], -position[2]]);
+                let target = radec_to_unit_vector(target_ras[i], target_decs[i]);
+                let cosine = dot_product(&target, &center);
+                (
+                    cosine > min_cos || max_cos.is_some_and(|max| cosine < max),
+                    cosine.clamp(-1.0, 1.0).acos().to_degrees() - self.limb_offset_deg(distance),
+                )
+            })
+            .into_iter()
+            .unzip();
         Ok(super::diagonal::DiagonalEvaluation::leaf(
             &self.name(),
             violated,
@@ -247,6 +250,10 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         format!("EarthLimb(min={}°)", self.min_angle_deg)
     }
 
+    fn ignores_explicit_roll(&self) -> bool {
+        true
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -278,16 +285,26 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         }
 
         let mut earth_limb_angle_deg = Array2::<f64>::zeros((n_targets, n_times));
-        for i in 0..n_targets {
-            let target_vec = [
-                target_vectors[[i, 0]],
-                target_vectors[[i, 1]],
-                target_vectors[[i, 2]],
-            ];
-            for t in 0..n_times {
-                let cos_angle = dot_product(&target_vec, &center_units[t]);
-                earth_limb_angle_deg[[i, t]] =
-                    cos_angle.clamp(-1.0, 1.0).acos().to_degrees() - limb_offsets[t];
+        // On an apparent view the catalogue cosine becomes the apparent one.
+        if let Some(corrections) = super::core::target_corrections_at(ephemeris, time_indices) {
+            earth_limb_angle_deg = super::core::apparent_cosine_grid(
+                &target_vectors,
+                &center_units,
+                &corrections,
+                |t, cos_angle| cos_angle.clamp(-1.0, 1.0).acos().to_degrees() - limb_offsets[t],
+            );
+        } else {
+            for i in 0..n_targets {
+                let target_vec = [
+                    target_vectors[[i, 0]],
+                    target_vectors[[i, 1]],
+                    target_vectors[[i, 2]],
+                ];
+                for t in 0..n_times {
+                    let cos_angle = dot_product(&target_vec, &center_units[t]);
+                    earth_limb_angle_deg[[i, t]] =
+                        cos_angle.clamp(-1.0, 1.0).acos().to_degrees() - limb_offsets[t];
+                }
             }
         }
 

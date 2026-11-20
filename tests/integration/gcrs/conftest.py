@@ -47,7 +47,7 @@ SINGLE_POINT_STEP_SIZE = 1
 
 
 @pytest.fixture(params=TEST_TIMES)
-def single_time(request: Any) -> Any:  # noqa: D401 - simple fixture
+def single_time(request: Any) -> Any:
     """Provide a single test time from TEST_TIMES via parametrization."""
     return request.param
 

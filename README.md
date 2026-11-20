@@ -86,13 +86,13 @@ ephem = rust_ephem.TLEEphemeris(
     norad_id=25544,  # ISS
     begin=begin,
     end=end,
-    step_size=60
+    step_size=60,
 )
 
 # Access positions as astropy SkyCoord
-satellite = ephem.gcrs      # Satellite in GCRS frame
-sun = ephem.sun             # Sun position
-moon = ephem.moon           # Moon position
+satellite = ephem.gcrs  # Satellite in GCRS frame
+sun = ephem.sun  # Sun position
+moon = ephem.moon  # Moon position
 
 # Or access raw position/velocity data (km, km/s)
 print(f"Position: {ephem.gcrs_pv.position[0]}")
@@ -119,7 +119,7 @@ obs = rust_ephem.GroundEphemeris(
     height=4205.0,  # meters
     begin=begin,
     end=end,
-    step_size=60
+    step_size=60,
 )
 
 # Sun and Moon positions from observatory
@@ -187,18 +187,12 @@ from rust_ephem.constraints import SunConstraint, MoonConstraint
 rust_ephem.ensure_planetary_ephemeris()
 
 # Primary instrument constraints (evaluated at commanded pointing)
-primary = (
-  SunConstraint(min_angle=45.0)
-  | MoonConstraint(min_angle=12.0)
-)
+primary = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=12.0)
 
 # Secondary instrument constraints (evaluated at boresight-offset direction)
-secondary = (
-  SunConstraint(min_angle=45.0)
-  | MoonConstraint(min_angle=12.0)
-)
+secondary = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=12.0)
 secondary_offset = secondary.boresight_offset(
-    pitch_deg=1.2,     # roll_deg=0.0 (default) = instrument aligned with spacecraft
+    pitch_deg=1.2,  # roll_deg=0.0 (default) = instrument aligned with spacecraft
     yaw_deg=-0.8,
 )
 
@@ -210,10 +204,10 @@ print(result.all_satisfied)
 
 # Evaluate same pointing at a specific spacecraft roll state
 result_roll = combined.evaluate(
-  ephem,
-  target_ra=83.63,
-  target_dec=22.01,
-  target_roll=95.0,
+    ephem,
+    target_ra=83.63,
+    target_dec=22.01,
+    target_roll=95.0,
 )
 print(result_roll.all_satisfied)
 ```
@@ -225,7 +219,9 @@ from rust_ephem.constraints import SunConstraint, MoonConstraint
 
 primary = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=12.0)
 secondary = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=12.0)
-combined = primary | secondary.boresight_offset(pitch_deg=1.2, yaw_deg=-0.8)  # roll_deg=0.0, FoR sweeps all spacecraft rolls
+combined = primary | secondary.boresight_offset(
+    pitch_deg=1.2, yaw_deg=-0.8
+)  # roll_deg=0.0, FoR sweeps all spacecraft rolls
 
 # Apply spacecraft roll at evaluation time
 result = combined.evaluate(ephem, target_ra=83.63, target_dec=22.01, target_roll=95.0)
@@ -268,9 +264,9 @@ constraint = SunConstraint(min_angle=45.0) | MoonConstraint(min_angle=12.0)
 
 # Evaluate at a single ephemeris index (fastest path)
 field_sr = constraint.instantaneous_field_of_regard(
-  ephemeris=ephem,
-  index=0,
-  n_points=20000,
+    ephemeris=ephem,
+    index=0,
+    n_points=20000,
 )
 
 print(f"Field of regard: {field_sr:.3f} sr")
@@ -298,12 +294,13 @@ print(result)  # SkyCoord position
 
 # Also works with moving_body_visibility constraints
 from rust_ephem.constraints import moving_body_visibility, SunConstraint
+
 constraint = SunConstraint(min_angle=45)
 visibility = moving_body_visibility(
     constraint=constraint,
     ephemeris=eph,
     body="2",  # Pallas
-    use_horizons=True
+    use_horizons=True,
 )
 ```
 

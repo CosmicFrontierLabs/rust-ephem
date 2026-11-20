@@ -248,6 +248,17 @@ impl OEMEphemeris {
         self.get_moon_pv_at(py, times)
     }
 
+    /// Unit vectors (N x 3, GCRS axes) in which catalogue targets are seen at arbitrary time(s)
+    fn apparent_target_at(
+        &self,
+        py: Python,
+        ras: &Bound<PyAny>,
+        decs: &Bound<PyAny>,
+        times: &Bound<PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        self.get_apparent_target_at(py, ras, decs, times)
+    }
+
     #[getter]
     fn obsgeoloc(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         self.get_obsgeoloc(py)
@@ -457,15 +468,27 @@ impl OEMEphemeris {
         self.find_closest_index(time)
     }
 
-    #[pyo3(signature = (body, spice_kernel=None, use_horizons=false))]
+    /// Position and velocity of a body relative to the observer (GCRS axes, km, km/s),
+    /// on the ephemeris grid or at arbitrary time(s), geometric or apparent
+    #[pyo3(signature = (body, spice_kernel=None, use_horizons=false, *, times=None, apparent=false))]
     fn get_body_pv(
         &self,
         py: Python,
-        body: &str,
+        body: &Bound<PyAny>,
         spice_kernel: Option<String>,
         use_horizons: bool,
-    ) -> PyResult<Py<PositionVelocityData>> {
-        <Self as EphemerisBase>::get_body_pv(self, py, body, spice_kernel.as_deref(), use_horizons)
+        times: Option<&Bound<PyAny>>,
+        apparent: bool,
+    ) -> PyResult<Py<PyAny>> {
+        <Self as EphemerisBase>::get_body_pv(
+            self,
+            py,
+            body,
+            spice_kernel.as_deref(),
+            use_horizons,
+            times,
+            apparent,
+        )
     }
 
     /// Get a body in observer-centred GCRS. With apparent=True, apply reception

@@ -104,6 +104,10 @@ or simply:
 
     pip install duckdb
 
+Without DuckDB, a local file, glob or directory is read with
+`PyArrow <https://arrow.apache.org/docs/python/>`_ instead. Remote sources
+(``s3://``, ``https://`` and the like) and ``where_clause`` need DuckDB.
+
 Constructing one
 ----------------
 
@@ -127,6 +131,13 @@ Constructing one
     print(f"Output rows  : {eph.gcrs_pv.position.shape[0]}")
     print(f"Position[0]  : {eph.gcrs_pv.position[0]} km")
     print(f"Latitude[0]  : {eph.latitude_deg[0]:.4f} deg")
+
+``begin`` and ``end`` are optional: left out, the output grid runs from the
+first to the last row of the data.
+
+.. code-block:: python
+
+    eph = re.ParquetEphemeris("spacecraft_states.parquet", step_size=120)
 
 Custom column names
 -------------------

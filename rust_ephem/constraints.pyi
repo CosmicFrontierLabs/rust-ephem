@@ -6,30 +6,26 @@ using Pydantic. These models can be serialized to/from JSON and used
 to configure the Rust constraint evaluators.
 """
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import Literal, TypeAlias, overload
 
 import numpy as np
 import numpy.typing as npt
+from astropy.time import Time  # type: ignore[import-untyped]
 from pydantic import BaseModel, TypeAdapter
 
 from ._rust_ephem import ElementwiseResult as ElementwiseResult
+from ._rust_ephem import GridResult as GridResult
 from ._rust_ephem import RouteResult as RouteResult
 from .ephemeris import Ephemeris
 
 DEFAULT_N_POINTS: int
 DEFAULT_N_ROLL_SAMPLES: int
 
-if TYPE_CHECKING:
-    from rust_ephem import VisibilityWindow
-
-if TYPE_CHECKING:
-    pass
+from rust_ephem import VisibilityWindow
 
 class RollReference(str, Enum):
     SUN = "sun"
@@ -55,7 +51,7 @@ class ConstraintResult(BaseModel):
     @property
     def constraint_array(self) -> list[bool]: ...
     @property
-    def constraint_values(self) -> dict[str, list[float]]: ...
+    def constraint_values(self) -> dict[str, npt.NDArray[np.float64]]: ...
     @property
     def cause_value_keys(self) -> dict[str, list[str]]: ...
     @property
@@ -99,6 +95,7 @@ class RustConstraintMixin(BaseModel):
         samples: int = 50,
         margin_deg: float = 5.0,
         grow_margin: bool = True,
+        apparent: bool = False,
     ) -> RouteResult: ...
     def to_toml(self) -> str: ...
     def to_toml_file(self, path: str | Path) -> None: ...
@@ -107,7 +104,11 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
-        times: datetime | list[datetime] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         target_roll: float | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -118,7 +119,11 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -129,40 +134,120 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
     ) -> npt.NDArray[np.bool_]: ...
+    @overload
+    def violated_count(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: Sequence[float] | npt.ArrayLike,
+        target_decs: Sequence[float] | npt.ArrayLike,
+        times: datetime
+        | Sequence[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
+        indices: int | list[int] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
+        fraction: Literal[False] = False,
+    ) -> npt.NDArray[np.int64]: ...
+    @overload
+    def violated_count(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: Sequence[float] | npt.ArrayLike,
+        target_decs: Sequence[float] | npt.ArrayLike,
+        times: datetime
+        | Sequence[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
+        indices: int | list[int] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
+        *,
+        fraction: Literal[True],
+    ) -> npt.NDArray[np.float64]: ...
+    def visibility_windows(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: Sequence[float] | npt.ArrayLike,
+        target_decs: Sequence[float] | npt.ArrayLike,
+        times: datetime
+        | Sequence[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
+        indices: int | list[int] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
+    ) -> list[npt.NDArray[np.int64]]: ...
     def in_constraint_elementwise(
         self,
         ephemeris: Ephemeris,
         target_ras: Sequence[float] | npt.ArrayLike,
         target_decs: Sequence[float] | npt.ArrayLike,
-        times: datetime | Sequence[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | Sequence[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
+        roll_offsets: Sequence[float | None] | None = None,
     ) -> npt.NDArray[np.bool_]: ...
     def evaluate_elementwise(
         self,
         ephemeris: Ephemeris,
         target_ras: Sequence[float] | npt.ArrayLike,
         target_decs: Sequence[float] | npt.ArrayLike,
-        times: datetime | Sequence[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | Sequence[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
+        roll_offsets: Sequence[float | None] | None = None,
     ) -> ElementwiseResult: ...
+    def evaluate_grid(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: Sequence[float] | npt.ArrayLike,
+        target_decs: Sequence[float] | npt.ArrayLike,
+        times: datetime
+        | Sequence[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
+        indices: int | list[int] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
+    ) -> GridResult: ...
     def in_constraint(
         self,
-        time: datetime | list[datetime] | npt.NDArray[np.datetime64],
+        time: datetime | list[datetime] | npt.NDArray[np.datetime64] | Time,
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
         target_roll: float | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> bool | list[bool]: ...
     def roll_range(
         self,
@@ -180,17 +265,23 @@ class RustConstraintMixin(BaseModel):
         n_points: int = DEFAULT_N_POINTS,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         target_roll: float | None = None,
+        apparent: bool = False,
     ) -> float: ...
     def evaluate_moving_body(
         self,
         ephemeris: Ephemeris,
         target_ras: list[float] | npt.ArrayLike | None = None,
         target_decs: list[float] | npt.ArrayLike | None = None,
-        times: datetime | list[datetime] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         body: str | int | None = None,
         use_horizons: bool = False,
         spice_kernel: str | None = None,
         target_roll: float | None = None,
+        apparent: bool = False,
     ) -> MovingVisibilityResult:
         """
         Evaluate constraint for a moving body (varying RA/Dec over time).
@@ -210,7 +301,6 @@ class RustConstraintMixin(BaseModel):
                 result1 = sun_c.evaluate_moving_body(ephem, body="Jupiter")
                 result2 = moon_c.evaluate_moving_body(ephem, body="Jupiter")
         """
-        ...
     def and_(self, other: ConstraintConfig) -> AndConstraint: ...
     def or_(self, other: ConstraintConfig) -> OrConstraint: ...
     def xor_(self, other: ConstraintConfig) -> XorConstraint: ...
@@ -339,7 +429,7 @@ class BoresightOffsetConstraint(RustConstraintMixin):
     constraint: ConstraintConfig
     roll_deg: float = 0.0
     roll_clockwise: bool = False
-    roll_reference: RollReference = RollReference.NORTH
+    roll_reference: RollReference = ...
     pitch_deg: float = 0.0
     yaw_deg: float = 0.0
 
@@ -350,7 +440,48 @@ class BrightStarConstraint(RustConstraintMixin):
     fov_polygon: list[tuple[float, float]] | None = None
     roll_deg: float | None = None
 
-ConstraintConfig = (
+class PointSourceTransmittance(BaseModel):
+    off_axis_deg: list[float]
+    azimuth_deg: list[float]
+    log10_pst: list[list[float | None]]
+    azimuth_symmetric: bool = True
+    @classmethod
+    def from_pst(
+        cls,
+        off_axis_deg: npt.ArrayLike,
+        azimuth_deg: npt.ArrayLike,
+        pst: npt.ArrayLike,
+        azimuth_symmetric: bool = True,
+    ) -> PointSourceTransmittance: ...
+
+class StrayLightStatus(int, Enum):
+    OK = 0
+    DARK = 1
+    IN_FIELD = 2
+    FIRST_CELL = 3
+    UNCONVERGED = 4
+    @property
+    def is_valid(self) -> bool: ...
+    @property
+    def label(self) -> str: ...
+    @classmethod
+    def labels(cls, values: npt.ArrayLike) -> npt.NDArray[np.str_]: ...
+
+class StrayLightConstraint(RustConstraintMixin):
+    type: Literal["stray_light"] = "stray_light"
+    pst: PointSourceTransmittance
+    conversion_factor: float
+    max_ratio: float = 3.0
+    roll_offset_deg: float = 0.0
+    sun_azimuth_deg: float = 0.0
+    zodi: Literal["constant", "table"] = "constant"
+    zodi_v_mag_arcsec2: float = 22.5
+    in_field_deg: float = 0.3
+    earth_albedo: float = 0.24
+    sun_v_mag_1au: float = -26.74
+    moon_v_mag_full: float = -12.73
+
+ConstraintConfig: TypeAlias = (
     SunConstraint
     | MoonConstraint
     | MoonLimbConstraint
@@ -361,6 +492,7 @@ ConstraintConfig = (
     | AirmassConstraint
     | MoonPhaseConstraint
     | SolarRollConstraint
+    | StrayLightConstraint
     | SAAConstraint
     | AltAzConstraint
     | OrbitRamConstraint

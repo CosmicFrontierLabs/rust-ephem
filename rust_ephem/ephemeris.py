@@ -1,6 +1,6 @@
 # Create a type alias that supports isinstance checks
 import abc
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -9,6 +9,7 @@ import numpy.typing as npt
 
 if TYPE_CHECKING:
     from astropy.coordinates import SkyCoord  # type: ignore[import-untyped]
+    from astropy.time import Time  # type: ignore[import-untyped]
     from astropy.units import Quantity  # type: ignore[import-untyped]
 
 from ._rust_ephem import (
@@ -87,7 +88,9 @@ class Ephemeris(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def gcrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def gcrs_pv_at(
+        self, times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time"
+    ) -> PositionVelocityData:
         """Observer GCRS position/velocity at arbitrary time(s).
 
         Grid times return the ``gcrs_pv`` rows unchanged; times between grid
@@ -98,18 +101,57 @@ class Ephemeris(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def itrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def itrs_pv_at(
+        self, times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time"
+    ) -> PositionVelocityData:
         """Observer ITRS position/velocity at arbitrary time(s); see ``gcrs_pv_at``."""
         ...
 
     @abc.abstractmethod
-    def sun_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def sun_pv_at(
+        self, times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time"
+    ) -> PositionVelocityData:
         """Sun GCRS position/velocity at arbitrary time(s); see ``gcrs_pv_at``."""
         ...
 
     @abc.abstractmethod
-    def moon_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def moon_pv_at(
+        self, times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time"
+    ) -> PositionVelocityData:
         """Moon GCRS position/velocity at arbitrary time(s); see ``gcrs_pv_at``."""
+        ...
+
+    @abc.abstractmethod
+    def apparent_target_at(
+        self,
+        ras: float | Sequence[float] | npt.NDArray[np.float64],
+        decs: float | Sequence[float] | npt.NDArray[np.float64],
+        times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time",
+    ) -> npt.NDArray[np.float64]:
+        """Directions in which catalogue targets are seen at arbitrary time(s).
+
+        Applies the correction constraints apply to targets with
+        ``apparent=True``: solar light deflection, then the aberration of the
+        observer's barycentric velocity. The angle between a row of the result
+        and ``get_body_pv(body, times=times, apparent=True).position`` is the
+        angle a constraint reports for that body with ``apparent=True``.
+
+        ``ras``, ``decs`` and ``times`` are paired row by row; any of them may
+        be a single value used for every row.
+
+        Args:
+            ras: Catalogue (ICRS) right ascension(s) in degrees.
+            decs: Catalogue (ICRS) declination(s) in degrees.
+            times: A datetime, an iterable of datetimes or a ``datetime64``
+                array (read as UTC).
+
+        Returns:
+            ``(N, 3)`` array of unit vectors, GCRS axes, rows in input order.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the lengths do
+                not match, or no planetary kernel covers the times.
+        """
         ...
 
     @property
