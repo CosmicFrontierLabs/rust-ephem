@@ -50,8 +50,8 @@ Classes
   **Common Methods:**
     * ``index(time)`` — Find closest timestamp index
     * ``get_body(body, spice_kernel=None, use_horizons=False, *, apparent=False)`` — Get SkyCoord for a celestial body. Set ``apparent=True`` for reception light time, solar light deflection, and observer aberration (SPICE only, positions without velocity differentials). The default is geometric. If ``use_horizons=True``, geometric queries fall back to JPL Horizons when the body is not found in SPICE kernels. See :doc:`ephemeris_get_body`.
-    * ``get_body_pv(body, spice_kernel=None, use_horizons=False, *, times=None, apparent=False)`` — Position/velocity (km, km/s, GCRS axes) of a celestial body relative to the observer. If ``use_horizons=True``, falls back to JPL Horizons when the body is not found in SPICE kernels. ``times`` evaluates at arbitrary time(s) instead of the ephemeris grid, handled as in ``gcrs_pv_at``. ``apparent=True`` returns the body as it is seen (reception light time, solar light deflection, aberration of the observer's barycentric velocity): the position points where constraints place the body with ``apparent=True`` and its length is the light-time distance; the velocity is the rate of change of that apparent position, which is not the geometric velocity.
-    * ``gcrs_pv_at(times)``, ``itrs_pv_at(times)``, ``sun_pv_at(times)``, ``moon_pv_at(times)`` — Position/velocity (km, km/s, same frames as the matching ``*_pv`` property) at arbitrary time(s). ``times`` is a datetime, an iterable of datetimes or a NumPy ``datetime64`` array (read as UTC); rows follow input order (unsorted and duplicate times allowed). Grid times return the stored rows unchanged; times between grid points use the same cubic Hermite interpolation as constraint evaluation with ``times=`` (Sun and Moon are interpolated, not recomputed). Times outside the ephemeris span raise ``ValueError``. See :doc:`ephemeris_tle` for an example.
+    * ``get_body_pv(body, spice_kernel=None, use_horizons=False, *, times=None, apparent=False)`` — Position/velocity (km, km/s, GCRS axes) of a celestial body relative to the observer. ``body`` may be a list or tuple of bodies: the result is then a dict keyed by the names as given, each entry what a call for that body alone returns, worked out from one sampling of the ephemeris. The result's ``ra_deg``, ``dec_deg`` and ``distance`` give the position as angles (degrees) and a length (km). If ``use_horizons=True``, falls back to JPL Horizons when the body is not found in SPICE kernels. ``times`` evaluates at arbitrary time(s) instead of the ephemeris grid, handled as in ``gcrs_pv_at``. ``apparent=True`` returns the body as it is seen (reception light time, solar light deflection, aberration of the observer's barycentric velocity): the position points where constraints place the body with ``apparent=True`` and its length is the light-time distance; the velocity is the rate of change of that apparent position, which is not the geometric velocity.
+    * ``gcrs_pv_at(times)``, ``itrs_pv_at(times)``, ``sun_pv_at(times)``, ``moon_pv_at(times)`` — Position/velocity (km, km/s, same frames as the matching ``*_pv`` property) at arbitrary time(s). ``times`` is a datetime, an iterable of datetimes, a NumPy ``datetime64`` array (read as UTC) or an astropy ``Time`` (any scale; converted to UTC and rounded to the microsecond); rows follow input order (unsorted and duplicate times allowed). Grid times return the stored rows unchanged; times between grid points use the same cubic Hermite interpolation as constraint evaluation with ``times=`` (Sun and Moon are interpolated, not recomputed). Times outside the ephemeris span raise ``ValueError``. See :doc:`ephemeris_tle` for an example.
     * ``apparent_target_at(ras, decs, times)`` — Unit vectors (``(N, 3)``, GCRS axes) in which catalogue targets at ``ras``/``decs`` (degrees, ICRS) are seen at arbitrary time(s): the deflection and aberration correction that constraints apply to targets with ``apparent=True``. The three arguments are paired row by row; any may be a single value. The angle between a row and ``get_body_pv(body, times=times, apparent=True).position`` is the angle a constraint reports for that body.
     * ``moon_illumination(time_indices=None)`` — Calculate Moon illumination fraction (0.0-1.0) as seen from observer
     * ``radec_to_altaz(ra_deg, dec_deg, time_indices=None)`` — Convert RA/Dec to Alt/Az coordinates
@@ -578,18 +578,23 @@ Classes
       - **Optimized**: Uses vectorized operations for batch RA/Dec conversion and constraint evaluation
       - **All constraint types supported**: Sun/Moon proximity, Earth limb, Eclipse, Body proximity, boresight offsets, and logical combinators (AND, OR, XOR, AT_LEAST, NOT)
 
-    * ``in_constraint_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)`` — Paired evaluation: element ``i`` is target ``(target_ras[i], target_decs[i])`` at ``times[i]``
+    * ``in_constraint_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False, roll_offsets=None)`` — Paired evaluation: element ``i`` is target ``(target_ras[i], target_decs[i])`` at ``times[i]``
 
       - Equals the diagonal of ``in_constraint_batch`` over all targets and times, at O(N) cost (no N x N grid)
       - ``times`` — One datetime per element; may be unsorted, duplicated and between ephemeris samples (interpolated, as in ``in_constraint``), but must lie within the ephemeris range. ``None`` pairs element ``i`` with ephemeris timestamp ``i``
       - ``target_rolls`` — Optional per-element roll (degrees); ``None`` entries sweep rolls for roll-dependent constraints, as in ``in_constraint_batch``
+      - ``roll_offsets`` — Optional per-element roll in degrees from the element's nominal roll (body +Y toward the Sun), in place of ``target_rolls``
       - Returns: 1D NumPy boolean array of shape (N,), True where the constraint is violated
+
+    * ``violated_count(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False, fraction=False)`` — Number (or, with ``fraction=True``, fraction) of the times at which each target is in-constraint: the row sums of ``in_constraint_batch`` without the ``(n_targets, n_times)`` mask
+
+    * ``visibility_windows(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)`` — Per target, an ``(n_windows, 2)`` integer array of the first and last time index of each run of times at which it is not in-constraint, again without the mask
 
     * ``evaluate_grid(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)`` — As ``evaluate_batch``, returning the whole grid as ``(n_targets, n_times)`` arrays instead of one result per target
 
       - Returns: ``GridResult`` object
 
-    * ``evaluate_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)`` — Same pairing as ``in_constraint_elementwise``, plus per-element values
+    * ``evaluate_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False, roll_offsets=None)`` — Same pairing as ``in_constraint_elementwise``, plus per-element values
 
       - Returns: ``ElementwiseResult`` object
 
@@ -672,6 +677,8 @@ Classes
     * ``visibility_flags`` — the inverse of ``constraint_array``
     * ``constraint_values`` — ``dict[str, numpy.ndarray]`` of (n_targets, n_times) float arrays
     * ``component_violated`` — ``dict[str, numpy.ndarray]`` of (n_targets, n_times) bool arrays keyed by cause tag
+    * ``component_order`` — the cause tags in the order the rules were written
+    * ``first_violated`` — (n_targets, n_times) NumPy str array: the first rule in that order violated where the constraint is, ``""`` elsewhere
     * ``cause_value_keys``, ``constraint_name``, ``shape``
     * ``timestamp`` — (n_times,) array of datetimes; ``ras``, ``decs`` — (n_targets,) arrays
 
@@ -689,6 +696,9 @@ Classes
       combinator namespacing such as ``sun.sun_angle_deg``)
     * ``component_violated`` — ``dict[str, numpy.ndarray]`` of (N,) per-leaf violation masks keyed
       by cause tag (``sun``, ``not.moon``, ...)
+    * ``component_order`` — the cause tags in the order the rules were written
+    * ``first_violated`` — (N,) NumPy str array: the first rule in that order violated where the
+      constraint is, ``""`` elsewhere
     * ``cause_value_keys`` — cause tag to ``constraint_values`` key(s), as on ``ConstraintResult``
     * ``timestamp`` — (N,) NumPy object array of the UTC datetime each element was evaluated at
     * ``ras``, ``decs`` — (N,) NumPy float arrays of the input coordinates

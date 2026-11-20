@@ -80,7 +80,8 @@ pub fn datetime_to_mjd(dt: &DateTime<Utc>) -> f64 {
 /// ephemeris `*_pv_at` methods.
 ///
 /// NumPy `datetime64` input (an array of any shape, a scalar, or a sequence of
-/// scalars) is accepted as well and read as UTC.
+/// scalars) is accepted as well and read as UTC, and so is an astropy `Time`
+/// (scalar or array, in any scale).
 pub fn python_datetimes_to_utc(times: &Bound<PyAny>) -> PyResult<Vec<DateTime<Utc>>> {
     if let Some(converted) = datetime64_to_utc(times)? {
         return Ok(converted);
@@ -93,6 +94,29 @@ pub fn python_datetimes_to_utc(times: &Bound<PyAny>) -> PyResult<Vec<DateTime<Ut
         .collect()
 }
 
+/// The UTC instants of an astropy `Time`, as `datetime64[us]` (a scalar or an
+/// array, as the `Time` is). `None` for anything else.
+///
+/// The object is recognised by its attributes, so astropy is not imported. A
+/// `Time` in any scale is converted to UTC. Its instants are rounded to the
+/// microsecond: astropy holds a time as two doubles, and the nanoseconds it
+/// reports carry rounding of that size.
+fn astropy_time_to_datetime64<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> {
+    if !(obj.hasattr("jd1")? && obj.hasattr("scale")? && obj.hasattr("utc")?) {
+        return Ok(None);
+    }
+    let np = obj.py().import("numpy")?;
+    let nanos = np
+        .call_method1("asarray", (obj.getattr("utc")?.getattr("datetime64")?,))?
+        .call_method1("astype", ("datetime64[ns]",))?
+        .call_method1("astype", ("int64",))?;
+    let micros = np.call_method1(
+        "floor_divide",
+        (np.call_method1("add", (nanos, 500))?, 1000),
+    )?;
+    micros.call_method1("astype", ("datetime64[us]",)).map(Some)
+}
+
 /// `datetime64` entries above which the conversion is shared across the cores.
 const DATETIME64_PARALLEL_MIN_LEN: usize = 16_384;
 /// Fewest entries converted by one core: a conversion costs a few
@@ -100,7 +124,8 @@ const DATETIME64_PARALLEL_MIN_LEN: usize = 16_384;
 const DATETIME64_PARALLEL_CHUNK: usize = 4096;
 
 /// Convert NumPy `datetime64` data (array or scalar, any unit) to UTC instants
-/// in flattened (C) order. Returns `Ok(None)` when `obj` is not `datetime64`.
+/// in flattened (C) order, and likewise an astropy `Time`. Returns `Ok(None)`
+/// when `obj` is neither.
 ///
 /// # Errors
 /// `ValueError` for `NaT` entries and for instants outside the supported range.
@@ -120,7 +145,10 @@ fn datetime64_to_utc_from(
         .and_then(|kind| kind.extract::<String>())
         .is_ok_and(|kind| kind == "M");
     if !is_datetime64 {
-        return Ok(None);
+        return match astropy_time_to_datetime64(obj)? {
+            Some(converted) => datetime64_to_utc(&converted),
+            None => Ok(None),
+        };
     }
     let np = obj.py().import("numpy")?;
     let micros = np

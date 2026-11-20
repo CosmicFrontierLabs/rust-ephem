@@ -669,6 +669,33 @@ fn merge_children_cause_value_keys(
     Ok(merged)
 }
 
+/// The children's cause tags in child order, named as
+/// `merge_children_cause_value_keys` names them: a child's tags are taken in
+/// sorted order when one has to be renamed, and keep the child's own order in
+/// the result.
+fn merge_children_cause_tags(children: &[Box<dyn ConstraintEvaluator>]) -> Vec<String> {
+    let mut taken: HashMap<String, ()> = HashMap::new();
+    let mut merged = Vec::new();
+    for child in children {
+        let tags = child.cause_tags();
+        let mut sorted: Vec<&String> = tags.iter().collect();
+        sorted.sort();
+        let mut renamed: HashMap<&String, String> = HashMap::new();
+        for tag in sorted {
+            let mut name = tag.clone();
+            let mut suffix = 2;
+            while taken.contains_key(&name) {
+                name = format!("{tag}_{suffix}");
+                suffix += 1;
+            }
+            taken.insert(name.clone(), ());
+            renamed.insert(tag, name);
+        }
+        merged.extend(tags.iter().map(|tag| renamed[tag].clone()));
+    }
+    merged
+}
+
 fn validate_unit_vector_shape(target_unit_vectors: &Array2<f64>) -> PyResult<()> {
     if target_unit_vectors.ncols() != 3 {
         return Err(pyo3::exceptions::PyValueError::new_err(
@@ -1229,6 +1256,10 @@ impl ConstraintEvaluator for AndEvaluator {
             time_indices,
             target_roll,
         )
+    }
+
+    fn cause_tags(&self) -> Vec<String> {
+        merge_children_cause_tags(&self.constraints)
     }
 
     fn compute_cause_value_keys(
@@ -1811,6 +1842,10 @@ impl ConstraintEvaluator for OrEvaluator {
         )
     }
 
+    fn cause_tags(&self) -> Vec<String> {
+        merge_children_cause_tags(&self.constraints)
+    }
+
     fn compute_cause_value_keys(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -2201,6 +2236,14 @@ impl ConstraintEvaluator for NotEvaluator {
             time_indices,
             target_roll,
         )
+    }
+
+    fn cause_tags(&self) -> Vec<String> {
+        self.constraint
+            .cause_tags()
+            .into_iter()
+            .map(|tag| format!("not.{tag}"))
+            .collect()
     }
 
     fn compute_cause_value_keys(
@@ -2628,6 +2671,10 @@ impl ConstraintEvaluator for XorEvaluator {
         )
     }
 
+    fn cause_tags(&self) -> Vec<String> {
+        merge_children_cause_tags(&self.constraints)
+    }
+
     fn compute_cause_value_keys(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -3048,6 +3095,10 @@ impl ConstraintEvaluator for AtLeastEvaluator {
             time_indices,
             target_roll,
         )
+    }
+
+    fn cause_tags(&self) -> Vec<String> {
+        merge_children_cause_tags(&self.constraints)
     }
 
     fn compute_cause_value_keys(

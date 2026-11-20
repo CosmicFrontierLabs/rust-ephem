@@ -90,7 +90,7 @@ use super::core::{
     track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult, EvaluationRoll,
 };
 use super::diagonal::DiagonalEvaluation;
-use super::solar_roll::{default_panel_normal, north_referenced_axes, solar_optimal_roll_deg};
+use super::solar_roll::{nominal_roll_deg, north_referenced_axes};
 use crate::ephemeris::ephemeris_common::EphemerisBase;
 use crate::utils::config::{AU_TO_KM, MOON_RADIUS_KM, SUN_RADIUS_KM};
 use crate::utils::vector_math::radec_to_unit_vector;
@@ -896,10 +896,8 @@ impl StrayLightEvaluator {
     /// The table's azimuth-zero axis is body +Y turned by the Sun's nominal
     /// table azimuth.
     fn frame(&self, boresight: Vec3, sun: Vec3, roll_deg: Option<f64>) -> (Frame, f64) {
-        let roll_deg = roll_deg.unwrap_or_else(|| {
-            solar_optimal_roll_deg(&boresight, &unit(sun), default_panel_normal())
-                + self.roll_offset_deg
-        });
+        let roll_deg =
+            roll_deg.unwrap_or_else(|| nominal_roll_deg(boresight, sun) + self.roll_offset_deg);
         let (y_ref, z_ref) = north_referenced_axes(boresight);
         let (sin_roll, cos_roll) = (roll_deg + self.sun_azimuth_deg).to_radians().sin_cos();
         let y = add_scaled(scaled(y_ref, cos_roll), z_ref, sin_roll);
