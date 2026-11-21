@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Integration tests for TEME -> GCRS transformation accuracy.
 
 Refactored so that:

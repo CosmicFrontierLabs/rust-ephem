@@ -11,6 +11,7 @@ pub mod core;
 pub mod diagonal;
 pub mod elementwise;
 pub mod fov_polygon;
+pub mod grid;
 pub mod roll_sweep;
 
 #[cfg(test)]
@@ -39,3 +40,4 @@ pub mod constraint_wrapper;
 pub use constraint_wrapper::{PyConstraint, RouteResult};
 pub use core::{ConstraintResult, ConstraintViolation, MovingBodyResult, VisibilityWindow};
 pub use elementwise::ElementwiseResult;
+pub use grid::GridResult;

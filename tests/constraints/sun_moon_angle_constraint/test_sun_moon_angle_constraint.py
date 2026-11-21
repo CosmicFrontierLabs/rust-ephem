@@ -171,13 +171,23 @@ class TestMoonLimbConstraints:
 
         centre = MoonConstraint(min_angle=MOON_CONSTRAINT)
         limb = MoonConstraint(min_angle=MOON_CONSTRAINT, from_limb=True)
-        kwargs = dict(ephemeris=tle_ephem, time=timestamp, target_ra=ra, target_dec=dec)
+        kwargs = {
+            "ephemeris": tle_ephem,
+            "time": timestamp,
+            "target_ra": ra,
+            "target_dec": dec,
+        }
         assert centre.in_constraint(**kwargs) is False
         assert limb.in_constraint(**kwargs) is True
 
         # Comfortably outside the limb margin: satisfied either way.
         ra, dec = self._target_at(moon, MOON_CONSTRAINT + 2 * radius)
-        kwargs = dict(ephemeris=tle_ephem, time=timestamp, target_ra=ra, target_dec=dec)
+        kwargs = {
+            "ephemeris": tle_ephem,
+            "time": timestamp,
+            "target_ra": ra,
+            "target_dec": dec,
+        }
         assert limb.in_constraint(**kwargs) is False
 
     def test_limb_angle_value_is_centre_angle_minus_radius(
@@ -205,7 +215,12 @@ class TestMoonLimbConstraints:
     ) -> None:
         radius = float(tle_ephem.moon_radius_deg[183])
         ra, dec = self._target_at(moon, MOON_CONSTRAINT + radius / 2)
-        kwargs = dict(ephemeris=tle_ephem, time=timestamp, target_ra=ra, target_dec=dec)
+        kwargs = {
+            "ephemeris": tle_ephem,
+            "time": timestamp,
+            "target_ra": ra,
+            "target_dec": dec,
+        }
 
         wrapper = MoonLimbConstraint(min_angle=MOON_CONSTRAINT)
         assert wrapper.in_constraint(**kwargs) is True
@@ -224,7 +239,12 @@ class TestMoonLimbConstraints:
         radius = float(tle_ephem.moon_radius_deg[183])
         # Within 30° of the limb but beyond 30° of the centre.
         ra, dec = self._target_at(moon, 30.0 + radius / 2)
-        kwargs = dict(ephemeris=tle_ephem, time=timestamp, target_ra=ra, target_dec=dec)
+        kwargs = {
+            "ephemeris": tle_ephem,
+            "time": timestamp,
+            "target_ra": ra,
+            "target_dec": dec,
+        }
         assert (
             MoonLimbConstraint(min_angle=0.0, max_angle=30.0).in_constraint(**kwargs)
             is False

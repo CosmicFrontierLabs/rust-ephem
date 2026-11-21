@@ -281,13 +281,11 @@ class TestURLDownloading:
         # url = "https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=TLE"
         # ephem = rust_ephem.TLEEphemeris(tle=url, begin=BEGIN, end=END, step_size=STEP_SIZE)
         # assert ephem.tle_epoch is not None
-        pass
 
     @pytest.mark.skip(reason="Requires network access")
     def test_url_caching(self) -> None:
         """Test that URL downloads are cached (placeholder)."""
         # Test that subsequent calls use cache within TTL
-        pass
 
 
 class TestCelestrakIntegration:
@@ -299,7 +297,6 @@ class TestCelestrakIntegration:
         # Example: Fetch ISS TLE
         # ephem = rust_ephem.TLEEphemeris(norad_id=25544, begin=BEGIN, end=END, step_size=STEP_SIZE)
         # assert ephem.tle_epoch is not None
-        pass
 
     @pytest.mark.skip(reason="Requires network access")
     def test_fetch_by_name(self) -> None:
@@ -307,7 +304,6 @@ class TestCelestrakIntegration:
         # Example: Fetch ISS by name
         # ephem = rust_ephem.TLEEphemeris(norad_name="ISS", begin=BEGIN, end=END, step_size=STEP_SIZE)
         # assert ephem.tle_epoch is not None
-        pass
 
 
 class TestSpaceTrackIntegration:
@@ -530,11 +526,14 @@ class TestFetchTLE:
 
         from rust_ephem.tle import fetch_tle
 
-        with patch(
-            "rust_ephem.tle._fetch_tle", side_effect=ValueError("Connection timeout")
+        with (
+            patch(
+                "rust_ephem.tle._fetch_tle",
+                side_effect=ValueError("Connection timeout"),
+            ),
+            pytest.raises(ValueError, match="timed out"),
         ):
-            with pytest.raises(ValueError, match="timed out"):
-                fetch_tle(norad_id=25544)
+            fetch_tle(norad_id=25544)
 
     def test_fetch_tle_timeout_error_includes_norad_id(self):
         """The timeout hint mentions the NORAD ID when one was supplied."""
@@ -542,11 +541,14 @@ class TestFetchTLE:
 
         from rust_ephem.tle import fetch_tle
 
-        with patch(
-            "rust_ephem.tle._fetch_tle", side_effect=ValueError("connection timeout")
+        with (
+            patch(
+                "rust_ephem.tle._fetch_tle",
+                side_effect=ValueError("connection timeout"),
+            ),
+            pytest.raises(ValueError, match="25544"),
         ):
-            with pytest.raises(ValueError, match="25544"):
-                fetch_tle(norad_id=25544)
+            fetch_tle(norad_id=25544)
 
     def test_fetch_tle_timeout_error_with_norad_name(self):
         """The timeout hint mentions the satellite name when supplied."""
@@ -554,11 +556,13 @@ class TestFetchTLE:
 
         from rust_ephem.tle import fetch_tle
 
-        with patch(
-            "rust_ephem.tle._fetch_tle", side_effect=ValueError("TIMEOUT occurred")
+        with (
+            patch(
+                "rust_ephem.tle._fetch_tle", side_effect=ValueError("TIMEOUT occurred")
+            ),
+            pytest.raises(ValueError, match="HUBBLE"),
         ):
-            with pytest.raises(ValueError, match="HUBBLE"):
-                fetch_tle(norad_name="HUBBLE")
+            fetch_tle(norad_name="HUBBLE")
 
     def test_fetch_tle_timeout_error_with_tle_source(self):
         """The timeout hint mentions the source path/URL when supplied."""
@@ -566,9 +570,11 @@ class TestFetchTLE:
 
         from rust_ephem.tle import fetch_tle
 
-        with patch("rust_ephem.tle._fetch_tle", side_effect=ValueError("Read Timeout")):
-            with pytest.raises(ValueError, match="myfile.tle"):
-                fetch_tle(tle="myfile.tle")
+        with (
+            patch("rust_ephem.tle._fetch_tle", side_effect=ValueError("Read Timeout")),
+            pytest.raises(ValueError, match="myfile.tle"),
+        ):
+            fetch_tle(tle="myfile.tle")
 
     def test_fetch_tle_parse_failure_error_is_reraised_with_hint(self):
         """An 'Invalid TLE' ValueError from the Rust layer gets a human-friendly message."""
@@ -576,11 +582,14 @@ class TestFetchTLE:
 
         from rust_ephem.tle import fetch_tle
 
-        with patch(
-            "rust_ephem.tle._fetch_tle", side_effect=ValueError("Invalid TLE format")
+        with (
+            patch(
+                "rust_ephem.tle._fetch_tle",
+                side_effect=ValueError("Invalid TLE format"),
+            ),
+            pytest.raises(ValueError, match="No TLE data was returned"),
         ):
-            with pytest.raises(ValueError, match="No TLE data was returned"):
-                fetch_tle(norad_id=25544)
+            fetch_tle(norad_id=25544)
 
     def test_fetch_tle_parse_failure_includes_norad_name(self):
         """The parse-failure hint includes the satellite name when supplied."""
@@ -588,11 +597,14 @@ class TestFetchTLE:
 
         from rust_ephem.tle import fetch_tle
 
-        with patch(
-            "rust_ephem.tle._fetch_tle", side_effect=ValueError("Invalid TLE line 1")
+        with (
+            patch(
+                "rust_ephem.tle._fetch_tle",
+                side_effect=ValueError("Invalid TLE line 1"),
+            ),
+            pytest.raises(ValueError, match="HUBBLE"),
         ):
-            with pytest.raises(ValueError, match="HUBBLE"):
-                fetch_tle(norad_name="HUBBLE")
+            fetch_tle(norad_name="HUBBLE")
 
     def test_fetch_tle_other_valueerror_is_reraised_unchanged(self):
         """A ValueError that is neither a timeout nor a parse failure is re-raised as-is."""
@@ -600,12 +612,14 @@ class TestFetchTLE:
 
         from rust_ephem.tle import fetch_tle
 
-        with patch(
-            "rust_ephem.tle._fetch_tle",
-            side_effect=ValueError("some unexpected problem"),
+        with (
+            patch(
+                "rust_ephem.tle._fetch_tle",
+                side_effect=ValueError("some unexpected problem"),
+            ),
+            pytest.raises(ValueError, match="some unexpected problem"),
         ):
-            with pytest.raises(ValueError, match="some unexpected problem"):
-                fetch_tle(norad_id=25544)
+            fetch_tle(norad_id=25544)
 
 
 class TestFetchTLECorruptCacheRecovery:

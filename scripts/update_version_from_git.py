@@ -39,8 +39,7 @@ def get_version_from_git() -> str | None:
         desc = out.decode("utf-8").strip()
 
         # Strip leading 'v' if present
-        if desc.startswith("v"):
-            desc = desc[1:]
+        desc = desc.removeprefix("v")
 
         # Check if it's exactly a tag (no commits past) or has dev commits
         # Format: X.Y.Z or X.Y.Z-N-gHASH
@@ -72,7 +71,7 @@ def update_cargo_toml(version: str, dry_run: bool = False) -> bool:
     # Replace the first occurrence of a line like 'version = "x.y.z"'
     version_pat = re.compile(r'^(version\s*=\s*")[^"]+("\s*)$', re.MULTILINE)
 
-    def repl(m: "re.Match[str]") -> str:
+    def repl(m: re.Match[str]) -> str:
         return f"{m.group(1)}{version}{m.group(2)}"
 
     new_text, count = version_pat.subn(repl, text, count=1)

@@ -386,7 +386,8 @@ def test_time_floor_native_result_and_immutability(ephemeris: GroundEphemeris) -
     )
     assert native.waypoint == expected.waypoint
     with pytest.raises(AttributeError):
-        setattr(native, "violated", False)
+        # The stub marks it read-only too; the point is that the runtime does.
+        native.violated = False  # type: ignore[misc]
 
 
 @pytest.mark.parametrize(
