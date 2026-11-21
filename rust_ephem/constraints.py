@@ -839,8 +839,8 @@ class RustConstraintMixin(BaseModel):
             npt.NDArray[np.bool_],
             backend.in_constraint_elementwise(
                 ephemeris,
-                np.asarray(target_ras, dtype=np.float64),
-                np.asarray(target_decs, dtype=np.float64),
+                target_ras,
+                target_decs,
                 self._elementwise_times(times),
                 target_rolls=rolls,
                 n_roll_samples=n_roll_samples,
@@ -878,8 +878,8 @@ class RustConstraintMixin(BaseModel):
             ElementwiseResult,
             backend.evaluate_elementwise(
                 ephemeris,
-                np.asarray(target_ras, dtype=np.float64),
-                np.asarray(target_decs, dtype=np.float64),
+                target_ras,
+                target_decs,
                 self._elementwise_times(times),
                 target_rolls=rolls,
                 n_roll_samples=n_roll_samples,
@@ -932,8 +932,8 @@ class RustConstraintMixin(BaseModel):
             ``constraint_name``, ``timestamp`` (length N), ``ras`` and ``decs``
             (length M). ``result.target(i)`` builds the
             :class:`ConstraintResult`-like result of one target, with its
-            violation and visibility windows, on demand. The arrays are
-            read-only.
+            violation and visibility windows, on demand. The grid arrays
+            and ``timestamp`` are read-only; ``ras`` and ``decs`` are copies.
         """
         if n_roll_samples <= 0:
             raise ValueError("n_roll_samples must be a positive integer")
@@ -945,8 +945,8 @@ class RustConstraintMixin(BaseModel):
             GridResult,
             backend.evaluate_grid(
                 ephemeris,
-                np.asarray(target_ras, dtype=np.float64),
-                np.asarray(target_decs, dtype=np.float64),
+                target_ras,
+                target_decs,
                 grid_times,
                 indices,
                 target_rolls=rolls,
