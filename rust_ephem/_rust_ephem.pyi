@@ -1383,6 +1383,41 @@ class TLEEphemeris(Ephemeris):
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
         ...
 
+    def apparent_target_at(
+        self,
+        ras: float | Sequence[float] | npt.NDArray[np.float64],
+        decs: float | Sequence[float] | npt.NDArray[np.float64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+    ) -> npt.NDArray[np.float64]:
+        """Directions in which catalogue targets are seen at arbitrary time(s).
+
+        Applies the correction constraints apply to targets with
+        ``apparent=True``: solar light deflection, then the aberration of the
+        observer's barycentric velocity. The angle between a row of the result
+        and ``get_body_pv(body, times=times, apparent=True).position`` is the
+        angle a constraint reports for that body with ``apparent=True``.
+
+        ``ras``, ``decs`` and ``times`` are paired row by row; any of them may
+        be a single value used for every row.
+
+        Args:
+            ras: Catalogue (ICRS) right ascension(s) in degrees: a value or
+                a one-dimensional sequence.
+            decs: Catalogue (ICRS) declination(s) in degrees, from -90 to 90:
+                a value or a one-dimensional sequence.
+            times: A datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC).
+
+        Returns:
+            ``(N, 3)`` array of unit vectors, GCRS axes, rows in input order.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the lengths do
+                not match, an argument has more than one dimension, a
+                coordinate is not finite or a declination is outside -90 to
+                90, or no planetary kernel covers the times.
+        """
+
     @property
     def timestamp(self) -> npt.NDArray[np.datetime64]:
         """
@@ -1717,20 +1752,69 @@ class TLEEphemeris(Ephemeris):
         ...
 
     def get_body_pv(
-        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+        self,
+        body: str,
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = ...,
+        apparent: bool = ...,
     ) -> PositionVelocityData:
         """
-        Get position and velocity of a celestial body.
+        Get position and velocity of a celestial body relative to the observer.
 
         Args:
-            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499')
             spice_kernel: Optional path to SPICE kernel
-            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+            use_horizons: Geometric queries only: fall back to the JPL
+                Horizons API when SPICE fails.
+            times: Time(s) to evaluate at instead of the ephemeris grid: a
+                datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC). Times between grid points
+                interpolate the observer as ``gcrs_pv_at`` does; rows follow
+                input order.
+            apparent: Return the body as it is seen: reception light time,
+                solar light deflection and the aberration of the observer's
+                barycentric velocity. The directions are those constraints
+                use with ``apparent=True``.
 
         Returns:
-            Position and velocity data for the requested body
+            Position (km) and velocity (km/s) in GCRS axes, centred on the
+            observer.
+
+            With ``apparent=False`` they are geometric. With ``times`` given,
+            the Sun, Moon and Earth come from the states the ephemeris holds,
+            so the Sun's position is ``sun_pv_at(t).position -
+            gcrs_pv_at(t).position``.
+
+            With ``times`` or ``apparent=True``, and no ``spice_kernel``, the
+            Sun and Moon are the states computed when the ephemeris was
+            built, as for constraints. If no planetary kernel was loaded then
+            they are analytic, and stay so after one is loaded: a
+            ``UserWarning`` reports it. Rebuild the ephemeris, or pass
+            ``spice_kernel``, to read the kernel.
+
+            With ``apparent=True`` the position points where the body's light
+            arrives from and its length is the light-time distance: from the
+            observer at the requested time to the body where it was when the
+            light left it. The velocity is the rate of change of that apparent
+            position, which is not the geometric velocity: the aberration
+            shift turns with the observer's velocity (several km/s for the Sun
+            seen from low orbit). It is a finite difference over half a second
+            and takes the observer's acceleration from the interpolated
+            ephemeris. Where the stored velocities are the derivative of the
+            stored positions, that gives about 2 m/s for the Sun and 2 cm/s
+            for the Moon and Earth on a one-minute step in low orbit, less on
+            a finer step and more for a more distant body. SGP4 velocities
+            are not that derivative, so a ``TLEEphemeris`` does worse and a
+            finer step does not help: see the TLE ephemeris guide. It is NaN
+            if the ephemeris spans less than a second.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the body is
+                unknown, or ``apparent=True`` and no planetary kernel covers
+                the times.
         """
-        ...
 
     def get_body(
         self,
@@ -2031,6 +2115,41 @@ class SPICEEphemeris(Ephemeris):
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
         ...
 
+    def apparent_target_at(
+        self,
+        ras: float | Sequence[float] | npt.NDArray[np.float64],
+        decs: float | Sequence[float] | npt.NDArray[np.float64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+    ) -> npt.NDArray[np.float64]:
+        """Directions in which catalogue targets are seen at arbitrary time(s).
+
+        Applies the correction constraints apply to targets with
+        ``apparent=True``: solar light deflection, then the aberration of the
+        observer's barycentric velocity. The angle between a row of the result
+        and ``get_body_pv(body, times=times, apparent=True).position`` is the
+        angle a constraint reports for that body with ``apparent=True``.
+
+        ``ras``, ``decs`` and ``times`` are paired row by row; any of them may
+        be a single value used for every row.
+
+        Args:
+            ras: Catalogue (ICRS) right ascension(s) in degrees: a value or
+                a one-dimensional sequence.
+            decs: Catalogue (ICRS) declination(s) in degrees, from -90 to 90:
+                a value or a one-dimensional sequence.
+            times: A datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC).
+
+        Returns:
+            ``(N, 3)`` array of unit vectors, GCRS axes, rows in input order.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the lengths do
+                not match, an argument has more than one dimension, a
+                coordinate is not finite or a declination is outside -90 to
+                90, or no planetary kernel covers the times.
+        """
+
     @property
     def obsgeoloc(self) -> npt.NDArray[np.float64]:
         """
@@ -2330,20 +2449,69 @@ class SPICEEphemeris(Ephemeris):
         ...
 
     def get_body_pv(
-        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+        self,
+        body: str,
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = ...,
+        apparent: bool = ...,
     ) -> PositionVelocityData:
         """
-        Get position and velocity of a celestial body.
+        Get position and velocity of a celestial body relative to the observer.
 
         Args:
-            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499')
             spice_kernel: Optional path to SPICE kernel
-            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+            use_horizons: Geometric queries only: fall back to the JPL
+                Horizons API when SPICE fails.
+            times: Time(s) to evaluate at instead of the ephemeris grid: a
+                datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC). Times between grid points
+                interpolate the observer as ``gcrs_pv_at`` does; rows follow
+                input order.
+            apparent: Return the body as it is seen: reception light time,
+                solar light deflection and the aberration of the observer's
+                barycentric velocity. The directions are those constraints
+                use with ``apparent=True``.
 
         Returns:
-            Position and velocity data for the requested body
+            Position (km) and velocity (km/s) in GCRS axes, centred on the
+            observer.
+
+            With ``apparent=False`` they are geometric. With ``times`` given,
+            the Sun, Moon and Earth come from the states the ephemeris holds,
+            so the Sun's position is ``sun_pv_at(t).position -
+            gcrs_pv_at(t).position``.
+
+            With ``times`` or ``apparent=True``, and no ``spice_kernel``, the
+            Sun and Moon are the states computed when the ephemeris was
+            built, as for constraints. If no planetary kernel was loaded then
+            they are analytic, and stay so after one is loaded: a
+            ``UserWarning`` reports it. Rebuild the ephemeris, or pass
+            ``spice_kernel``, to read the kernel.
+
+            With ``apparent=True`` the position points where the body's light
+            arrives from and its length is the light-time distance: from the
+            observer at the requested time to the body where it was when the
+            light left it. The velocity is the rate of change of that apparent
+            position, which is not the geometric velocity: the aberration
+            shift turns with the observer's velocity (several km/s for the Sun
+            seen from low orbit). It is a finite difference over half a second
+            and takes the observer's acceleration from the interpolated
+            ephemeris. Where the stored velocities are the derivative of the
+            stored positions, that gives about 2 m/s for the Sun and 2 cm/s
+            for the Moon and Earth on a one-minute step in low orbit, less on
+            a finer step and more for a more distant body. SGP4 velocities
+            are not that derivative, so a ``TLEEphemeris`` does worse and a
+            finer step does not help: see the TLE ephemeris guide. It is NaN
+            if the ephemeris spans less than a second.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the body is
+                unknown, or ``apparent=True`` and no planetary kernel covers
+                the times.
         """
-        ...
 
     def get_body(
         self,
@@ -2584,6 +2752,41 @@ class OEMEphemeris(Ephemeris):
     ) -> PositionVelocityData:
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
         ...
+
+    def apparent_target_at(
+        self,
+        ras: float | Sequence[float] | npt.NDArray[np.float64],
+        decs: float | Sequence[float] | npt.NDArray[np.float64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+    ) -> npt.NDArray[np.float64]:
+        """Directions in which catalogue targets are seen at arbitrary time(s).
+
+        Applies the correction constraints apply to targets with
+        ``apparent=True``: solar light deflection, then the aberration of the
+        observer's barycentric velocity. The angle between a row of the result
+        and ``get_body_pv(body, times=times, apparent=True).position`` is the
+        angle a constraint reports for that body with ``apparent=True``.
+
+        ``ras``, ``decs`` and ``times`` are paired row by row; any of them may
+        be a single value used for every row.
+
+        Args:
+            ras: Catalogue (ICRS) right ascension(s) in degrees: a value or
+                a one-dimensional sequence.
+            decs: Catalogue (ICRS) declination(s) in degrees, from -90 to 90:
+                a value or a one-dimensional sequence.
+            times: A datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC).
+
+        Returns:
+            ``(N, 3)`` array of unit vectors, GCRS axes, rows in input order.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the lengths do
+                not match, an argument has more than one dimension, a
+                coordinate is not finite or a declination is outside -90 to
+                90, or no planetary kernel covers the times.
+        """
 
     @property
     def obsgeoloc(self) -> npt.NDArray[np.float64]:
@@ -2884,20 +3087,69 @@ class OEMEphemeris(Ephemeris):
         ...
 
     def get_body_pv(
-        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+        self,
+        body: str,
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = ...,
+        apparent: bool = ...,
     ) -> PositionVelocityData:
         """
-        Get position and velocity of a celestial body.
+        Get position and velocity of a celestial body relative to the observer.
 
         Args:
-            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499')
             spice_kernel: Optional path to SPICE kernel
-            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+            use_horizons: Geometric queries only: fall back to the JPL
+                Horizons API when SPICE fails.
+            times: Time(s) to evaluate at instead of the ephemeris grid: a
+                datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC). Times between grid points
+                interpolate the observer as ``gcrs_pv_at`` does; rows follow
+                input order.
+            apparent: Return the body as it is seen: reception light time,
+                solar light deflection and the aberration of the observer's
+                barycentric velocity. The directions are those constraints
+                use with ``apparent=True``.
 
         Returns:
-            Position and velocity data for the requested body
+            Position (km) and velocity (km/s) in GCRS axes, centred on the
+            observer.
+
+            With ``apparent=False`` they are geometric. With ``times`` given,
+            the Sun, Moon and Earth come from the states the ephemeris holds,
+            so the Sun's position is ``sun_pv_at(t).position -
+            gcrs_pv_at(t).position``.
+
+            With ``times`` or ``apparent=True``, and no ``spice_kernel``, the
+            Sun and Moon are the states computed when the ephemeris was
+            built, as for constraints. If no planetary kernel was loaded then
+            they are analytic, and stay so after one is loaded: a
+            ``UserWarning`` reports it. Rebuild the ephemeris, or pass
+            ``spice_kernel``, to read the kernel.
+
+            With ``apparent=True`` the position points where the body's light
+            arrives from and its length is the light-time distance: from the
+            observer at the requested time to the body where it was when the
+            light left it. The velocity is the rate of change of that apparent
+            position, which is not the geometric velocity: the aberration
+            shift turns with the observer's velocity (several km/s for the Sun
+            seen from low orbit). It is a finite difference over half a second
+            and takes the observer's acceleration from the interpolated
+            ephemeris. Where the stored velocities are the derivative of the
+            stored positions, that gives about 2 m/s for the Sun and 2 cm/s
+            for the Moon and Earth on a one-minute step in low orbit, less on
+            a finer step and more for a more distant body. SGP4 velocities
+            are not that derivative, so a ``TLEEphemeris`` does worse and a
+            finer step does not help: see the TLE ephemeris guide. It is NaN
+            if the ephemeris spans less than a second.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the body is
+                unknown, or ``apparent=True`` and no planetary kernel covers
+                the times.
         """
-        ...
 
     def get_body(
         self,
@@ -3186,6 +3438,41 @@ class FileEphemeris(Ephemeris):
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
         ...
 
+    def apparent_target_at(
+        self,
+        ras: float | Sequence[float] | npt.NDArray[np.float64],
+        decs: float | Sequence[float] | npt.NDArray[np.float64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+    ) -> npt.NDArray[np.float64]:
+        """Directions in which catalogue targets are seen at arbitrary time(s).
+
+        Applies the correction constraints apply to targets with
+        ``apparent=True``: solar light deflection, then the aberration of the
+        observer's barycentric velocity. The angle between a row of the result
+        and ``get_body_pv(body, times=times, apparent=True).position`` is the
+        angle a constraint reports for that body with ``apparent=True``.
+
+        ``ras``, ``decs`` and ``times`` are paired row by row; any of them may
+        be a single value used for every row.
+
+        Args:
+            ras: Catalogue (ICRS) right ascension(s) in degrees: a value or
+                a one-dimensional sequence.
+            decs: Catalogue (ICRS) declination(s) in degrees, from -90 to 90:
+                a value or a one-dimensional sequence.
+            times: A datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC).
+
+        Returns:
+            ``(N, 3)`` array of unit vectors, GCRS axes, rows in input order.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the lengths do
+                not match, an argument has more than one dimension, a
+                coordinate is not finite or a declination is outside -90 to
+                90, or no planetary kernel covers the times.
+        """
+
     @property
     def obsgeoloc(self) -> Any:
         """Observer geocentric location."""
@@ -3385,10 +3672,69 @@ class FileEphemeris(Ephemeris):
         ...
 
     def get_body_pv(
-        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+        self,
+        body: str,
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = ...,
+        apparent: bool = ...,
     ) -> PositionVelocityData:
-        """Get position and velocity of a named solar-system body."""
-        ...
+        """
+        Get position and velocity of a celestial body relative to the observer.
+
+        Args:
+            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499')
+            spice_kernel: Optional path to SPICE kernel
+            use_horizons: Geometric queries only: fall back to the JPL
+                Horizons API when SPICE fails.
+            times: Time(s) to evaluate at instead of the ephemeris grid: a
+                datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC). Times between grid points
+                interpolate the observer as ``gcrs_pv_at`` does; rows follow
+                input order.
+            apparent: Return the body as it is seen: reception light time,
+                solar light deflection and the aberration of the observer's
+                barycentric velocity. The directions are those constraints
+                use with ``apparent=True``.
+
+        Returns:
+            Position (km) and velocity (km/s) in GCRS axes, centred on the
+            observer.
+
+            With ``apparent=False`` they are geometric. With ``times`` given,
+            the Sun, Moon and Earth come from the states the ephemeris holds,
+            so the Sun's position is ``sun_pv_at(t).position -
+            gcrs_pv_at(t).position``.
+
+            With ``times`` or ``apparent=True``, and no ``spice_kernel``, the
+            Sun and Moon are the states computed when the ephemeris was
+            built, as for constraints. If no planetary kernel was loaded then
+            they are analytic, and stay so after one is loaded: a
+            ``UserWarning`` reports it. Rebuild the ephemeris, or pass
+            ``spice_kernel``, to read the kernel.
+
+            With ``apparent=True`` the position points where the body's light
+            arrives from and its length is the light-time distance: from the
+            observer at the requested time to the body where it was when the
+            light left it. The velocity is the rate of change of that apparent
+            position, which is not the geometric velocity: the aberration
+            shift turns with the observer's velocity (several km/s for the Sun
+            seen from low orbit). It is a finite difference over half a second
+            and takes the observer's acceleration from the interpolated
+            ephemeris. Where the stored velocities are the derivative of the
+            stored positions, that gives about 2 m/s for the Sun and 2 cm/s
+            for the Moon and Earth on a one-minute step in low orbit, less on
+            a finer step and more for a more distant body. SGP4 velocities
+            are not that derivative, so a ``TLEEphemeris`` does worse and a
+            finer step does not help: see the TLE ephemeris guide. It is NaN
+            if the ephemeris spans less than a second.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the body is
+                unknown, or ``apparent=True`` and no planetary kernel covers
+                the times.
+        """
 
     def get_body(
         self,
@@ -3625,6 +3971,12 @@ class ParquetEphemeris(Ephemeris):
     def moon_pv_at(
         self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
     ) -> PositionVelocityData: ...
+    def apparent_target_at(
+        self,
+        ras: float | Sequence[float] | npt.NDArray[np.float64],
+        decs: float | Sequence[float] | npt.NDArray[np.float64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+    ) -> npt.NDArray[np.float64]: ...
     @property
     def obsgeoloc(self) -> Any: ...
     @property
@@ -3706,7 +4058,13 @@ class ParquetEphemeris(Ephemeris):
         self, time_indices: list[int] | None = None
     ) -> list[float]: ...
     def get_body_pv(
-        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+        self,
+        body: str,
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = ...,
+        apparent: bool = ...,
     ) -> PositionVelocityData: ...
     def get_body(
         self,
@@ -3892,6 +4250,41 @@ class GroundEphemeris(Ephemeris):
     ) -> PositionVelocityData:
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
         ...
+
+    def apparent_target_at(
+        self,
+        ras: float | Sequence[float] | npt.NDArray[np.float64],
+        decs: float | Sequence[float] | npt.NDArray[np.float64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+    ) -> npt.NDArray[np.float64]:
+        """Directions in which catalogue targets are seen at arbitrary time(s).
+
+        Applies the correction constraints apply to targets with
+        ``apparent=True``: solar light deflection, then the aberration of the
+        observer's barycentric velocity. The angle between a row of the result
+        and ``get_body_pv(body, times=times, apparent=True).position`` is the
+        angle a constraint reports for that body with ``apparent=True``.
+
+        ``ras``, ``decs`` and ``times`` are paired row by row; any of them may
+        be a single value used for every row.
+
+        Args:
+            ras: Catalogue (ICRS) right ascension(s) in degrees: a value or
+                a one-dimensional sequence.
+            decs: Catalogue (ICRS) declination(s) in degrees, from -90 to 90:
+                a value or a one-dimensional sequence.
+            times: A datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC).
+
+        Returns:
+            ``(N, 3)`` array of unit vectors, GCRS axes, rows in input order.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the lengths do
+                not match, an argument has more than one dimension, a
+                coordinate is not finite or a declination is outside -90 to
+                90, or no planetary kernel covers the times.
+        """
 
     @property
     def timestamp(self) -> npt.NDArray[np.datetime64]:
@@ -4242,20 +4635,69 @@ class GroundEphemeris(Ephemeris):
         ...
 
     def get_body_pv(
-        self, body: str, spice_kernel: str | None = ..., use_horizons: bool = ...
+        self,
+        body: str,
+        spice_kernel: str | None = ...,
+        use_horizons: bool = ...,
+        *,
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = ...,
+        apparent: bool = ...,
     ) -> PositionVelocityData:
         """
-        Get position and velocity of a celestial body.
+        Get position and velocity of a celestial body relative to the observer.
 
         Args:
-            body: Name of the body (e.g., 'sun', 'moon', 'earth')
+            body: Body name or NAIF ID (e.g., 'sun', 'moon', 'earth', '499')
             spice_kernel: Optional path to SPICE kernel
-            use_horizons: If True, fall back to JPL Horizons API when SPICE fails
+            use_horizons: Geometric queries only: fall back to the JPL
+                Horizons API when SPICE fails.
+            times: Time(s) to evaluate at instead of the ephemeris grid: a
+                datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC). Times between grid points
+                interpolate the observer as ``gcrs_pv_at`` does; rows follow
+                input order.
+            apparent: Return the body as it is seen: reception light time,
+                solar light deflection and the aberration of the observer's
+                barycentric velocity. The directions are those constraints
+                use with ``apparent=True``.
 
         Returns:
-            Position and velocity data for the requested body
+            Position (km) and velocity (km/s) in GCRS axes, centred on the
+            observer.
+
+            With ``apparent=False`` they are geometric. With ``times`` given,
+            the Sun, Moon and Earth come from the states the ephemeris holds,
+            so the Sun's position is ``sun_pv_at(t).position -
+            gcrs_pv_at(t).position``.
+
+            With ``times`` or ``apparent=True``, and no ``spice_kernel``, the
+            Sun and Moon are the states computed when the ephemeris was
+            built, as for constraints. If no planetary kernel was loaded then
+            they are analytic, and stay so after one is loaded: a
+            ``UserWarning`` reports it. Rebuild the ephemeris, or pass
+            ``spice_kernel``, to read the kernel.
+
+            With ``apparent=True`` the position points where the body's light
+            arrives from and its length is the light-time distance: from the
+            observer at the requested time to the body where it was when the
+            light left it. The velocity is the rate of change of that apparent
+            position, which is not the geometric velocity: the aberration
+            shift turns with the observer's velocity (several km/s for the Sun
+            seen from low orbit). It is a finite difference over half a second
+            and takes the observer's acceleration from the interpolated
+            ephemeris. Where the stored velocities are the derivative of the
+            stored positions, that gives about 2 m/s for the Sun and 2 cm/s
+            for the Moon and Earth on a one-minute step in low orbit, less on
+            a finer step and more for a more distant body. SGP4 velocities
+            are not that derivative, so a ``TLEEphemeris`` does worse and a
+            finer step does not help: see the TLE ephemeris guide. It is NaN
+            if the ephemeris spans less than a second.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the body is
+                unknown, or ``apparent=True`` and no planetary kernel covers
+                the times.
         """
-        ...
 
     def get_body(
         self,
