@@ -247,6 +247,10 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         format!("EarthLimb(min={}°)", self.min_angle_deg)
     }
 
+    fn ignores_explicit_roll(&self) -> bool {
+        true
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

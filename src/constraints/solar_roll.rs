@@ -99,25 +99,11 @@ pub fn roll_is_unconstrained(
     sun_along_boresight || panel_proj <= NEAR_ZERO
 }
 
-/// Compute the north-referenced spacecraft roll (degrees, CCW positive) that maximises
-/// solar illumination of the panel with the given body-frame normal.
-///
-/// North-referenced body frame (same convention as `boresight_rotate` in roll_range.rs):
-///   x = boresight (target direction)
-///   z = celestial north projected onto the plane perpendicular to x
-///   y = z × x  (recomputed for orthonormality)
-///
-/// At roll θ the body Y-axis is:  y_ref·cos(θ) + z_ref·sin(θ)
-/// For panel normal n = [nx, ny, nz] (body frame, x = boresight), the panel
-/// illumination is maximised at:
-///   θ_opt = atan2(sun_z, sun_y) - atan2(nz, ny)
-/// The +Y default (ny=1, nz=0) recovers the original formula.
-pub fn solar_optimal_roll_deg(
-    target: &[f64; 3],
-    sun_unit: &[f64; 3],
-    panel_normal: [f64; 3],
-) -> f64 {
-    let x_axis = *target;
+/// Roll-zero axes of the north-referenced body frame for boresight `x_axis`:
+/// `(y, z)` with `z` celestial north projected perpendicular to the boresight
+/// and `y = z x boresight`. At spacecraft roll `theta` (CCW about the
+/// boresight) body +Y is `y cos(theta) + z sin(theta)`.
+pub fn north_referenced_axes(x_axis: [f64; 3]) -> ([f64; 3], [f64; 3]) {
     let z_ref = [0.0_f64, 0.0, 1.0];
 
     let zref_dot_x = dot3(x_axis, z_ref);
@@ -146,6 +132,28 @@ pub fn solar_optimal_roll_deg(
     let y_raw = cross3(z_axis, x_axis);
     let y_axis = normalize3(y_raw).unwrap_or([0.0, 1.0, 0.0]);
     let z_axis = cross3(x_axis, y_axis); // recomputed for strict orthonormality
+    (y_axis, z_axis)
+}
+
+/// Compute the north-referenced spacecraft roll (degrees, CCW positive) that maximises
+/// solar illumination of the panel with the given body-frame normal.
+///
+/// North-referenced body frame (same convention as `boresight_rotate` in roll_range.rs):
+///   x = boresight (target direction)
+///   z = celestial north projected onto the plane perpendicular to x
+///   y = z × x  (recomputed for orthonormality)
+///
+/// At roll θ the body Y-axis is:  y_ref·cos(θ) + z_ref·sin(θ)
+/// For panel normal n = [nx, ny, nz] (body frame, x = boresight), the panel
+/// illumination is maximised at:
+///   θ_opt = atan2(sun_z, sun_y) - atan2(nz, ny)
+/// The +Y default (ny=1, nz=0) recovers the original formula.
+pub fn solar_optimal_roll_deg(
+    target: &[f64; 3],
+    sun_unit: &[f64; 3],
+    panel_normal: [f64; 3],
+) -> f64 {
+    let (y_axis, z_axis) = north_referenced_axes(*target);
 
     let sun_y = dot3(*sun_unit, y_axis);
     let sun_z = dot3(*sun_unit, z_axis);

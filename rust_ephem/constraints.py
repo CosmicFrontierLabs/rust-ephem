@@ -23,6 +23,7 @@ from pydantic import (
     Field,
     PrivateAttr,
     TypeAdapter,
+    field_validator,
     model_validator,
 )
 
@@ -1995,6 +1996,368 @@ class BrightStarConstraint(RustConstraintMixin):
         return self
 
 
+class PointSourceTransmittance(BaseModel):
+    """A telescope's point-source transmittance (PST) table.
+
+    ``PST(theta, phi) = E_focal / E_aperture``: the mean focal-plane irradiance
+    produced by a collimated source of unit irradiance arriving from off-axis
+    angle ``theta`` and azimuth ``phi`` about the boresight. The table holds
+    ``log10(PST)`` and is interpolated bilinearly in the logarithm.
+
+    Lookups outside the table:
+
+    * Beyond the last off-axis angle, and in cells given as ``None`` or NaN,
+      the PST is the lowest value in the table (the floor of the raytrace).
+    * Below the first off-axis angle the first row is used.
+    * With ``azimuth_symmetric=True`` (the default) the response is taken to be
+      mirror symmetric about its azimuth-zero plane: the columns cover part or
+      all of 0-180 degrees and any azimuth is folded onto that range. With
+      ``False`` the columns span a full turn and wrap around.
+
+    Use :meth:`from_pst` to build one from linear PST values.
+
+    Attributes:
+        off_axis_deg: Off-axis angles of the rows (degrees), strictly
+            increasing, within [0, 180]. At least two.
+        azimuth_deg: Azimuths of the columns (degrees), strictly increasing. A
+            single column describes a PST that does not depend on azimuth.
+        log10_pst: ``log10(PST)``, shape ``(len(off_axis_deg), len(azimuth_deg))``.
+        azimuth_symmetric: Fold azimuths onto 0-180 degrees (see above).
+    """
+
+    off_axis_deg: list[float] = Field(
+        ..., description="Off-axis angles of the rows (degrees), strictly increasing"
+    )
+    azimuth_deg: list[float] = Field(
+        ..., description="Azimuths of the columns (degrees), strictly increasing"
+    )
+    log10_pst: list[list[float | None]] = Field(
+        ...,
+        description="log10(PST), one row per off-axis angle; None for an empty cell",
+    )
+    azimuth_symmetric: bool = Field(
+        default=True,
+        description="Fold azimuths onto 0-180 degrees (mirror-symmetric response)",
+    )
+
+    @field_validator("off_axis_deg", "azimuth_deg", mode="before")
+    @classmethod
+    def _axis_to_list(cls, value: Any) -> Any:
+        return np.asarray(value, dtype=float).tolist()
+
+    @field_validator("log10_pst", mode="before")
+    @classmethod
+    def _grid_to_list(cls, value: Any) -> Any:
+        grid = np.asarray(
+            [[np.nan if cell is None else cell for cell in row] for row in value],
+            dtype=float,
+        )
+        if grid.ndim != 2:
+            raise ValueError("log10_pst must be a 2-D table")
+        return [
+            [float(cell) if np.isfinite(cell) else None for cell in row] for row in grid
+        ]
+
+    @model_validator(mode="after")
+    def _check_table(self) -> PointSourceTransmittance:
+        def increasing(axis: list[float]) -> bool:
+            return bool(np.all(np.isfinite(axis)) and np.all(np.diff(axis) > 0))
+
+        if len(self.off_axis_deg) < 2 or not increasing(self.off_axis_deg):
+            raise ValueError(
+                "off_axis_deg must hold at least two finite, strictly increasing angles"
+            )
+        if self.off_axis_deg[0] < 0.0 or self.off_axis_deg[-1] > 180.0:
+            raise ValueError("off_axis_deg must lie within [0, 180] degrees")
+        if len(self.azimuth_deg) < 1 or not increasing(self.azimuth_deg):
+            raise ValueError(
+                "azimuth_deg must hold at least one finite, strictly increasing angle"
+            )
+        if self.azimuth_symmetric and (
+            self.azimuth_deg[0] < 0.0 or self.azimuth_deg[-1] > 180.0
+        ):
+            raise ValueError(
+                "azimuth_deg must lie within [0, 180] degrees for a symmetric table"
+            )
+        if (
+            not self.azimuth_symmetric
+            and self.azimuth_deg[-1] - self.azimuth_deg[0] >= 360.0
+        ):
+            raise ValueError("azimuth_deg must span less than 360 degrees")
+        shape = (len(self.off_axis_deg), len(self.azimuth_deg))
+        if len(self.log10_pst) != shape[0] or any(
+            len(row) != shape[1] for row in self.log10_pst
+        ):
+            raise ValueError(
+                f"log10_pst must have shape {shape}: one row per off-axis angle, "
+                "one column per azimuth"
+            )
+        if all(cell is None for row in self.log10_pst for cell in row):
+            raise ValueError("log10_pst holds no finite value")
+        return self
+
+    @classmethod
+    def from_pst(
+        cls,
+        off_axis_deg: npt.ArrayLike,
+        azimuth_deg: npt.ArrayLike,
+        pst: npt.ArrayLike,
+        azimuth_symmetric: bool = True,
+    ) -> PointSourceTransmittance:
+        """Build a table from linear PST values.
+
+        Args:
+            off_axis_deg: Off-axis angles of the rows (degrees).
+            azimuth_deg: Azimuths of the columns (degrees).
+            pst: PST values, shape ``(len(off_axis_deg), len(azimuth_deg))``.
+                Zero, negative and NaN entries are treated as empty cells.
+            azimuth_symmetric: See the class documentation.
+        """
+        values = np.asarray(pst, dtype=float)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            log = np.where(values > 0.0, np.log10(values), np.nan)
+        return cls(
+            off_axis_deg=np.asarray(off_axis_deg, dtype=float).tolist(),
+            azimuth_deg=np.asarray(azimuth_deg, dtype=float).tolist(),
+            log10_pst=log.tolist(),
+            azimuth_symmetric=azimuth_symmetric,
+        )
+
+
+class StrayLightStatus(int, Enum):
+    """Why a body has, or has not, a stray-light prediction: the meaning of the
+    ``sun_status``, ``earth_status`` and ``moon_status`` values of
+    :class:`StrayLightConstraint`."""
+
+    #: A converged prediction.
+    OK = 0
+    #: No sunlit surface is visible. The body contributes nothing; it counts
+    #: as a prediction.
+    DARK = 1
+    #: The nearest limb is within ``in_field_deg`` of the boresight.
+    IN_FIELD = 2
+    #: The nearest limb is inside the first off-axis cell of the table.
+    FIRST_CELL = 3
+    #: The integral over the body did not converge.
+    UNCONVERGED = 4
+    #: The Earth hides the whole body. It contributes nothing; it counts as a
+    #: prediction.
+    OCCULTED = 5
+
+    @property
+    def is_valid(self) -> bool:
+        """Whether the body's contribution is a usable prediction."""
+        return self in (
+            StrayLightStatus.OK,
+            StrayLightStatus.DARK,
+            StrayLightStatus.OCCULTED,
+        )
+
+
+class StrayLightConstraint(RustConstraintMixin):
+    """Stray-light constraint: scattered light against the zodiacal background.
+
+    Violated when out-of-field light from the Sun, Earth and Moon, scattered
+    onto the focal plane, exceeds ``max_ratio`` times the zodiacal background,
+    or when the model cannot make a prediction for the pointing.
+
+    For each body the model sums radiance times the telescope's point-source
+    transmittance over the sky directions its sunlit surface is seen in, and
+    reports the sum as two factors: the body's V magnitude at the observer
+    (distance and phase) and the brightness-weighted mean of the PST over it.
+    The Sun is a uniform disk. The Earth is a Lambert sphere whose radiance is
+    summed over the sky as it is seen, with no factor for the inclination of
+    a ray to the Earth's direction, so the result holds from low orbit, where
+    the Earth spans about 136 degrees. The Moon follows Allen's phase law.
+    The three are added, and ``conversion_factor`` turns the total into the
+    surface brightness of the uniform sky that would put the same light on
+    the focal plane, which is compared with the zodi.
+
+    **Occultation.** A part of the Sun or Moon whose line of sight meets the
+    Earth first contributes nothing: a body wholly behind the Earth has status
+    ``OCCULTED``, and one crossing the limb contributes in proportion to the
+    part in view. The Earth is a sphere with no atmosphere.
+
+    **Attitude.** Without a roll, the attitude is tied to the Sun: at the
+    nominal attitude the Sun's direction, projected perpendicular to the
+    boresight, lies at table azimuth ``sun_azimuth_deg``, and
+    ``roll_offset_deg`` rolls the spacecraft right-handed about the boresight
+    from there, which adds to the Sun's azimuth.
+
+    A ``target_roll`` (or a ``target_rolls`` entry) passed to an evaluation
+    method is the absolute spacecraft roll for that row, in the convention of
+    :class:`SolarRollConstraint` and :class:`BoresightOffsetConstraint`:
+    counter-clockwise about the boresight, with body +Y to the east and body
+    +Z to the north at roll zero. It replaces the nominal attitude, and
+    ``roll_offset_deg`` is not applied to that row. Rows whose roll is
+    ``None`` keep the nominal attitude. The table's azimuth-zero axis is body
+    +Y turned by ``sun_azimuth_deg``, and the nominal attitude is the
+    solar-optimal roll of a +Y panel plus ``roll_offset_deg``.
+
+    The roll actually used is reported as ``roll_deg`` in
+    ``constraint_values``, so the two descriptions convert through it: passing
+    it back as ``target_roll`` reproduces the result, and ``roll_deg + x``
+    reproduces ``roll_offset_deg=x``. :meth:`roll_range` returns the rolls at
+    which the constraint is satisfied.
+
+    **Free roll.** With no roll given, this constraint alone, or with rules
+    that do not depend on the roll, is evaluated at its nominal attitude. In
+    a tree with a rule that needs a roll (:class:`SolarRollConstraint`, a
+    boresight offset with pitch or yaw, a polygon field of view) the tree is
+    swept over ``n_roll_samples`` rolls and this constraint is evaluated at
+    each candidate with the others: the tree is satisfied where some roll
+    satisfies all of it, as :meth:`roll_range` reports. ``constraint_values``
+    still describe the nominal attitude in that case.
+
+    **Validity.** There is no prediction, and the constraint is violated, when
+    a body's nearest limb is within ``in_field_deg`` of the boresight (direct
+    light), when that limb lies inside the first off-axis cell of the table,
+    when the integral over a body does not converge, or when the tabulated
+    zodi has no entry for the pointing. ``constraint_values`` are NaN in those
+    cases. A body showing no sunlit surface, or wholly hidden by the Earth, is
+    a valid prediction of zero.
+
+    **Values.** ``constraint_values`` holds everything the model works out, so
+    nothing has to be recomputed outside it:
+
+    * ``stray_light_ratio`` (scattered light over zodi) and the parts of it due
+      to each body, ``sun_stray_light_ratio``, ``earth_stray_light_ratio`` and
+      ``moon_stray_light_ratio`` (each NaN only when that body has no
+      prediction), and ``zodi_v_mag_arcsec2``, the zodi they are taken against;
+    * for the pointing: ``roll_deg`` (the spacecraft roll used, 0-360, in the
+      convention of ``target_roll``), ``helio_ecliptic_longitude_deg`` (ecliptic
+      longitude from the Sun, 0-360), ``ecliptic_latitude_deg`` and
+      ``zodi_table_v_mag_arcsec2`` (the tabulated zodi there, whichever zodi the
+      ratio uses);
+    * for each body, with the prefix ``sun_``, ``earth_`` or ``moon_`` (for
+      example ``earth_v_mag``): ``v_mag``; ``phase_deg`` (NaN for the Sun);
+      ``distance_km``; ``angular_radius_deg``; ``separation_deg`` and
+      ``limb_deg`` (boresight to the centre and to the nearest limb);
+      ``azimuth_deg`` (table azimuth of the centre, -180 to 180);
+      ``pst_center`` and ``pst_mean`` (PST toward the centre and its
+      brightness-weighted mean over the body, hidden parts counting as zero);
+      ``lit_fraction`` (the part of the disk that is sunlit and in view);
+      ``quadrature_error``; and ``status`` (a :class:`StrayLightStatus` value).
+
+    The per-body values are filled in even where the body has no prediction. A
+    body's scattered flux in V = 0 sources is ``10**(-0.4 * v_mag) * pst_mean``.
+
+    **Conversion factor.** The two sides of the ratio start in different
+    units. The scattered light is an irradiance on the focal plane,
+    ``sum(flux * <PST>)``, with each body's flux in units of a V = 0 source.
+    The zodi is a surface brightness: V = 0 sources per square arcsecond of
+    sky. ``conversion_factor`` is the surface brightness of the uniform sky
+    that produces one unit of focal-plane irradiance, and it is a property of
+    the telescope:
+
+    * A uniform sky of radiance ``L`` per steradian puts an irradiance of
+      ``L * pi / (4 N**2)`` on the focal plane of a telescope of focal ratio
+      ``N`` (a faster telescope concentrates the sky more).
+    * A surface brightness ``S`` per square arcsecond is a radiance of
+      ``S * A**2`` per steradian, where ``A = 3600 * 180 / pi = 206264.8`` is
+      the number of arcseconds in a radian, so ``A**2`` is the number of square
+      arcseconds in a steradian.
+    * If the sky's light passes through optics the PST does not already
+      include (or the reverse), the ratio of the two throughputs enters too.
+
+    Setting the sky's irradiance equal to one unit and solving for ``S``::
+
+        arcsec_per_radian = 3600 * 180 / pi
+        conversion_factor = (
+            4 * N**2 / (pi * arcsec_per_radian**2)
+            * scatter_throughput / sky_throughput
+        )
+
+    For an f/10 telescope with equal throughputs this is about 3.0e-9. For a
+    grey PST and solar-colour sources a bandpass scales both sides by the same
+    constants, so this one number is all the radiometry the constraint needs.
+
+    Attributes:
+        type: Always "stray_light"
+        pst: The telescope's point-source transmittance table.
+        conversion_factor: Equivalent sky surface brightness (V = 0 sources per
+            square arcsecond) per unit of PST-weighted flux (V = 0 sources).
+        max_ratio: Largest allowed scattered light / zodi ratio (default 3).
+        roll_offset_deg: Roll about the boresight from the nominal attitude
+            (degrees, default 0).
+        sun_azimuth_deg: Table azimuth of the Sun at the nominal attitude
+            (degrees, default 0).
+        zodi: ``"constant"`` (default) compares with ``zodi_v_mag_arcsec2``
+            everywhere; ``"table"`` uses the zodiacal light of Leinert et al.
+            (1998) against ecliptic position relative to the Sun, which has no
+            entry within about 60 degrees of the Sun near the ecliptic.
+        zodi_v_mag_arcsec2: Surface brightness of the constant zodi, V mag per
+            square arcsecond (default 22.5).
+        in_field_deg: A body whose nearest limb is closer to the boresight than
+            this is in the field (degrees, default 0.3).
+        earth_albedo: Geometric albedo of the Earth in V (default 0.24).
+        sun_v_mag_1au: V magnitude of the Sun at 1 au (default -26.74).
+        moon_v_mag_full: V magnitude of the full Moon at 384,400 km
+            (default -12.73).
+    """
+
+    type: Literal["stray_light"] = "stray_light"
+    pst: PointSourceTransmittance = Field(
+        ..., description="Point-source transmittance table of the telescope"
+    )
+    conversion_factor: float = Field(
+        ...,
+        gt=0.0,
+        allow_inf_nan=False,
+        description=(
+            "Equivalent sky surface brightness (V = 0 sources per arcsec^2) per "
+            "unit of PST-weighted flux (V = 0 sources)"
+        ),
+    )
+    max_ratio: float = Field(
+        default=3.0,
+        gt=0.0,
+        allow_inf_nan=False,
+        description="Largest allowed scattered light / zodi ratio",
+    )
+    roll_offset_deg: float = Field(
+        default=0.0,
+        allow_inf_nan=False,
+        description="Roll about the boresight from the nominal attitude (degrees)",
+    )
+    sun_azimuth_deg: float = Field(
+        default=0.0,
+        allow_inf_nan=False,
+        description="Table azimuth of the Sun at the nominal attitude (degrees)",
+    )
+    zodi: Literal["constant", "table"] = Field(
+        default="constant",
+        description="Zodiacal reference: a constant, or tabulated against the Sun",
+    )
+    zodi_v_mag_arcsec2: float = Field(
+        default=22.5,
+        allow_inf_nan=False,
+        description="Surface brightness of the constant zodi (V mag per arcsec^2)",
+    )
+    in_field_deg: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=180.0,
+        description="Limb distance from the boresight below which a body is in the field (degrees)",
+    )
+    earth_albedo: float = Field(
+        default=0.24,
+        gt=0.0,
+        allow_inf_nan=False,
+        description="Geometric albedo of the Earth in V",
+    )
+    sun_v_mag_1au: float = Field(
+        default=-26.74,
+        allow_inf_nan=False,
+        description="V magnitude of the Sun at 1 au",
+    )
+    moon_v_mag_full: float = Field(
+        default=-12.73,
+        allow_inf_nan=False,
+        description="V magnitude of the full Moon at 384,400 km",
+    )
+
+
 # Union type for all constraints
 ConstraintConfig = Union[
     SunConstraint,
@@ -2007,6 +2370,7 @@ ConstraintConfig = Union[
     AirmassConstraint,
     MoonPhaseConstraint,
     SolarRollConstraint,
+    StrayLightConstraint,
     OrbitRamConstraint,
     OrbitPoleConstraint,
     SAAConstraint,

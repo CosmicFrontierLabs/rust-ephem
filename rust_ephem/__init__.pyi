@@ -158,10 +158,19 @@ from rust_ephem.constraints import (
     OrConstraint as OrConstraint,
 )
 from rust_ephem.constraints import (
+    PointSourceTransmittance as PointSourceTransmittance,
+)
+from rust_ephem.constraints import (
     SAAConstraint as SAAConstraint,
 )
 from rust_ephem.constraints import (
     SolarRollConstraint as SolarRollConstraint,
+)
+from rust_ephem.constraints import (
+    StrayLightConstraint as StrayLightConstraint,
+)
+from rust_ephem.constraints import (
+    StrayLightStatus as StrayLightStatus,
 )
 from rust_ephem.constraints import (
     SunConstraint as SunConstraint,
@@ -214,6 +223,9 @@ __all__ = [
     "MoonPhaseConstraint",
     "SAAConstraint",
     "SolarRollConstraint",
+    "StrayLightConstraint",
+    "StrayLightStatus",
+    "PointSourceTransmittance",
     "AltAzConstraint",
     "OrbitRamConstraint",
     "OrbitPoleConstraint",

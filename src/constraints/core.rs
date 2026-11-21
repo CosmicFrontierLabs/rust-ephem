@@ -39,6 +39,7 @@ pub(crate) fn value_key_prefix(name: &str) -> String {
         "EarthLimb" => "earth_limb",
         "BrightStar" => "bright_star",
         "SolarRollConstraint" => "solar_roll",
+        "StrayLight" => "stray_light",
         "AND" => "and",
         "OR" => "or",
         "NOT" => "not",
@@ -792,6 +793,35 @@ pub trait ConstraintEvaluator: Send + Sync {
         super::diagonal::evaluate(self, ephemeris, target_ras, target_decs, time_indices)
     }
 
+    /// Whether an explicit spacecraft roll can never change this evaluator's
+    /// result. Only leaves that do not look at the roll at all say so; the
+    /// default is the safe answer for everything else.
+    fn ignores_explicit_roll(&self) -> bool {
+        false
+    }
+
+    /// `evaluate_diagonal` with a spacecraft roll per element: `rolls[i]` is an
+    /// explicit roll for element `i`, or `None`.
+    ///
+    /// `Ok(None)` means there is no paired kernel for this tree with rolls, and
+    /// the caller evaluates the elements grouped by (time, roll) instead. An
+    /// implementation must give exactly what that grouped evaluation would.
+    fn evaluate_diagonal_at_rolls(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        _rolls: &[Option<f64>],
+    ) -> PyResult<Option<super::diagonal::DiagonalEvaluation>> {
+        if self.ignores_explicit_roll() {
+            return self
+                .evaluate_diagonal(ephemeris, target_ras, target_decs, time_indices)
+                .map(Some);
+        }
+        Ok(None)
+    }
+
     /// Continuous values at an explicit spacecraft roll. Most leaves expose
     /// roll-independent values; boresight nodes rotate targets before delegating.
     fn compute_named_values_at_roll(
@@ -1002,6 +1032,18 @@ pub trait ConstraintEvaluator: Send + Sync {
     /// Combinators delegate to their children: they are roll-dependent if any child is.
     fn is_roll_dependent(&self) -> bool {
         false
+    }
+
+    /// Returns `true` if this constraint's result at a sweep candidate depends on
+    /// the candidate roll. Every roll-dependent constraint does. A constraint
+    /// that supplies its own attitude when no roll is given (stray light) is not
+    /// roll-dependent, so alone it is never swept, yet it follows the candidates
+    /// of a sweep that a sibling starts: all rules of a tree share one roll.
+    ///
+    /// `is_roll_dependent` decides whether a tree is swept; this decides which
+    /// of its children may be evaluated once and reused across the candidates.
+    fn follows_sweep_roll(&self) -> bool {
+        self.is_roll_dependent()
     }
 
     /// Evaluate violated-per-direction for a *single* roll angle, at one timestamp.

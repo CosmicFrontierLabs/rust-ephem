@@ -103,6 +103,16 @@ pub fn evaluate_elements(
         return evaluator.evaluate_diagonal(ephemeris, ras, decs, Some(indices));
     }
 
+    // A tree with a paired kernel for per-element rolls needs no grouping:
+    // one pass, whatever the number of distinct rolls and times.
+    if let Some(rolls) = rolls {
+        if let Some(result) =
+            evaluator.evaluate_diagonal_at_rolls(ephemeris, ras, decs, Some(indices), rolls)?
+        {
+            return Ok(result);
+        }
+    }
+
     let mut acc = Accumulator::new(n);
     let mut cause_value_keys = None;
 
