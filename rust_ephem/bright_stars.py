@@ -18,10 +18,11 @@ Typical usage::
 from __future__ import annotations
 
 import glob
+import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
-from astroquery.vizier import Vizier  # type: ignore[import-untyped]
 from numpy.typing import NDArray
 
 __all__ = ["get_bright_stars"]
@@ -29,6 +30,19 @@ __all__ = ["get_bright_stars"]
 _CATALOG_ID = "I/239/hip_main"
 _COLUMNS = ["_RA.icrs", "_DE.icrs", "Vmag"]
 _CACHE_PREFIX = "hipparcos_vmag_"
+
+
+def __getattr__(name: str) -> Any:
+    """Import astroquery on first use of ``Vizier``.
+
+    astroquery pulls in astropy and pyvo, which is most of the time
+    ``import rust_ephem`` used to take; only a catalogue download needs it.
+    """
+    if name == "Vizier":
+        from astroquery.vizier import Vizier  # type: ignore[import-untyped]
+
+        return Vizier
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # ── Cache helpers ──────────────────────────────────────────────────────────────
@@ -79,7 +93,8 @@ def _download(cache_mag_limit: float) -> NDArray[np.float64]:
     Returns an (N, 3) float64 array with columns [ra_deg, dec_deg, vmag].
     """
 
-    v = Vizier(columns=_COLUMNS, row_limit=-1)
+    # Looked up on the module so the import stays lazy (see ``__getattr__``).
+    v = sys.modules[__name__].Vizier(columns=_COLUMNS, row_limit=-1)
     result = v.query_constraints(
         catalog=_CATALOG_ID,
         Vmag=f"<{cache_mag_limit}",

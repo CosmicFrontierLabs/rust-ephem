@@ -155,7 +155,7 @@ Two methods with different accuracy levels:
   - Accuracy: ~32 arcminutes (0.5 degrees)
   - No external data required
   - Sufficient for: Spacecraft applications, general astronomy
-  - Automatically used when SPICE not initialized
+  - Used, with a ``UserWarning``, when no planetary kernel is loaded or cached
 
 **SPICE/ANISE (High Precision)**
   - Accuracy: <1 arcsecond
@@ -171,6 +171,14 @@ Two methods with different accuracy levels:
     ephem = rust_ephem.TLEEphemeris(tle1, tle2, begin, end, step_size)
     moon = ephem.moon  # Now uses SPICE if initialized
 
+Building an ephemeris without a kernel initialised does not go straight to the
+built-in models. A DE440 or DE440S file already in the cache directory is
+loaded on demand (nothing is downloaded). Only when there is none are the
+built-in Sun and Moon models used, and a ``UserWarning`` says so, because the
+resulting error (a few km for the Sun, a few hundred km for the Moon) is
+otherwise easy to miss. Calling ``ensure_planetary_ephemeris()`` first remains
+the way to fetch a kernel that is not cached yet.
+
 Sun Position Accuracy
 ----------------------
 
@@ -180,7 +188,7 @@ positions:
 **SOFA epv00 (Built-in)**
   - Accuracy: full precision only within 1900-2100 (±100 Julian years of J2000)
   - No external data required
-  - Automatically used when SPICE not initialized
+  - Used, with a ``UserWarning``, when no planetary kernel is loaded or cached
   - Sufficient for: spacecraft applications and general astronomy within 1900-2100
 
 **SPICE/ANISE (High Precision)**

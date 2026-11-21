@@ -102,7 +102,18 @@ your file uses different units.
 
 Supported position units: ``"km"`` (default), ``"m"``, ``"cm"``.
 
-Supported velocity units: ``"km/s"`` (default), ``"m/s"``, ``"cm/s"``.
+Supported velocity units: ``"km/s"``, ``"m/s"``, ``"cm/s"``.
+
+When no velocity unit is given (and the file does not state one), it follows
+the position unit: ``position_unit="m"`` alone means velocities in m/s. Pass
+``velocity_unit`` explicitly for a file that mixes, say, metres with km/s.
+
+The units are also checked against the data. Between consecutive samples the
+positions should move about as far as the velocities predict (speed × time
+step). When the two differ by a factor that a unit mix-up produces (100, 1000
+or 100,000), a ``UserWarning`` says so and names the units that were used.
+Such states still pass through the samples, but are far from the orbit
+between them. The ephemeris is built either way.
 
 Basic example
 -------------
@@ -249,6 +260,13 @@ Velocities are required: Hermite interpolation uses them together with the
 positions. ``ValueError`` is raised for arrays that are not ``(N, 3)``,
 mismatched lengths, fewer than two samples, non-finite values, times that are
 not strictly increasing, or a ``begin``/``end`` outside the sample range.
+
+Building an ephemeris of about a thousand rows or more converts frames and
+looks up the Sun and Moon on every core. A program that already runs one
+worker process per core should set the environment variable
+``RAYON_NUM_THREADS`` (for example to ``1``) before ``rust_ephem`` is imported,
+so that each worker does not start a full set of threads. This applies to
+every ephemeris type.
 
 Constraint evaluation
 ---------------------

@@ -29,7 +29,7 @@
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use ndarray::{s, Array2};
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayMethods};
+use numpy::{IntoPyArray, PyArray2, PyArrayMethods};
 use pyo3::{prelude::*, types::PyDateTime};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -55,7 +55,9 @@ struct ParsedStates {
     states: Array2<f64>,
     frame: String,
     position_unit: String,
-    velocity_unit: String,
+    /// `None` when the source does not state one: it then follows the
+    /// position unit (see [`velocity_unit_for`]).
+    velocity_unit: Option<String>,
 }
 
 // ─── Public struct ────────────────────────────────────────────────────────────
@@ -113,7 +115,7 @@ impl FileEphemeris {
             parsed.position_unit = unit;
         }
         if let Some(unit) = velocity_unit {
-            parsed.velocity_unit = unit;
+            parsed.velocity_unit = Some(unit);
         }
         if let Some(f) = frame {
             parsed.frame = f;
@@ -139,7 +141,7 @@ impl FileEphemeris {
     /// ``begin``/``end``/``step_size`` grid, frame transforms, Sun/Moon).
     #[staticmethod]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (times, positions, velocities, begin=None, end=None, step_size=60, *, polar_motion=false, position_unit="km".to_string(), velocity_unit="km/s".to_string(), frame="J2000".to_string()))]
+    #[pyo3(signature = (times, positions, velocities, begin=None, end=None, step_size=60, *, polar_motion=false, position_unit="km".to_string(), velocity_unit=None, frame="J2000".to_string()))]
     fn from_arrays(
         py: Python,
         times: &Bound<'_, PyAny>,
@@ -150,10 +152,10 @@ impl FileEphemeris {
         step_size: i64,
         polar_motion: bool,
         position_unit: String,
-        velocity_unit: String,
+        velocity_unit: Option<String>,
         frame: String,
     ) -> PyResult<Self> {
-        let times = extract_utc_times(py, times)?;
+        let times = extract_utc_times(times)?;
         let pos = extract_vectors(py, positions, "positions")?;
         let vel = extract_vectors(py, velocities, "velocities")?;
 
@@ -644,7 +646,17 @@ impl FileEphemeris {
         }
 
         // ── Convert units to km / km/s ─────────────────────────────────────
+        let velocity_unit = match velocity_unit {
+            Some(unit) => unit,
+            None => Self::velocity_unit_for(&position_unit)?,
+        };
         let source_states = Self::apply_unit_conversion(&states, &position_unit, &velocity_unit)?;
+        Self::warn_if_units_disagree(
+            &source_times,
+            &source_states,
+            &position_unit,
+            &velocity_unit,
+        );
 
         // ── Validate requested time range ───────────────────────────────────
         if begin_dt < source_times[0] || end_dt > source_times[n_source - 1] {
@@ -779,22 +791,122 @@ impl FileEphemeris {
 
     // ── Unit conversion ───────────────────────────────────────────────────────
 
+    /// Scale factor from a position unit to km.
+    fn position_scale(pos_unit: &str) -> PyResult<f64> {
+        let pos_lower = pos_unit.to_lowercase();
+        match pos_lower.trim() {
+            "km" | "kilometre" | "kilometres" | "kilometer" | "kilometers" => Ok(1.0),
+            "m" | "metre" | "metres" | "meter" | "meters" => Ok(1.0e-3),
+            "cm" | "centimetre" | "centimetres" | "centimeter" | "centimeters" => Ok(1.0e-5),
+            other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Unknown position unit '{other}'. Supported: 'km', 'm', 'cm'"
+            ))),
+        }
+    }
+
+    /// Velocity unit assumed when none is given: the position unit per second.
+    /// Positions in metres with velocities left in km/s would put every
+    /// interpolated (off-sample) state far from the orbit.
+    fn velocity_unit_for(pos_unit: &str) -> PyResult<String> {
+        let scale = Self::position_scale(pos_unit)?;
+        Ok(if scale == 1.0 {
+            "km/s"
+        } else if scale == 1.0e-3 {
+            "m/s"
+        } else {
+            "cm/s"
+        }
+        .to_string())
+    }
+
+    /// Typical ratio of the distance moved between consecutive samples to the
+    /// distance their velocities predict (speed × time step), for states
+    /// already converted to km and km/s. About 1 when the two agree. `None`
+    /// when no pair of samples both moves and has a velocity.
+    fn displacement_to_velocity_ratio(
+        times: &[DateTime<Utc>],
+        states_km: &Array2<f64>,
+    ) -> Option<f64> {
+        /// Pairs examined, spread evenly over the data.
+        const MAX_PAIRS: usize = 512;
+        let n_pairs = times.len().saturating_sub(1);
+        let stride = n_pairs.div_ceil(MAX_PAIRS).max(1);
+        let norm = |row: usize, cols: std::ops::Range<usize>| -> f64 {
+            cols.map(|c| states_km[[row, c]].powi(2))
+                .sum::<f64>()
+                .sqrt()
+        };
+        let mut ratios: Vec<f64> = (0..n_pairs)
+            .step_by(stride)
+            .filter_map(|i| {
+                let dt = (times[i + 1] - times[i]).as_seconds_f64();
+                let moved = (0..3)
+                    .map(|c| (states_km[[i + 1, c]] - states_km[[i, c]]).powi(2))
+                    .sum::<f64>()
+                    .sqrt();
+                let predicted = 0.5 * (norm(i, 3..6) + norm(i + 1, 3..6)) * dt;
+                let ratio = moved / predicted;
+                (ratio.is_finite() && ratio > 0.0).then_some(ratio)
+            })
+            .collect();
+        if ratios.is_empty() {
+            return None;
+        }
+        let mid = ratios.len() / 2;
+        let (_, median, _) = ratios.select_nth_unstable_by(mid, f64::total_cmp);
+        Some(*median)
+    }
+
+    /// Warn when positions and velocities disagree by a factor that a unit
+    /// mix-up produces (100, 1000 or 100,000: cm, m and km against each other).
+    /// Such states pass through the samples but are far off between them.
+    fn warn_if_units_disagree(
+        times: &[DateTime<Utc>],
+        states_km: &Array2<f64>,
+        position_unit: &str,
+        velocity_unit: &str,
+    ) {
+        let Some(ratio) = Self::displacement_to_velocity_ratio(times, states_km) else {
+            return;
+        };
+        let Some(factor) = Self::unit_mismatch_factor(ratio) else {
+            return;
+        };
+        let (size, factor) = if factor > 1.0 {
+            ("small", factor)
+        } else {
+            ("large", 1.0 / factor)
+        };
+        let message = format!(
+            "Velocities look about {factor:.0} times too {size} for the positions: between \
+             samples the positions move {ratio:.3e} times as far as the velocities predict. \
+             They were read as position_unit='{position_unit}' and \
+             velocity_unit='{velocity_unit}'; pass the units the data is in, or states between \
+             samples will be far from the orbit."
+        );
+        Python::attach(|py| {
+            if let Ok(message) = std::ffi::CString::new(message) {
+                let category = py.get_type::<pyo3::exceptions::PyUserWarning>();
+                let _ = PyErr::warn(py, &category, &message, 1);
+            }
+        });
+    }
+
+    /// The unit factor (100, 1000, 100,000 or the inverse of one) within a
+    /// factor of two of `ratio`, if there is one.
+    fn unit_mismatch_factor(ratio: f64) -> Option<f64> {
+        [1.0e2, 1.0e3, 1.0e5]
+            .into_iter()
+            .flat_map(|factor: f64| [factor, 1.0 / factor])
+            .find(|factor| (0.5..=2.0).contains(&(ratio / factor)))
+    }
+
     fn apply_unit_conversion(
         states: &Array2<f64>,
         pos_unit: &str,
         vel_unit: &str,
     ) -> PyResult<Array2<f64>> {
-        let pos_lower = pos_unit.to_lowercase();
-        let pos_scale: f64 = match pos_lower.trim() {
-            "km" | "kilometre" | "kilometres" | "kilometer" | "kilometers" => 1.0,
-            "m" | "metre" | "metres" | "meter" | "meters" => 1.0e-3,
-            "cm" | "centimetre" | "centimetres" | "centimeter" | "centimeters" => 1.0e-5,
-            other => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "Unknown position unit '{other}'. Supported: 'km', 'm', 'cm'"
-                )))
-            }
-        };
+        let pos_scale = Self::position_scale(pos_unit)?;
 
         let vel_lower = vel_unit.to_lowercase();
         let vel_scale: f64 = match vel_lower.trim() {
@@ -855,7 +967,7 @@ impl FileEphemeris {
         let mut detected_epoch: Option<DateTime<Utc>> = override_epoch.copied();
         let mut detected_frame = "J2000".to_string();
         let mut detected_position_unit = "km".to_string();
-        let mut detected_velocity_unit = "km/s".to_string();
+        let mut detected_velocity_unit: Option<String> = None;
 
         let mut in_data_section = false;
         let mut data_times: Vec<DateTime<Utc>> = Vec::new();
@@ -997,7 +1109,7 @@ impl FileEphemeris {
                     detected_position_unit = value.clone();
                 }
                 if matches!(key.as_str(), "velocityunit" | "velocity_unit" | "speedunit") {
-                    detected_velocity_unit = value.clone();
+                    detected_velocity_unit = Some(value.clone());
                 }
             }
         }
@@ -1156,40 +1268,9 @@ impl FileEphemeris {
 
 /// Convert a sequence of datetimes (naive = UTC) or a NumPy ``datetime64``
 /// array to UTC timestamps.
-fn extract_utc_times(py: Python, obj: &Bound<'_, PyAny>) -> PyResult<Vec<DateTime<Utc>>> {
-    let is_datetime64 = obj
-        .getattr("dtype")
-        .and_then(|dt| dt.getattr("kind"))
-        .and_then(|k| k.extract::<String>())
-        .map(|k| k == "M")
-        .unwrap_or(false);
-
-    if is_datetime64 {
-        let np = py.import("numpy")?;
-        let micros = np
-            .call_method1("asarray", (obj,))?
-            .call_method1("astype", ("datetime64[us]",))?
-            .call_method1("astype", ("int64",))?
-            .call_method1("ravel", ())?;
-        let arr = micros.cast::<PyArray1<i64>>().map_err(|_| {
-            pyo3::exceptions::PyTypeError::new_err("Could not convert datetime64 times to int64")
-        })?;
-        return arr
-            .readonly()
-            .as_array()
-            .iter()
-            .enumerate()
-            .map(|(i, &us)| {
-                if us == i64::MIN {
-                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "times[{i}] is NaT"
-                    )));
-                }
-                DateTime::<Utc>::from_timestamp_micros(us).ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err(format!("times[{i}] is out of range"))
-                })
-            })
-            .collect();
+fn extract_utc_times(obj: &Bound<'_, PyAny>) -> PyResult<Vec<DateTime<Utc>>> {
+    if let Some(times) = crate::utils::time_utils::datetime64_to_utc(obj)? {
+        return Ok(times);
     }
 
     let iter = pyo3::types::PyIterator::from_object(obj).map_err(|_| {

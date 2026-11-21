@@ -76,6 +76,34 @@ impl ObserverAberration {
             p[2].atan2(p[0].hypot(p[1])).to_degrees(),
         )
     }
+
+    /// The inverse of [`apply`](Self::apply): the catalogue unit vector whose
+    /// proper direction for this observer state is `proper`.
+    ///
+    /// The correction moves a direction by at most ~1e-4 rad and varies slowly
+    /// across the sky, so adding back the residual converges by about four
+    /// digits per pass; four passes reach rounding error.
+    pub fn remove(&self, proper: [f64; 3]) -> [f64; 3] {
+        let mut catalogue = proper;
+        for _ in 0..4 {
+            let reached = self.apply(catalogue);
+            let mut next: [f64; 3] = std::array::from_fn(|k| catalogue[k] + proper[k] - reached[k]);
+            let length = norm(&next);
+            next.iter_mut().for_each(|x| *x /= length);
+            catalogue = next;
+        }
+        catalogue
+    }
+
+    /// [`remove`](Self::remove) for an (RA, Dec) in degrees; RA is returned in [0, 360).
+    pub fn remove_radec_deg(&self, ra_deg: f64, dec_deg: f64) -> (f64, f64) {
+        let (ra, dec) = (ra_deg.to_radians(), dec_deg.to_radians());
+        let p = self.remove([dec.cos() * ra.cos(), dec.cos() * ra.sin(), dec.sin()]);
+        (
+            p[1].atan2(p[0]).to_degrees().rem_euclid(360.0),
+            p[2].atan2(p[0].hypot(p[1])).to_degrees(),
+        )
+    }
 }
 
 /// Spacing of the SPICE samples of the Sun's barycentric velocity. It changes
@@ -407,6 +435,39 @@ mod tests {
     fn unit(v: [f64; 3]) -> [f64; 3] {
         let r = norm(&v);
         v.map(|x| x / r)
+    }
+
+    #[test]
+    fn remove_inverts_apply() {
+        let beta = [0.4e-4, -0.9e-4, 0.5e-4];
+        let correction = ObserverAberration {
+            beta,
+            lorentz_inverse: (1.0 - beta.iter().map(|x| x * x).sum::<f64>()).sqrt(),
+            sun_to_observer: unit([0.3, 0.8, -0.5]),
+            sun_distance_au: 1.01,
+        };
+        let sunward = correction.sun_to_observer.map(|x| -x);
+        // Over the sphere, and half a degree from the Sun where deflection peaks.
+        let mut directions: Vec<[f64; 3]> = (0..200)
+            .map(|k| {
+                let z = -1.0 + 2.0 * (k as f64 + 0.5) / 200.0;
+                let phi = k as f64 * 2.399_963_229_728_653;
+                let r = (1.0 - z * z).sqrt();
+                [r * phi.cos(), r * phi.sin(), z]
+            })
+            .collect();
+        directions.push(unit([sunward[0] + 0.009, sunward[1], sunward[2]]));
+        for catalogue in directions {
+            let proper = correction.apply(catalogue);
+            let moved = norm(&std::array::from_fn(|k| proper[k] - catalogue[k]));
+            assert!(moved < 3e-4);
+            let back = correction.remove(proper);
+            let error = norm(&std::array::from_fn(|k| back[k] - catalogue[k]));
+            assert!(error < 1e-14, "{error:e} rad after removing {moved:e} rad");
+        }
+        let (ra, dec) = correction.apply_radec_deg(123.4, -56.7);
+        let (ra, dec) = correction.remove_radec_deg(ra, dec);
+        assert!((ra - 123.4).abs() < 1e-11 && (dec + 56.7).abs() < 1e-11);
     }
 
     #[test]

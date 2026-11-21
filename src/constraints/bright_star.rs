@@ -344,6 +344,73 @@ impl BrightStarEvaluator {
     }
 }
 
+/// Catalogue coordinates of targets handed to this leaf.
+///
+/// Stars and target are displaced together by the observer's aberration and
+/// by solar deflection, so whether a star lies in the field is decided in the
+/// catalogue frame: there the common displacement cancels, leaving only its
+/// variation across the field (under 0.4" per degree from the boresight).
+/// On an apparent view the targets arrive as proper directions for the one
+/// selected time and are taken back to the catalogue frame here; on any other
+/// ephemeris, and on a view whose kernels are handed catalogue targets, they
+/// are returned unchanged.
+fn catalogue_aberration(
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    time_indices: Option<&[usize]>,
+) -> PyResult<Option<crate::utils::apparent::ObserverAberration>> {
+    if ephemeris.target_corrections().is_some() {
+        return Ok(None);
+    }
+    let Some(aberrations) = ephemeris.target_aberrations() else {
+        return Ok(None);
+    };
+    match (time_indices, aberrations) {
+        (Some([row]), _) if *row < aberrations.len() => Ok(Some(aberrations[*row])),
+        (None, [only]) => Ok(Some(*only)),
+        // Nothing to evaluate, so nothing to take back.
+        (Some([]), _) | (None, []) => Ok(None),
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "bright-star evaluation on an apparent view needs exactly one time per call",
+        )),
+    }
+}
+
+type Targets<'a> = (std::borrow::Cow<'a, [f64]>, std::borrow::Cow<'a, [f64]>);
+
+fn catalogue_targets<'a>(
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    target_ras: &'a [f64],
+    target_decs: &'a [f64],
+    time_indices: Option<&[usize]>,
+) -> PyResult<Targets<'a>> {
+    let Some(aberration) = catalogue_aberration(ephemeris, time_indices)? else {
+        return Ok((target_ras.into(), target_decs.into()));
+    };
+    let (ras, decs): (Vec<f64>, Vec<f64>) = target_ras
+        .iter()
+        .zip(target_decs)
+        .map(|(&ra, &dec)| aberration.remove_radec_deg(ra, dec))
+        .unzip();
+    Ok((ras.into(), decs.into()))
+}
+
+/// [`catalogue_targets`] for the unit vectors of the field-of-regard kernels.
+fn catalogue_unit_vectors<'a>(
+    ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+    target_unit_vectors: &'a Array2<f64>,
+    time_index: usize,
+) -> PyResult<std::borrow::Cow<'a, Array2<f64>>> {
+    let Some(aberration) = catalogue_aberration(ephemeris, Some(&[time_index]))? else {
+        return Ok(std::borrow::Cow::Borrowed(target_unit_vectors));
+    };
+    let mut catalogue = target_unit_vectors.clone();
+    for mut row in catalogue.rows_mut() {
+        let removed = aberration.remove([row[0], row[1], row[2]]);
+        row.iter_mut().zip(removed).for_each(|(x, r)| *x = r);
+    }
+    Ok(std::borrow::Cow::Owned(catalogue))
+}
+
 impl ConstraintEvaluator for BrightStarEvaluator {
     fn prepare_attributed_roll_sweep<'a>(
         &'a self,
@@ -359,12 +426,18 @@ impl ConstraintEvaluator for BrightStarEvaluator {
         self.format_name_at_roll(target_roll)
     }
 
+    /// Catalogue targets are what this leaf evaluates (see `catalogue_targets`),
+    /// so a view that leaves target corrections to the kernels needs none here.
+    fn applies_target_corrections(&self) -> bool {
+        true
+    }
+
     fn prepare_roll_sweep<'a>(
         &'a self,
-        _ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_ras: &'a [f64],
         target_decs: &'a [f64],
-        _time_indices: Option<&'a [usize]>,
+        time_indices: Option<&'a [usize]>,
         cells: &[super::roll_sweep::RollCell],
     ) -> PyResult<Option<super::roll_sweep::PreparedRollEvaluator<'a>>> {
         let vertices = match &self.fov {
@@ -374,6 +447,9 @@ impl ConstraintEvaluator for BrightStarEvaluator {
             } => vertices,
             _ => return Ok(None),
         };
+        let (target_ras, target_decs) =
+            catalogue_targets(ephemeris, target_ras, target_decs, time_indices)?;
+        let (target_ras, target_decs) = (&*target_ras, &*target_decs);
         let first = cells.iter().map(|&(i, _)| i).min().unwrap_or(0);
         let end = cells.iter().map(|&(i, _)| i + 1).max().unwrap_or(first);
         // A star's projection depends on the target, but neither time nor roll.
@@ -420,6 +496,10 @@ impl ConstraintEvaluator for BrightStarEvaluator {
             None => all_times.to_vec(),
         };
 
+        let (target_ra, target_dec) = match catalogue_aberration(ephemeris, time_indices)? {
+            Some(aberration) => aberration.remove_radec_deg(target_ra, target_dec),
+            None => (target_ra, target_dec),
+        };
         // The result is time-invariant: compute once.
         let violated = self.is_violated(target_ra, target_dec);
 
@@ -444,6 +524,9 @@ impl ConstraintEvaluator for BrightStarEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
+        let (target_ras, target_decs) =
+            catalogue_targets(ephemeris, target_ras, target_decs, time_indices)?;
+        let (target_ras, target_decs) = (&*target_ras, &*target_decs);
         let all_times = ephemeris.get_times()?;
         let n_times = match time_indices {
             Some(idx) => idx.len(),
@@ -482,6 +565,9 @@ impl ConstraintEvaluator for BrightStarEvaluator {
         time_indices: Option<&[usize]>,
         n_roll_samples: usize,
     ) -> PyResult<Array2<bool>> {
+        let (target_ras, target_decs) =
+            catalogue_targets(ephemeris, target_ras, target_decs, time_indices)?;
+        let (target_ras, target_decs) = (&*target_ras, &*target_decs);
         let vertices = match &self.fov {
             FovDefinition::Polygon {
                 vertices,
@@ -555,6 +641,9 @@ impl ConstraintEvaluator for BrightStarEvaluator {
         time_indices: Option<&[usize]>,
         roll_deg: EvaluationRoll,
     ) -> PyResult<Array2<bool>> {
+        let (target_ras, target_decs) =
+            catalogue_targets(ephemeris, target_ras, target_decs, time_indices)?;
+        let (target_ras, target_decs) = (&*target_ras, &*target_decs);
         let vertices = match &self.fov {
             FovDefinition::Polygon { vertices, roll_rad }
                 if roll_deg.is_fixed() || roll_rad.is_none() =>
@@ -613,11 +702,14 @@ impl ConstraintEvaluator for BrightStarEvaluator {
     /// running an independent internal roll sweep.
     fn field_of_regard_violated_at_roll(
         &self,
-        _ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_unit_vectors: &Array2<f64>,
-        _time_index: usize,
+        time_index: usize,
         roll_deg: f64,
     ) -> PyResult<Vec<bool>> {
+        let target_unit_vectors =
+            catalogue_unit_vectors(ephemeris, target_unit_vectors, time_index)?;
+        let target_unit_vectors = &*target_unit_vectors;
         let n_targets = target_unit_vectors.nrows();
 
         let (vertices, stored_roll_rad) = match &self.fov {
@@ -669,11 +761,14 @@ impl ConstraintEvaluator for BrightStarEvaluator {
     /// default core-trait sweep would otherwise do via `field_of_regard_violated_at_roll`.
     fn field_of_regard_violated_batch(
         &self,
-        _ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
         target_unit_vectors: &Array2<f64>,
-        _time_index: usize,
+        time_index: usize,
         n_roll_samples: usize,
     ) -> PyResult<Vec<bool>> {
+        let target_unit_vectors =
+            catalogue_unit_vectors(ephemeris, target_unit_vectors, time_index)?;
+        let target_unit_vectors = &*target_unit_vectors;
         let n_targets = target_unit_vectors.nrows();
 
         match &self.fov {
@@ -772,6 +867,9 @@ impl ConstraintEvaluator for BrightStarEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<HashMap<String, Array2<f64>>> {
+        let (target_ras, target_decs) =
+            catalogue_targets(ephemeris, target_ras, target_decs, time_indices)?;
+        let (target_ras, target_decs) = (&*target_ras, &*target_decs);
         // Only circle mode has a single natural scalar; polygon mode is roll-swept
         // and has no canonical angle to report.
         if !matches!(self.fov, FovDefinition::Circle { .. }) {

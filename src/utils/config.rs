@@ -123,7 +123,10 @@ pub const MOON_RADIUS_KM: f64 = 1737.4; // Moon mean radius
 pub const EARTH_RADIUS_KM: f64 = 6378.137; // Earth equatorial radius (WGS84 / IERS 2010)
 
 // Limits
-pub const MAX_TIMESTAMPS: i64 = 100_000;
+/// Most timestamps one ephemeris may hold. A guard against a mistyped range or
+/// step allocating without bound, not a working limit: a year at a 10 s step
+/// (3.2 million samples, roughly 200 bytes each) still fits.
+pub const MAX_TIMESTAMPS: i64 = 5_000_000;
 
 /// Celestrak GP TLE API endpoint
 pub const CELESTRAK_API_BASE: &str = "https://celestrak.org/NORAD/elements/gp.php";
