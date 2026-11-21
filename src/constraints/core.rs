@@ -1034,6 +1034,18 @@ pub trait ConstraintEvaluator: Send + Sync {
         false
     }
 
+    /// Returns `true` if this constraint's result at a sweep candidate depends on
+    /// the candidate roll. Every roll-dependent constraint does. A constraint
+    /// that supplies its own attitude when no roll is given (stray light) is not
+    /// roll-dependent, so alone it is never swept, yet it follows the candidates
+    /// of a sweep that a sibling starts: all rules of a tree share one roll.
+    ///
+    /// `is_roll_dependent` decides whether a tree is swept; this decides which
+    /// of its children may be evaluated once and reused across the candidates.
+    fn follows_sweep_roll(&self) -> bool {
+        self.is_roll_dependent()
+    }
+
     /// Evaluate violated-per-direction for a *single* roll angle, at one timestamp.
     ///
     /// Returns one bool per target direction: `true` = violated at this roll,

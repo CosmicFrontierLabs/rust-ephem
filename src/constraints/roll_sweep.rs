@@ -29,7 +29,7 @@ pub fn prepare_with_causes<'a, T: ConstraintEvaluator + ?Sized>(
     decs: &'a [f64],
     indices: Option<&'a [usize]>,
 ) -> PyResult<PreparedAttributedRollEvaluator<'a>> {
-    if !evaluator.is_roll_dependent() {
+    if !evaluator.follows_sweep_roll() {
         // Sweep candidates preserve configured fixed rolls, so these masks and
         // their cause tags are identical for every candidate angle.
         let result = evaluator.in_constraint_batch_with_causes(
@@ -162,7 +162,7 @@ pub fn prepare<'a, T: ConstraintEvaluator + ?Sized>(
     time_indices: Option<&'a [usize]>,
     cells: &[RollCell],
 ) -> PyResult<PreparedRollEvaluator<'a>> {
-    let independent = !evaluator.is_roll_dependent();
+    let independent = !evaluator.follows_sweep_roll();
     if !independent {
         if let Some(prepared) =
             evaluator.prepare_roll_sweep(ephemeris, ras, decs, time_indices, cells)?

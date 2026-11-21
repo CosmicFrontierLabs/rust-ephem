@@ -351,7 +351,8 @@ Use :py:class:`~rust_ephem.constraints.StrayLightConstraint` when being clear
 of the Sun, Earth and Moon is not enough and the light they scatter into the
 telescope has to stay below a multiple of the zodiacal background. You supply
 the telescope's point-source transmittance table and one conversion factor;
-the constraint integrates the table over each body's illuminated disk.
+the constraint integrates the table over each body's sunlit surface, and
+leaves out whatever of the Sun and Moon the Earth hides.
 
 .. code-block:: python
 
@@ -378,7 +379,7 @@ the constraint integrates the table over each body's illuminated disk.
     result.constraint_values["earth_stray_light_ratio"]
 
 Where the model has no prediction (a body in the field, a limb inside the first
-cell of the table, a disk integral that did not converge) the values are NaN
+cell of the table, an integral that did not converge) the values are NaN
 and the constraint is violated. It is far more expensive per pointing than a
 proximity rule, so in a combined tree it pays to apply cheap rules first and
 evaluate this one only where they pass. See the

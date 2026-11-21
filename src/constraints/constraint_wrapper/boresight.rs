@@ -340,7 +340,7 @@ impl BoresightOffsetEvaluator {
         } else {
             self.rotation_params()
         };
-        let inner_roll = if roll.is_fixed() || self.constraint.is_roll_dependent() {
+        let inner_roll = if roll.is_fixed() || self.constraint.follows_sweep_roll() {
             Some(roll)
         } else {
             None
@@ -768,6 +768,10 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
     /// this wrapper and the inner constraint would never see a candidate roll.
     fn is_roll_dependent(&self) -> bool {
         self.own_roll_is_free() || self.constraint.is_roll_dependent()
+    }
+
+    fn follows_sweep_roll(&self) -> bool {
+        self.own_roll_is_free() || self.constraint.follows_sweep_roll()
     }
 
     /// Efficient standalone sweep for free-roll FoR: reuses a single allocation across

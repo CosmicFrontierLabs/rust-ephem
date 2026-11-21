@@ -2131,20 +2131,27 @@ class StrayLightStatus(int, Enum):
 
     #: A converged prediction.
     OK = 0
-    #: No sunlit surface is visible. The quoted contribution is an upper bound
-    #: on one that is physically negligible; it counts as a prediction.
+    #: No sunlit surface is visible. The body contributes nothing; it counts
+    #: as a prediction.
     DARK = 1
     #: The nearest limb is within ``in_field_deg`` of the boresight.
     IN_FIELD = 2
     #: The nearest limb is inside the first off-axis cell of the table.
     FIRST_CELL = 3
-    #: The disk integral did not converge.
+    #: The integral over the body did not converge.
     UNCONVERGED = 4
+    #: The Earth hides the whole body. It contributes nothing; it counts as a
+    #: prediction.
+    OCCULTED = 5
 
     @property
     def is_valid(self) -> bool:
         """Whether the body's contribution is a usable prediction."""
-        return self in (StrayLightStatus.OK, StrayLightStatus.DARK)
+        return self in (
+            StrayLightStatus.OK,
+            StrayLightStatus.DARK,
+            StrayLightStatus.OCCULTED,
+        )
 
 
 class StrayLightConstraint(RustConstraintMixin):
@@ -2154,13 +2161,22 @@ class StrayLightConstraint(RustConstraintMixin):
     onto the focal plane, exceeds ``max_ratio`` times the zodiacal background,
     or when the model cannot make a prediction for the pointing.
 
-    For each body the model takes its disk-integrated V magnitude at the
-    observer (distance and phase), multiplies the corresponding flux by the
-    brightness-weighted mean of the telescope's point-source transmittance
-    over the body's resolved disk (Lambertian illumination with the terminator
-    for the Earth and Moon), and sums the three. ``conversion_factor`` turns
-    that sum into the surface brightness of the uniform sky that would put the
-    same light on the focal plane, which is compared with the zodi.
+    For each body the model sums radiance times the telescope's point-source
+    transmittance over the sky directions its sunlit surface is seen in, and
+    reports the sum as two factors: the body's V magnitude at the observer
+    (distance and phase) and the brightness-weighted mean of the PST over it.
+    The Sun is a uniform disk. The Earth is a Lambert sphere whose radiance is
+    summed over the sky as it is seen, with no factor for the inclination of
+    a ray to the Earth's direction, so the result holds from low orbit, where
+    the Earth spans about 136 degrees. The Moon follows Allen's phase law.
+    The three are added, and ``conversion_factor`` turns the total into the
+    surface brightness of the uniform sky that would put the same light on
+    the focal plane, which is compared with the zodi.
+
+    **Occultation.** A part of the Sun or Moon whose line of sight meets the
+    Earth first contributes nothing: a body wholly behind the Earth has status
+    ``OCCULTED``, and one crossing the limb contributes in proportion to the
+    part in view. The Earth is a sphere with no atmosphere.
 
     **Attitude.** Without a roll, the attitude is tied to the Sun: at the
     nominal attitude the Sun's direction, projected perpendicular to the
@@ -2184,11 +2200,22 @@ class StrayLightConstraint(RustConstraintMixin):
     reproduces ``roll_offset_deg=x``. :meth:`roll_range` returns the rolls at
     which the constraint is satisfied.
 
+    **Free roll.** With no roll given, this constraint alone, or with rules
+    that do not depend on the roll, is evaluated at its nominal attitude. In
+    a tree with a rule that needs a roll (:class:`SolarRollConstraint`, a
+    boresight offset with pitch or yaw, a polygon field of view) the tree is
+    swept over ``n_roll_samples`` rolls and this constraint is evaluated at
+    each candidate with the others: the tree is satisfied where some roll
+    satisfies all of it, as :meth:`roll_range` reports. ``constraint_values``
+    still describe the nominal attitude in that case.
+
     **Validity.** There is no prediction, and the constraint is violated, when
     a body's nearest limb is within ``in_field_deg`` of the boresight (direct
     light), when that limb lies inside the first off-axis cell of the table,
-    when the disk integral does not converge, or when the tabulated zodi has no
-    entry for the pointing. ``constraint_values`` are NaN in those cases.
+    when the integral over a body does not converge, or when the tabulated
+    zodi has no entry for the pointing. ``constraint_values`` are NaN in those
+    cases. A body showing no sunlit surface, or wholly hidden by the Earth, is
+    a valid prediction of zero.
 
     **Values.** ``constraint_values`` holds everything the model works out, so
     nothing has to be recomputed outside it:
@@ -2208,7 +2235,8 @@ class StrayLightConstraint(RustConstraintMixin):
       ``limb_deg`` (boresight to the centre and to the nearest limb);
       ``azimuth_deg`` (table azimuth of the centre, -180 to 180);
       ``pst_center`` and ``pst_mean`` (PST toward the centre and its
-      brightness-weighted mean over the disk); ``lit_fraction``;
+      brightness-weighted mean over the body, hidden parts counting as zero);
+      ``lit_fraction`` (the part of the disk that is sunlit and in view);
       ``quadrature_error``; and ``status`` (a :class:`StrayLightStatus` value).
 
     The per-body values are filled in even where the body has no prediction. A
