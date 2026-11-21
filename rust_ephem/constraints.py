@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, SupportsFloat, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -970,8 +970,8 @@ class RustConstraintMixin(BaseModel):
     def in_constraint_elementwise(
         self,
         ephemeris: Ephemeris,
-        target_ras: Sequence[float] | npt.ArrayLike,
-        target_decs: Sequence[float] | npt.ArrayLike,
+        target_ras: Sequence[SupportsFloat] | npt.ArrayLike,
+        target_decs: Sequence[SupportsFloat] | npt.ArrayLike,
         times: datetime | Sequence[datetime] | npt.NDArray[Any] | Time | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -1046,8 +1046,8 @@ class RustConstraintMixin(BaseModel):
     def evaluate_elementwise(
         self,
         ephemeris: Ephemeris,
-        target_ras: Sequence[float] | npt.ArrayLike,
-        target_decs: Sequence[float] | npt.ArrayLike,
+        target_ras: Sequence[SupportsFloat] | npt.ArrayLike,
+        target_decs: Sequence[SupportsFloat] | npt.ArrayLike,
         times: datetime | Sequence[datetime] | npt.NDArray[Any] | Time | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -1091,8 +1091,8 @@ class RustConstraintMixin(BaseModel):
     def evaluate_grid(
         self,
         ephemeris: Ephemeris,
-        target_ras: Sequence[float] | npt.ArrayLike,
-        target_decs: Sequence[float] | npt.ArrayLike,
+        target_ras: Sequence[SupportsFloat] | npt.ArrayLike,
+        target_decs: Sequence[SupportsFloat] | npt.ArrayLike,
         times: datetime
         | Sequence[datetime]
         | npt.NDArray[np.datetime64]
@@ -2525,7 +2525,8 @@ class StrayLightConstraint(RustConstraintMixin):
     **Occultation.** A part of the Sun or Moon whose line of sight meets the
     Earth first contributes nothing: a body wholly behind the Earth has status
     ``OCCULTED``, and one crossing the limb contributes in proportion to the
-    part in view. The Earth is a sphere with no atmosphere.
+    part in view, however little of it shows. The Earth is a sphere with no
+    atmosphere.
 
     **Attitude.** Without a roll, the attitude is tied to the Sun: at the
     nominal attitude the Sun's direction, projected perpendicular to the

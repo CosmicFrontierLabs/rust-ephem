@@ -71,8 +71,12 @@
 //! its centre and position angle. The grid is doubled in both directions
 //! until two levels agree.
 //!
-//! A sample of the Sun or Moon whose line of sight meets the Earth first is
-//! hidden and contributes nothing, which covers partial occultation.
+//! The part of the Sun or Moon behind the Earth contributes nothing. A body
+//! the Earth's limb crosses is integrated over the part above the limb alone,
+//! on a grid laid out about the Earth's centre (angle from it, and position
+//! angle across the body), so that every sample is in view and a sliver is
+//! resolved as well as a whole disk. Only a body wholly behind the Earth is
+//! `OCCULTED`.
 //!
 //! # Validity
 //!
@@ -668,6 +672,18 @@ enum Hidden {
     All,
 }
 
+/// How the quadrature over a body accounts for the Earth in front of it.
+#[derive(Clone, Copy)]
+enum Occultation {
+    /// The Earth hides none of the body.
+    None,
+    /// The body lies wholly beyond the Earth's limb, which then cuts it along
+    /// a circle on the sky: only the part above the limb is sampled.
+    AboveLimb(Vec3),
+    /// A body reaching nearer than the limb: each sample is tested.
+    Sampled(Blocker),
+}
+
 /// Why a body has, or has not, a stray-light prediction. The numeric values
 /// are what `<body>_status` reports.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1039,19 +1055,116 @@ impl StrayLightEvaluator {
         level
     }
 
+    /// One quadrature level over the part of the Sun or Moon that shows above
+    /// the Earth's limb, for a body lying wholly beyond the limb's distance.
+    ///
+    /// The grid is laid out about the Earth's centre: `n_psi` angles from it,
+    /// between the limb and the far edge of the body, and `n_az` position
+    /// angles across the body at each. Every sample is therefore in view, and
+    /// a sliver above the limb is sampled as finely as a whole disk: no part
+    /// in view can fall between samples. The angles are packed toward the
+    /// body's far edge (`psi = far - span s^2`), where its width closes as a
+    /// square root.
+    ///
+    /// The Sun's disk is uniform. A sample on the Moon is weighted by the
+    /// cosine of the solar incidence where its line of sight meets the
+    /// surface, as in `cap_level`, and counts for nothing on the night side.
+    /// `weight` is left at zero: the caller supplies the whole body's.
+    #[allow(clippy::too_many_arguments)]
+    fn limb_level(
+        &self,
+        frame: &Frame,
+        body: Body,
+        centre: Vec3,
+        to_sun: Vec3,
+        earth: Vec3,
+        n_psi: usize,
+        n_az: usize,
+    ) -> DiskLevel {
+        let mut level = DiskLevel::default();
+        let (distance, earth_distance) = (norm(centre), norm(earth));
+        let radius_km = body.radius_km();
+        let toward_earth = scaled(earth, 1.0 / earth_distance);
+        let toward_body = scaled(centre, 1.0 / distance);
+        let limb = (EARTH_MEAN_RADIUS_KM / earth_distance)
+            .clamp(-1.0, 1.0)
+            .asin();
+        let rho = (radius_km / distance).clamp(-1.0, 1.0).asin();
+        let cos_separation = dot(toward_earth, toward_body).clamp(-1.0, 1.0);
+        let separation = cos_separation.acos();
+        let sin_separation = separation.sin();
+        let (near, far) = (limb.max(separation - rho), separation + rho);
+        if far <= near || sin_separation < 1e-12 {
+            return level;
+        }
+        let u = unit(add_scaled(toward_body, toward_earth, -cos_separation));
+        let w = cross(toward_earth, u);
+        let cos_rho = rho.cos();
+        let behind2 = distance * distance - radius_km * radius_km;
+        for i in 0..n_psi {
+            let s = (i as f64 + 0.5) / n_psi as f64;
+            let psi = far - (far - near) * s * s;
+            let d_psi = 2.0 * (far - near) * s / n_psi as f64;
+            let (sin_psi, cos_psi) = psi.sin_cos();
+            // Half the body's width in position angle at this distance.
+            let half = ((cos_rho - cos_psi * cos_separation) / (sin_psi * sin_separation))
+                .clamp(-1.0, 1.0)
+                .acos();
+            let d_az = 2.0 * half / n_az as f64;
+            let solid_angle = sin_psi * d_psi * d_az;
+            for j in 0..n_az {
+                let (sin_az, cos_az) = (-half + (j as f64 + 0.5) * d_az).sin_cos();
+                let p = add_scaled(
+                    add_scaled(scaled(toward_earth, cos_psi), u, sin_psi * cos_az),
+                    w,
+                    sin_psi * sin_az,
+                );
+                let weight = match body {
+                    Body::Sun => solid_angle,
+                    _ => {
+                        let along = dot(p, centre);
+                        let discriminant = along * along - behind2;
+                        if discriminant <= 0.0 {
+                            continue;
+                        }
+                        let range = along - discriminant.sqrt();
+                        let normal =
+                            scaled(add_scaled(scaled(p, range), centre, -1.0), 1.0 / radius_km);
+                        let cos_incidence = dot(normal, to_sun);
+                        if cos_incidence <= 0.0 {
+                            continue;
+                        }
+                        cos_incidence * solid_angle
+                    }
+                };
+                level.weighted += weight * self.pst_toward(frame, p);
+                level.lit_solid_angle += solid_angle;
+            }
+        }
+        level
+    }
+
     /// The quadrature over a body, refined until two levels agree. Returns
     /// the last level, whether it is converged, and the relative change of
     /// the flux between the last two levels.
+    ///
+    /// `occultation` says how the Earth's shadow on the body is handled. A
+    /// partly hidden body that shows no light at one level is refined to the
+    /// last: two empty levels are not agreement.
     fn disk_integral(
         &self,
         frame: &Frame,
         body: Body,
         centre: Vec3,
         to_sun: Vec3,
-        blocker: Option<Blocker>,
+        occultation: Occultation,
     ) -> (DiskLevel, bool, f64) {
         let (n_a, n_b) = body.grid();
-        let level = |k: u32| match body {
+        let blocker = match occultation {
+            Occultation::Sampled(blocker) => Some(blocker),
+            _ => None,
+        };
+        let whole = |k: u32| match body {
             Body::Sun => self.sun_level(frame, centre, n_a << k, n_b << k, blocker),
             _ => self.cap_level(
                 frame,
@@ -1063,6 +1176,22 @@ impl StrayLightEvaluator {
                 blocker,
             ),
         };
+        let level = |k: u32| match occultation {
+            Occultation::AboveLimb(earth) => {
+                let mut level =
+                    self.limb_level(frame, body, centre, to_sun, earth, n_a << k, n_b << k);
+                level.weight = match body {
+                    Body::Sun => {
+                        let sin_radius = SUN_RADIUS_KM / norm(centre);
+                        std::f64::consts::TAU * (1.0 - (1.0 - sin_radius * sin_radius).sqrt())
+                    }
+                    _ => whole(k).weight,
+                };
+                level
+            }
+            _ => whole(k),
+        };
+        let partly = !matches!(occultation, Occultation::None);
         // What the flux is proportional to: the Earth's own radiance sum is
         // part of its flux; the Sun's and Moon's magnitudes are given.
         let signal = |level: &DiskLevel| match body {
@@ -1080,7 +1209,7 @@ impl StrayLightEvaluator {
                 (new - old).abs() / new.abs()
             };
             current = finer;
-            if change <= QUADRATURE_RTOL {
+            if change <= QUADRATURE_RTOL && !(partly && new == 0.0) {
                 break;
             }
         }
@@ -1209,12 +1338,19 @@ impl StrayLightEvaluator {
             }
             return report;
         }
-        let blocker = (hidden == Hidden::Partly).then(|| Blocker {
-            centre: earth,
-            tangent2: dot(earth, earth) - EARTH_MEAN_RADIUS_KM * EARTH_MEAN_RADIUS_KM,
-        });
+        let tangent2 = dot(earth, earth) - EARTH_MEAN_RADIUS_KM * EARTH_MEAN_RADIUS_KM;
+        let occultation = if hidden != Hidden::Partly {
+            Occultation::None
+        } else if (distance - radius) * (distance - radius) >= tangent2 {
+            Occultation::AboveLimb(earth)
+        } else {
+            Occultation::Sampled(Blocker {
+                centre: earth,
+                tangent2,
+            })
+        };
         let (disk, converged, error) =
-            self.disk_integral(frame, body, centre, unit(sunward), blocker);
+            self.disk_integral(frame, body, centre, unit(sunward), occultation);
         if body == Body::Earth {
             // Radiance (3 p / 2 pi) E_sun cos(i), with E_sun the Sun's
             // irradiance at the Earth, summed over the sky.
@@ -1231,9 +1367,14 @@ impl StrayLightEvaluator {
         report.flux = 10f64.powf(-0.4 * report.v_mag) * report.pst_mean;
         report.status = if in_field {
             Status::InField
-        } else if blocker.is_some() && disk.lit_solid_angle == 0.0 {
-            // Every sunlit sample is behind the Earth.
-            Status::Occulted
+        } else if hidden == Hidden::Partly && disk.lit_solid_angle == 0.0 {
+            match (occultation, body) {
+                // The part of the Moon above the limb was sampled throughout
+                // and none of it is sunlit: its light is behind the Earth.
+                (Occultation::AboveLimb(_), Body::Moon) => Status::Occulted,
+                // Part of the body may be in view though no sample saw it.
+                _ => Status::Unconverged,
+            }
         } else if report.limb_deg < self.pst.first_cell_deg {
             Status::FirstCell
         } else if !converged {
@@ -1867,6 +2008,44 @@ mod tests {
     }
 
     #[test]
+    fn a_sliver_above_the_limb_is_not_occulted() {
+        let earth = [7000.0, 0.0, 0.0];
+        let limb = (EARTH_MEAN_RADIUS_KM / 7000.0).asin();
+        let rho = (SUN_RADIUS_KM / AU_TO_KM).asin();
+        let evaluator = evaluator(&config());
+        let boresight = [0.0, 0.0, 1.0];
+        let at = |below: f64| {
+            // The Sun's centre `below` solar radii under the limb.
+            let angle = limb - below * rho;
+            let sun = scaled([angle.cos(), angle.sin(), 0.0], AU_TO_KM);
+            let (frame, _) = evaluator.frame(boresight, sun, None);
+            evaluator.body_report(&frame, Body::Sun, sun, sun, earth, true)
+        };
+        let whole = at(-1.5);
+        assert!(whole.status == Status::Ok && (whole.lit_fraction - 1.0).abs() < 1e-3);
+        // The limb is all but straight across half a degree, so the part in
+        // view is a segment of the disk.
+        for below in [0.5, 0.9, 0.99, 0.999, 0.99999] {
+            let segment =
+                (f64::acos(below) - below * (1.0 - below * below).sqrt()) / std::f64::consts::PI;
+            let sliver = at(below);
+            assert!(sliver.status == Status::Ok, "{below}");
+            assert!(sliver.flux > 0.0, "{below}");
+            assert!(
+                (sliver.lit_fraction / segment - 1.0).abs() < 0.03,
+                "{below}: {} against {segment}",
+                sliver.lit_fraction
+            );
+            assert!(
+                (sliver.flux / whole.flux / segment - 1.0).abs() < 0.05,
+                "{below}"
+            );
+        }
+        let gone = at(1.001);
+        assert!(gone.status == Status::Occulted && gone.flux == 0.0);
+    }
+
+    #[test]
     fn the_sun_sits_at_the_configured_azimuth() {
         let boresight = radec_to_unit_vector(40.0, 20.0);
         let sun = radec_to_unit_vector(130.0, -5.0);
@@ -1893,7 +2072,8 @@ mod tests {
         let sun = scaled(radec_to_unit_vector(90.0, 0.0), AU_TO_KM);
         let (frame, _) = evaluator.frame(boresight, sun, None);
         // The Sun, half a degree across, 90 degrees off axis.
-        let (disk, converged, _) = evaluator.disk_integral(&frame, Body::Sun, sun, unit(sun), None);
+        let (disk, converged, _) =
+            evaluator.disk_integral(&frame, Body::Sun, sun, unit(sun), Occultation::None);
         assert!(converged);
         assert_eq!(disk.lit_solid_angle, disk.weight);
         let centre = evaluator.pst_toward(&frame, unit(sun));

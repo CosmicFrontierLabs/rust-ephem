@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Literal, TypeAlias, overload
+from typing import Literal, SupportsFloat, TypeAlias, overload
 
 import numpy as np
 import numpy.typing as npt
@@ -197,8 +197,8 @@ class RustConstraintMixin(BaseModel):
     def in_constraint_elementwise(
         self,
         ephemeris: Ephemeris,
-        target_ras: Sequence[float] | npt.ArrayLike,
-        target_decs: Sequence[float] | npt.ArrayLike,
+        target_ras: Sequence[SupportsFloat] | npt.ArrayLike,
+        target_decs: Sequence[SupportsFloat] | npt.ArrayLike,
         times: datetime
         | Sequence[datetime]
         | npt.NDArray[np.datetime64]
@@ -212,8 +212,8 @@ class RustConstraintMixin(BaseModel):
     def evaluate_elementwise(
         self,
         ephemeris: Ephemeris,
-        target_ras: Sequence[float] | npt.ArrayLike,
-        target_decs: Sequence[float] | npt.ArrayLike,
+        target_ras: Sequence[SupportsFloat] | npt.ArrayLike,
+        target_decs: Sequence[SupportsFloat] | npt.ArrayLike,
         times: datetime
         | Sequence[datetime]
         | npt.NDArray[np.datetime64]
@@ -227,8 +227,8 @@ class RustConstraintMixin(BaseModel):
     def evaluate_grid(
         self,
         ephemeris: Ephemeris,
-        target_ras: Sequence[float] | npt.ArrayLike,
-        target_decs: Sequence[float] | npt.ArrayLike,
+        target_ras: Sequence[SupportsFloat] | npt.ArrayLike,
+        target_decs: Sequence[SupportsFloat] | npt.ArrayLike,
         times: datetime
         | Sequence[datetime]
         | npt.NDArray[np.datetime64]
