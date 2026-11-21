@@ -1447,7 +1447,9 @@ disk. The grid is doubled until two levels agree to 2%.
 **Occultation.** A part of the Sun or Moon whose line of sight meets the Earth
 first contributes nothing. A body wholly behind the Earth has status
 ``OCCULTED`` and a contribution of zero; one crossing the limb contributes in
-proportion to the part in view. The Earth is a sphere of its mean radius with
+proportion to the part in view. A body the limb crosses is integrated over the
+part above the limb alone, on a grid laid out about the Earth's centre, so a
+sliver of the Sun still in view is never missed, however thin. The Earth is a sphere of its mean radius with
 no atmosphere: refraction, twilight and the Earth's shadow on the Moon are not
 modelled, and the Moon does not hide the Sun.
 

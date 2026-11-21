@@ -400,6 +400,69 @@ class Reference:
             float(solid.ravel()[seen].sum()),
         )
 
+    def limb_level(
+        self,
+        name: str,
+        b: Array,
+        y: Array,
+        x: Array,
+        centre: Array,
+        to_sun: Array,
+        earth: Array,
+        n_psi: int,
+        n_az: int,
+    ) -> Level:
+        """The part of the Sun or Moon above the Earth's limb, in angle from
+        the Earth's centre (limb to the body's far edge, packed toward that
+        edge) and position angle across the body. The weight of the whole body
+        is left to the caller."""
+        d, d_earth = float(np.linalg.norm(centre)), float(np.linalg.norm(earth))
+        radius = RADIUS_KM[name]
+        to_earth, to_body = earth / d_earth, centre / d
+        limb = np.arcsin(RADIUS_KM["earth"] / d_earth)
+        rho = np.arcsin(radius / d)
+        cos_sep = float(np.clip(to_earth @ to_body, -1, 1))
+        sep = float(np.arccos(cos_sep))
+        near, far = max(limb, sep - rho), sep + rho
+        if far <= near or np.sin(sep) < 1e-12:
+            return Level(0.0, 0.0, 0.0)
+        u = unit(to_body - cos_sep * to_earth)
+        w = np.cross(to_earth, u)
+        step: Array = (np.arange(n_psi) + 0.5) / n_psi
+        psi = far - (far - near) * step**2
+        d_psi = 2 * (far - near) * step / n_psi
+        half = np.arccos(
+            np.clip(
+                (np.cos(rho) - np.cos(psi) * cos_sep) / (np.sin(psi) * np.sin(sep)),
+                -1,
+                1,
+            )
+        )
+        d_az = 2 * half / n_az
+        az = -half[:, None] + (np.arange(n_az) + 0.5)[None, :] * d_az[:, None]
+        solid = (np.sin(psi) * d_psi * d_az)[:, None] * np.ones_like(az)
+        p = (
+            np.cos(psi)[:, None, None] * to_earth
+            + (np.sin(psi)[:, None] * np.cos(az))[..., None] * u
+            + (np.sin(psi)[:, None] * np.sin(az))[..., None] * w
+        ).reshape(-1, 3)
+        solid = solid.ravel()
+        weight: Array
+        lit: Array
+        if name == "sun":
+            weight = solid
+            lit = np.ones(len(p), dtype=bool)
+        else:
+            ahead = along(p, centre)
+            discriminant = ahead**2 - (d * d - radius**2)
+            hit = ahead - np.sqrt(np.clip(discriminant, 0, None))
+            normal = (hit[:, None] * p - centre) / radius
+            cos_incidence = along(normal, to_sun)
+            lit = (discriminant > 0) & (cos_incidence > 0)
+            weight = cos_incidence * solid
+        value = self.pst_toward(b, y, x, p)
+        return Level(float(np.sum((weight * value)[lit])), 0.0, float(solid[lit].sum()))
+
     @staticmethod
     def hidden(name: str, centre: Array, earth: Array) -> str:
         """How much of a body the Earth hides: "none", "partly" or "all"."""
@@ -488,15 +551,35 @@ class Reference:
             info["status"] = float(status_of.DARK)
             return 0.0, True, info
 
-        blocker = earth if hidden == "partly" else None
+        # A body wholly beyond the limb's distance is cut by it along a circle
+        # on the sky, and only the part above is sampled. Anything nearer has
+        # each sample tested against the Earth.
+        partly = hidden == "partly"
+        tangent2 = float(earth @ earth) - RADIUS_KM["earth"] ** 2
+        above_limb = partly and (d - radius) ** 2 >= tangent2
+        blocker = earth if partly and not above_limb else None
         n_a, n_b = START_GRID[name]
 
-        def level(k: int) -> Level:
+        def whole(k: int) -> Level:
             if name == "sun":
                 return self.sun_level(b, y, x, centre, n_a << k, n_b << k, blocker)
             return self.cap_level(
                 b, y, x, centre, radius, unit(sunward), n_a << k, n_b << k, blocker
             )
+
+        def level(k: int) -> Level:
+            if not above_limb:
+                return whole(k)
+            to_sun = sunward if name == "sun" else unit(sunward)
+            part = self.limb_level(
+                name, b, y, x, centre, to_sun, earth, n_a << k, n_b << k
+            )
+            total = (
+                2 * np.pi * (1 - np.sqrt(1 - (radius / d) ** 2))
+                if name == "sun"
+                else whole(k).weight
+            )
+            return Level(part.weighted, float(total), part.lit)
 
         def signal(lv: Level) -> float:
             return lv.weighted if name == "earth" else lv.mean
@@ -508,7 +591,9 @@ class Reference:
             new, old = signal(finer), signal(current)
             change = 0.0 if new == old else abs(new - old) / abs(new)
             current = finer
-            if change <= 0.02:
+            # Two levels that see no light of a partly hidden body do not
+            # agree on anything: refine to the last.
+            if change <= 0.02 and not (partly and new == 0.0):
                 break
         converged = change <= 0.02
         if name == "earth":
@@ -518,11 +603,19 @@ class Reference:
             )
             info["v_mag"] = float(-2.5 * np.log10(radiance * current.weight))
         disk = 2 * np.pi * (1 - np.sqrt(1 - (radius / d) ** 2))
+        # No light found on a partly hidden body: the Moon's sunlit side is
+        # behind the Earth if the part above the limb was sampled throughout;
+        # otherwise a part in view may have been missed.
+        unseen = (
+            status_of.OCCULTED
+            if above_limb and name == "moon"
+            else status_of.UNCONVERGED
+        )
         status = (
             status_of.IN_FIELD
             if in_field
-            else status_of.OCCULTED
-            if blocker is not None and current.lit == 0
+            else unseen
+            if partly and current.lit == 0
             else status_of.FIRST_CELL
             if limb < self.c.pst.off_axis_deg[1]
             else status_of.UNCONVERGED
@@ -646,8 +739,11 @@ def test_matches_independent_reference(
     # Violated above the limit, and wherever there is no prediction.
     ratio = expected["stray_light_ratio"]
     np.testing.assert_array_equal(result.constraint_array, ~(ratio <= 3.0))
-    # The sample exercises valid and invalid cells of every kind used below.
-    assert np.isnan(ratio).any() and np.isfinite(ratio).sum() > len(ratio) // 2
+    # The sample holds a Sun partly behind the Earth, which has a prediction.
+    partial = np.asarray(expected["sun_lit_fraction"])
+    partial = (partial > 0) & (partial < 0.99)
+    assert partial.any() and np.isfinite(ratio[partial]).all()
+    assert np.isfinite(ratio).sum() > len(ratio) // 2
 
 
 @pytest.mark.parametrize("zodi", ["constant", "table"])
@@ -1204,6 +1300,203 @@ def test_a_setting_sun_is_hidden_part_by_part(
     np.testing.assert_allclose(
         values["sun_stray_light_ratio"][inside] / whole, fraction[inside], rtol=0.05
     )
+
+
+def limb_crossing(name: str, count: int = 241) -> Any:
+    """Observers 500 km up, one a second, placed so that the centre of `name`
+    passes from 1.3 of its radii below the Earth's limb to 1.3 above."""
+    times = [BEGIN + timedelta(seconds=i) for i in range(count)]
+    probe = re.FileEphemeris.from_arrays(
+        times,
+        np.tile([7000.0, 0.0, 0.0], (count, 1)),
+        np.tile([0.0, 7.5, 0.0], (count, 1)),
+        step_size=1,
+    )
+    bodies = np.asarray(getattr(probe, f"{name}_pv").position)
+    radius = RADIUS_KM["earth"] + 500.0
+    limb = np.arcsin(RADIUS_KM["earth"] / radius)
+    rho = np.arcsin(RADIUS_KM[name] / np.linalg.norm(bodies[0]))
+    position = np.zeros((count, 3))
+    across: Array = np.zeros(3)
+    for i, above in enumerate(np.linspace(-1.3, 1.3, count) * rho):
+        toward = unit(bodies[i])
+        across = unit(np.cross(toward, [0.0, 0.0, 1.0]))
+        # The angle at the Earth's centre that puts the body, seen from the
+        # observer, `above` the limb.
+        angle = limb + above
+        for _ in range(20):
+            position[i] = radius * (-np.cos(angle) * toward + np.sin(angle) * across)
+            seen = np.radians(angle_deg(bodies[i] - position[i], -position[i]))
+            angle += limb + above - seen
+    velocity = np.tile(7.6 * across, (count, 1))
+    return re.FileEphemeris.from_arrays(times, position, velocity, step_size=1)
+
+
+def part_in_view(
+    name: str, centre: Array, earth: Array, sun: Array, count: int = 300
+) -> tuple[float, float]:
+    """By brute force over the body's disk, each line of sight tested against
+    the Earth: the fraction of the disk that is in view (and, for the Moon,
+    sunlit), and the fraction of the body's light that is in view."""
+    d = float(np.linalg.norm(centre))
+    e = centre / d
+    rho = np.arcsin(RADIUS_KM[name] / d)
+    u = unit(np.cross([0.0, 0.0, 1.0], e))
+    w = np.cross(e, u)
+    # Rings of equal area.
+    gamma, beta = (
+        a.ravel()
+        for a in np.meshgrid(
+            rho * np.sqrt((np.arange(count) + 0.5) / count),
+            (np.arange(2 * count) + 0.5) / (2 * count) * 2 * np.pi,
+            indexing="ij",
+        )
+    )
+    p = np.cos(gamma)[:, None] * e + np.sin(gamma)[:, None] * (
+        np.cos(beta)[:, None] * u + np.sin(beta)[:, None] * w
+    )
+    seen = ~Reference.hides(earth, p, np.inf)
+    if name == "sun":
+        return float(seen.mean()), float(seen.mean())
+    ahead = along(p, centre)
+    hit = ahead - np.sqrt(np.clip(ahead**2 - (d * d - RADIUS_KM[name] ** 2), 0, None))
+    normal = (hit[:, None] * p - centre) / RADIUS_KM[name]
+    light = np.clip(along(normal, unit(sun - centre)), 0, None)
+    return float((seen & (light > 0)).mean()), float(light[seen].sum() / light.sum())
+
+
+@pytest.fixture(scope="module", params=["sun", "moon"])
+def crossing(
+    request: pytest.FixtureRequest,
+    table: PointSourceTransmittance,
+    ensure_planetary_data: None,
+) -> dict[str, Any]:
+    """A body crossing the limb, with the model's values and the brute-force
+    part in view at each row."""
+    name = str(request.param)
+    ephem = limb_crossing(name)
+    count = len(ephem.timestamp)
+    rows = np.arange(count)
+    bodies = bodies_at(ephem, rows)
+    middle = count // 2
+    # One pointing, clear of the Earth and of the body throughout.
+    b = -unit(unit(bodies["earth"][middle]) + 0.5 * unit(bodies[name][middle]))
+    ra, dec = (np.full(count, value) for value in radec_of(b))
+    constraint = StrayLightConstraint(pst=table, conversion_factor=CONVERSION)
+    result = evaluate(constraint, ephem, ra, dec, rows)
+    truth = np.array(
+        [
+            part_in_view(name, bodies[name][i], bodies["earth"][i], bodies["sun"][i])
+            for i in rows
+        ]
+    )
+    hidden = np.array(
+        [Reference.hidden(name, bodies[name][i], bodies["earth"][i]) for i in rows]
+    )
+    return {
+        "name": name,
+        "ephem": ephem,
+        "constraint": constraint,
+        "ra": ra,
+        "dec": dec,
+        "rows": rows,
+        "result": result,
+        "values": {k: np.asarray(v) for k, v in result.constraint_values.items()},
+        "disk": truth[:, 0],
+        "light": truth[:, 1],
+        "partly": hidden == "partly",
+    }
+
+
+def test_a_body_crossing_the_limb_always_has_a_prediction(
+    crossing: dict[str, Any],
+) -> None:
+    """However little of it shows: never OCCULTED, never UNCONVERGED."""
+    name, values, partly = crossing["name"], crossing["values"], crossing["partly"]
+    status = re.StrayLightStatus
+    assert partly.sum() > 150
+    assert (values[f"{name}_status"][partly] == status.OK).all()
+    assert (values[f"{name}_stray_light_ratio"][partly] > 0).all()
+    assert (values[f"{name}_lit_fraction"][partly] > 0).all()
+    # Wholly behind the Earth at one end, clear of it at the other.
+    assert values[f"{name}_status"][0] == status.OCCULTED
+    assert values[f"{name}_stray_light_ratio"][0] == 0.0
+    assert not partly[0] and not partly[-1]
+    # The part of the crossing with under a twentieth of the disk in view.
+    sliver = partly & (crossing["disk"] < 0.05)
+    assert sliver.sum() >= 10
+
+
+def test_the_light_of_a_body_crossing_the_limb_follows_the_part_in_view(
+    crossing: dict[str, Any],
+) -> None:
+    name, values, partly = crossing["name"], crossing["values"], crossing["partly"]
+    ratio = values[f"{name}_stray_light_ratio"]
+    # The table hardly changes across half a degree.
+    np.testing.assert_allclose(
+        ratio[partly] / ratio[-1], crossing["light"][partly], rtol=0, atol=0.02
+    )
+    # The Moon's terminator is not a line of the grid, and refinement stops
+    # when the light has converged: its sunlit area is known less finely.
+    np.testing.assert_allclose(
+        values[f"{name}_lit_fraction"][partly],
+        crossing["disk"][partly],
+        rtol=0,
+        atol=0.02 if name == "sun" else 0.05,
+    )
+    assert (values[f"{name}_quadrature_error"][partly] <= 0.02).all()
+
+
+def test_a_crossing_matches_the_reference_model(crossing: dict[str, Any]) -> None:
+    rows = crossing["rows"][::6]
+    result = evaluate(
+        crossing["constraint"],
+        crossing["ephem"],
+        crossing["ra"][rows],
+        crossing["dec"][rows],
+        rows,
+    )
+    assert_values_match(
+        result.constraint_values,
+        reference_values(
+            crossing["constraint"],
+            crossing["ephem"],
+            crossing["ra"][rows],
+            crossing["dec"][rows],
+            rows,
+        ),
+    )
+
+
+def test_a_sliver_of_the_sun_above_the_limb_violates(
+    crossing: dict[str, Any],
+) -> None:
+    """A few percent of the Sun is above the limit: the pointing must not pass
+    because the samples of a coarse grid all fell behind the Earth."""
+    if crossing["name"] != "sun":
+        pytest.skip("the Moon's light is far below the limit here")
+    values, partly = crossing["values"], crossing["partly"]
+    whole = values["sun_stray_light_ratio"][-1]
+    assert whole > 100
+    expected = crossing["light"] * whole
+    must_violate = partly & (expected > 1.5 * crossing["constraint"].max_ratio)
+    assert must_violate.sum() > 150
+    assert (crossing["disk"][must_violate] < 0.05).sum() >= 3
+    assert np.asarray(crossing["result"].constraint_array)[must_violate].all()
+    # The mask alone agrees, row by row and as a grid.
+    ephem, constraint = crossing["ephem"], crossing["constraint"]
+    times = [ephem.timestamp[int(i)] for i in np.flatnonzero(must_violate)]
+    mask = constraint.in_constraint_elementwise(
+        ephem,
+        crossing["ra"][must_violate],
+        crossing["dec"][must_violate],
+        times=times,
+    )
+    assert np.asarray(mask).all()
+    grid = constraint.in_constraint_batch(
+        ephem, crossing["ra"][:1], crossing["dec"][:1]
+    )
+    assert np.asarray(grid)[0][must_violate].all()
 
 
 def test_the_moon_behind_the_earth_contributes_nothing(
@@ -1871,17 +2164,18 @@ def test_apparent_angles_shift_the_result_slightly(
 ) -> None:
     ra, dec, rows = (a[:40] for a in sample)
     times = [ephem.timestamp[int(i)] for i in rows]
-    geometric = np.asarray(
-        constraint.evaluate_elementwise(ephem, ra, dec, times=times).constraint_values[
-            "stray_light_ratio"
-        ]
-    )
+    values = constraint.evaluate_elementwise(ephem, ra, dec, times=times)
+    geometric = np.asarray(values.constraint_values["stray_light_ratio"])
     apparent = np.asarray(
         constraint.evaluate_elementwise(
             ephem, ra, dec, times=times, apparent=True
         ).constraint_values["stray_light_ratio"]
     )
-    valid = np.isfinite(geometric) & np.isfinite(apparent)
+    # A Sun cut by the Earth's limb is left out: the part in view changes by
+    # several percent over those arcseconds.
+    whole = np.asarray(values.constraint_values["sun_lit_fraction"]) > 0.999
+    assert not whole.all()
+    valid = np.isfinite(geometric) & np.isfinite(apparent) & whole
     assert valid.sum() > 20
     # Tens of arcseconds across a table that varies by 12% per degree.
     np.testing.assert_allclose(apparent[valid], geometric[valid], rtol=5e-3)

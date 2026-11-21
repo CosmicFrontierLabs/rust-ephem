@@ -2226,7 +2226,8 @@ class StrayLightConstraint(RustConstraintMixin):
     **Occultation.** A part of the Sun or Moon whose line of sight meets the
     Earth first contributes nothing: a body wholly behind the Earth has status
     ``OCCULTED``, and one crossing the limb contributes in proportion to the
-    part in view. The Earth is a sphere with no atmosphere.
+    part in view, however little of it shows. The Earth is a sphere with no
+    atmosphere.
 
     **Attitude.** Without a roll, the attitude is tied to the Sun: at the
     nominal attitude the Sun's direction, projected perpendicular to the
