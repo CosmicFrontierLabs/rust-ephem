@@ -99,6 +99,7 @@ def report(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
         cwd=home,
         capture_output=True,
         text=True,
+        check=False,
     )
     assert done.returncode == 0, done.stderr
     lines = (line.split(": ", 1) for line in done.stdout.splitlines() if ": " in line)
