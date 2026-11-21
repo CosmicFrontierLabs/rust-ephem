@@ -135,13 +135,80 @@ observer at the requested time to the body where it was when the light left it.
 cover (``"jupiter barycenter"``, ``"499"``). ``apparent=True`` needs a planetary
 kernel (``ensure_planetary_ephemeris()``).
 
+.. note::
+
+   With ``times=`` or ``apparent=True``, and no ``spice_kernel``, the Sun and
+   Moon are the states the ephemeris computed when it was built: the ones
+   ``sun_pv_at``, ``moon_pv_at`` and constraints use. If no planetary kernel
+   was loaded or cached at that moment they are analytic (the Moon is off by
+   up to about 200 km, a few arcseconds), and they stay analytic after a
+   kernel is loaded. The plain ``get_body_pv(body)`` and ``get_body(body)``
+   read the kernel when they are called, so the two then disagree. A
+   ``UserWarning`` reports it. Load the kernel before building the ephemeris,
+   or pass ``spice_kernel=`` to read it for one call.
+
+``ras``, ``decs`` and ``times`` must be single values or one-dimensional;
+declinations must lie between -90 and 90 degrees and every coordinate must be
+finite.
+
 The apparent velocity is the rate of change of the apparent position. It is
 not the geometric velocity: from low Earth orbit the Sun's aberration shift is
 a few thousand km at 1 au and swings round with the orbital velocity, which
 adds several km/s. It is found by differencing the apparent position over half
 a second, so it inherits the observer's acceleration from the interpolated
-ephemeris: on a one-minute step in low orbit it is good to about 2 m/s for the
-Sun and 2 cm/s for the Moon and Earth, and better on a finer step.
+ephemeris, and the aberration multiplies an error in that acceleration by the
+light time to the body: about 500 s for the Sun, 1.3 s for the Moon, and 2,000
+to 3,000 s for Jupiter.
+
+How good the acceleration is depends on the ephemeris:
+
+- Where the stored velocities are the time derivative of the stored positions
+  (OEM, SPICE and file ephemerides from a numerical propagator, and ground
+  sites), a one-minute step in low orbit gives about 2 m/s for the Sun and
+  2 cm/s for the Moon and Earth. A finer step is better, and a more distant
+  body is worse in proportion to its light time.
+- For a ``TLEEphemeris`` it is worse, and a finer step does not help. SGP4's
+  velocity differs from the derivative of its position by about 0.02 m/s near
+  the TLE's epoch and by 0.3 to 0.5 m/s for an element set years old. The
+  interpolation turns a difference :math:`\delta v` into an acceleration error
+  of about :math:`6\,\delta v / \mathrm{step}`, so the velocity error is about
+  :math:`(D/c)\,6\,\delta v / \mathrm{step}` for a body at distance :math:`D`,
+  and grows as the step shrinks. Measured over two hours of a low orbit,
+  worst case:
+
+  .. list-table::
+     :header-rows: 1
+
+     * - Body, TLE age
+       - 10 s step
+       - 60 s step
+       - 300 s step
+     * - Sun, at epoch
+       - 5 m/s
+       - 2 m/s
+       - 42 m/s
+     * - Sun, 15 years old
+       - 77 m/s
+       - 16 m/s
+       - 41 m/s
+     * - Moon, at epoch
+       - 2 cm/s
+       - 2 cm/s
+       - 2.5 m/s
+     * - Moon, 15 years old
+       - 0.4 m/s
+       - 0.3 m/s
+       - 2.5 m/s
+     * - Jupiter, at epoch
+       - 20 m/s
+       - 9 m/s
+       - 200 m/s
+
+  Around one minute is the best step for a TLE observer; at 300 s the
+  interpolation of the orbit itself dominates.
+
+Apparent positions and directions do not depend on the observer's
+acceleration, so none of this affects them.
 
 TLEEphemeris Notes
 ------------------

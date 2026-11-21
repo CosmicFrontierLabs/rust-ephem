@@ -41,7 +41,11 @@ const APPARENT_PAIRED_BLOCK_CELLS: usize = 1 << 20;
 
 /// Read a 1-D sequence of numbers as `f64`s. A NumPy array is copied in one
 /// step; anything else goes through `numpy.asarray`, so lists, tuples and
-/// arrays of other dtypes are accepted alike.
+/// arrays of other numeric dtypes are accepted alike.
+///
+/// Only numbers are accepted. NumPy would also parse strings (`"10.5"`) into
+/// floats, which the methods taking a list of floats refuse: a `TypeError`
+/// here too.
 pub(super) fn extract_f64s(values: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<f64>> {
     use numpy::{PyArray1, PyArrayMethods};
 
@@ -53,10 +57,20 @@ pub(super) fn extract_f64s(values: &Bound<'_, PyAny>, name: &str) -> PyResult<Ve
     let array = match values.cast::<PyArray1<f64>>() {
         Ok(array) => array.clone(),
         Err(_) => {
-            let converted = values
-                .py()
-                .import("numpy")?
-                .call_method1("asarray", (values, "float64"))
+            let numpy = values.py().import("numpy")?;
+            let as_given = numpy
+                .call_method1("asarray", (values,))
+                .map_err(|err| invalid(err.to_string()))?;
+            let dtype = as_given.getattr("dtype")?;
+            let kind: String = dtype.getattr("kind")?.extract()?;
+            // Booleans, integers and floats.
+            if !matches!(kind.as_str(), "b" | "i" | "u" | "f") {
+                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                    "{name} must be a 1-D sequence of numbers, not of dtype {dtype}"
+                )));
+            }
+            let converted = numpy
+                .call_method1("asarray", (as_given, "float64"))
                 .map_err(|err| invalid(err.to_string()))?;
             converted
                 .cast_into::<PyArray1<f64>>()
@@ -787,6 +801,7 @@ impl PyConstraint {
         }
         Ok(GridEvaluation {
             name: evaluator.name_at_roll(target_roll),
+            target_names: None,
             times,
             violated,
             named,
@@ -1022,6 +1037,7 @@ impl PyConstraint {
         };
         Ok(GridEvaluation {
             name: evaluator.name_at_roll(target_roll),
+            target_names: None,
             // Times, the cause-key mapping and the name are the same for every
             // target: built once and shared.
             times: ephemeris.get_times_at_indices(time_indices)?.into(),

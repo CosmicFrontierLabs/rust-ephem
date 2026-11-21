@@ -2,7 +2,6 @@
 model, on a synthetic point-source transmittance table."""
 
 from datetime import datetime, timedelta, timezone
-from functools import cache
 from typing import Any, Literal
 
 import numpy as np
@@ -113,6 +112,12 @@ def unit(v: Array) -> Array:
     return np.asarray(v / np.linalg.norm(v, axis=-1, keepdims=True))
 
 
+def along(p: Array, v: Array) -> Array:
+    """Each row of p dotted with v (without BLAS, whose matmul raises spurious
+    floating-point warnings on some platforms)."""
+    return np.asarray(np.einsum("ij,j->i", p, v))
+
+
 def angle_deg(a: Array, b: Array) -> float:
     return float(np.degrees(np.arccos(np.clip(unit(a) @ unit(b), -1.0, 1.0))))
 
@@ -163,51 +168,30 @@ class ReferenceTable:
         )
 
 
-def lambert_integral(x: float, alpha_deg: Array, n: int = 400) -> Array:
-    """Phase law of a Lambert sphere seen from distance R / x, by a midpoint
-    rule over the visible cap, normalised to the distant-observer law."""
-    theta_max = np.pi / 2 if x == 0 else np.arccos(x)
-    theta = (np.arange(n) + 0.5) / n * theta_max
-    longitude = (np.arange(2 * n) + 0.5) / (2 * n) * np.pi
-    st, ct = np.sin(theta), np.cos(theta)
-    if x == 0:
-        geometry = ct * st
-    else:
-        r2 = 1 - 2 * x * ct + x * x
-        geometry = (ct - x) * (1 - x * ct) / r2 * st / r2
-    weight = (theta_max / n) * (np.pi / (2 * n)) * 2 * 3 / (2 * np.pi)
-    out = []
-    for alpha in np.radians(np.atleast_1d(alpha_deg)):
-        cos_incidence = np.clip(
-            np.outer(st, np.cos(longitude)) * np.sin(alpha)
-            + ct[:, None] * np.cos(alpha),
-            0,
-            None,
-        )
-        out.append(weight * np.sum(cos_incidence * geometry[:, None]))
-    return np.array(out)
+def lit_half_width(
+    cos_alpha: float, sin_alpha: float, theta_max: float
+) -> float | None:
+    """Half the range of longitudes about the sub-observer point that hold
+    sunlit surface inside the visible cap; None when there is none."""
+    if cos_alpha > 0.0:
+        return float(np.pi)
+    edge = -cos_alpha * np.cos(theta_max)
+    reach = sin_alpha * np.sin(theta_max)
+    if not reach > edge:
+        return None
+    return float(np.arccos(np.clip(edge / reach, -1.0, 1.0)))
 
 
-@cache
-def lambert_row(index: int) -> Array:
-    """log10 of the phase law at x = index / 100 for alpha = 0, 2.5, ..., 180."""
-    values = lambert_integral(index * 0.01, np.arange(0.0, 180.001, 2.5))
-    return np.asarray(np.maximum(-9.0, np.log10(np.maximum(1e-300, values))))
+class Level:
+    """One quadrature level: sum of weight x PST over the samples in view, the
+    sum of the weights, and the solid angle of the sunlit samples in view."""
 
+    def __init__(self, weighted: float, weight: float, lit: float) -> None:
+        self.weighted, self.weight, self.lit = weighted, weight, lit
 
-def lambert_phase(x: float, alpha_deg: float) -> float:
-    """The tabulated phase law, bilinear in log10 as the constraint reads it."""
-    fx, fa = min(max(x, 0.0), 0.98) / 0.01, min(max(alpha_deg, 0.0), 180.0) / 2.5
-    i, j = min(int(fx), 97), min(int(fa), 71)
-    u, v = fx - i, fa - j
-    low, high = lambert_row(i), lambert_row(i + 1)
-    return float(
-        10.0
-        ** (
-            (1 - u) * ((1 - v) * low[j] + v * low[j + 1])
-            + u * ((1 - v) * high[j] + v * high[j + 1])
-        )
-    )
+    @property
+    def mean(self) -> float:
+        return self.weighted / self.weight if self.weight > 0 else 0.0
 
 
 ZODI_TABLE = np.array(
@@ -283,21 +267,35 @@ class Reference:
         y = np.cos(q) * body_y + np.sin(q) * np.cross(b, body_y)
         return y, np.cross(y, b), roll % 360.0
 
-    def level(
+    def pst_toward(self, b: Array, y: Array, x: Array, p: Array) -> Array:
+        polar = np.degrees(np.arccos(np.clip(along(p, b), -1, 1)))
+        azimuth = np.degrees(np.arctan2(along(p, x), along(p, y)))
+        return np.asarray(10.0 ** self.pst(polar, azimuth))
+
+    @staticmethod
+    def hides(earth: Array | None, p: Array, reach: Any) -> Array:
+        """Whether the Earth is on the line of sight along p before `reach`."""
+        if earth is None:
+            return np.zeros(len(p), dtype=bool)
+        ahead = along(p, earth)
+        discriminant = ahead**2 - (earth @ earth - RADIUS_KM["earth"] ** 2)
+        root = np.sqrt(np.clip(discriminant, 0, None))
+        return np.asarray((ahead > 0) & (discriminant > 0) & (ahead - root < reach))
+
+    def sun_level(
         self,
         b: Array,
         y: Array,
         x: Array,
         centre: Array,
-        radius: float,
-        sun: Array,
         n_r: int,
         n_az: int,
-        lambert: bool,
-    ) -> tuple[float, float, float]:
+        earth: Array | None,
+    ) -> Level:
+        """The Sun's uniform disk, in angle from its centre and position angle."""
         d = float(np.linalg.norm(centre))
         e = centre / d
-        rho = np.arcsin(radius / d)
+        rho = np.arcsin(RADIUS_KM["sun"] / d)
         ref = np.array([0.0, 0.0, 1.0]) if abs(e[2]) < 0.95 else np.array([0.0, 1.0, 0])
         u = unit(np.cross(ref, e))
         w = np.cross(e, u)
@@ -312,57 +310,135 @@ class Reference:
         p = np.cos(gamma)[:, None] * e + np.sin(gamma)[:, None] * (
             np.cos(beta)[:, None] * u + np.sin(beta)[:, None] * w
         )
-        polar = np.degrees(np.arccos(np.clip(p @ b, -1, 1)))
-        value = 10.0 ** self.pst(polar, np.degrees(np.arctan2(p @ x, p @ y)))
-        flat = np.sin(gamma)
-        weight = flat
-        if lambert:
-            reach = d * np.cos(gamma)
-            hit = reach - np.sqrt(np.clip(reach**2 - (d * d - radius**2), 0, None))
-            surface = hit[:, None] * p
-            cos_incidence = np.sum(unit(surface - centre) * unit(sun - surface), axis=1)
-            weight = flat * np.clip(cos_incidence, 0, None)
-        chosen = weight if weight.sum() > 0 else flat
-        return (
-            float(np.sum(chosen * value) / chosen.sum()),
-            float(np.mean(weight > 0)),
-            float((value.max() - value.min()) / value.mean()),
+        weight = np.sin(gamma) * (rho / n_r) * (2 * np.pi / n_az)
+        seen = ~self.hides(earth, p, np.inf)
+        value = self.pst_toward(b, y, x, p)
+        return Level(
+            float(np.sum((weight * value)[seen])),
+            float(weight.sum()),
+            float(weight[seen].sum()),
         )
 
+    def cap_level(
+        self,
+        b: Array,
+        y: Array,
+        x: Array,
+        centre: Array,
+        radius: float,
+        to_sun: Array,
+        n_theta: int,
+        n_phi: int,
+        earth: Array | None,
+    ) -> Level:
+        """The sunlit part of the visible cap of a Lambert sphere, in colatitude
+        from the sub-observer point and longitude about it (zero on the Sun's
+        side). Each longitude is sampled between the terminator and the edge
+        of the cap, and only the longitudes holding sunlit surface."""
+        d = float(np.linalg.norm(centre))
+        toward = -centre / d
+        theta_max = float(np.arccos(radius / d))
+        cos_alpha = float(to_sun @ toward)
+        across = to_sun - cos_alpha * toward
+        sin_alpha = float(np.linalg.norm(across))
+        phi_max = lit_half_width(cos_alpha, sin_alpha, theta_max)
+        if phi_max is None:
+            return Level(0.0, 0.0, 0.0)
+        if sin_alpha > 1e-12:
+            side = across / sin_alpha
+        else:
+            ref = (
+                np.array([0.0, 0.0, 1.0])
+                if abs(toward[2]) < 0.95
+                else np.array([0.0, 1.0, 0.0])
+            )
+            side = unit(np.cross(ref, toward))
+        third = np.cross(toward, side)
+        d_phi = 2 * phi_max / n_phi
+        phi: Array = -phi_max + (np.arange(n_phi) + 0.5) * d_phi
+        toward_sun: Array = sin_alpha * np.cos(phi)
+        low: Array
+        high: Array
+        with np.errstate(divide="ignore", invalid="ignore"):
+            if cos_alpha > 0:
+                low = np.zeros(n_phi)
+                high = np.where(
+                    toward_sun < 0,
+                    np.minimum(theta_max, np.arctan(cos_alpha / -toward_sun)),
+                    theta_max,
+                )
+            else:
+                low = np.arctan(-cos_alpha / toward_sun)
+                high = np.full(n_phi, theta_max)
+        used = high > low
+        phi, toward_sun, low, high = phi[used], toward_sun[used], low[used], high[used]
+        d_theta = (high - low) / n_theta
+        theta = low[:, None] + (np.arange(n_theta) + 0.5)[None, :] * d_theta[:, None]
+        outward = np.cos(phi)[:, None] * side + np.sin(phi)[:, None] * third
+        normal = (
+            np.cos(theta)[..., None] * toward
+            + np.sin(theta)[..., None] * outward[:, None, :]
+        )
+        point = centre + radius * normal
+        reach = np.linalg.norm(point, axis=-1)
+        cos_emission = (d * np.cos(theta) - radius) / reach
+        solid = (
+            cos_emission * radius**2 * np.sin(theta) * d_theta[:, None] * d_phi
+        ) / reach**2
+        weight = (
+            np.clip(
+                cos_alpha * np.cos(theta) + toward_sun[:, None] * np.sin(theta), 0, None
+            )
+            * solid
+        )
+        p = (point / reach[..., None]).reshape(-1, 3)
+        seen = ~self.hides(earth, p, reach.ravel())
+        value = self.pst_toward(b, y, x, p)
+        return Level(
+            float(np.sum((weight.ravel() * value)[seen])),
+            float(weight.sum()),
+            float(solid.ravel()[seen].sum()),
+        )
+
+    @staticmethod
+    def hidden(name: str, centre: Array, earth: Array) -> str:
+        """How much of a body the Earth hides: "none", "partly" or "all"."""
+        if name == "earth":
+            return "none"
+        d, d_earth = float(np.linalg.norm(centre)), float(np.linalg.norm(earth))
+        radius, earth_radius = RADIUS_KM[name], RADIUS_KM["earth"]
+        separation = np.radians(angle_deg(centre, earth))
+        rho_earth, rho = np.arcsin(earth_radius / d_earth), np.arcsin(radius / d)
+        tangent = np.sqrt(d_earth**2 - earth_radius**2)
+        if separation >= rho_earth + rho or d + radius <= tangent:
+            return "none"
+        if separation + rho <= rho_earth and d - radius >= tangent:
+            return "all"
+        return "partly"
+
     def body(
-        self, name: str, b: Array, y: Array, x: Array, centre: Array, sun: Array
+        self,
+        name: str,
+        b: Array,
+        y: Array,
+        x: Array,
+        centre: Array,
+        sun: Array,
+        earth: Array,
     ) -> tuple[float, bool, dict[str, float]]:
         """(flux in V = 0 sources, valid, the intermediate quantities)"""
+        status_of = re.StrayLightStatus
         radius = RADIUS_KM[name]
         d = float(np.linalg.norm(centre))
         separation = angle_deg(centre, b)
         rho = float(np.degrees(np.arcsin(radius / d)))
         limb = separation - rho
         azimuth = float(np.degrees(np.arctan2(centre @ x, centre @ y)))
-        if name == "sun":
-            phase = 0.0
-            v_mag = self.c.sun_v_mag_1au + 5 * np.log10(d / AU_KM)
-        else:
-            phase = angle_deg(sun - centre, -centre)
-            if name == "earth":
-                full = self.c.sun_v_mag_1au - 2.5 * np.log10(
-                    self.c.earth_albedo * (radius / AU_KM) ** 2
-                )
-                v_mag = (
-                    full
-                    + 5 * np.log10(d / AU_KM)
-                    - 2.5 * np.log10(lambert_phase(radius / d, phase))
-                )
-            else:
-                v_mag = (
-                    self.c.moon_v_mag_full
-                    + 5 * np.log10(d / 384400.0)
-                    + 0.026 * phase
-                    + 4e-9 * phase**4
-                )
+        sunward = sun - centre
+        sun_au = float(np.linalg.norm(sunward)) / AU_KM
         info = {
-            "v_mag": float(v_mag),
-            "phase_deg": np.nan if name == "sun" else phase,
+            "v_mag": np.nan,
+            "phase_deg": np.nan,
             "distance_km": d,
             "angular_radius_deg": rho,
             "separation_deg": separation,
@@ -374,46 +450,93 @@ class Reference:
             "pst_mean": np.nan,
             "lit_fraction": np.nan,
             "quadrature_error": np.nan,
-            "status": float(re.StrayLightStatus.IN_FIELD),
+            "status": float(status_of.IN_FIELD),
         }
-        in_field = limb < self.c.in_field_deg
-        n_r, n_az = START_GRID[name]
-        lambert = name != "sun"
-        mean, lit, spread = self.level(b, y, x, centre, radius, sun, n_r, n_az, lambert)
-        unsettled, change = True, np.inf
-        for k in range(1, 5):
-            finer = self.level(
-                b, y, x, centre, radius, sun, n_r << k, n_az << k, lambert
+        dark = False
+        if name == "sun":
+            info["v_mag"] = self.c.sun_v_mag_1au + 5 * np.log10(d / AU_KM)
+        else:
+            phase = angle_deg(sunward, -centre)
+            info["phase_deg"] = phase
+            a = np.radians(phase)
+            dark = (
+                lit_half_width(
+                    float(np.cos(a)), float(np.sin(a)), float(np.arccos(radius / d))
+                )
+                is None
             )
-            change = abs(finer[0] - mean) / finer[0]
-            mean, lit, spread = finer
-            unsettled = change > 0.02 or lit == 0
-            if not unsettled:
+            if name == "moon":
+                info["v_mag"] = (
+                    self.c.moon_v_mag_full
+                    + 5 * np.log10(d / 384400.0)
+                    + 5 * np.log10(sun_au)
+                    + 0.026 * phase
+                    + 4e-9 * phase**4
+                )
+        nothing = {"pst_mean": 0.0, "lit_fraction": 0.0}
+        hidden = self.hidden(name, centre, earth)
+        if hidden == "all":
+            info.update(nothing, status=float(status_of.OCCULTED))
+            return 0.0, True, info
+        in_field = limb < self.c.in_field_deg
+        if dark:
+            info.update(nothing)
+            if name == "earth":
+                info["v_mag"] = np.inf
+            if in_field:
+                return np.nan, False, info
+            info["status"] = float(status_of.DARK)
+            return 0.0, True, info
+
+        blocker = earth if hidden == "partly" else None
+        n_a, n_b = START_GRID[name]
+
+        def level(k: int) -> Level:
+            if name == "sun":
+                return self.sun_level(b, y, x, centre, n_a << k, n_b << k, blocker)
+            return self.cap_level(
+                b, y, x, centre, radius, unit(sunward), n_a << k, n_b << k, blocker
+            )
+
+        def signal(lv: Level) -> float:
+            return lv.weighted if name == "earth" else lv.mean
+
+        current = level(0)
+        change = np.inf
+        for k in range(1, 5):
+            finer = level(k)
+            new, old = signal(finer), signal(current)
+            change = 0.0 if new == old else abs(new - old) / abs(new)
+            current = finer
+            if change <= 0.02:
                 break
-        converged = spread <= 0.1 if lit == 0 else not unsettled
-        dark = (
-            name != "sun"
-            and lit == 0
-            and phase >= 90 + np.degrees(np.arccos(radius / d))
-        )
+        converged = change <= 0.02
+        if name == "earth":
+            sun_at_earth = self.c.sun_v_mag_1au + 5 * np.log10(sun_au)
+            radiance = (
+                3 / (2 * np.pi) * self.c.earth_albedo * 10.0 ** (-0.4 * sun_at_earth)
+            )
+            info["v_mag"] = float(-2.5 * np.log10(radiance * current.weight))
+        disk = 2 * np.pi * (1 - np.sqrt(1 - (radius / d) ** 2))
         status = (
-            re.StrayLightStatus.IN_FIELD
+            status_of.IN_FIELD
             if in_field
-            else re.StrayLightStatus.DARK
-            if dark
-            else re.StrayLightStatus.FIRST_CELL
+            else status_of.OCCULTED
+            if blocker is not None and current.lit == 0
+            else status_of.FIRST_CELL
             if limb < self.c.pst.off_axis_deg[1]
-            else re.StrayLightStatus.UNCONVERGED
+            else status_of.UNCONVERGED
             if not converged
-            else re.StrayLightStatus.OK
+            else status_of.OK
         )
         info.update(
-            pst_mean=mean,
-            lit_fraction=lit,
-            quadrature_error=spread if lit == 0 else change,
+            pst_mean=current.mean,
+            lit_fraction=min(current.lit / disk, 1.0),
+            quadrature_error=change,
             status=float(status),
         )
-        return float(10.0 ** (-0.4 * v_mag) * mean), status.is_valid, info
+        flux = float(10.0 ** (-0.4 * info["v_mag"]) * current.mean)
+        return flux, status.is_valid, info
 
     def __call__(
         self,
@@ -440,7 +563,9 @@ class Reference:
         )
         total, all_valid = 0.0, True
         for name in ("sun", "earth", "moon"):
-            flux, valid, info = self.body(name, b, y, x, bodies[name], sun)
+            flux, valid, info = self.body(
+                name, b, y, x, bodies[name], sun, bodies["earth"]
+            )
             out[f"{name}_stray_light_ratio"] = flux * per_zodi if valid else np.nan
             total += flux
             all_valid &= valid
@@ -640,22 +765,6 @@ def test_symmetric_table_ignores_the_sign_of_the_sun_azimuth(
     )
 
 
-def test_tabulated_phase_law_matches_direct_integration() -> None:
-    """The table the Earth's magnitude reads is the finite-distance Lambert
-    integral: Phi(alpha) of a distant sphere at x = 0."""
-    alpha = np.array([0.0, 45.0, 90.0, 135.0])
-    a = np.radians(alpha)
-    distant = (np.sin(a) + (np.pi - a) * np.cos(a)) / np.pi
-    np.testing.assert_allclose(lambert_integral(0.0, alpha), distant, rtol=1e-5)
-    np.testing.assert_allclose(
-        [lambert_phase(0.0, x) for x in alpha], distant, rtol=1e-5
-    )
-    # Off the grid nodes the bilinear table stays close to the integral.
-    for x, phase in [(0.137, 61.0), (0.211, 118.3), (0.05, 7.7)]:
-        direct = lambert_integral(x, np.array([phase]))[0]
-        assert lambert_phase(x, phase) == pytest.approx(direct, rel=5e-3)
-
-
 def test_ratio_scales_with_the_conversion_factor_and_the_zodi(
     table: PointSourceTransmittance, ephem: Any, sample: tuple[Array, Array, Any]
 ) -> None:
@@ -774,6 +883,387 @@ def test_single_column_table_does_not_depend_on_roll(ephem: Any) -> None:
     ]
     assert np.isfinite(ratios[0]).all()
     np.testing.assert_allclose(ratios[0], ratios[1], rtol=1e-12)
+
+
+# --- low orbit: the Earth fills the sky, and hides things ---------------------
+
+LOW_STEP = 2
+LOW_N = 2850  # one revolution at 500 km
+
+
+@pytest.fixture(scope="module")
+def low_orbit(ensure_planetary_data: None) -> Any:
+    """A circular orbit 500 km up, from which the Earth is 136 degrees across."""
+    return circular_orbit(500.0, LOW_N, LOW_STEP)
+
+
+def circular_orbit(altitude_km: float, count: int, step: int) -> Any:
+    radius = RADIUS_KM["earth"] + altitude_km
+    rate = np.sqrt(398600.4418 / radius**3)
+    angle = rate * np.arange(count) * float(step)
+    inclination = np.radians(30.0)
+    along = np.array([1.0, 0.0, 0.0])
+    across = np.array([0.0, np.cos(inclination), np.sin(inclination)])
+    position = radius * (
+        np.cos(angle)[:, None] * along + np.sin(angle)[:, None] * across
+    )
+    velocity = (
+        radius
+        * rate
+        * (-np.sin(angle)[:, None] * along + np.cos(angle)[:, None] * across)
+    )
+    times = [BEGIN + timedelta(seconds=float(step * i)) for i in range(count)]
+    return re.FileEphemeris.from_arrays(times, position, velocity, step_size=step)
+
+
+def radec_of(v: Array) -> tuple[float, float]:
+    v = unit(np.asarray(v, dtype=float))
+    return (
+        float(np.degrees(np.arctan2(v[1], v[0])) % 360.0),
+        float(np.degrees(np.arcsin(v[2]))),
+    )
+
+
+def earth_phase_deg(ephem: Any, rows: Any) -> Array:
+    """Sun-Earth-observer angle at each row."""
+    bodies = bodies_at(ephem, rows)
+    to_sun, to_observer = unit(bodies["sun"] - bodies["earth"]), unit(-bodies["earth"])
+    return np.asarray(np.degrees(np.arccos(np.sum(to_sun * to_observer, axis=1))))
+
+
+def sky_integral(
+    constraint: StrayLightConstraint,
+    b: Array,
+    earth: Array,
+    sun: Array,
+    count: int = 500,
+) -> float:
+    """The Earth's scattered flux (V = 0 sources) summed over sky directions:
+    radiance (3 p / 2 pi) E_sun cos(i) times PST times solid angle.
+
+    Independent of the model's surface integral: a grid in angle from the
+    Earth's centre and position angle, packed toward the limb, where a
+    crescent lies, by gamma = rho (1 - s^2)."""
+    model = Reference(constraint)
+    y, x, _ = model.frame(b, sun, None)
+    d = float(np.linalg.norm(earth))
+    e = earth / d
+    rho = np.arcsin(RADIUS_KM["earth"] / d)
+    u = unit(np.cross([0.0, 0.0, 1.0], e))
+    w = np.cross(e, u)
+    s = (np.arange(count) + 0.5) / count
+    gamma = rho * (1 - s**2)
+    d_gamma = rho * 2 * s / count
+    beta = (np.arange(2 * count) + 0.5) / (2 * count) * 2 * np.pi
+    to_sun = unit(sun - earth)
+    sun_at_earth = constraint.sun_v_mag_1au + 5 * np.log10(
+        np.linalg.norm(sun - earth) / AU_KM
+    )
+    radiance = 3 / (2 * np.pi) * constraint.earth_albedo * 10.0 ** (-0.4 * sun_at_earth)
+    total = 0.0
+    for g, dg in zip(gamma, d_gamma):
+        p = np.cos(g) * e + np.sin(g) * (
+            np.cos(beta)[:, None] * u + np.sin(beta)[:, None] * w
+        )
+        reach = d * np.cos(g)
+        hit = reach - np.sqrt(max(reach**2 - (d * d - RADIUS_KM["earth"] ** 2), 0.0))
+        normal = unit(hit * p - earth)
+        cos_incidence = np.clip(along(normal, to_sun), 0, None)
+        value = model.pst_toward(b, y, x, p)
+        total += float(np.sum(cos_incidence * value)) * np.sin(g) * dg
+    return float(radiance * total * (2 * np.pi / (2 * count)))
+
+
+def clear_of_the_earth(earth: Array, sun: Array, above_limb_deg: float) -> Array:
+    """A boresight `above_limb_deg` beyond the Earth's limb, on the Sun's side
+    of the nadir when there is one."""
+    nadir = unit(earth)
+    s = unit(sun)
+    across = s - (s @ nadir) * nadir
+    if np.linalg.norm(across) < 1e-6:
+        across = np.cross(nadir, [0.0, 0.0, 1.0])
+    across = unit(across)
+    angle = np.arcsin(RADIUS_KM["earth"] / np.linalg.norm(earth)) + np.radians(
+        above_limb_deg
+    )
+    return np.asarray(np.cos(angle) * nadir + np.sin(angle) * across)
+
+
+@pytest.mark.parametrize("flat", [True, False], ids=["constant_pst", "smooth_pst"])
+@pytest.mark.parametrize("altitude_km", [400.0, 500.0, 1000.0, 6000.0, 35786.0])
+def test_earth_flux_is_radiance_times_pst_summed_over_the_sky(
+    table: PointSourceTransmittance,
+    ensure_planetary_data: None,
+    altitude_km: float,
+    flat: bool,
+) -> None:
+    """Against an independent integral over sky directions, from low orbit to
+    geostationary height and from full Earth to a crescent. A factor for the
+    inclination of each ray to the Earth's direction would lose a third of
+    the light at 500 km (and three quarters of a crescent's)."""
+    period = 2 * np.pi * np.sqrt((RADIUS_KM["earth"] + altitude_km) ** 3 / 398600.4418)
+    count = 48
+    ephem = circular_orbit(altitude_km, count, max(1, int(period / count)))
+    off_axis = np.arange(0.0, 181.0, 5.0)
+    pst = (
+        PointSourceTransmittance.from_pst(
+            off_axis, [0.0, 180.0], np.full((37, 2), 1e-6)
+        )
+        if flat
+        else table
+    )
+    constraint = StrayLightConstraint(pst=pst, conversion_factor=CONVERSION)
+    per_zodi = CONVERSION / 10.0 ** (-0.4 * constraint.zodi_v_mag_arcsec2)
+    rows = np.arange(count)
+    phase = earth_phase_deg(ephem, rows)
+    reach = np.degrees(
+        np.arccos(RADIUS_KM["earth"] / (RADIUS_KM["earth"] + altitude_km))
+    )
+    bodies = bodies_at(ephem, rows)
+    checked = []
+    # A dozen rows from full Earth to the thinnest crescent.
+    lit = rows[phase < 90.0 + reach - 2.0]
+    for row in lit[np.argsort(phase[lit])][:: max(1, len(lit) // 12)]:
+        earth, sun = bodies["earth"][row], bodies["sun"][row]
+        b = clear_of_the_earth(earth, sun, 25.0)
+        ra, dec = radec_of(b)
+        values = evaluate(constraint, ephem, ra, dec, [row]).constraint_values
+        if values["earth_status"][0] != re.StrayLightStatus.OK:
+            continue
+        flux = values["earth_stray_light_ratio"][0] / per_zodi
+        expected = sky_integral(constraint, b, earth, sun)
+        # The quadrature stops when two levels agree to 2%.
+        assert flux == pytest.approx(expected, rel=0.01 if flat else 0.03), (
+            row,
+            phase[row],
+        )
+        checked.append(phase[row])
+    # Full Earth and crescent both.
+    assert min(checked) < 30.0 and max(checked) > 90.0
+
+
+def test_low_orbit_matches_independent_reference(
+    table: PointSourceTransmittance, low_orbit: Any
+) -> None:
+    """Every reported value, around a whole orbit: day, terminator, eclipse."""
+    rng = np.random.default_rng(11)
+    count = 240
+    ra = rng.uniform(0.0, 360.0, count)
+    dec = np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, count)))
+    rows = rng.integers(0, LOW_N, count)
+    constraint = StrayLightConstraint(
+        pst=table, conversion_factor=CONVERSION, sun_azimuth_deg=180
+    )
+    result = evaluate(constraint, low_orbit, ra, dec, rows)
+    expected = reference_values(constraint, low_orbit, ra, dec, rows)
+    assert_values_match(result.constraint_values, expected)
+    seen = {
+        int(v) for body in ("sun", "earth", "moon") for v in expected[f"{body}_status"]
+    }
+    status = re.StrayLightStatus
+    assert {status.OK, status.DARK, status.OCCULTED, status.IN_FIELD} <= seen
+
+
+def test_no_cell_is_unconverged_through_the_terminator(
+    table: PointSourceTransmittance, low_orbit: Any
+) -> None:
+    """Where the Earth is a crescent on the limb, the lit surface is still
+    integrated: nothing is rejected for want of a prediction."""
+    rng = np.random.default_rng(5)
+    count = 60
+    ra = rng.uniform(0.0, 360.0, count)
+    dec = np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, count)))
+    constraint = StrayLightConstraint(pst=table, conversion_factor=CONVERSION)
+    rows = np.arange(0, LOW_N, 15)
+    phase = earth_phase_deg(low_orbit, rows)
+    reach = np.degrees(np.arccos(RADIUS_KM["earth"] / (RADIUS_KM["earth"] + 500.0)))
+    crescent = (phase > 95.0) & (phase < 90.0 + reach)
+    assert crescent.sum() >= 8
+    status = re.StrayLightStatus
+    for row, alpha in zip(rows, phase):
+        values = evaluate(
+            constraint, low_orbit, ra, dec, [int(row)] * count
+        ).constraint_values
+        earth = np.asarray(values["earth_status"]).astype(int)
+        assert status.UNCONVERGED not in earth, (row, alpha)
+        in_field = earth == status.IN_FIELD
+        # Dark exactly when the day side and the visible cap do not meet.
+        dark = alpha >= 90.0 + reach
+        np.testing.assert_array_equal(earth[~in_field] == status.DARK, dark)
+        if dark:
+            np.testing.assert_array_equal(
+                np.asarray(values["earth_stray_light_ratio"])[~in_field], 0.0
+            )
+            assert np.isposinf(np.asarray(values["earth_v_mag"])[~in_field]).all()
+
+
+def test_a_dark_earth_costs_no_integral(
+    table: PointSourceTransmittance, low_orbit: Any
+) -> None:
+    import time as clock
+
+    rng = np.random.default_rng(6)
+    count = 400
+    ra = list(rng.uniform(0.0, 360.0, count))
+    dec = list(np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, count))))
+    constraint = StrayLightConstraint(pst=table, conversion_factor=CONVERSION)
+    phase = earth_phase_deg(low_orbit, np.arange(LOW_N))
+
+    def best(row: int) -> float:
+        elapsed = []
+        for _ in range(3):
+            start = clock.perf_counter()
+            constraint.in_constraint_batch(low_orbit, ra, dec, indices=[row])
+            elapsed.append(clock.perf_counter() - start)
+        return min(elapsed)
+
+    # In eclipse every refinement level used to run: forty times the daylight cost.
+    assert best(int(np.argmax(phase))) < 2.0 * best(int(np.argmin(phase))) + 0.02
+
+
+def test_the_sun_behind_the_earth_contributes_nothing(
+    table: PointSourceTransmittance, low_orbit: Any
+) -> None:
+    """In eclipse, pointing just above the limb toward the hidden Sun."""
+    rows = np.arange(LOW_N)
+    bodies = bodies_at(low_orbit, rows)
+    from_nadir = np.degrees(
+        np.arccos(np.sum(unit(bodies["sun"]) * unit(bodies["earth"]), axis=1))
+    )
+    row = int(np.argmin(np.abs(from_nadir - 30.0)))
+    assert from_nadir[row] < 35.0
+    time = low_orbit.timestamp[row]
+    assert re.EclipseConstraint().in_constraint(time, low_orbit, 0.0, 0.0)
+    ra, dec = radec_of(
+        clear_of_the_earth(bodies["earth"][row], bodies["sun"][row], 12.0)
+    )
+    constraint = StrayLightConstraint(pst=table, conversion_factor=CONVERSION)
+    result = evaluate(constraint, low_orbit, ra, dec, [row])
+    values = result.constraint_values
+    status = re.StrayLightStatus
+    assert values["sun_status"][0] == status.OCCULTED
+    assert status.OCCULTED.is_valid
+    assert values["sun_stray_light_ratio"][0] == 0.0
+    assert values["sun_lit_fraction"][0] == 0.0
+    # The Sun's own magnitude is still reported.
+    assert values["sun_v_mag"][0] == pytest.approx(-26.74, abs=0.05)
+    assert values["earth_status"][0] == status.DARK
+    assert values["earth_stray_light_ratio"][0] == 0.0
+    assert values["stray_light_ratio"][0] < 1e-3
+    assert not bool(result.constraint_array[0])
+    # The mask alone agrees.
+    assert not constraint.in_constraint(time, low_orbit, ra, dec)
+
+
+def test_a_setting_sun_is_hidden_part_by_part(
+    table: PointSourceTransmittance, low_orbit: Any
+) -> None:
+    """Across the limb the Sun's contribution falls with the part in view."""
+    rows = np.arange(LOW_N)
+    bodies = bodies_at(low_orbit, rows)
+    hidden = np.array(
+        [
+            Reference.hidden("sun", bodies["sun"][row], bodies["earth"][row])
+            for row in rows
+        ]
+    )
+    partly = np.flatnonzero(hidden == "partly")
+    # Sunset and sunrise, a few seconds each.
+    assert 4 <= len(partly) <= 20
+    first = (
+        partly[np.flatnonzero(np.diff(partly) > 1)[0] + 1 :]
+        if (np.diff(partly) > 1).any()
+        else partly
+    )
+    crossing = np.arange(first[0] - 1, first[-1] + 2)
+    # One pointing, clear of everything for the whole crossing.
+    middle = int(crossing[len(crossing) // 2])
+    b = -unit(unit(bodies["earth"][middle]) + 0.5 * unit(bodies["sun"][middle]))
+    ra, dec = radec_of(b)
+    constraint = StrayLightConstraint(pst=table, conversion_factor=CONVERSION)
+    n = len(crossing)
+    result = evaluate(constraint, low_orbit, [ra] * n, [dec] * n, crossing)
+    values = {k: np.asarray(v) for k, v in result.constraint_values.items()}
+    assert_values_match(
+        values,
+        reference_values(
+            constraint, low_orbit, np.full(n, ra), np.full(n, dec), crossing
+        ),
+    )
+    fraction = values["sun_lit_fraction"]
+    # From one side of the limb to the other, monotonically.
+    assert {fraction[0], fraction[-1]} == {0.0, 1.0}
+    step = np.diff(fraction)
+    assert (step >= 0).all() or (step <= 0).all()
+    inside = (fraction > 0) & (fraction < 1)
+    assert inside.sum() >= 2
+    assert (values["sun_status"][inside] == re.StrayLightStatus.OK).all()
+    # The table hardly changes across half a degree: the light follows the
+    # fraction of the disk in view.
+    whole = values["sun_stray_light_ratio"][fraction == 1.0][0]
+    np.testing.assert_allclose(
+        values["sun_stray_light_ratio"][inside] / whole, fraction[inside], rtol=0.05
+    )
+
+
+def test_the_moon_behind_the_earth_contributes_nothing(
+    table: PointSourceTransmittance, low_orbit: Any
+) -> None:
+    rows = np.arange(0, LOW_N, 25)
+    bodies = bodies_at(low_orbit, rows)
+    hidden = np.array(
+        [
+            Reference.hidden("moon", bodies["moon"][i], bodies["earth"][i])
+            for i in range(len(rows))
+        ]
+    )
+    assert (hidden == "all").any() and (hidden == "none").any()
+    constraint = StrayLightConstraint(pst=table, conversion_factor=CONVERSION)
+    # Away from the Earth, so that the pointing itself is never the question.
+    for kind in ("all", "none"):
+        i = int(np.flatnonzero(hidden == kind)[0])
+        ra, dec = radec_of(-bodies["earth"][i])
+        values = evaluate(
+            constraint, low_orbit, ra, dec, [int(rows[i])]
+        ).constraint_values
+        occulted = values["moon_status"][0] == re.StrayLightStatus.OCCULTED
+        assert occulted == (kind == "all")
+        assert (values["moon_stray_light_ratio"][0] == 0.0) == (kind == "all")
+
+
+def test_illumination_follows_the_distance_of_the_sun(
+    table: PointSourceTransmittance, ephem: Any
+) -> None:
+    """The Earth and Moon are lit by the Sun where it is, not at 1 au: the
+    reference applies the inverse square of the Sun's distance to both."""
+    row = 300
+    bodies = bodies_at(ephem, [row])
+    sun_au = np.linalg.norm(bodies["sun"][0] - bodies["earth"][0]) / AU_KM
+    # Early March: the Earth is inside 1 au.
+    assert 0.985 < sun_au < 0.995
+    ra, dec = radec_of(-bodies["sun"][0])
+    constraint = StrayLightConstraint(pst=table, conversion_factor=CONVERSION)
+    values = evaluate(constraint, ephem, ra, dec, [row]).constraint_values
+    expected = reference_values(
+        constraint, ephem, np.array([ra]), np.array([dec]), [row]
+    )
+    for body in ("earth", "moon"):
+        assert values[f"{body}_v_mag"][0] == pytest.approx(
+            expected[f"{body}_v_mag"][0], abs=1e-9
+        )
+    # The Moon's magnitude carries the term explicitly.
+    moon = bodies["moon"][0]
+    phase = angle_deg(bodies["sun"][0] - moon, -moon)
+    moon_sun_au = np.linalg.norm(bodies["sun"][0] - moon) / AU_KM
+    at_1au = (
+        constraint.moon_v_mag_full
+        + 5 * np.log10(np.linalg.norm(moon) / 384400.0)
+        + 0.026 * phase
+        + 4e-9 * phase**4
+    )
+    assert values["moon_v_mag"][0] - at_1au == pytest.approx(
+        5 * np.log10(moon_sun_au), abs=1e-9
+    )
 
 
 # --- evaluation methods ------------------------------------------------------
@@ -1160,6 +1650,220 @@ def test_roll_range_gives_the_rolls_that_are_dark(
     for low, high in ranges:
         allowed |= (ROLLS >= low - 1e-9) & (ROLLS <= high + 1e-9)
     np.testing.assert_array_equal(allowed, ~violated)
+
+
+# --- free roll ---------------------------------------------------------------
+
+SWEPT = 72
+SWEPT_ROLLS = np.arange(SWEPT) * (360.0 / SWEPT)
+
+
+@pytest.fixture(scope="module")
+def free_roll_case(
+    ephem: Any, sample: tuple[Array, Array, Any]
+) -> tuple[StrayLightConstraint, Array, Array, list[Any], Array]:
+    """A stray-light rule whose answer depends on the roll at most pointings:
+    (rule, ra, dec, times, violated at each of SWEPT_ROLLS x pointing)."""
+    ra, dec, rows = (a[:48] for a in sample)
+    times = [ephem.timestamp[int(i)] for i in rows]
+    pst = make_table(symmetric=False)
+    probe = StrayLightConstraint(pst=pst, conversion_factor=CONVERSION)
+    nominal = np.asarray(
+        probe.evaluate_elementwise(ephem, ra, dec, times=times).constraint_values[
+            "stray_light_ratio"
+        ]
+    )
+    stray = StrayLightConstraint(
+        pst=pst,
+        conversion_factor=CONVERSION,
+        max_ratio=float(np.nanmedian(nominal)),
+    )
+    return stray, ra, dec, times, at_each_roll(stray, ephem, ra, dec, times)
+
+
+def at_each_roll(
+    tree: Any, ephem: Any, ra: Array, dec: Array, times: list[Any]
+) -> Array:
+    """The mask at each of SWEPT_ROLLS given explicitly: (rolls, pointings)."""
+    return np.array(
+        [
+            tree.in_constraint_elementwise(
+                ephem, ra, dec, times=times, target_rolls=[float(roll)] * len(ra)
+            )
+            for roll in SWEPT_ROLLS
+        ]
+    )
+
+
+def free_roll_trees(stray: StrayLightConstraint) -> dict[str, Any]:
+    """Trees in which another rule needs a roll, so a free roll is swept."""
+    offset = re.SunConstraint(min_angle=100).boresight_offset(pitch_deg=50)
+    solar = re.SolarRollConstraint(tolerance_deg=40.0)
+    sun = re.SunConstraint(min_angle=60)
+    return {
+        "or_offset": offset | stray,
+        "and_offset": offset & stray,
+        "or_solar_roll": solar | stray,
+        "nested": (stray & sun) | offset,
+        "negated": ~stray | offset,
+        "xor": stray ^ offset,
+        "wrapped": stray.boresight_offset(pitch_deg=0.0) | offset,
+    }
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["or_offset", "and_offset", "or_solar_roll", "nested", "negated", "xor", "wrapped"],
+)
+def test_free_roll_holds_every_rule_at_one_roll(
+    free_roll_case: tuple[StrayLightConstraint, Array, Array, list[Any], Array],
+    ephem: Any,
+    name: str,
+) -> None:
+    """With no roll given, a tree that needs one is satisfied exactly where
+    some roll satisfies all of it: the stray-light rule is evaluated at each
+    candidate with the others, not left at its nominal attitude."""
+    stray, ra, dec, times, _ = free_roll_case
+    tree = free_roll_trees(stray)[name]
+    explicit = at_each_roll(tree, ephem, ra, dec, times)
+    expected: npt.NDArray[np.bool_] = np.asarray(explicit.all(axis=0))
+    free: dict[str, Any] = {"n_roll_samples": SWEPT}
+    np.testing.assert_array_equal(
+        tree.in_constraint_elementwise(ephem, ra, dec, times=times, **free), expected
+    )
+    np.testing.assert_array_equal(
+        tree.evaluate_elementwise(ephem, ra, dec, times=times, **free).constraint_array,
+        expected,
+    )
+    for i in range(0, len(ra), 4):
+        point = (float(ra[i]), float(dec[i]))
+        want = bool(expected[i])
+        assert tree.in_constraint(times[i], ephem, *point, **free) == want
+        single = tree.evaluate(ephem, *point, times=[times[i]], **free)
+        assert bool(single.constraint_array[0]) == want
+        assert single.all_satisfied == (not want)
+        grid = tree.in_constraint_batch(
+            ephem, [point[0]], [point[1]], times=[times[i]], **free
+        )
+        assert bool(grid[0, 0]) == want
+        (batch,) = tree.evaluate_batch(
+            ephem, [point[0]], [point[1]], times=[times[i]], **free
+        )
+        assert bool(batch.constraint_array[0]) == want
+        # No roll range exactly where no roll satisfies the tree.
+        ranges = tree.roll_range(times[i], ephem, *point, n_roll_samples=SWEPT)
+        assert (len(ranges) == 0) == want
+    if name in ("or_offset", "and_offset", "nested"):
+        # The case is not vacuous: both answers occur, and the stray-light
+        # rule at its nominal attitude would give a different mask.
+        assert expected.any() and not expected.all()
+
+
+def test_a_tree_no_roll_satisfies_is_violated_though_the_nominal_roll_passes(
+    ephem: Any, sample: tuple[Array, Array, Any]
+) -> None:
+    """The stray-light rule passes at its nominal attitude and over a narrow
+    range of rolls; an offset rule passes over another range; no roll passes
+    both. The tree is violated, and has no roll range."""
+    ra, dec, rows = (a[:48] for a in sample)
+    times = [ephem.timestamp[int(i)] for i in rows]
+    pst = make_table(symmetric=False)
+    probe = StrayLightConstraint(pst=pst, conversion_factor=CONVERSION)
+
+    def ratios(**kwargs: Any) -> Array:
+        return np.asarray(
+            probe.evaluate_elementwise(
+                ephem, ra, dec, times=times, **kwargs
+            ).constraint_values["stray_light_ratio"]
+        )
+
+    nominal = ratios()
+    by_roll = np.array(
+        [ratios(target_rolls=[float(roll)] * len(ra)) for roll in SWEPT_ROLLS]
+    )
+    offsets = [
+        re.SunConstraint(min_angle=angle).boresight_offset(pitch_deg=pitch)
+        for pitch in (30.0, 50.0, 70.0)
+        for angle in (60.0, 80.0, 100.0, 120.0, 140.0)
+    ]
+    offset_masks = [at_each_roll(offset, ephem, ra, dec, times) for offset in offsets]
+    found = 0
+    for i in range(len(ra)):
+        if not np.isfinite(by_roll[:, i]).all():
+            continue
+        # A limit the nominal attitude meets and most rolls do not.
+        limit = max(1.02 * nominal[i], float(np.quantile(by_roll[:, i], 0.1)))
+        stray_violated = by_roll[:, i] > limit
+        if stray_violated.all() or not stray_violated.any():
+            continue
+        for offset, mask in zip(offsets, offset_masks):
+            if mask[:, i].all() or not (stray_violated | mask[:, i]).all():
+                continue
+            stray = StrayLightConstraint(
+                pst=pst, conversion_factor=CONVERSION, max_ratio=limit
+            )
+            tree = offset | stray
+            point = (float(ra[i]), float(dec[i]))
+            free: dict[str, Any] = {"n_roll_samples": SWEPT}
+            # Each rule alone can be satisfied; stray light is at its nominal roll.
+            assert not stray.in_constraint(times[i], ephem, *point)
+            assert not offset.in_constraint(times[i], ephem, *point, **free)
+            assert tree.in_constraint(times[i], ephem, *point, **free)
+            result = tree.evaluate(ephem, *point, times=[times[i]], **free)
+            assert not result.all_satisfied
+            assert tree.roll_range(times[i], ephem, *point, n_roll_samples=SWEPT) == []
+            assert stray.roll_range(times[i], ephem, *point, n_roll_samples=SWEPT)
+            assert offset.roll_range(times[i], ephem, *point, n_roll_samples=SWEPT)
+            found += 1
+            break
+    assert found >= 3
+
+
+def test_without_a_rule_that_needs_a_roll_the_attitude_is_nominal(
+    free_roll_case: tuple[StrayLightConstraint, Array, Array, list[Any], Array],
+    ephem: Any,
+) -> None:
+    """Alone, or with rules that ignore the roll, nothing is swept."""
+    stray, ra, dec, times, by_roll = free_roll_case
+    values = stray.evaluate_elementwise(ephem, ra, dec, times=times).constraint_values
+    ratio = np.asarray(values["stray_light_ratio"])
+    nominal = ~(ratio <= stray.max_ratio)
+    np.testing.assert_array_equal(
+        stray.in_constraint_elementwise(ephem, ra, dec, times=times), nominal
+    )
+    # Not the same thing as "violated at every roll".
+    assert (nominal != by_roll.all(axis=0)).any()
+    sun = re.SunConstraint(min_angle=60)
+    sun_mask = np.asarray(sun.in_constraint_elementwise(ephem, ra, dec, times=times))
+    np.testing.assert_array_equal(
+        (stray | sun).in_constraint_elementwise(ephem, ra, dec, times=times),
+        nominal | sun_mask,
+    )
+    grid = (stray | sun).in_constraint_batch(
+        ephem, list(ra[:6]), list(dec[:6]), times=times[:6]
+    )
+    np.testing.assert_array_equal(np.diag(grid), (nominal | sun_mask)[:6])
+
+
+def test_field_of_regard_of_a_swept_tree(
+    free_roll_case: tuple[StrayLightConstraint, Array, Array, list[Any], Array],
+    ephem: Any,
+) -> None:
+    """A rule can only take sky away: with stray light the field of regard of
+    a swept tree is no larger, and is the same whichever way it is nested."""
+    stray, *_ = free_roll_case
+    offset = re.SunConstraint(min_angle=100).boresight_offset(pitch_deg=50)
+    kwargs: dict[str, Any] = {"index": 300, "n_points": 600, "n_roll_samples": 24}
+    alone = offset.instantaneous_field_of_regard(ephem, **kwargs)
+    together = (offset | stray).instantaneous_field_of_regard(ephem, **kwargs)
+    assert 0.0 < together < alone
+    either = (offset & stray).instantaneous_field_of_regard(ephem, **kwargs)
+    assert either >= alone
+    sun = re.SunConstraint(min_angle=20)
+    nested = ((offset | stray) | sun).instantaneous_field_of_regard(ephem, **kwargs)
+    flat = (offset | stray | sun).instantaneous_field_of_regard(ephem, **kwargs)
+    assert nested == pytest.approx(flat, rel=1e-12)
+    assert nested <= together
 
 
 def test_apparent_angles_shift_the_result_slightly(

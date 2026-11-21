@@ -127,6 +127,7 @@ impl SampledEphemeris {
         data.gcrs = source.data().gcrs.as_ref().map(sample);
         data.sun_gcrs = source.data().sun_gcrs.as_ref().map(sample);
         data.moon_gcrs = source.data().moon_gcrs.as_ref().map(sample);
+        data.sun_moon_analytic = source.data().sun_moon_analytic;
         // Preserve the source's Earth-fixed frame / polar-motion convention.
         // Derived angles, radii and geodetic caches are recomputed from these states.
         Ok(Self {

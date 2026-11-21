@@ -89,7 +89,9 @@ pub fn python_datetimes_to_utc(times: &Bound<PyAny>) -> PyResult<Vec<DateTime<Ut
     let Ok(iter) = pyo3::types::PyIterator::from_object(times) else {
         return Ok(vec![python_datetime_to_utc(times)?]);
     };
-    iter.map(|item| python_datetime_to_utc(&item?)).collect()
+    iter.enumerate()
+        .map(|(index, item)| python_datetime_to_utc_at(&item?, index))
+        .collect()
 }
 
 /// The UTC instants of an astropy `Time`, as `datetime64[us]` (a scalar or an
@@ -306,6 +308,15 @@ const DATETIME64_PARALLEL_MIN_LEN: usize = 8192;
 /// # Errors
 /// `ValueError` for `NaT` entries and for instants outside the supported range.
 pub fn datetime64_to_utc(obj: &Bound<PyAny>) -> PyResult<Option<Vec<DateTime<Utc>>>> {
+    datetime64_to_utc_from(obj, 0)
+}
+
+/// [`datetime64_to_utc`] for data that starts at `first_index` of the caller's
+/// input, so that an error names the entry the caller passed.
+fn datetime64_to_utc_from(
+    obj: &Bound<PyAny>,
+    first_index: usize,
+) -> PyResult<Option<Vec<DateTime<Utc>>>> {
     let is_datetime64 = obj
         .getattr("dtype")
         .and_then(|dtype| dtype.getattr("kind"))
@@ -351,6 +362,7 @@ pub fn datetime64_to_utc(obj: &Bound<PyAny>) -> PyResult<Option<Vec<DateTime<Utc
         .iter()
         .enumerate()
         .map(|(i, &us)| {
+            let i = first_index + i;
             if us == i64::MIN {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
                     "times[{i}] is NaT"
@@ -367,10 +379,16 @@ pub fn datetime64_to_utc(obj: &Bound<PyAny>) -> PyResult<Option<Vec<DateTime<Utc
 /// Convert Python datetime to UTC, respecting its offset. Naive values mean UTC.
 /// A `numpy.datetime64` scalar is accepted too and read as UTC.
 pub fn python_datetime_to_utc(py_dt: &Bound<PyAny>) -> PyResult<DateTime<Utc>> {
+    python_datetime_to_utc_at(py_dt, 0)
+}
+
+/// [`python_datetime_to_utc`] for entry `index` of a sequence of times: a
+/// `datetime64` entry that cannot be read is reported at that index.
+fn python_datetime_to_utc_at(py_dt: &Bound<PyAny>, index: usize) -> PyResult<DateTime<Utc>> {
     let year = match py_dt.getattr("year") {
         Ok(year) => year,
         Err(err) => {
-            return match datetime64_to_utc(py_dt)?.as_deref() {
+            return match datetime64_to_utc_from(py_dt, index)?.as_deref() {
                 Some([dt]) => Ok(*dt),
                 _ => Err(err),
             }

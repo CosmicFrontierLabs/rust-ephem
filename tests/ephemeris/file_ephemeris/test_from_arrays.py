@@ -1,5 +1,6 @@
 """Tests for FileEphemeris.from_arrays (in-memory state vectors)."""
 
+import warnings
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
@@ -135,6 +136,84 @@ class TestDefaultsAndMetadata:
         eph = FileEphemeris.from_arrays(t, r, v, BEGIN, END, STEP, frame="ECEF")
         np.testing.assert_array_equal(eph.itrs_pv.position, ref.itrs_pv.position)
         np.testing.assert_array_equal(eph.gcrs_pv.position, ref.gcrs_pv.position)
+
+
+class TestUnitMismatchWarning:
+    """Positions and velocities a unit factor apart are reported."""
+
+    def test_metres_with_velocities_left_in_km_s(self, arrays: Arrays) -> None:
+        # The reviewer's case: only position_unit="m" is given, so the
+        # velocities are read as m/s although they are in km/s.
+        t, r, v = arrays
+        with pytest.warns(UserWarning, match="1000 times too small") as caught:
+            eph = FileEphemeris.from_arrays(
+                t, r * 1000.0, v, BEGIN, END, STEP, position_unit="m"
+            )
+        assert eph.source_velocity_unit == "m/s"
+        assert "velocity_unit='m/s'" in str(caught[0].message)
+
+    def test_kilometres_with_velocities_in_m_s(self, arrays: Arrays) -> None:
+        t, r, v = arrays
+        with pytest.warns(UserWarning, match="1000 times too large"):
+            FileEphemeris.from_arrays(t, r, v * 1000.0, BEGIN, END, STEP)
+
+    @pytest.mark.parametrize(
+        ("position_unit", "velocity_unit", "factor"),
+        [("m", "cm/s", 100), ("cm", "km/s", 100000)],
+    )
+    def test_other_unit_factors(
+        self, arrays: Arrays, position_unit: str, velocity_unit: str, factor: int
+    ) -> None:
+        # Data in km and km/s, declared in two other units.
+        t, r, v = arrays
+        with pytest.warns(UserWarning, match=f"{factor} times too"):
+            FileEphemeris.from_arrays(
+                t,
+                r,
+                v,
+                BEGIN,
+                END,
+                STEP,
+                position_unit=position_unit,
+                velocity_unit=velocity_unit,
+            )
+
+    def test_file_constructor_warns_too(self, meters_file: str) -> None:
+        # Metres read as km: the positions are 1000 times too large.
+        with pytest.warns(UserWarning, match="1000 times too small"):
+            FileEphemeris(
+                meters_file,
+                begin=BEGIN,
+                end=END,
+                step_size=STEP,
+                position_unit="km",
+                velocity_unit="m/s",
+            )
+
+    @pytest.mark.parametrize("scale", [1.0, 1000.0])
+    def test_consistent_units_do_not_warn(self, arrays: Arrays, scale: float) -> None:
+        t, r, v = arrays
+        unit = "km" if scale == 1.0 else "m"
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            FileEphemeris.from_arrays(
+                t, r * scale, v * scale, BEGIN, END, STEP, position_unit=unit
+            )
+
+    def test_zero_velocities_do_not_warn(self, arrays: Arrays) -> None:
+        t, r, v = arrays
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            FileEphemeris.from_arrays(t, r, np.zeros_like(v), BEGIN, END, STEP)
+
+    def test_a_warning_made_an_error_does_not_stop_construction(
+        self, arrays: Arrays
+    ) -> None:
+        t, r, v = arrays
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            eph = FileEphemeris.from_arrays(t, r, v * 1000.0, BEGIN, END, STEP)
+        assert eph.source_velocity_unit == "km/s"
 
 
 class TestValidation:

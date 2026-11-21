@@ -1431,17 +1431,44 @@ irradiance produced by a collimated source of unit irradiance arriving from
 off-axis angle ``theta`` and azimuth ``phi`` about the boresight. No telescope
 data ships with ``rust-ephem``.
 
-For each body the model:
+For each body the model computes the light it puts on the focal plane, in
+units of a V = 0 source: radiance times PST, summed over the sky directions
+``p`` that the body's sunlit surface is seen in,
+``sum(L(p) * PST(p) * dOmega)``. It is reported as two factors whose product
+is that sum:
 
-1. computes its disk-integrated V magnitude at the observer: the Sun from its
-   distance; the Earth as a Lambert sphere of the given albedo, with the phase
-   law evaluated at the observer's finite distance; the Moon from its distance
-   and Allen's empirical phase law;
-2. averages the PST over the body's resolved disk, each sample weighted by its
-   solid angle and, for the Earth and Moon, by the Lambertian illumination of
-   the surface point it sees, so the terminator is resolved. The sampling grid
-   is doubled until two levels agree to 2% and at least one sample is sunlit;
-3. multiplies the two, giving the scattered flux in units of a V = 0 source.
+1. the body's V magnitude at the observer:
+
+   - the Sun from its distance;
+   - the Earth as a Lambert sphere of the given geometric albedo ``p``. A
+     surface point at solar incidence ``i`` has radiance
+     ``(3 p / 2 pi) * E_sun * cos(i)``, with ``E_sun`` the Sun's irradiance at
+     the Earth, and the magnitude is that of the radiance summed over the
+     sky, ``sum(L * dOmega)``;
+   - the Moon from Allen's empirical phase law, scaled to its distances from
+     the observer and from the Sun;
+
+2. the mean of the PST over the body, each part weighted by its brightness:
+   uniform for the Sun, Lambertian for the Earth and Moon.
+
+The Earth's light is not reduced for the inclination of a ray to the Earth's
+direction. The PST is defined per source of unit irradiance on a plane facing
+that source, wherever on the sky the source is. From low orbit the Earth spans
+about 136 degrees, and such a factor would remove a third of its light at
+500 km and three quarters of a crescent's.
+
+The Earth and Moon are integrated over their surface, in colatitude from the
+sub-observer point and longitude about it. Each longitude is sampled only
+between the terminator and the edge of the visible cap, so a thin crescent on
+the limb is resolved as well as a full disk. The Sun is integrated over its
+disk. The grid is doubled until two levels agree to 2%.
+
+**Occultation.** A part of the Sun or Moon whose line of sight meets the Earth
+first contributes nothing. A body wholly behind the Earth has status
+``OCCULTED`` and a contribution of zero; one crossing the limb contributes in
+proportion to the part in view. The Earth is a sphere of its mean radius with
+no atmosphere: refraction, twilight and the Earth's shadow on the Moon are not
+modelled, and the Moon does not hide the Sun.
 
 The sum over the bodies, times ``conversion_factor``, is the surface brightness
 of the uniform sky that would put the same light on the focal plane. Its ratio
@@ -1481,9 +1508,26 @@ convert through it:
    # Rolls at which one pointing is clear at one time
    stray.roll_range(time, ephem, ra, dec)
 
-In a combined constraint every component is evaluated at the same roll. A
-free-roll sweep (``target_roll=None`` on a tree with roll-dependent
-components) does not move this constraint off its nominal attitude.
+**Free roll.** In a combined constraint every component is evaluated at the
+same roll. With no roll given:
+
+- alone, or with components that do not depend on the roll, this constraint
+  is evaluated at its nominal attitude, as above;
+- in a tree with a component that needs a roll (``SolarRollConstraint``, a
+  boresight offset with pitch or yaw, a polygon field of view), the tree is
+  swept over ``n_roll_samples`` rolls, and this constraint is evaluated at
+  each candidate roll with the others. The tree is satisfied where some roll
+  satisfies all of it, which is what ``roll_range`` reports. The nominal
+  attitude gets no preference in that search.
+
+In a swept evaluation ``constraint_values`` still describe the nominal
+attitude (``roll_deg`` says which roll they belong to). To get the values at a
+roll the sweep would accept, take one from ``roll_range`` and pass it as
+``target_roll``.
+
+Under ``boresight_offset(...)`` this constraint receives the spacecraft roll,
+not the offset's own ``roll_deg``: the table's orientation is set by
+``sun_azimuth_deg``.
 
 **Validity.** A body gives no prediction when:
 
@@ -1491,15 +1535,18 @@ components) does not move this constraint off its nominal attitude.
   a pointing violation rather than a stray-light level);
 - that limb lies inside the first off-axis cell of the table, where the table
   is an order-of-magnitude guide only;
-- the disk integral does not converge (a thin crescent across a steep part of
-  the table).
+- the integral over the body does not converge (the table changes too
+  abruptly across it).
 
-A body that shows no sunlit surface at all is valid: its quoted contribution is
-an upper bound on one that is physically negligible. With ``zodi="table"`` the
-zodi itself has no entry within about 60 degrees of the Sun near the ecliptic.
-In every one of these cases the constraint is violated and the affected
-``constraint_values`` are NaN: no prediction is treated as unknown, never as
-dark.
+With ``zodi="table"`` the zodi itself has no entry within about 60 degrees of
+the Sun near the ecliptic. In every one of these cases the constraint is
+violated and the affected ``constraint_values`` are NaN: no prediction is
+treated as unknown, never as dark.
+
+A body that shows no sunlit surface (``DARK``), or that the Earth hides
+completely (``OCCULTED``), is valid and contributes exactly zero. Neither
+needs the integral, so an observer in eclipse costs less than one in daylight.
+An Earth whose night side is in the field is still ``IN_FIELD``.
 
 **Conversion factor.** The two sides of the ratio start in different units.
 The scattered light is an irradiance on the focal plane,
@@ -1562,8 +1609,8 @@ constants, so this one number is all the radiometry the constraint needs.
    :param float zodi_v_mag_arcsec2: Surface brightness of the constant zodi, V mag per square arcsecond
    :param float in_field_deg: A body whose nearest limb is closer to the boresight than this is in the field, degrees
    :param float earth_albedo: Geometric albedo of the Earth in V (0.24 is the measured whole-disk value; 0.40 corresponds to the older V = -3.9 at 1 au)
-   :param float sun_v_mag_1au: V magnitude of the Sun at 1 au
-   :param float moon_v_mag_full: V magnitude of the full Moon at 384,400 km
+   :param float sun_v_mag_1au: V magnitude of the Sun at 1 au. The Earth and Moon are lit by the Sun at its actual distance from each
+   :param float moon_v_mag_full: V magnitude of the full Moon at 384,400 km from the observer and 1 au from the Sun
 
    **Attributes:**
 
@@ -1592,18 +1639,20 @@ constants, so this one number is all the radiometry the constraint needs.
    Each body, with the prefix ``sun_``, ``earth_`` or ``moon_`` (for example
    ``earth_v_mag``):
 
-   - ``v_mag``: disk-integrated V magnitude at the observer
+   - ``v_mag``: V magnitude of the whole body at the observer, hidden or
+     not; ``+inf`` for an Earth showing no sunlit surface
    - ``phase_deg``: Sun-body-observer angle (NaN for the Sun)
    - ``distance_km``, ``angular_radius_deg``
    - ``separation_deg``, ``limb_deg``: boresight to the centre and to the
      nearest limb
    - ``azimuth_deg``: table azimuth of the centre, -180 to 180
    - ``pst_center``, ``pst_mean``: PST toward the centre, and its
-     brightness-weighted mean over the disk
-   - ``lit_fraction``: sunlit fraction of the disk samples
-   - ``quadrature_error``: relative change between the last two levels of the
-     disk integral (for a disk with no sunlit sample, the relative spread of
-     the PST across it)
+     brightness-weighted mean over the body, parts hidden by the Earth
+     counting as zero
+   - ``lit_fraction``: fraction of the disk's solid angle that is sunlit and
+     in view
+   - ``quadrature_error``: relative change of the flux between the last two
+     levels of the integral; NaN where no integral was needed
    - ``status``: a :py:class:`StrayLightStatus` value
 
    The per-body values are reported even where the body has no prediction. A
@@ -1616,17 +1665,20 @@ constants, so this one number is all the radiometry the constraint needs.
    Integer enum behind ``sun_status``, ``earth_status`` and ``moon_status``.
 
    - ``OK`` (0): a converged prediction
-   - ``DARK`` (1): no sunlit surface is visible; the quoted contribution is an
-     upper bound on a negligible one, and counts as a prediction
+   - ``DARK`` (1): no sunlit surface is visible; the body contributes
+     nothing, which counts as a prediction
    - ``IN_FIELD`` (2): the nearest limb is within ``in_field_deg`` of the boresight
    - ``FIRST_CELL`` (3): the nearest limb is inside the first off-axis cell of
      the table
-   - ``UNCONVERGED`` (4): the disk integral did not converge
+   - ``UNCONVERGED`` (4): the integral over the body did not converge
+   - ``OCCULTED`` (5): the Earth hides the whole body; it contributes nothing,
+     which counts as a prediction
 
-   ``is_valid`` is true for ``OK`` and ``DARK``. ``label`` is the lower-case
-   name of a status (``"in_field"``), and ``StrayLightStatus.labels(values)``
-   names every entry of a ``sun_status``, ``earth_status`` or ``moon_status``
-   array of any shape, with an empty string for an entry that is not a status.
+   ``is_valid`` is true for ``OK``, ``DARK`` and ``OCCULTED``. ``label`` is the
+   lower-case name of a status (``"in_field"``), and
+   ``StrayLightStatus.labels(values)`` names every entry of a ``sun_status``,
+   ``earth_status`` or ``moon_status`` array of any shape, with an empty string
+   for an entry that is not a status.
 
    **Example:**
 
@@ -2230,8 +2282,11 @@ GridResult
 .. py:class:: GridResult
 
    Result of ``evaluate_grid()``: every target at every time, as
-   ``(n_targets, n_times)`` arrays. Each array is built on first access, shared
-   by later ones, and read-only.
+   ``(n_targets, n_times)`` arrays. The grid arrays (``constraint_array``,
+   ``visibility_flags`` and those in ``constraint_values`` and
+   ``component_violated``) and ``timestamp`` are built on first access, shared
+   by later ones, and read-only. ``ras`` and ``decs`` are new copies on each
+   access. The two dicts are new on each access, over the same arrays.
 
    **Attributes:**
 
@@ -2252,14 +2307,20 @@ GridResult
      rule flagged (a negated rule that is itself satisfied). Also on
      ``ElementwiseResult``, per row.
    - ``cause_value_keys`` (dict[str, list[str]]): cause tag to value key(s)
-   - ``constraint_name`` (str)
+   - ``constraint_name`` (str): the constraint at the roll the targets were
+     evaluated at. A roll-dependent constraint states its roll in its name, so
+     when ``target_rolls`` holds different rolls no one name fits: this is
+     then the name of the constraint as defined, and
+     ``target(i).constraint_name`` is that of each target
    - ``timestamp`` (numpy.ndarray of datetime): the ``n_times`` evaluated times
    - ``ras``, ``decs`` (numpy.ndarray): the ``n_targets`` target coordinates
 
    .. py:method:: target(index)
 
       The result of one target, with its violation and visibility windows,
-      built on demand from row ``index``.
+      built on demand from row ``index``. Its name and violation descriptions
+      carry the roll that target was evaluated at, as ``evaluate_batch()``
+      reports them.
 
       :rtype: ConstraintResult
 
@@ -2340,6 +2401,11 @@ yourself.
 
 ``constraint_values`` is a ``dict[str, numpy.ndarray]``: one read-only float
 array per named quantity, aligned index-for-index with ``result.timestamps``.
+The arrays are not lists: use ``array.tolist()`` where a list is needed, for
+example ``json.dumps({k: v.tolist() for k, v in result.constraint_values.items()})``,
+and ``array.copy()`` to modify one. The result of
+:py:meth:`evaluate_moving_body` is a pydantic model of plain lists, and its
+``constraint_values`` are still ``list[float]``.
 For a whole grid of targets and times, :py:meth:`evaluate_grid` returns the
 same quantities as ``(n_targets, n_times)`` arrays in one call. It is populated
 by :py:meth:`evaluate`, :py:meth:`evaluate_batch`, and

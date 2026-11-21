@@ -75,6 +75,7 @@ class TestEphemerisABCBehavior:
             "sun_pv_at",
             "moon_pv_at",
             "apparent_target_at",
+            "get_body_pv",
             "obsgeoloc",
             "obsgeovel",
             "latitude",

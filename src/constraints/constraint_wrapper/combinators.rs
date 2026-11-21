@@ -378,10 +378,12 @@ fn sweep_combination(
     n_roll_samples: usize,
     is_and: bool,
 ) -> PyResult<Array2<bool>> {
+    // A child that follows the candidate roll shares the sweep even when it
+    // would not start one itself.
     let (dependent, fixed): (Vec<&dyn ConstraintEvaluator>, Vec<_>) = children
         .iter()
         .map(|child| &**child)
-        .partition(|child| child.is_roll_dependent());
+        .partition(|child| child.follows_sweep_roll());
     let mut independent =
         combine_child_masks(fixed, ephemeris, ras, decs, time_indices, None, is_and)?;
     if dependent.is_empty() {
@@ -1107,6 +1109,10 @@ impl ConstraintEvaluator for AndEvaluator {
         self.constraints.iter().any(|c| c.is_roll_dependent())
     }
 
+    fn follows_sweep_roll(&self) -> bool {
+        self.constraints.iter().any(|c| c.follows_sweep_roll())
+    }
+
     /// Hoist roll-independent children: `AND_step (V_indep ∧ V_dep_at_step)
     /// = V_indep ∧ AND_step (V_dep_at_step)` since V_indep doesn't depend on the roll.
     fn in_constraint_batch_constrained_at_every_roll(
@@ -1175,6 +1181,27 @@ impl ConstraintEvaluator for AndEvaluator {
         let n_targets = target_unit_vectors.nrows();
         if self.constraints.is_empty() {
             return Ok(vec![true; n_targets]);
+        }
+        // The decomposition needs each child's own "violated at every roll".
+        // A child that only follows a sweep (stray light) has none: alone it
+        // is evaluated at its nominal attitude. Sweep such a tree jointly.
+        if self.is_roll_dependent()
+            && self
+                .constraints
+                .iter()
+                .any(|c| c.follows_sweep_roll() && !c.is_roll_dependent())
+        {
+            let (ras, decs) = unit_vectors_to_radec_batch(target_unit_vectors);
+            let result = sweep_combination(
+                &self.constraints,
+                ephemeris,
+                &ras,
+                &decs,
+                Some(&[time_index]),
+                n_roll_samples,
+                true,
+            )?;
+            return Ok(result.column(0).to_vec());
         }
 
         let mut result = self.constraints[0].field_of_regard_violated_batch(
@@ -1645,6 +1672,10 @@ impl ConstraintEvaluator for OrEvaluator {
         self.constraints.iter().any(|c| c.is_roll_dependent())
     }
 
+    fn follows_sweep_roll(&self) -> bool {
+        self.constraints.iter().any(|c| c.follows_sweep_roll())
+    }
+
     /// Hoist roll-independent children: `AND_step (V_indep ∨ V_dep_at_step)
     /// = V_indep ∨ AND_step (V_dep_at_step)` since V_indep doesn't depend on the roll.
     /// Avoids re-evaluating roll-independent siblings 360 times in the outer sweep.
@@ -1721,7 +1752,7 @@ impl ConstraintEvaluator for OrEvaluator {
         let (indep_children, dep_children): (Vec<_>, Vec<_>) = self
             .constraints
             .iter()
-            .partition(|c| !c.is_roll_dependent());
+            .partition(|c| !c.follows_sweep_roll());
 
         if dep_children.len() > 1 {
             // Multiple children need the same sampled roll. Reuse the prepared
@@ -2147,6 +2178,10 @@ impl ConstraintEvaluator for NotEvaluator {
         self.constraint.is_roll_dependent()
     }
 
+    fn follows_sweep_roll(&self) -> bool {
+        self.constraint.follows_sweep_roll()
+    }
+
     fn field_of_regard_violated_at_roll(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -2558,6 +2593,10 @@ impl ConstraintEvaluator for XorEvaluator {
 
     fn is_roll_dependent(&self) -> bool {
         self.constraints.iter().any(|c| c.is_roll_dependent())
+    }
+
+    fn follows_sweep_roll(&self) -> bool {
+        self.constraints.iter().any(|c| c.follows_sweep_roll())
     }
 
     fn field_of_regard_violated_at_roll(
@@ -2976,6 +3015,10 @@ impl ConstraintEvaluator for AtLeastEvaluator {
 
     fn is_roll_dependent(&self) -> bool {
         self.constraints.iter().any(|c| c.is_roll_dependent())
+    }
+
+    fn follows_sweep_roll(&self) -> bool {
+        self.constraints.iter().any(|c| c.follows_sweep_roll())
     }
 
     fn field_of_regard_violated_at_roll(

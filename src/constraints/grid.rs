@@ -13,7 +13,13 @@ use std::sync::{Arc, OnceLock};
 
 /// What one evaluation of a constraint tree over a grid produces.
 pub struct GridEvaluation {
+    /// The constraint's name at the roll evaluated. For a grid assembled from
+    /// targets at different rolls it is the name of the definition, and
+    /// `target_names` holds each target's own.
     pub name: String,
+    /// Per target, the name at the roll that target was evaluated at; `None`
+    /// when every target shares `name`.
+    pub target_names: Option<Vec<Arc<str>>>,
     /// The evaluated times, one per column.
     pub times: Arc<[DateTime<Utc>]>,
     /// (targets x times), `true` where the constraint is violated.
@@ -30,18 +36,19 @@ impl GridEvaluation {
     /// The result of one target: its violation windows over the evaluated
     /// times, with its row of every value and per-leaf mask.
     pub fn target(&self, index: usize) -> ConstraintResult {
+        let name = self.target_name(index);
         let violated = self.violated.row(index);
         let violations = track_violations(
             &self.times,
             |i| (violated[i], if violated[i] { 1.0 } else { 0.0 }),
-            |_i, _is_open| self.name.clone(),
+            |_i, _is_open| name.to_string(),
         );
         let all_satisfied = violations.is_empty();
         let row = |array: &Array2<f64>| array.row(index).to_vec();
         ConstraintResult::new(
             violations,
             all_satisfied,
-            self.name.clone(),
+            name.to_string(),
             self.times.clone(),
         )
         .with_constraint_values(
@@ -59,6 +66,14 @@ impl GridEvaluation {
         .with_cause_value_keys(self.cause_value_keys.clone())
     }
 
+    /// The constraint's name at the roll target `index` was evaluated at.
+    pub fn target_name(&self, index: usize) -> &str {
+        match &self.target_names {
+            Some(names) => &names[index],
+            None => &self.name,
+        }
+    }
+
     /// One result per target, in target order.
     pub fn into_results(self) -> Vec<ConstraintResult> {
         (0..self.violated.nrows())
@@ -69,23 +84,41 @@ impl GridEvaluation {
     /// Assemble the grid of `n_targets` targets from grids of disjoint subsets
     /// of them: `parts` pairs the target indices of a subset with its grid.
     /// Every part covers the same times and reports the same keys.
+    ///
+    /// Each part is named for the roll it was evaluated at, and its targets
+    /// keep that name. The grid as a whole takes it too when the parts agree,
+    /// and `definition_name` (the constraint as defined) when they do not.
     pub fn from_target_groups(
-        name: String,
+        definition_name: String,
         n_targets: usize,
         mut parts: Vec<(Vec<usize>, GridEvaluation)>,
     ) -> Option<GridEvaluation> {
         // The usual case: every target evaluated together, in order.
         if let [(targets, _)] = parts.as_slice() {
             if targets.iter().copied().eq(0..n_targets) {
-                let (_, mut grid) = parts.pop()?;
-                grid.name = name;
-                return Some(grid);
+                return parts.pop().map(|(_, grid)| grid);
             }
         }
         let (_, first) = parts.first()?;
         let n_times = first.violated.ncols();
+        let shared = parts.iter().all(|(_, part)| part.name == first.name);
+        let target_names = (!shared).then(|| {
+            let mut names: Vec<Arc<str>> = vec![Arc::from(""); n_targets];
+            for (targets, part) in &parts {
+                let name: Arc<str> = Arc::from(part.name.as_str());
+                for &target in targets {
+                    names[target] = name.clone();
+                }
+            }
+            names
+        });
         let mut merged = GridEvaluation {
-            name,
+            name: if shared {
+                first.name.clone()
+            } else {
+                definition_name
+            },
+            target_names,
             times: first.times.clone(),
             violated: Array2::from_elem((n_targets, n_times), false),
             named: first
@@ -253,7 +286,9 @@ impl GridResult {
         self.grid.violated.dim()
     }
 
-    /// Constraint name/description.
+    /// Constraint name/description, at the roll the targets were evaluated
+    /// at. When they were evaluated at different rolls it is the name of the
+    /// constraint as defined; `target(i).constraint_name` is each target's own.
     #[getter]
     fn constraint_name(&self) -> &str {
         &self.grid.name
@@ -337,18 +372,21 @@ impl GridResult {
     }
 
     /// numpy float array (n_targets,) of target right ascensions in degrees.
+    /// A new copy on each access.
     #[getter]
     fn ras(&self, py: Python) -> Py<PyAny> {
         self.ras.clone().into_pyarray(py).into_any().unbind()
     }
 
     /// numpy float array (n_targets,) of target declinations in degrees.
+    /// A new copy on each access.
     #[getter]
     fn decs(&self, py: Python) -> Py<PyAny> {
         self.decs.clone().into_pyarray(py).into_any().unbind()
     }
 
-    /// numpy object array (n_times,) of the UTC datetimes evaluated.
+    /// numpy object array (n_times,) of the UTC datetimes evaluated. Built on
+    /// first access and shared by later ones, so read-only.
     #[getter]
     fn timestamp(&self, py: Python) -> PyResult<Py<PyAny>> {
         cached(py, &self.timestamp_cache, || {
@@ -359,7 +397,11 @@ impl GridResult {
             let numpy = pyo3::types::PyModule::import(py, "numpy")?;
             let kwargs = pyo3::types::PyDict::new(py);
             kwargs.set_item("dtype", "object")?;
-            Ok(numpy.call_method("array", (list,), Some(&kwargs))?.unbind())
+            let array = numpy.call_method("array", (list,), Some(&kwargs))?;
+            let read_only = pyo3::types::PyDict::new(py);
+            read_only.set_item("write", false)?;
+            array.call_method("setflags", (), Some(&read_only))?;
+            Ok(array.unbind())
         })
     }
 

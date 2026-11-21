@@ -151,6 +151,8 @@ def test_status_labels() -> None:
         ["ok", "dark", "in_field"],
         ["first_cell", "unconverged", ""],
     ]
+    assert StrayLightStatus.labels([5.0, 6.0]).tolist() == ["occulted", ""]
+    assert StrayLightStatus.OCCULTED.label == "occulted"
     assert StrayLightStatus.labels([7.0, -1.0, 0.5]).tolist() == ["", "", ""]
     assert StrayLightStatus.labels([]).shape == (0,)
     for status in StrayLightStatus:
