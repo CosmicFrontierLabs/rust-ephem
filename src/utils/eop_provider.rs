@@ -10,7 +10,7 @@ use crate::utils::eop_cache::{load_or_download_eop2_data, Eop2Provenance};
 use crate::utils::time_utils;
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
-use std::sync::Mutex;
+use std::sync::RwLock;
 
 /// A single EOP data record
 #[derive(Debug, Clone)]
@@ -202,7 +202,7 @@ impl EopProvider {
 }
 
 /// Cached EOP provider from JPL
-static EOP_PROVIDER: Lazy<Mutex<Option<EopProvider>>> = Lazy::new(|| {
+static EOP_PROVIDER: Lazy<RwLock<Option<EopProvider>>> = Lazy::new(|| {
     // Try to initialize by loading from cache or downloading
     match EopProvider::load_or_download() {
         Ok(provider) => {
@@ -213,14 +213,14 @@ static EOP_PROVIDER: Lazy<Mutex<Option<EopProvider>>> = Lazy::new(|| {
             if let Some((start, end)) = provider.mjd_range() {
                 eprintln!("  MJD range: {start} to {end}");
             }
-            Mutex::new(Some(provider))
+            RwLock::new(Some(provider))
         }
         Err(e) => {
             eprintln!(
                 "Warning: Could not initialize EOP provider: {e}. Polar motion will default to (0, 0)"
             );
             eprintln!("This is expected if you don't have internet access or JPL servers are unreachable.");
-            Mutex::new(None)
+            RwLock::new(None)
         }
     }
 });
@@ -229,7 +229,7 @@ static EOP_PROVIDER: Lazy<Mutex<Option<EopProvider>>> = Lazy::new(|| {
 ///
 /// Returns (xp, yp) in arcseconds, or (0.0, 0.0) if data is not available.
 pub fn get_polar_motion(dt: &DateTime<Utc>) -> (f64, f64) {
-    let provider_lock = EOP_PROVIDER.lock().unwrap();
+    let provider_lock = EOP_PROVIDER.read().unwrap();
 
     if let Some(provider) = provider_lock.as_ref() {
         provider.get_polar_motion(dt)
@@ -242,7 +242,7 @@ pub fn get_polar_motion(dt: &DateTime<Utc>) -> (f64, f64) {
 ///
 /// Returns (xp_rad, yp_rad) in radians, or (0.0, 0.0) if data is not available.
 pub fn get_polar_motion_rad(dt: &DateTime<Utc>) -> (f64, f64) {
-    let provider_lock = EOP_PROVIDER.lock().unwrap();
+    let provider_lock = EOP_PROVIDER.read().unwrap();
 
     if let Some(provider) = provider_lock.as_ref() {
         provider.get_polar_motion_rad(dt)
@@ -253,7 +253,7 @@ pub fn get_polar_motion_rad(dt: &DateTime<Utc>) -> (f64, f64) {
 
 pub fn eop_provenance() -> Option<Eop2Provenance> {
     Lazy::get(&EOP_PROVIDER)?
-        .lock()
+        .read()
         .unwrap()
         .as_ref()
         .and_then(|provider| provider.provenance().cloned())
@@ -265,7 +265,7 @@ pub fn eop_provenance() -> Option<Eop2Provenance> {
 ///
 /// This can be called to force a refresh of IERS data. Returns true if successful.
 pub fn init_eop_provider() -> bool {
-    let mut provider_lock = EOP_PROVIDER.lock().unwrap();
+    let mut provider_lock = EOP_PROVIDER.write().unwrap();
 
     match EopProvider::load_or_download() {
         Ok(provider) => {
@@ -281,7 +281,7 @@ pub fn init_eop_provider() -> bool {
 
 /// Check if EOP provider is available
 pub fn is_eop_available() -> bool {
-    EOP_PROVIDER.lock().unwrap().is_some()
+    EOP_PROVIDER.read().unwrap().is_some()
 }
 
 // Tests moved to tests/eop_provider_tests.rs

@@ -26,27 +26,6 @@ const APPARENT_BLOCK_VALUES: usize = 8_000_000;
 const APPARENT_PARALLEL_MIN_CELLS: usize = 20_000;
 
 impl PyConstraint {
-    pub(super) fn validate_apparent(&self, apparent: bool) -> PyResult<()> {
-        if !apparent {
-            return Ok(());
-        }
-        fn contains_bright_star(config: &serde_json::Value) -> bool {
-            config["type"] == "bright_star"
-                || config.get("constraint").is_some_and(contains_bright_star)
-                || config["constraints"]
-                    .as_array()
-                    .is_some_and(|children| children.iter().any(contains_bright_star))
-        }
-        let config = serde_json::from_str(&self.config_json)
-            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-        if contains_bright_star(&config) {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "apparent=True is not supported for BrightStarConstraint or trees containing it: catalogue stars are not corrected",
-            ));
-        }
-        Ok(())
-    }
-
     pub(super) fn parse_datetime_input(times: &Bound<PyAny>) -> PyResult<Vec<DateTime<Utc>>> {
         crate::utils::time_utils::python_datetimes_to_utc(times)
     }
@@ -184,7 +163,6 @@ impl PyConstraint {
         with_values: bool,
         apparent: bool,
     ) -> PyResult<(Vec<DateTime<Utc>>, DiagonalEvaluation)> {
-        self.validate_apparent(apparent)?;
         Self::validate_n_roll_samples(n_roll_samples)?;
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -496,10 +474,7 @@ impl PyConstraint {
     ) -> HashMap<String, Vec<T>> {
         matrices
             .iter()
-            .map(|(key, arr)| {
-                let row: Vec<T> = (0..arr.ncols()).map(|i| arr[[target_index, i]]).collect();
-                (key.clone(), row)
-            })
+            .map(|(key, arr)| (key.clone(), arr.row(target_index).to_vec()))
             .collect()
     }
 
@@ -641,12 +616,12 @@ impl PyConstraint {
         };
         let violation_array = swept.violated;
 
-        let all_times = ephemeris.get_times()?;
-        let times: Vec<_> = if let Some(ref indices) = time_indices {
-            indices.iter().map(|&i| all_times[i]).collect()
-        } else {
-            all_times.to_vec()
-        };
+        // Times, the cause-key mapping and the name are the same for every
+        // target: build them once and share them, so a wide batch (many targets,
+        // few times) is not dominated by per-result copies.
+        let times: std::sync::Arc<[DateTime<Utc>]> = ephemeris
+            .get_times_at_indices(time_indices.as_deref())?
+            .into();
 
         // Compute named continuous values once for all targets (not swept across roll angles).
         let values_map = evaluator.compute_named_values_at_roll(
@@ -659,33 +634,26 @@ impl PyConstraint {
 
         // Shared across all targets: the mapping depends only on the evaluator's
         // structure, not on the target positions.
-        let cause_value_keys = Self::cause_value_keys_for(evaluator, ephemeris)?;
+        let cause_value_keys =
+            std::sync::Arc::new(Self::cause_value_keys_for(evaluator, ephemeris)?);
+        let name = evaluator.name_at_roll(target_roll);
 
         let mut results = Vec::with_capacity(target_ras.len());
-        for target_index in 0..target_ras.len() {
-            let violated: Vec<bool> = (0..violation_array.ncols())
-                .map(|i| violation_array[[target_index, i]])
-                .collect();
-
+        for (target_index, violated) in violation_array.rows().into_iter().enumerate() {
             let violations = track_violations(
                 &times,
                 |i| (violated[i], if violated[i] { 1.0 } else { 0.0 }),
-                |_i, _is_open| evaluator.name_at_roll(target_roll),
+                |_i, _is_open| name.clone(),
             );
 
             let all_satisfied = violations.is_empty();
             let values = Self::extract_target_row(&values_map, target_index);
             let component_violated = Self::extract_target_row(&swept.named, target_index);
             results.push(
-                ConstraintResult::new(
-                    violations,
-                    all_satisfied,
-                    evaluator.name_at_roll(target_roll),
-                    times.clone(),
-                )
-                .with_constraint_values(values)
-                .with_component_violated(component_violated)
-                .with_cause_value_keys(cause_value_keys.clone()),
+                ConstraintResult::new(violations, all_satisfied, name.clone(), times.clone())
+                    .with_constraint_values(values)
+                    .with_component_violated(component_violated)
+                    .with_cause_value_keys(cause_value_keys.clone()),
             );
         }
 

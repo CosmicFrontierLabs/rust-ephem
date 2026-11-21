@@ -85,20 +85,41 @@ class ConstraintResult(BaseModel):
         Keeps a lazy reference to it for timestamps/constraint_array/visibility
         instead of eagerly copying those (potentially large) arrays into Python.
         """
-        result = cls(
-            violations=[
-                ConstraintViolation(
-                    start_time=v.start_time,
-                    end_time=v.end_time,
-                    max_severity=v.max_severity,
-                    description=v.description,
-                )
-                for v in rust_result.violations
-            ],
-            all_satisfied=rust_result.all_satisfied,
-            constraint_name=rust_result.constraint_name,
+        # The values come from the Rust result, already of the declared types.
+        # Running them through pydantic (``__init__`` or ``model_construct``)
+        # costs a few microseconds per result, which dominated a many-target
+        # ``evaluate_batch``; the instance state pydantic would have produced
+        # is set directly instead.
+        all_satisfied = rust_result.all_satisfied
+        result = object.__new__(cls)
+        object.__setattr__(
+            result,
+            "__dict__",
+            {
+                "violations": []
+                if all_satisfied
+                else [
+                    ConstraintViolation(
+                        start_time=v.start_time,
+                        end_time=v.end_time,
+                        max_severity=v.max_severity,
+                        description=v.description,
+                    )
+                    for v in rust_result.violations
+                ],
+                "all_satisfied": all_satisfied,
+                "constraint_name": rust_result.constraint_name,
+            },
         )
-        result._rust_result_ref = rust_result
+        object.__setattr__(
+            result,
+            "__pydantic_fields_set__",
+            {"violations", "all_satisfied", "constraint_name"},
+        )
+        object.__setattr__(result, "__pydantic_extra__", None)
+        object.__setattr__(
+            result, "__pydantic_private__", {"_rust_result_ref": rust_result}
+        )
         return result
 
     @property
@@ -247,7 +268,7 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
+        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
         indices: int | list[int] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
@@ -274,7 +295,7 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
+        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
         indices: int | list[int] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
@@ -490,7 +511,7 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
-        times: datetime | list[datetime] | None = None,
+        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
         indices: int | list[int] | None = None,
         target_roll: float | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -553,7 +574,7 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
+        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
         indices: int | list[int] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -634,7 +655,7 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
+        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
         indices: int | list[int] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -742,7 +763,7 @@ class RustConstraintMixin(BaseModel):
     @staticmethod
     def _elementwise_times(
         times: datetime | Sequence[datetime] | npt.NDArray[Any] | None,
-    ) -> datetime | list[datetime] | None:
+    ) -> datetime | list[datetime] | npt.NDArray[np.datetime64] | None:
         """Normalise elementwise ``times`` (datetime64 arrays -> UTC datetimes)."""
         if isinstance(times, np.ndarray) and np.issubdtype(times.dtype, np.datetime64):
             return cast(
@@ -875,6 +896,7 @@ class RustConstraintMixin(BaseModel):
         target_dec: float,
         target_roll: float | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> bool | list[bool]:
         """Check if target is in-constraint at given time(s).
 
@@ -905,6 +927,9 @@ class RustConstraintMixin(BaseModel):
             n_roll_samples: Number of roll angles to sweep when ``target_roll`` is ``None``
                 and the constraint is roll-dependent.  Uniformly spaced over [0°, 360°).
                 Default :data:`DEFAULT_N_ROLL_SAMPLES` (360 ≈ 1° resolution).
+            apparent: Measure angles as the observer sees them rather than
+                geometrically (see :meth:`in_constraint_batch`). Needs a planetary
+                SPICE kernel. Default ``False``.
 
         Returns:
             True if constraint is violated at the given time(s) (in-constraint).
@@ -927,6 +952,7 @@ class RustConstraintMixin(BaseModel):
                 target_dec,
                 target_roll,
                 n_roll_samples,
+                apparent,
             ),
         )
 
@@ -979,6 +1005,7 @@ class RustConstraintMixin(BaseModel):
         samples: int = 50,
         margin_deg: float = 5.0,
         grow_margin: bool = True,
+        apparent: bool = False,
     ) -> RouteResult:
         """Find a single waypoint around a sampled constraint crossing.
 
@@ -1004,6 +1031,11 @@ class RustConstraintMixin(BaseModel):
         length of both legs, not the extra distance. A violated result without
         a waypoint means no candidate validated. Antipodal arcs use a stable,
         deterministic plane; negligible slews do not produce waypoints.
+
+        With ``apparent=True`` the route is found in the sky as the observer
+        sees it (apparent Earth, Sun and Moon; end points taken to their proper
+        directions, as in :meth:`in_constraint_batch`). The waypoint is still
+        returned in catalogue (ICRS) coordinates. Needs a planetary SPICE kernel.
         """
         constraint = cast(
             rust_ephem.Constraint, self._resolve_evaluation_constraint(target_roll)
@@ -1021,6 +1053,7 @@ class RustConstraintMixin(BaseModel):
             samples=samples,
             margin_deg=margin_deg,
             grow_margin=grow_margin,
+            apparent=apparent,
         )
 
     def instantaneous_field_of_regard(
@@ -1031,6 +1064,7 @@ class RustConstraintMixin(BaseModel):
         n_points: int = DEFAULT_N_POINTS,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         target_roll: float | None = None,
+        apparent: bool = False,
     ) -> float:
         """Compute instantaneous field of regard in steradians.
 
@@ -1059,6 +1093,10 @@ class RustConstraintMixin(BaseModel):
             target_roll: Spacecraft roll angle (degrees) about the boresight +X axis.
                 When ``None`` (default), FoR sweeps all possible roll angles for
                 boresight-offset constraints with non-zero pitch/yaw.
+            apparent: Place the Earth, Sun and Moon where the observer sees them
+                (light time, solar deflection, aberration), so the result is the
+                clear solid angle of the apparent sky. Needs a planetary SPICE
+                kernel. Default ``False`` (geometric).
 
         Returns:
             Visible solid angle in steradians (range [0, 4π])
@@ -1079,6 +1117,7 @@ class RustConstraintMixin(BaseModel):
                 index=index,
                 n_points=n_points,
                 n_roll_samples=n_roll_samples,
+                apparent=apparent,
             )
         )
 
@@ -1087,11 +1126,12 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float] | npt.ArrayLike | None = None,
         target_decs: list[float] | npt.ArrayLike | None = None,
-        times: datetime | list[datetime] | None = None,
+        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
         body: str | int | None = None,
         use_horizons: bool = False,
         spice_kernel: str | None = None,
         target_roll: float | None = None,
+        apparent: bool = False,
     ) -> MovingVisibilityResult:
         """Evaluate constraint for a moving body (varying RA/Dec over time).
 
@@ -1116,6 +1156,15 @@ class RustConstraintMixin(BaseModel):
             use_horizons: If True, query JPL Horizons for body positions (default: False)
             spice_kernel: Path or URL to a SPICE kernel file for body positions.
                 Can be a local path or URL (e.g., from JPL Horizons SPK files).
+            apparent: Measure angles as the observer sees them. The Earth, Sun
+                and Moon are apparent, as in :meth:`in_constraint_batch`. A
+                ``body`` is placed where its light arrives from (light time,
+                solar deflection, aberration) and the returned ``ras``/``decs``
+                are those apparent coordinates; this needs the body in a SPICE
+                kernel and cannot be combined with ``use_horizons``. A supplied
+                track is corrected for deflection and aberration only (it should
+                already allow for light time) and is returned as supplied.
+                Default ``False`` (geometric).
 
         Returns:
             MovingVisibilityResult with per-timestamp violation flags, visibility flags,
@@ -1153,6 +1202,7 @@ class RustConstraintMixin(BaseModel):
             body_str,
             use_horizons,
             spice_kernel,
+            apparent,
         )
 
         # Convert Rust VisibilityWindow objects to VisibilityWindowResult

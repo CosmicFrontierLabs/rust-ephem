@@ -5,6 +5,7 @@
 
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use hifitime::{Duration, Epoch};
+use numpy::PyArrayMethods;
 use pyo3::prelude::*;
 
 use crate::utils::config::{JD_EPOCH, SECONDS_PER_DAY};
@@ -77,18 +78,95 @@ pub fn datetime_to_mjd(dt: &DateTime<Utc>) -> f64 {
 /// Convert a single Python datetime, or any iterable of them, to UTC instants,
 /// preserving input order. Shared by constraint `times=` arguments and the
 /// ephemeris `*_pv_at` methods.
+///
+/// NumPy `datetime64` input (an array of any shape, a scalar, or a sequence of
+/// scalars) is accepted as well and read as UTC.
 pub fn python_datetimes_to_utc(times: &Bound<PyAny>) -> PyResult<Vec<DateTime<Utc>>> {
-    if let Ok(iter) = pyo3::types::PyIterator::from_object(times) {
-        iter.map(|item| python_datetime_to_utc(&item?)).collect()
-    } else {
-        Ok(vec![python_datetime_to_utc(times)?])
+    if let Some(converted) = datetime64_to_utc(times)? {
+        return Ok(converted);
     }
+    let Ok(iter) = pyo3::types::PyIterator::from_object(times) else {
+        return Ok(vec![python_datetime_to_utc(times)?]);
+    };
+    iter.enumerate()
+        .map(|(index, item)| python_datetime_to_utc_at(&item?, index))
+        .collect()
+}
+
+/// Convert NumPy `datetime64` data (array or scalar, any unit) to UTC instants
+/// in flattened (C) order. Returns `Ok(None)` when `obj` is not `datetime64`.
+///
+/// # Errors
+/// `ValueError` for `NaT` entries and for instants outside the supported range.
+pub fn datetime64_to_utc(obj: &Bound<PyAny>) -> PyResult<Option<Vec<DateTime<Utc>>>> {
+    datetime64_to_utc_from(obj, 0)
+}
+
+/// [`datetime64_to_utc`] for data that starts at `first_index` of the caller's
+/// input, so that an error names the entry the caller passed.
+fn datetime64_to_utc_from(
+    obj: &Bound<PyAny>,
+    first_index: usize,
+) -> PyResult<Option<Vec<DateTime<Utc>>>> {
+    let is_datetime64 = obj
+        .getattr("dtype")
+        .and_then(|dtype| dtype.getattr("kind"))
+        .and_then(|kind| kind.extract::<String>())
+        .is_ok_and(|kind| kind == "M");
+    if !is_datetime64 {
+        return Ok(None);
+    }
+    let np = obj.py().import("numpy")?;
+    let micros = np
+        .call_method1("asarray", (obj,))?
+        .call_method1("astype", ("datetime64[us]",))?
+        .call_method1("astype", ("int64",))?
+        .call_method1("ravel", ())?;
+    let micros = micros
+        .cast::<numpy::PyArray1<i64>>()
+        .map_err(|_| {
+            pyo3::exceptions::PyTypeError::new_err("Could not convert datetime64 times to int64")
+        })?
+        .readonly();
+    micros
+        .as_array()
+        .iter()
+        .enumerate()
+        .map(|(i, &us)| {
+            let i = first_index + i;
+            if us == i64::MIN {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "times[{i}] is NaT"
+                )));
+            }
+            DateTime::<Utc>::from_timestamp_micros(us).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!("times[{i}] is out of range"))
+            })
+        })
+        .collect::<PyResult<Vec<_>>>()
+        .map(Some)
 }
 
 /// Convert Python datetime to UTC, respecting its offset. Naive values mean UTC.
+/// A `numpy.datetime64` scalar is accepted too and read as UTC.
 pub fn python_datetime_to_utc(py_dt: &Bound<PyAny>) -> PyResult<DateTime<Utc>> {
+    python_datetime_to_utc_at(py_dt, 0)
+}
+
+/// [`python_datetime_to_utc`] for entry `index` of a sequence of times: a
+/// `datetime64` entry that cannot be read is reported at that index.
+fn python_datetime_to_utc_at(py_dt: &Bound<PyAny>, index: usize) -> PyResult<DateTime<Utc>> {
+    let year = match py_dt.getattr("year") {
+        Ok(year) => year,
+        Err(err) => {
+            return match datetime64_to_utc_from(py_dt, index)?.as_deref() {
+                Some([dt]) => Ok(*dt),
+                _ => Err(err),
+            }
+        }
+    };
     let date = chrono::NaiveDate::from_ymd_opt(
-        py_dt.getattr("year")?.extract()?,
+        year.extract()?,
         py_dt.getattr("month")?.extract()?,
         py_dt.getattr("day")?.extract()?,
     )

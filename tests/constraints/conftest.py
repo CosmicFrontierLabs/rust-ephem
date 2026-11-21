@@ -194,6 +194,7 @@ class DummyConstraintBackend:
         target_dec: object,
         target_roll: object = None,
         n_roll_samples: object = None,
+        apparent: bool = False,
     ) -> str:
         self.single_calls.append(
             (time, ephemeris, target_ra, target_dec, target_roll, n_roll_samples)
@@ -209,6 +210,7 @@ class DummyConstraintBackend:
         body: str,
         use_horizons: bool,
         spice_kernel: Optional[str],
+        apparent: bool = False,
     ) -> DummyRustResult:
         self.evaluate_moving_body_calls.append(
             (ephemeris, ras, decs, times, body, use_horizons, spice_kernel)

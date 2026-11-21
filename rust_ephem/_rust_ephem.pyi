@@ -367,6 +367,7 @@ class Constraint:
         samples: int = 50,
         margin_deg: float = 5.0,
         grow_margin: bool = True,
+        apparent: bool = False,
     ) -> RouteResult: ...
     @staticmethod
     def sun_proximity(min_angle: float, max_angle: float | None = None) -> Constraint:
@@ -794,7 +795,7 @@ class Constraint:
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
-        times: datetime | list[datetime] | None = None,
+        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
         indices: int | list[int] | None = None,
         target_roll: float | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -839,7 +840,7 @@ class Constraint:
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
+        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
         indices: int | list[int] | None = None,
         target_rolls: list[float] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -874,7 +875,7 @@ class Constraint:
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
+        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
         indices: int | list[int] | None = None,
         target_rolls: list[float] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -919,7 +920,7 @@ class Constraint:
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
+        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
         target_rolls: list[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
@@ -955,7 +956,7 @@ class Constraint:
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | None = None,
+        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
         target_rolls: list[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
@@ -971,6 +972,7 @@ class Constraint:
         target_dec: float,
         target_roll: float | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> bool | list[bool]:
         """
         Check if the target is in-constraint at given time(s).
@@ -1041,10 +1043,13 @@ class Constraint:
         index: int | None = None,
         n_points: int = DEFAULT_N_POINTS,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
     ) -> float:
         """Compute instantaneous visible solid angle in steradians.
 
-        Exactly one of ``time`` or ``index`` must be provided.
+        Exactly one of ``time`` or ``index`` must be provided. With
+        ``apparent=True`` the Earth, Sun and Moon are placed where the observer
+        sees them and the result is the clear solid angle of that apparent sky.
         """
         ...
 
@@ -1053,10 +1058,11 @@ class Constraint:
         ephemeris: Ephemeris,
         target_ras: list[float] | None = None,
         target_decs: list[float] | None = None,
-        times: datetime | list[datetime] | None = None,
+        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
         body: str | None = None,
         use_horizons: bool = False,
         spice_kernel: str | None = None,
+        apparent: bool = False,
     ) -> MovingBodyResult:
         """
         Evaluate constraint for a moving body (varying RA/Dec over time).
@@ -1343,7 +1349,9 @@ class TLEEphemeris(Ephemeris):
         """Moon position and velocity in GCRS frame"""
         ...
 
-    def gcrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def gcrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
 
         Times on the ephemeris grid return the ``gcrs_pv`` rows unchanged;
@@ -1357,15 +1365,21 @@ class TLEEphemeris(Ephemeris):
         """
         ...
 
-    def itrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def itrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
         ...
 
-    def sun_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def sun_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
         ...
 
-    def moon_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def moon_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
         ...
 
@@ -1983,7 +1997,9 @@ class SPICEEphemeris(Ephemeris):
         """Moon position and velocity in GCRS frame"""
         ...
 
-    def gcrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def gcrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
 
         Times on the ephemeris grid return the ``gcrs_pv`` rows unchanged;
@@ -1997,15 +2013,21 @@ class SPICEEphemeris(Ephemeris):
         """
         ...
 
-    def itrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def itrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
         ...
 
-    def sun_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def sun_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
         ...
 
-    def moon_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def moon_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
         ...
 
@@ -2529,7 +2551,9 @@ class OEMEphemeris(Ephemeris):
         """Moon position and velocity in GCRS frame"""
         ...
 
-    def gcrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def gcrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
 
         Times on the ephemeris grid return the ``gcrs_pv`` rows unchanged;
@@ -2543,15 +2567,21 @@ class OEMEphemeris(Ephemeris):
         """
         ...
 
-    def itrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def itrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
         ...
 
-    def sun_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def sun_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
         ...
 
-    def moon_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def moon_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
         ...
 
@@ -2952,7 +2982,8 @@ class FileEphemeris(Ephemeris):
             position_unit: Override detected position unit.
                 Supported: ``"km"`` (default), ``"m"``, ``"cm"``.
             velocity_unit: Override detected velocity unit.
-                Supported: ``"km/s"`` (default), ``"m/s"``, ``"cm/s"``.
+                Supported: ``"km/s"``, ``"m/s"``, ``"cm/s"``. When neither given
+                nor stated in the file, it follows the position unit.
             frame: Override detected coordinate frame.
                 GCRS-compatible: ``"J2000"``, ``"EME2000"``, ``"GCRF"``, ``"GCRS"``,
                 ``"ICRF"``.  Earth-fixed: ``"ITRS"``, ``"ECEF"``, ``"ECF"``,
@@ -2981,7 +3012,7 @@ class FileEphemeris(Ephemeris):
         *,
         polar_motion: bool = False,
         position_unit: str = "km",
-        velocity_unit: str = "km/s",
+        velocity_unit: str | None = None,
         frame: str = "J2000",
     ) -> FileEphemeris:
         """
@@ -3004,7 +3035,8 @@ class FileEphemeris(Ephemeris):
             step_size: Output time step in seconds (default 60).
             polar_motion: Apply polar motion correction (default False).
             position_unit: ``"km"`` (default), ``"m"`` or ``"cm"``.
-            velocity_unit: ``"km/s"`` (default), ``"m/s"`` or ``"cm/s"``.
+            velocity_unit: ``"km/s"``, ``"m/s"`` or ``"cm/s"``.  Default: the
+                position unit per second.
             frame: Frame of the input vectors.  GCRS-compatible: ``"J2000"``
                 (default), ``"EME2000"``, ``"GCRF"``, ``"GCRS"``, ``"ICRF"``.
                 Earth-fixed: ``"ITRS"``, ``"ECEF"``, ``"ECF"``, ``"FIXED"``,
@@ -3120,7 +3152,9 @@ class FileEphemeris(Ephemeris):
         """Moon position/velocity in GCRS frame."""
         ...
 
-    def gcrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def gcrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
 
         Times on the ephemeris grid return the ``gcrs_pv`` rows unchanged;
@@ -3134,15 +3168,21 @@ class FileEphemeris(Ephemeris):
         """
         ...
 
-    def itrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def itrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
         ...
 
-    def sun_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def sun_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
         ...
 
-    def moon_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def moon_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
         ...
 
@@ -3414,8 +3454,9 @@ class ParquetEphemeris(Ephemeris):
     DigitalOcean Spaces, additionally pass ``s3_endpoint``
     (e.g. ``"nyc3.digitaloceanspaces.com"``).
 
-    Requires the ``duckdb`` Python package: ``pip install rust-ephem[parquet]``
-    or ``pip install duckdb``.
+    Reads with the ``duckdb`` Python package. Without it, local files, globs
+    and directories are read with ``pyarrow``; remote sources and
+    ``where_clause`` need ``duckdb``.
 
     Example
     -------
@@ -3434,8 +3475,8 @@ class ParquetEphemeris(Ephemeris):
     def __init__(
         self,
         source: str,
-        begin: datetime,
-        end: datetime,
+        begin: datetime | None = None,
+        end: datetime | None = None,
         step_size: int = 60,
         *,
         polar_motion: bool = False,
@@ -3455,8 +3496,10 @@ class ParquetEphemeris(Ephemeris):
         Args:
             source: Path or URI to the Parquet file. Supports local paths,
                 ``s3://``, ``gcs://``, ``r2://``, and ``http(s)://``.
-            begin: Start of the output time grid (UTC).
-            end: End of the output time grid (UTC).
+            begin: Start of the output time grid (UTC). Default: the first
+                row of the data.
+            end: End of the output time grid (UTC). Default: the last row of
+                the data.
             step_size: Output time step in seconds (default 60).
             polar_motion: Apply polar motion correction (default False).
             time_col: Name of the timestamp column. Default ``"time"``.
@@ -3571,16 +3614,16 @@ class ParquetEphemeris(Ephemeris):
     @property
     def moon_pv(self) -> PositionVelocityData: ...
     def gcrs_pv_at(
-        self, times: datetime | Iterable[datetime]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
     ) -> PositionVelocityData: ...
     def itrs_pv_at(
-        self, times: datetime | Iterable[datetime]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
     ) -> PositionVelocityData: ...
     def sun_pv_at(
-        self, times: datetime | Iterable[datetime]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
     ) -> PositionVelocityData: ...
     def moon_pv_at(
-        self, times: datetime | Iterable[datetime]
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
     ) -> PositionVelocityData: ...
     @property
     def obsgeoloc(self) -> Any: ...
@@ -3816,7 +3859,9 @@ class GroundEphemeris(Ephemeris):
         """Position and velocity data for Moon"""
         ...
 
-    def gcrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def gcrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in GCRS (km, km/s) at arbitrary time(s).
 
         Times on the ephemeris grid return the ``gcrs_pv`` rows unchanged;
@@ -3830,15 +3875,21 @@ class GroundEphemeris(Ephemeris):
         """
         ...
 
-    def itrs_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def itrs_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Observer position/velocity in ITRS (km, km/s) at arbitrary time(s); see ``gcrs_pv_at``."""
         ...
 
-    def sun_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def sun_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Sun position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``sun_pv``; see ``gcrs_pv_at``."""
         ...
 
-    def moon_pv_at(self, times: datetime | Iterable[datetime]) -> PositionVelocityData:
+    def moon_pv_at(
+        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+    ) -> PositionVelocityData:
         """Moon position/velocity in GCRS (km, km/s) at arbitrary time(s), interpolated from ``moon_pv``; see ``gcrs_pv_at``."""
         ...
 

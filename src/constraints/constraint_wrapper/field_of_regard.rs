@@ -124,6 +124,7 @@ pub(super) fn instantaneous_field_of_regard_impl<F>(
     index: Option<usize>,
     n_points: usize,
     n_roll_samples: usize,
+    apparent: bool,
     evaluator: &dyn ConstraintEvaluator,
     parse_times_to_indices: F,
 ) -> PyResult<f64>
@@ -192,6 +193,21 @@ where
     let sky_samples = cached_fibonacci_sphere_radec(n_points);
 
     let evaluate_batch = |ephem: &dyn EphemerisBase| -> PyResult<Vec<bool>> {
+        if apparent {
+            // The sky samples are directions as the observer sees them, so only
+            // the bodies need placing: the field of regard is the solid angle
+            // of the apparent sky that is clear.
+            let (view, _) = crate::ephemeris::sampled_ephemeris::SampledEphemeris::apparent(
+                ephem,
+                &[eval_index],
+            )?;
+            return evaluator.field_of_regard_violated_batch(
+                &view,
+                &sky_samples.unit_vectors,
+                0,
+                n_roll_samples,
+            );
+        }
         evaluator.field_of_regard_violated_batch(
             ephem,
             &sky_samples.unit_vectors,
