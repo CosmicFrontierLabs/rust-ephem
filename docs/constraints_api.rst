@@ -2220,8 +2220,11 @@ GridResult
 .. py:class:: GridResult
 
    Result of ``evaluate_grid()``: every target at every time, as
-   ``(n_targets, n_times)`` arrays. Each array is built on first access, shared
-   by later ones, and read-only.
+   ``(n_targets, n_times)`` arrays. The grid arrays (``constraint_array``,
+   ``visibility_flags`` and those in ``constraint_values`` and
+   ``component_violated``) and ``timestamp`` are built on first access, shared
+   by later ones, and read-only. ``ras`` and ``decs`` are new copies on each
+   access. The two dicts are new on each access, over the same arrays.
 
    **Attributes:**
 
@@ -2234,14 +2237,20 @@ GridResult
    - ``component_violated`` (dict[str, numpy.ndarray of bool]): per-rule
      violation masks keyed by cause tag (``sun``, ``not.moon``, ...)
    - ``cause_value_keys`` (dict[str, list[str]]): cause tag to value key(s)
-   - ``constraint_name`` (str)
+   - ``constraint_name`` (str): the constraint at the roll the targets were
+     evaluated at. A roll-dependent constraint states its roll in its name, so
+     when ``target_rolls`` holds different rolls no one name fits: this is
+     then the name of the constraint as defined, and
+     ``target(i).constraint_name`` is that of each target
    - ``timestamp`` (numpy.ndarray of datetime): the ``n_times`` evaluated times
    - ``ras``, ``decs`` (numpy.ndarray): the ``n_targets`` target coordinates
 
    .. py:method:: target(index)
 
       The result of one target, with its violation and visibility windows,
-      built on demand from row ``index``.
+      built on demand from row ``index``. Its name and violation descriptions
+      carry the roll that target was evaluated at, as ``evaluate_batch()``
+      reports them.
 
       :rtype: ConstraintResult
 
@@ -2322,6 +2331,11 @@ yourself.
 
 ``constraint_values`` is a ``dict[str, numpy.ndarray]``: one read-only float
 array per named quantity, aligned index-for-index with ``result.timestamps``.
+The arrays are not lists: use ``array.tolist()`` where a list is needed, for
+example ``json.dumps({k: v.tolist() for k, v in result.constraint_values.items()})``,
+and ``array.copy()`` to modify one. The result of
+:py:meth:`evaluate_moving_body` is a pydantic model of plain lists, and its
+``constraint_values`` are still ``list[float]``.
 For a whole grid of targets and times, :py:meth:`evaluate_grid` returns the
 same quantities as ``(n_targets, n_times)`` arrays in one call. It is populated
 by :py:meth:`evaluate`, :py:meth:`evaluate_batch`, and

@@ -9,6 +9,7 @@ import numpy.typing as npt
 import pytest
 
 import rust_ephem as re
+from rust_ephem.constraints import RollReference
 
 BEGIN = datetime(2026, 3, 20, tzinfo=timezone.utc)
 STEP = 600
@@ -244,6 +245,21 @@ class TestGridResult:
         with pytest.raises(ValueError, match="read-only"):
             grid.constraint_array[0, 0] = True
 
+    def test_timestamp_is_shared_and_read_only(self, grid: Any) -> None:
+        stamps = grid.timestamp
+        assert grid.timestamp is stamps
+        with pytest.raises(ValueError, match="read-only"):
+            stamps[0] = None
+        assert grid.timestamp[0] is not None
+
+    def test_ras_and_decs_are_copies(self, grid: Any) -> None:
+        ras, _ = targets(5)
+        mine = grid.ras
+        mine[0] = -1.0
+        grid.decs[0] = -1.0
+        np.testing.assert_array_equal(grid.ras, ras)
+        assert grid.decs[0] != -1.0
+
     def test_target_gives_one_result_on_demand(self, grid: Any, ephem: Any) -> None:
         ras, decs = targets(5)
         batch = TREES["rules"].evaluate_batch(
@@ -285,8 +301,132 @@ class TestGridResult:
                 ephem, [[1.0, 2.0]], [[1.0, 2.0]]
             )
 
+    @pytest.mark.parametrize(
+        "bad",
+        [["10", "20"], np.array(["10", "20"]), [None, 1.0], [10 + 0j, 20 + 0j]],
+        ids=["strings", "string_array", "none", "complex"],
+    )
+    def test_coordinates_must_be_numbers(self, ephem: Any, bad: Any) -> None:
+        """NumPy would read "10" as 10.0; evaluate_batch refuses it, and so
+        does every method that takes coordinate arrays."""
+        constraint = TREES["rules"]
+        good = [1.0, 2.0]
+        times = [ephem.timestamp[0], ephem.timestamp[1]]
+        with pytest.raises(TypeError):
+            constraint.evaluate_batch(ephem, bad, good)
+        for method in (
+            constraint.evaluate_grid,
+            constraint._get_cached_rust_constraint().evaluate_grid,
+        ):
+            with pytest.raises(TypeError, match="sequence of numbers"):
+                method(ephem, bad, good)
+            with pytest.raises(TypeError, match="sequence of numbers"):
+                method(ephem, good, bad)
+        for elementwise in (
+            constraint.evaluate_elementwise,
+            constraint.in_constraint_elementwise,
+        ):
+            with pytest.raises(TypeError, match="sequence of numbers"):
+                elementwise(ephem, bad, good, times=times)
+
+    def test_integers_and_booleans_are_numbers(self, ephem: Any) -> None:
+        constraint = TREES["rules"]
+        as_float = constraint.evaluate_grid(ephem, [10.0, 1.0], [20.0, 0.0])
+        for ras, decs in (([10, 1], [20, 0]), (np.array([10, 1]), [20.0, False])):
+            grid = constraint.evaluate_grid(ephem, ras, decs)
+            np.testing.assert_array_equal(
+                grid.constraint_array, as_float.constraint_array
+            )
+
+
+ROLL_TREES = {
+    "boresight": TREES["boresight"],
+    "sun_reference": re.SunConstraint(min_angle=60).boresight_offset(
+        pitch_deg=20, roll_reference=RollReference.SUN, roll_clockwise=True
+    ),
+    "polygon": TREES["polygon"],
+    "nested": ~TREES["boresight"] & re.EarthLimbConstraint(min_angle=20),
+}
+
+
+@pytest.mark.parametrize("apparent", [False, True], ids=["geometric", "apparent"])
+@pytest.mark.parametrize("roll_kind", ["free", "fixed", "mixed"])
+@pytest.mark.parametrize("tree", list(ROLL_TREES))
+def test_names_carry_the_roll_each_target_was_evaluated_at(
+    ephem: Any, tree: str, roll_kind: str, apparent: bool
+) -> None:
+    """The name of a roll-dependent rule states its roll. A target's result is
+    named, and its violations described, as evaluate_batch names them."""
+    constraint = ROLL_TREES[tree]
+    ras, decs = targets(9, seed=8)
+    rolls = rolls_for(roll_kind, 9)
+    kwargs: dict[str, Any] = {
+        "indices": list(range(0, N, 5)),
+        "target_rolls": rolls,
+        "apparent": apparent,
+    }
+    grid = constraint.evaluate_grid(ephem, ras, decs, **kwargs)
+    batch = constraint.evaluate_batch(ephem, list(ras), list(decs), **kwargs)
+    names = [result.constraint_name for result in batch]
+    described = 0
+    for i, expected in enumerate(batch):
+        one = grid.target(i)
+        assert one.constraint_name == expected.constraint_name, i
+        assert [v.description for v in one.violations] == [
+            v.description for v in expected.violations
+        ], i
+        described += len(one.violations)
+    # The nested tree is rarely violated; the others always are somewhere.
+    assert described > 0 or tree == "nested"
+    if roll_kind == "mixed":
+        # Rolls differ, so no one name fits: the grid's is the definition's.
+        assert len(set(names)) > 1
+        free = constraint.evaluate_grid(ephem, ras, decs, indices=[0])
+        assert grid.constraint_name == free.constraint_name
+    else:
+        assert set(names) == {grid.constraint_name}
+    if roll_kind == "fixed" and tree != "polygon":
+        assert "roll=35.000°" in grid.constraint_name
+    assert grid.constraint_name in repr(grid)
+
+
+def test_one_roll_given_in_any_grouping_gives_one_name(ephem: Any) -> None:
+    """Targets at the same roll share its name however they are ordered among
+    targets at another roll."""
+    constraint = ROLL_TREES["boresight"]
+    ras, decs = targets(6, seed=2)
+    rolls: list[float | None] = [10.0, 80.0, 10.0, 80.0, 80.0, 10.0]
+    grid = constraint.evaluate_grid(
+        ephem, ras, decs, indices=[0, 1], target_rolls=rolls
+    )
+    names = [grid.target(i).constraint_name for i in range(6)]
+    assert ["roll=10.000°" in name for name in names] == [r == 10.0 for r in rolls]
+    assert ["roll=80.000°" in name for name in names] == [r == 80.0 for r in rolls]
+
 
 class TestCheaperResults:
+    def test_moving_body_values_stay_lists(self, ephem: Any) -> None:
+        """MovingVisibilityResult is a pydantic model of plain lists and stays
+        one: only ConstraintResult.constraint_values became arrays."""
+        import json
+
+        constraint = TREES["rules"]
+        count = 6
+        moving = constraint.evaluate_moving_body(
+            ephem,
+            target_ras=list(np.linspace(100.0, 101.0, count)),
+            target_decs=list(np.linspace(20.0, 21.0, count)),
+            times=list(ephem.timestamp[:count]),
+        )
+        values = moving.constraint_values["sun.sun_angle_deg"]
+        assert isinstance(values, list) and len(values) == count
+        json.dumps(moving.constraint_values)
+        # The same numbers from a ConstraintResult, as lists when wanted.
+        result = constraint.evaluate(ephem, 100.0, 20.0, indices=[0])
+        as_lists = {k: v.tolist() for k, v in result.constraint_values.items()}
+        assert json.loads(json.dumps(as_lists)) == as_lists
+        assert as_lists["sun.sun_angle_deg"][0] == pytest.approx(values[0])
+
     def test_constraint_values_are_cached_read_only_arrays(self, ephem: Any) -> None:
         result = TREES["rules"].evaluate(ephem, 200.0, 30.0)
         values = result.constraint_values
