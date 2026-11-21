@@ -339,6 +339,67 @@ def test_invalid_requests(tle: rust_ephem.TLEEphemeris) -> None:
         tle.apparent_target_at(RAS, DECS, TIMES[:3])
 
 
+@pytest.mark.parametrize("dec", [90.0, -90.0])
+def test_the_poles_are_valid_declinations(
+    tle: rust_ephem.TLEEphemeris, dec: float
+) -> None:
+    target = tle.apparent_target_at(10.0, dec, TIMES)
+    np.testing.assert_allclose(np.linalg.norm(target, axis=1), 1.0, rtol=0, atol=1e-12)
+
+
+@pytest.mark.parametrize(
+    ("ras", "decs", "message"),
+    [
+        (5.0, 95.0, r"decs\[0\] is 95; it must be between -90 and 90 degrees"),
+        ([5.0, 6.0], [10.0, -90.5], r"decs\[1\] is -90.5"),
+        (5.0, float("nan"), r"decs\[0\] is NaN"),
+        (float("nan"), 5.0, r"ras\[0\] is NaN; it must be finite"),
+        ([1.0, float("inf")], 5.0, r"ras\[1\] is inf"),
+    ],
+)
+def test_apparent_target_rejects_invalid_coordinates(
+    tle: rust_ephem.TLEEphemeris,
+    ras: float | list[float],
+    decs: float | list[float],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        tle.apparent_target_at(ras, decs, TIMES[0])
+
+
+def test_right_ascension_is_not_range_limited(tle: rust_ephem.TLEEphemeris) -> None:
+    np.testing.assert_allclose(
+        tle.apparent_target_at(370.0, 5.0, TIMES),
+        tle.apparent_target_at(10.0, 5.0, TIMES),
+        rtol=0,
+        atol=1e-12,
+    )
+
+
+def test_more_than_one_dimension_is_rejected(tle: rust_ephem.TLEEphemeris) -> None:
+    grid = np.full((2, 2), 5.0)
+    naive = [time.replace(tzinfo=None) for time in TIMES]
+    times_2d = np.array(naive, dtype="datetime64[us]").reshape(2, 2)
+    with pytest.raises(ValueError, match="ras must be a single value or one-dim"):
+        tle.apparent_target_at(grid, 5.0, TIMES)
+    with pytest.raises(ValueError, match="decs must be a single value or one-dim"):
+        tle.apparent_target_at(5.0, grid, TIMES)
+    with pytest.raises(ValueError, match="times must be a single value or one-dim"):
+        tle.apparent_target_at(5.0, 5.0, times_2d)
+    with pytest.raises(ValueError, match="times must be a single value or one-dim"):
+        tle.get_body_pv("sun", times=times_2d)
+    with pytest.raises(ValueError, match="not 2-dimensional"):
+        tle.get_body_pv("sun", times=times_2d, apparent=True)
+    # Zero- and one-dimensional arrays are fine.
+    assert tle.apparent_target_at(np.float64(5.0), np.array(5.0), TIMES).shape == (4, 3)
+    assert tle.get_body_pv("sun", times=times_2d.ravel()).position.shape == (4, 3)
+
+
+def test_get_body_pv_is_declared_on_the_base_class() -> None:
+    assert "get_body_pv" in rust_ephem.Ephemeris.__abstractmethods__
+    assert "apparent_target_at" in rust_ephem.Ephemeris.__abstractmethods__
+
+
 # Mid-interval, so a one-second difference does not straddle a grid row, where
 # the interpolated observer's acceleration steps.
 INSIDE = [BEGIN + timedelta(seconds=x) for x in (30.0, 630.5, 1830.0, 3570.25)]

@@ -1401,17 +1401,21 @@ class TLEEphemeris(Ephemeris):
         be a single value used for every row.
 
         Args:
-            ras: Catalogue (ICRS) right ascension(s) in degrees.
-            decs: Catalogue (ICRS) declination(s) in degrees.
-            times: A datetime, an iterable of datetimes or a ``datetime64``
-                array (read as UTC).
+            ras: Catalogue (ICRS) right ascension(s) in degrees: a value or
+                a one-dimensional sequence.
+            decs: Catalogue (ICRS) declination(s) in degrees, from -90 to 90:
+                a value or a one-dimensional sequence.
+            times: A datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC).
 
         Returns:
             ``(N, 3)`` array of unit vectors, GCRS axes, rows in input order.
 
         Raises:
             ValueError: If a time is outside the ephemeris span, the lengths do
-                not match, or no planetary kernel covers the times.
+                not match, an argument has more than one dimension, a
+                coordinate is not finite or a declination is outside -90 to
+                90, or no planetary kernel covers the times.
         """
 
     @property
@@ -1765,9 +1769,10 @@ class TLEEphemeris(Ephemeris):
             use_horizons: Geometric queries only: fall back to the JPL
                 Horizons API when SPICE fails.
             times: Time(s) to evaluate at instead of the ephemeris grid: a
-                datetime, an iterable of datetimes or a ``datetime64`` array
-                (read as UTC). Times between grid points interpolate the
-                observer as ``gcrs_pv_at`` does; rows follow input order.
+                datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC). Times between grid points
+                interpolate the observer as ``gcrs_pv_at`` does; rows follow
+                input order.
             apparent: Return the body as it is seen: reception light time,
                 solar light deflection and the aberration of the observer's
                 barycentric velocity. The directions are those constraints
@@ -1782,6 +1787,13 @@ class TLEEphemeris(Ephemeris):
             so the Sun's position is ``sun_pv_at(t).position -
             gcrs_pv_at(t).position``.
 
+            With ``times`` or ``apparent=True``, and no ``spice_kernel``, the
+            Sun and Moon are the states computed when the ephemeris was
+            built, as for constraints. If no planetary kernel was loaded then
+            they are analytic, and stay so after one is loaded: a
+            ``UserWarning`` reports it. Rebuild the ephemeris, or pass
+            ``spice_kernel``, to read the kernel.
+
             With ``apparent=True`` the position points where the body's light
             arrives from and its length is the light-time distance: from the
             observer at the requested time to the body where it was when the
@@ -1790,9 +1802,13 @@ class TLEEphemeris(Ephemeris):
             shift turns with the observer's velocity (several km/s for the Sun
             seen from low orbit). It is a finite difference over half a second
             and takes the observer's acceleration from the interpolated
-            ephemeris: about 2 m/s for the Sun and 2 cm/s for the Moon and
-            Earth on a one-minute step in low orbit. It is NaN if the
-            ephemeris spans less than a second.
+            ephemeris. Where the stored velocities are the derivative of the
+            stored positions, that gives about 2 m/s for the Sun and 2 cm/s
+            for the Moon and Earth on a one-minute step in low orbit, less on
+            a finer step and more for a more distant body. SGP4 velocities
+            are not that derivative, so a ``TLEEphemeris`` does worse and a
+            finer step does not help: see the TLE ephemeris guide. It is NaN
+            if the ephemeris spans less than a second.
 
         Raises:
             ValueError: If a time is outside the ephemeris span, the body is
@@ -2117,17 +2133,21 @@ class SPICEEphemeris(Ephemeris):
         be a single value used for every row.
 
         Args:
-            ras: Catalogue (ICRS) right ascension(s) in degrees.
-            decs: Catalogue (ICRS) declination(s) in degrees.
-            times: A datetime, an iterable of datetimes or a ``datetime64``
-                array (read as UTC).
+            ras: Catalogue (ICRS) right ascension(s) in degrees: a value or
+                a one-dimensional sequence.
+            decs: Catalogue (ICRS) declination(s) in degrees, from -90 to 90:
+                a value or a one-dimensional sequence.
+            times: A datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC).
 
         Returns:
             ``(N, 3)`` array of unit vectors, GCRS axes, rows in input order.
 
         Raises:
             ValueError: If a time is outside the ephemeris span, the lengths do
-                not match, or no planetary kernel covers the times.
+                not match, an argument has more than one dimension, a
+                coordinate is not finite or a declination is outside -90 to
+                90, or no planetary kernel covers the times.
         """
 
     @property
@@ -2446,9 +2466,10 @@ class SPICEEphemeris(Ephemeris):
             use_horizons: Geometric queries only: fall back to the JPL
                 Horizons API when SPICE fails.
             times: Time(s) to evaluate at instead of the ephemeris grid: a
-                datetime, an iterable of datetimes or a ``datetime64`` array
-                (read as UTC). Times between grid points interpolate the
-                observer as ``gcrs_pv_at`` does; rows follow input order.
+                datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC). Times between grid points
+                interpolate the observer as ``gcrs_pv_at`` does; rows follow
+                input order.
             apparent: Return the body as it is seen: reception light time,
                 solar light deflection and the aberration of the observer's
                 barycentric velocity. The directions are those constraints
@@ -2463,6 +2484,13 @@ class SPICEEphemeris(Ephemeris):
             so the Sun's position is ``sun_pv_at(t).position -
             gcrs_pv_at(t).position``.
 
+            With ``times`` or ``apparent=True``, and no ``spice_kernel``, the
+            Sun and Moon are the states computed when the ephemeris was
+            built, as for constraints. If no planetary kernel was loaded then
+            they are analytic, and stay so after one is loaded: a
+            ``UserWarning`` reports it. Rebuild the ephemeris, or pass
+            ``spice_kernel``, to read the kernel.
+
             With ``apparent=True`` the position points where the body's light
             arrives from and its length is the light-time distance: from the
             observer at the requested time to the body where it was when the
@@ -2471,9 +2499,13 @@ class SPICEEphemeris(Ephemeris):
             shift turns with the observer's velocity (several km/s for the Sun
             seen from low orbit). It is a finite difference over half a second
             and takes the observer's acceleration from the interpolated
-            ephemeris: about 2 m/s for the Sun and 2 cm/s for the Moon and
-            Earth on a one-minute step in low orbit. It is NaN if the
-            ephemeris spans less than a second.
+            ephemeris. Where the stored velocities are the derivative of the
+            stored positions, that gives about 2 m/s for the Sun and 2 cm/s
+            for the Moon and Earth on a one-minute step in low orbit, less on
+            a finer step and more for a more distant body. SGP4 velocities
+            are not that derivative, so a ``TLEEphemeris`` does worse and a
+            finer step does not help: see the TLE ephemeris guide. It is NaN
+            if the ephemeris spans less than a second.
 
         Raises:
             ValueError: If a time is outside the ephemeris span, the body is
@@ -2739,17 +2771,21 @@ class OEMEphemeris(Ephemeris):
         be a single value used for every row.
 
         Args:
-            ras: Catalogue (ICRS) right ascension(s) in degrees.
-            decs: Catalogue (ICRS) declination(s) in degrees.
-            times: A datetime, an iterable of datetimes or a ``datetime64``
-                array (read as UTC).
+            ras: Catalogue (ICRS) right ascension(s) in degrees: a value or
+                a one-dimensional sequence.
+            decs: Catalogue (ICRS) declination(s) in degrees, from -90 to 90:
+                a value or a one-dimensional sequence.
+            times: A datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC).
 
         Returns:
             ``(N, 3)`` array of unit vectors, GCRS axes, rows in input order.
 
         Raises:
             ValueError: If a time is outside the ephemeris span, the lengths do
-                not match, or no planetary kernel covers the times.
+                not match, an argument has more than one dimension, a
+                coordinate is not finite or a declination is outside -90 to
+                90, or no planetary kernel covers the times.
         """
 
     @property
@@ -3068,9 +3104,10 @@ class OEMEphemeris(Ephemeris):
             use_horizons: Geometric queries only: fall back to the JPL
                 Horizons API when SPICE fails.
             times: Time(s) to evaluate at instead of the ephemeris grid: a
-                datetime, an iterable of datetimes or a ``datetime64`` array
-                (read as UTC). Times between grid points interpolate the
-                observer as ``gcrs_pv_at`` does; rows follow input order.
+                datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC). Times between grid points
+                interpolate the observer as ``gcrs_pv_at`` does; rows follow
+                input order.
             apparent: Return the body as it is seen: reception light time,
                 solar light deflection and the aberration of the observer's
                 barycentric velocity. The directions are those constraints
@@ -3085,6 +3122,13 @@ class OEMEphemeris(Ephemeris):
             so the Sun's position is ``sun_pv_at(t).position -
             gcrs_pv_at(t).position``.
 
+            With ``times`` or ``apparent=True``, and no ``spice_kernel``, the
+            Sun and Moon are the states computed when the ephemeris was
+            built, as for constraints. If no planetary kernel was loaded then
+            they are analytic, and stay so after one is loaded: a
+            ``UserWarning`` reports it. Rebuild the ephemeris, or pass
+            ``spice_kernel``, to read the kernel.
+
             With ``apparent=True`` the position points where the body's light
             arrives from and its length is the light-time distance: from the
             observer at the requested time to the body where it was when the
@@ -3093,9 +3137,13 @@ class OEMEphemeris(Ephemeris):
             shift turns with the observer's velocity (several km/s for the Sun
             seen from low orbit). It is a finite difference over half a second
             and takes the observer's acceleration from the interpolated
-            ephemeris: about 2 m/s for the Sun and 2 cm/s for the Moon and
-            Earth on a one-minute step in low orbit. It is NaN if the
-            ephemeris spans less than a second.
+            ephemeris. Where the stored velocities are the derivative of the
+            stored positions, that gives about 2 m/s for the Sun and 2 cm/s
+            for the Moon and Earth on a one-minute step in low orbit, less on
+            a finer step and more for a more distant body. SGP4 velocities
+            are not that derivative, so a ``TLEEphemeris`` does worse and a
+            finer step does not help: see the TLE ephemeris guide. It is NaN
+            if the ephemeris spans less than a second.
 
         Raises:
             ValueError: If a time is outside the ephemeris span, the body is
@@ -3408,17 +3456,21 @@ class FileEphemeris(Ephemeris):
         be a single value used for every row.
 
         Args:
-            ras: Catalogue (ICRS) right ascension(s) in degrees.
-            decs: Catalogue (ICRS) declination(s) in degrees.
-            times: A datetime, an iterable of datetimes or a ``datetime64``
-                array (read as UTC).
+            ras: Catalogue (ICRS) right ascension(s) in degrees: a value or
+                a one-dimensional sequence.
+            decs: Catalogue (ICRS) declination(s) in degrees, from -90 to 90:
+                a value or a one-dimensional sequence.
+            times: A datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC).
 
         Returns:
             ``(N, 3)`` array of unit vectors, GCRS axes, rows in input order.
 
         Raises:
             ValueError: If a time is outside the ephemeris span, the lengths do
-                not match, or no planetary kernel covers the times.
+                not match, an argument has more than one dimension, a
+                coordinate is not finite or a declination is outside -90 to
+                90, or no planetary kernel covers the times.
         """
 
     @property
@@ -3637,9 +3689,10 @@ class FileEphemeris(Ephemeris):
             use_horizons: Geometric queries only: fall back to the JPL
                 Horizons API when SPICE fails.
             times: Time(s) to evaluate at instead of the ephemeris grid: a
-                datetime, an iterable of datetimes or a ``datetime64`` array
-                (read as UTC). Times between grid points interpolate the
-                observer as ``gcrs_pv_at`` does; rows follow input order.
+                datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC). Times between grid points
+                interpolate the observer as ``gcrs_pv_at`` does; rows follow
+                input order.
             apparent: Return the body as it is seen: reception light time,
                 solar light deflection and the aberration of the observer's
                 barycentric velocity. The directions are those constraints
@@ -3654,6 +3707,13 @@ class FileEphemeris(Ephemeris):
             so the Sun's position is ``sun_pv_at(t).position -
             gcrs_pv_at(t).position``.
 
+            With ``times`` or ``apparent=True``, and no ``spice_kernel``, the
+            Sun and Moon are the states computed when the ephemeris was
+            built, as for constraints. If no planetary kernel was loaded then
+            they are analytic, and stay so after one is loaded: a
+            ``UserWarning`` reports it. Rebuild the ephemeris, or pass
+            ``spice_kernel``, to read the kernel.
+
             With ``apparent=True`` the position points where the body's light
             arrives from and its length is the light-time distance: from the
             observer at the requested time to the body where it was when the
@@ -3662,9 +3722,13 @@ class FileEphemeris(Ephemeris):
             shift turns with the observer's velocity (several km/s for the Sun
             seen from low orbit). It is a finite difference over half a second
             and takes the observer's acceleration from the interpolated
-            ephemeris: about 2 m/s for the Sun and 2 cm/s for the Moon and
-            Earth on a one-minute step in low orbit. It is NaN if the
-            ephemeris spans less than a second.
+            ephemeris. Where the stored velocities are the derivative of the
+            stored positions, that gives about 2 m/s for the Sun and 2 cm/s
+            for the Moon and Earth on a one-minute step in low orbit, less on
+            a finer step and more for a more distant body. SGP4 velocities
+            are not that derivative, so a ``TLEEphemeris`` does worse and a
+            finer step does not help: see the TLE ephemeris guide. It is NaN
+            if the ephemeris spans less than a second.
 
         Raises:
             ValueError: If a time is outside the ephemeris span, the body is
@@ -4205,17 +4269,21 @@ class GroundEphemeris(Ephemeris):
         be a single value used for every row.
 
         Args:
-            ras: Catalogue (ICRS) right ascension(s) in degrees.
-            decs: Catalogue (ICRS) declination(s) in degrees.
-            times: A datetime, an iterable of datetimes or a ``datetime64``
-                array (read as UTC).
+            ras: Catalogue (ICRS) right ascension(s) in degrees: a value or
+                a one-dimensional sequence.
+            decs: Catalogue (ICRS) declination(s) in degrees, from -90 to 90:
+                a value or a one-dimensional sequence.
+            times: A datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC).
 
         Returns:
             ``(N, 3)`` array of unit vectors, GCRS axes, rows in input order.
 
         Raises:
             ValueError: If a time is outside the ephemeris span, the lengths do
-                not match, or no planetary kernel covers the times.
+                not match, an argument has more than one dimension, a
+                coordinate is not finite or a declination is outside -90 to
+                90, or no planetary kernel covers the times.
         """
 
     @property
@@ -4584,9 +4652,10 @@ class GroundEphemeris(Ephemeris):
             use_horizons: Geometric queries only: fall back to the JPL
                 Horizons API when SPICE fails.
             times: Time(s) to evaluate at instead of the ephemeris grid: a
-                datetime, an iterable of datetimes or a ``datetime64`` array
-                (read as UTC). Times between grid points interpolate the
-                observer as ``gcrs_pv_at`` does; rows follow input order.
+                datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC). Times between grid points
+                interpolate the observer as ``gcrs_pv_at`` does; rows follow
+                input order.
             apparent: Return the body as it is seen: reception light time,
                 solar light deflection and the aberration of the observer's
                 barycentric velocity. The directions are those constraints
@@ -4601,6 +4670,13 @@ class GroundEphemeris(Ephemeris):
             so the Sun's position is ``sun_pv_at(t).position -
             gcrs_pv_at(t).position``.
 
+            With ``times`` or ``apparent=True``, and no ``spice_kernel``, the
+            Sun and Moon are the states computed when the ephemeris was
+            built, as for constraints. If no planetary kernel was loaded then
+            they are analytic, and stay so after one is loaded: a
+            ``UserWarning`` reports it. Rebuild the ephemeris, or pass
+            ``spice_kernel``, to read the kernel.
+
             With ``apparent=True`` the position points where the body's light
             arrives from and its length is the light-time distance: from the
             observer at the requested time to the body where it was when the
@@ -4609,9 +4685,13 @@ class GroundEphemeris(Ephemeris):
             shift turns with the observer's velocity (several km/s for the Sun
             seen from low orbit). It is a finite difference over half a second
             and takes the observer's acceleration from the interpolated
-            ephemeris: about 2 m/s for the Sun and 2 cm/s for the Moon and
-            Earth on a one-minute step in low orbit. It is NaN if the
-            ephemeris spans less than a second.
+            ephemeris. Where the stored velocities are the derivative of the
+            stored positions, that gives about 2 m/s for the Sun and 2 cm/s
+            for the Moon and Earth on a one-minute step in low orbit, less on
+            a finer step and more for a more distant body. SGP4 velocities
+            are not that derivative, so a ``TLEEphemeris`` does worse and a
+            finer step does not help: see the TLE ephemeris guide. It is NaN
+            if the ephemeris spans less than a second.
 
         Raises:
             ValueError: If a time is outside the ephemeris span, the body is
