@@ -214,14 +214,16 @@ class TestUnitConversion:
         np.testing.assert_allclose(speed, 7.546, rtol=1e-3)
 
     def test_explicit_velocity_unit_is_kept(self, meters_file: str) -> None:
-        eph = FileEphemeris(
-            meters_file,
-            begin=BEGIN,
-            end=END,
-            step_size=STEP,
-            position_unit="m",
-            velocity_unit="km/s",
-        )
+        # The file holds m/s, so the unit asked for is wrong and is reported.
+        with pytest.warns(UserWarning, match="1000 times too large"):
+            eph = FileEphemeris(
+                meters_file,
+                begin=BEGIN,
+                end=END,
+                step_size=STEP,
+                position_unit="m",
+                velocity_unit="km/s",
+            )
         assert eph.source_velocity_unit == "km/s"
         assert np.linalg.norm(eph.file_pv.velocity[0]) == pytest.approx(7546, rel=1e-3)
 

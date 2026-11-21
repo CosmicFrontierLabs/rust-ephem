@@ -651,6 +651,12 @@ impl FileEphemeris {
             None => Self::velocity_unit_for(&position_unit)?,
         };
         let source_states = Self::apply_unit_conversion(&states, &position_unit, &velocity_unit)?;
+        Self::warn_if_units_disagree(
+            &source_times,
+            &source_states,
+            &position_unit,
+            &velocity_unit,
+        );
 
         // ── Validate requested time range ───────────────────────────────────
         if begin_dt < source_times[0] || end_dt > source_times[n_source - 1] {
@@ -811,6 +817,88 @@ impl FileEphemeris {
             "cm/s"
         }
         .to_string())
+    }
+
+    /// Typical ratio of the distance moved between consecutive samples to the
+    /// distance their velocities predict (speed × time step), for states
+    /// already converted to km and km/s. About 1 when the two agree. `None`
+    /// when no pair of samples both moves and has a velocity.
+    fn displacement_to_velocity_ratio(
+        times: &[DateTime<Utc>],
+        states_km: &Array2<f64>,
+    ) -> Option<f64> {
+        /// Pairs examined, spread evenly over the data.
+        const MAX_PAIRS: usize = 512;
+        let n_pairs = times.len().saturating_sub(1);
+        let stride = n_pairs.div_ceil(MAX_PAIRS).max(1);
+        let norm = |row: usize, cols: std::ops::Range<usize>| -> f64 {
+            cols.map(|c| states_km[[row, c]].powi(2))
+                .sum::<f64>()
+                .sqrt()
+        };
+        let mut ratios: Vec<f64> = (0..n_pairs)
+            .step_by(stride)
+            .filter_map(|i| {
+                let dt = (times[i + 1] - times[i]).as_seconds_f64();
+                let moved = (0..3)
+                    .map(|c| (states_km[[i + 1, c]] - states_km[[i, c]]).powi(2))
+                    .sum::<f64>()
+                    .sqrt();
+                let predicted = 0.5 * (norm(i, 3..6) + norm(i + 1, 3..6)) * dt;
+                let ratio = moved / predicted;
+                (ratio.is_finite() && ratio > 0.0).then_some(ratio)
+            })
+            .collect();
+        if ratios.is_empty() {
+            return None;
+        }
+        let mid = ratios.len() / 2;
+        let (_, median, _) = ratios.select_nth_unstable_by(mid, f64::total_cmp);
+        Some(*median)
+    }
+
+    /// Warn when positions and velocities disagree by a factor that a unit
+    /// mix-up produces (100, 1000 or 100,000: cm, m and km against each other).
+    /// Such states pass through the samples but are far off between them.
+    fn warn_if_units_disagree(
+        times: &[DateTime<Utc>],
+        states_km: &Array2<f64>,
+        position_unit: &str,
+        velocity_unit: &str,
+    ) {
+        let Some(ratio) = Self::displacement_to_velocity_ratio(times, states_km) else {
+            return;
+        };
+        let Some(factor) = Self::unit_mismatch_factor(ratio) else {
+            return;
+        };
+        let (size, factor) = if factor > 1.0 {
+            ("small", factor)
+        } else {
+            ("large", 1.0 / factor)
+        };
+        let message = format!(
+            "Velocities look about {factor:.0} times too {size} for the positions: between \
+             samples the positions move {ratio:.3e} times as far as the velocities predict. \
+             They were read as position_unit='{position_unit}' and \
+             velocity_unit='{velocity_unit}'; pass the units the data is in, or states between \
+             samples will be far from the orbit."
+        );
+        Python::attach(|py| {
+            if let Ok(message) = std::ffi::CString::new(message) {
+                let category = py.get_type::<pyo3::exceptions::PyUserWarning>();
+                let _ = PyErr::warn(py, &category, &message, 1);
+            }
+        });
+    }
+
+    /// The unit factor (100, 1000, 100,000 or the inverse of one) within a
+    /// factor of two of `ratio`, if there is one.
+    fn unit_mismatch_factor(ratio: f64) -> Option<f64> {
+        [1.0e2, 1.0e3, 1.0e5]
+            .into_iter()
+            .flat_map(|factor: f64| [factor, 1.0 / factor])
+            .find(|factor| (0.5..=2.0).contains(&(ratio / factor)))
     }
 
     fn apply_unit_conversion(

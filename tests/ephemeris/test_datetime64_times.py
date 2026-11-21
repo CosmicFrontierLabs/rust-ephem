@@ -64,6 +64,23 @@ def test_pv_at_rejects_nat(ephem: Any) -> None:
         ephem.gcrs_pv_at(times)
 
 
+@pytest.mark.parametrize("position", [0, 1, 4])
+def test_nat_in_a_list_of_scalars_is_reported_at_its_own_index(
+    ephem: Any, position: int
+) -> None:
+    times = list(AS_DATETIME64)
+    times[position] = np.datetime64("NaT")
+    with pytest.raises(ValueError, match=rf"times\[{position}\] is NaT"):
+        ephem.gcrs_pv_at(times)
+
+
+def test_nat_among_datetimes_is_reported_at_its_own_index(ephem: Any) -> None:
+    times: list[Any] = list(AS_DATETIME)
+    times[3] = np.datetime64("NaT")
+    with pytest.raises(ValueError, match=r"times\[3\] is NaT"):
+        ephem.gcrs_pv_at(times)
+
+
 def test_pv_at_still_rejects_non_times(ephem: Any) -> None:
     with pytest.raises(AttributeError):
         ephem.gcrs_pv_at(["2024-01-01T00:00:00"])
