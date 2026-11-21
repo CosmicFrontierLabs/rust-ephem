@@ -1,6 +1,6 @@
 # Create a type alias that supports isinstance checks
 import abc
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -118,6 +118,77 @@ class Ephemeris(abc.ABC):
         self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
     ) -> PositionVelocityData:
         """Moon GCRS position/velocity at arbitrary time(s); see ``gcrs_pv_at``."""
+        ...
+
+    @abc.abstractmethod
+    def get_body_pv(
+        self,
+        body: str,
+        spice_kernel: str | None = None,
+        use_horizons: bool = False,
+        *,
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = None,
+        apparent: bool = False,
+    ) -> PositionVelocityData:
+        """Position (km) and velocity (km/s) of a body relative to the observer.
+
+        GCRS axes. By default the states are geometric and on the ephemeris
+        grid. ``times`` evaluates at arbitrary time(s) instead, interpolating
+        the observer as ``gcrs_pv_at`` does. ``apparent=True`` returns the body
+        as it is seen (reception light time, solar light deflection, observer
+        aberration), in the directions constraints use with ``apparent=True``.
+
+        Args:
+            body: Body name or NAIF ID (``"sun"``, ``"moon"``, ``"earth"``,
+                ``"499"``).
+            spice_kernel: Optional path to a SPICE kernel to read the body from.
+            use_horizons: Geometric queries only: fall back to the JPL Horizons
+                API when SPICE fails.
+            times: A datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC).
+            apparent: Return the apparent state.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span or the body is
+                unknown.
+        """
+        ...
+
+    @abc.abstractmethod
+    def apparent_target_at(
+        self,
+        ras: float | Sequence[float] | npt.NDArray[np.float64],
+        decs: float | Sequence[float] | npt.NDArray[np.float64],
+        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+    ) -> npt.NDArray[np.float64]:
+        """Directions in which catalogue targets are seen at arbitrary time(s).
+
+        Applies the correction constraints apply to targets with
+        ``apparent=True``: solar light deflection, then the aberration of the
+        observer's barycentric velocity. The angle between a row of the result
+        and ``get_body_pv(body, times=times, apparent=True).position`` is the
+        angle a constraint reports for that body with ``apparent=True``.
+
+        ``ras``, ``decs`` and ``times`` are paired row by row; any of them may
+        be a single value used for every row.
+
+        Args:
+            ras: Catalogue (ICRS) right ascension(s) in degrees: a value or
+                a one-dimensional sequence.
+            decs: Catalogue (ICRS) declination(s) in degrees, from -90 to 90:
+                a value or a one-dimensional sequence.
+            times: A datetime, an iterable of datetimes or a one-dimensional
+                ``datetime64`` array (read as UTC).
+
+        Returns:
+            ``(N, 3)`` array of unit vectors, GCRS axes, rows in input order.
+
+        Raises:
+            ValueError: If a time is outside the ephemeris span, the lengths do
+                not match, an argument has more than one dimension, a
+                coordinate is not finite or a declination is outside -90 to
+                90, or no planetary kernel covers the times.
+        """
         ...
 
     @property
