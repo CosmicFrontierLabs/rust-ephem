@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, SupportsFloat, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -790,8 +790,8 @@ class RustConstraintMixin(BaseModel):
     def in_constraint_elementwise(
         self,
         ephemeris: Ephemeris,
-        target_ras: Sequence[float] | npt.ArrayLike,
-        target_decs: Sequence[float] | npt.ArrayLike,
+        target_ras: Sequence[SupportsFloat] | npt.ArrayLike,
+        target_decs: Sequence[SupportsFloat] | npt.ArrayLike,
         times: datetime | Sequence[datetime] | npt.NDArray[Any] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -852,8 +852,8 @@ class RustConstraintMixin(BaseModel):
     def evaluate_elementwise(
         self,
         ephemeris: Ephemeris,
-        target_ras: Sequence[float] | npt.ArrayLike,
-        target_decs: Sequence[float] | npt.ArrayLike,
+        target_ras: Sequence[SupportsFloat] | npt.ArrayLike,
+        target_decs: Sequence[SupportsFloat] | npt.ArrayLike,
         times: datetime | Sequence[datetime] | npt.NDArray[Any] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -891,8 +891,8 @@ class RustConstraintMixin(BaseModel):
     def evaluate_grid(
         self,
         ephemeris: Ephemeris,
-        target_ras: Sequence[float] | npt.ArrayLike,
-        target_decs: Sequence[float] | npt.ArrayLike,
+        target_ras: Sequence[SupportsFloat] | npt.ArrayLike,
+        target_decs: Sequence[SupportsFloat] | npt.ArrayLike,
         times: datetime | Sequence[datetime] | npt.NDArray[np.datetime64] | None = None,
         indices: int | list[int] | None = None,
         target_rolls: Sequence[float | None] | None = None,

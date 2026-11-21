@@ -1,8 +1,11 @@
 """``evaluate_grid``: the target x time grid as arrays, against the other
 evaluation methods on the same cells."""
 
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from decimal import Decimal
+from fractions import Fraction
+from typing import Any, SupportsFloat
 
 import numpy as np
 import numpy.typing as npt
@@ -303,8 +306,24 @@ class TestGridResult:
 
     @pytest.mark.parametrize(
         "bad",
-        [["10", "20"], np.array(["10", "20"]), [None, 1.0], [10 + 0j, 20 + 0j]],
-        ids=["strings", "string_array", "none", "complex"],
+        [
+            ["10", "20"],
+            np.array(["10", "20"]),
+            [None, 1.0],
+            [10 + 0j, 20 + 0j],
+            np.array(["10", 20.0], dtype=object),
+            np.array([10.0, None], dtype=object),
+            np.array([10.0, b"20"], dtype=object),
+        ],
+        ids=[
+            "strings",
+            "string_array",
+            "none",
+            "complex",
+            "object_string",
+            "object_none",
+            "object_bytes",
+        ],
     )
     def test_coordinates_must_be_numbers(self, ephem: Any, bad: Any) -> None:
         """NumPy would read "10" as 10.0; evaluate_batch refuses it, and so
@@ -328,6 +347,60 @@ class TestGridResult:
         ):
             with pytest.raises(TypeError, match="sequence of numbers"):
                 elementwise(ephem, bad, good, times=times)
+
+    @pytest.mark.parametrize(
+        "held",
+        ["object_array", "decimal", "fraction", "object_series"],
+    )
+    def test_numbers_held_as_objects_are_numbers(self, ephem: Any, held: str) -> None:
+        """An object array, Decimals and Fractions are converted as float()
+        would, as evaluate_batch and the released elementwise methods do."""
+
+        def hold(values: list[float]) -> Sequence[SupportsFloat] | npt.ArrayLike:
+            if held == "object_array":
+                return np.array(values, dtype=object)
+            if held == "decimal":
+                return [Decimal(str(value)) for value in values]
+            if held == "fraction":
+                return [Fraction(value) for value in values]
+            series: npt.ArrayLike = pytest.importorskip("pandas").Series(
+                values, dtype=object
+            )
+            return series
+
+        floats = ([10.5, 20.0], [5.25, -30.0])
+        ras, decs = hold(floats[0]), hold(floats[1])
+        constraint = TREES["rules"]
+        times = [ephem.timestamp[0], ephem.timestamp[1]]
+        expected = constraint.evaluate_grid(ephem, *floats).constraint_array
+        np.testing.assert_array_equal(
+            constraint.evaluate_grid(ephem, ras, decs).constraint_array, expected
+        )
+        np.testing.assert_array_equal(
+            constraint._get_cached_rust_constraint()
+            .evaluate_grid(ephem, ras, decs)
+            .constraint_array,
+            expected,
+        )
+        np.testing.assert_array_equal(
+            constraint.in_constraint_elementwise(ephem, ras, decs, times=times),
+            constraint.in_constraint_elementwise(ephem, *floats, times=times),
+        )
+        np.testing.assert_array_equal(
+            constraint.evaluate_elementwise(
+                ephem, ras, decs, times=times
+            ).constraint_array,
+            constraint.evaluate_elementwise(
+                ephem, *floats, times=times
+            ).constraint_array,
+        )
+
+    def test_an_object_array_must_be_one_dimensional(self, ephem: Any) -> None:
+        grid = np.array([[1.0, 2.0]], dtype=object)
+        with pytest.raises(ValueError, match="1-D sequence of numbers"):
+            TREES["rules"]._get_cached_rust_constraint().evaluate_grid(
+                ephem, grid, grid
+            )
 
     def test_integers_and_booleans_are_numbers(self, ephem: Any) -> None:
         constraint = TREES["rules"]

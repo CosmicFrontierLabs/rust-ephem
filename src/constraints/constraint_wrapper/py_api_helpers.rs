@@ -33,6 +33,11 @@ const APPARENT_PARALLEL_MIN_CELLS: usize = 20_000;
 /// Only numbers are accepted. NumPy would also parse strings (`"10.5"`) into
 /// floats, which the methods taking a list of floats refuse: a `TypeError`
 /// here too.
+///
+/// Numbers held as Python objects (an object array, a list of `Decimal` or
+/// `Fraction`) are converted one by one as `float()` would, which is what
+/// those methods do with each element of a list; a string or `None` among
+/// them is a `TypeError`.
 pub(super) fn extract_f64s(values: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<f64>> {
     use numpy::{PyArray1, PyArrayMethods};
 
@@ -50,6 +55,27 @@ pub(super) fn extract_f64s(values: &Bound<'_, PyAny>, name: &str) -> PyResult<Ve
                 .map_err(|err| invalid(err.to_string()))?;
             let dtype = as_given.getattr("dtype")?;
             let kind: String = dtype.getattr("kind")?.extract()?;
+            if kind == "O" {
+                if as_given.getattr("ndim")?.extract::<usize>()? != 1 {
+                    return Err(invalid("it is not one-dimensional".to_string()));
+                }
+                return as_given
+                    .try_iter()?
+                    .enumerate()
+                    .map(|(i, item)| {
+                        let item = item?;
+                        item.extract::<f64>().map_err(|_| {
+                            let kind = item
+                                .get_type()
+                                .name()
+                                .map_or_else(|_| "object".to_string(), |n| n.to_string());
+                            pyo3::exceptions::PyTypeError::new_err(format!(
+                                "{name} must be a 1-D sequence of numbers: {name}[{i}] is a {kind}"
+                            ))
+                        })
+                    })
+                    .collect();
+            }
             // Booleans, integers and floats.
             if !matches!(kind.as_str(), "b" | "i" | "u" | "f") {
                 return Err(pyo3::exceptions::PyTypeError::new_err(format!(
