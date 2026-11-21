@@ -28,9 +28,47 @@ const APPARENT_PARALLEL_MIN_CELLS: usize = 20_000;
 
 /// Paired elements above which their per-element set-up is shared across the cores.
 const ELEMENTWISE_PARALLEL_MIN_ROWS: usize = 8192;
+/// Fewest paired elements set up by one core; see
+/// [`diagonal::PARALLEL_CHUNK_ELEMENTS`](crate::constraints::diagonal::PARALLEL_CHUNK_ELEMENTS).
+const ELEMENTWISE_PARALLEL_CHUNK: usize = crate::constraints::diagonal::PARALLEL_CHUNK_ELEMENTS;
+
+/// An apparent paired call finds its distinct ephemeris rows by sorting them
+/// when it has fewer elements than one in this many rows, and by marking them
+/// in a table of every row otherwise. The table costs time in proportion to
+/// the ephemeris, whatever the number of elements.
+const DISTINCT_ROWS_TABLE_RATIO: usize = 16;
 
 /// Cells of an apparent grid evaluated as paired elements in one call.
 const APPARENT_PAIRED_BLOCK_CELLS: usize = 1 << 20;
+
+/// The distinct values of `indices` in ascending order, and the place of each
+/// index among them. Every index must be below `n_source`.
+///
+/// Few indices into a long ephemeris are sorted, so the cost follows the
+/// indices and not the ephemeris; many are marked in a table of `n_source`
+/// entries, which needs no sort.
+fn distinct_rows(indices: &[usize], n_source: usize) -> (Vec<usize>, Vec<usize>) {
+    if indices.len().saturating_mul(DISTINCT_ROWS_TABLE_RATIO) < n_source {
+        let mut rows = indices.to_vec();
+        rows.sort_unstable();
+        rows.dedup();
+        let local = indices
+            .iter()
+            .map(|row| rows.binary_search(row).expect("every index is among them"))
+            .collect();
+        return (rows, local);
+    }
+    let mut place = vec![usize::MAX; n_source];
+    for &row in indices {
+        place[row] = 0;
+    }
+    let rows: Vec<usize> = (0..n_source).filter(|&row| place[row] == 0).collect();
+    for (position, &row) in rows.iter().enumerate() {
+        place[row] = position;
+    }
+    let local = indices.iter().map(|&row| place[row]).collect();
+    (rows, local)
+}
 
 /// Read a 1-D sequence of numbers as `f64`s. A NumPy array is copied in one
 /// step; anything else goes through `numpy.asarray`, so lists, tuples and
@@ -211,7 +249,11 @@ impl PyConstraint {
             // each is then found directly, with nothing to sort.
             let find = |time: &DateTime<Utc>| source_times.binary_search(time).ok();
             let on_grid: Option<Vec<usize>> = if requested.len() >= ELEMENTWISE_PARALLEL_MIN_ROWS {
-                requested.par_iter().map(find).collect()
+                requested
+                    .par_iter()
+                    .with_min_len(ELEMENTWISE_PARALLEL_CHUNK)
+                    .map(find)
+                    .collect()
             } else {
                 requested.iter().map(find).collect()
             };
@@ -224,7 +266,11 @@ impl PyConstraint {
             let locations = locate_times(source_times, &unique)?;
             let row = |time: &DateTime<Utc>| unique.binary_search(time).unwrap_or_else(|i| i);
             let element_rows: Vec<usize> = if requested.len() >= ELEMENTWISE_PARALLEL_MIN_ROWS {
-                requested.par_iter().map(row).collect()
+                requested
+                    .par_iter()
+                    .with_min_len(ELEMENTWISE_PARALLEL_CHUNK)
+                    .map(row)
+                    .collect()
             } else {
                 requested.iter().map(row).collect()
             };
@@ -273,29 +319,25 @@ impl PyConstraint {
                 if apparent {
                     // One apparent row per distinct time; each target is aberrated
                     // for the observer state of its own time.
-                    let n_source = ephem.get_times()?.len();
+                    // The length alone: `get_times` would copy every timestamp.
+                    let n_source = ephem.data().times.as_ref().map_or(0, Vec::len);
                     if let Some(row) = indices.iter().find(|&&row| row >= n_source) {
                         return Err(pyo3::exceptions::PyIndexError::new_err(format!(
                             "index {row} out of bounds for ephemeris with {n_source} timestamps"
                         )));
                     }
-                    // The distinct rows in order, and each one's place among them.
-                    let mut place = vec![usize::MAX; n_source];
-                    for &row in indices {
-                        place[row] = 0;
-                    }
-                    let rows: Vec<usize> = (0..n_source).filter(|&row| place[row] == 0).collect();
-                    for (position, &row) in rows.iter().enumerate() {
-                        place[row] = position;
-                    }
+                    let (rows, local) = distinct_rows(indices, n_source);
                     let (view, aberrations) = SampledEphemeris::apparent(ephem, &rows)?;
-                    let local: Vec<usize> = indices.iter().map(|&row| place[row]).collect();
                     let correct = |i: usize| {
                         aberrations[local[i]].apply_radec_deg(target_ras[i], target_decs[i])
                     };
                     let (ras, decs): (Vec<f64>, Vec<f64>) =
                         if local.len() >= ELEMENTWISE_PARALLEL_MIN_ROWS {
-                            (0..local.len()).into_par_iter().map(correct).unzip()
+                            (0..local.len())
+                                .into_par_iter()
+                                .with_min_len(ELEMENTWISE_PARALLEL_CHUNK)
+                                .map(correct)
+                                .unzip()
                         } else {
                             (0..local.len()).map(correct).unzip()
                         };
@@ -922,5 +964,27 @@ impl PyConstraint {
                 target_roll,
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{distinct_rows, DISTINCT_ROWS_TABLE_RATIO};
+
+    /// Few indices are sorted and many are marked in a table; both must give
+    /// the distinct rows in order and each index's place among them.
+    #[test]
+    fn distinct_rows_are_the_same_by_sort_and_by_table() {
+        let indices = [7, 2, 7, 40, 0, 2, 39];
+        let expected_rows = vec![0, 2, 7, 39, 40];
+        let expected_local = vec![2, 1, 2, 4, 0, 1, 3];
+        let sparse = indices.len() * DISTINCT_ROWS_TABLE_RATIO + 1;
+        for n_source in [41, sparse - 1, sparse, 1_000_000] {
+            let (rows, local) = distinct_rows(&indices, n_source);
+            assert_eq!(rows, expected_rows, "n_source {n_source}");
+            assert_eq!(local, expected_local, "n_source {n_source}");
+        }
+        assert_eq!(distinct_rows(&[], 10), (vec![], vec![]));
+        assert_eq!(distinct_rows(&[], 0), (vec![], vec![]));
     }
 }

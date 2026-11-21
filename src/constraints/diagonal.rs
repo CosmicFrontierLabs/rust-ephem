@@ -31,12 +31,22 @@ impl DiagonalEvaluation {
 /// Elements above which a paired kernel is shared across the cores.
 pub const PARALLEL_MIN_ELEMENTS: usize = 8192;
 
+/// Fewest elements handed to one core. An element costs tens of nanoseconds,
+/// so a smaller share costs more to hand out than to compute, and a machine
+/// with many cores would be slower than one core on a moderate input.
+pub const PARALLEL_CHUNK_ELEMENTS: usize = 4096;
+
 /// `one(i)` for every element `i` below `count`, in order. Elements are
-/// independent, so a large input is spread across the cores.
+/// independent, so a large input is spread across the cores, each taking at
+/// least [`PARALLEL_CHUNK_ELEMENTS`].
 pub fn each_element<T: Send>(count: usize, one: impl Fn(usize) -> T + Sync) -> Vec<T> {
     use rayon::prelude::*;
     if count >= PARALLEL_MIN_ELEMENTS {
-        (0..count).into_par_iter().map(&one).collect()
+        (0..count)
+            .into_par_iter()
+            .with_min_len(PARALLEL_CHUNK_ELEMENTS)
+            .map(&one)
+            .collect()
     } else {
         (0..count).map(one).collect()
     }

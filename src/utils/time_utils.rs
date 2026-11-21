@@ -95,6 +95,9 @@ pub fn python_datetimes_to_utc(times: &Bound<PyAny>) -> PyResult<Vec<DateTime<Ut
 
 /// `datetime64` entries above which the conversion is shared across the cores.
 const DATETIME64_PARALLEL_MIN_LEN: usize = 8192;
+/// Fewest entries converted by one core: a conversion costs a few
+/// nanoseconds, so a smaller share costs more to hand out than to convert.
+const DATETIME64_PARALLEL_CHUNK: usize = 4096;
 
 /// Convert NumPy `datetime64` data (array or scalar, any unit) to UTC instants
 /// in flattened (C) order. Returns `Ok(None)` when `obj` is not `datetime64`.
@@ -142,7 +145,11 @@ fn datetime64_to_utc_from(
                 .flatten()
         };
         let converted: Option<Vec<DateTime<Utc>>> = match micros.as_slice() {
-            Some(values) => values.par_iter().map(valid).collect(),
+            Some(values) => values
+                .par_iter()
+                .with_min_len(DATETIME64_PARALLEL_CHUNK)
+                .map(valid)
+                .collect(),
             None => None,
         };
         if converted.is_some() {
