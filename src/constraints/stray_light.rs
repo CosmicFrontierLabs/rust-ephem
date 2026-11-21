@@ -6,11 +6,15 @@
 //! focal-plane irradiance produced by a collimated source of unit irradiance
 //! arriving from off-axis angle `theta` and azimuth `phi` about the boresight.
 //!
-//! For each body the model computes
+//! For each body the model computes the light it puts on the focal plane, in
+//! units of a V = 0 source: the integral over the body's visible, sunlit
+//! surface of radiance times PST, `sum of L(p) PST(p) dOmega` over sky
+//! directions `p`. It is reported as two factors,
 //!
-//! 1. its disk-integrated V magnitude at the observer (distance and phase),
-//! 2. the brightness-weighted mean of the PST over its resolved disk,
-//! 3. their product, the scattered flux in units of a V = 0 source.
+//! 1. the body's V magnitude at the observer (distance and phase),
+//! 2. the brightness-weighted mean of the PST over its disk,
+//!
+//! whose product `10^(-0.4 V) <PST>` is that integral.
 //!
 //! The sum over the three bodies, times a caller-supplied conversion factor,
 //! is the surface brightness (V = 0 sources per square arcsecond) of the
@@ -33,27 +37,50 @@
 //! The same attitude in the library's terms: body +Y points to the Sun's
 //! side, which is the solar-optimal spacecraft roll of a +Y panel
 //! (`SolarRollConstraint`), and the table's azimuth-zero axis is body +Y
-//! turned by `sun_azimuth_deg`. An explicit spacecraft roll (`target_roll`)
-//! replaces the nominal roll and the offset; a roll-sweep candidate does not,
-//! because without an explicit roll this constraint supplies its own.
+//! turned by `sun_azimuth_deg`. A spacecraft roll replaces the nominal roll
+//! and the offset: an explicit one (`target_roll`), or the candidate of a
+//! free-roll sweep that another rule of the same tree asks for. With no roll
+//! and no such rule, this constraint supplies the nominal attitude itself.
 //!
-//! # Disk integral
+//! # Brightness
 //!
-//! For a body of angular radius `rho` centred on direction `e` the effective
-//! transmittance is the brightness-weighted mean of the PST over the disk, by
-//! a midpoint rule in (`gamma`, `beta`): `gamma` in (0, `rho`) from the centre
-//! and `beta` around it. The weight of a sample is its solid angle times, for
-//! the Earth and Moon, the Lambertian `max(n.s, 0)` of the surface point seen
-//! in that direction, so the terminator is resolved. The grid is doubled in
-//! both directions until two levels agree and at least one sample is sunlit.
+//! - **Sun**: a uniform disk of the configured magnitude at 1 au, scaled by
+//!   the inverse square of its distance.
+//! - **Earth**: a Lambert sphere of the configured geometric albedo `p`. A
+//!   surface point at solar incidence `i` has radiance
+//!   `(3 p / 2 pi) E_sun cos(i)`, with `E_sun` the Sun's irradiance at the
+//!   Earth. The Earth's magnitude is that of its radiance summed over the
+//!   sky, `sum of L dOmega`. No factor for the inclination of a ray to the
+//!   Earth's direction is applied: the PST is defined per source of unit
+//!   irradiance on a plane facing that source, wherever on the sky it is.
+//!   (From low orbit the Earth spans about 136 degrees, and such a factor
+//!   would cut its light by a third or more.)
+//! - **Moon**: Allen's empirical phase law for the magnitude, scaled to the
+//!   Moon's distances from the observer and from the Sun, spread over the
+//!   disk as a Lambert sphere would spread it.
+//!
+//! # Surface integral
+//!
+//! The Earth and Moon are integrated over their surface, not over the sky:
+//! over colatitude `theta` from the sub-observer point (out to
+//! `acos(R / d)`, the edge of the visible cap) and longitude about it, by a
+//! midpoint rule. Each longitude is sampled only between the terminator and
+//! the edge of the cap, and only the longitudes that hold sunlit surface are
+//! sampled, so a thin crescent is resolved as well as a full disk and the
+//! integrand has no kink. The Sun is integrated over its disk in angle from
+//! its centre and position angle. The grid is doubled in both directions
+//! until two levels agree.
+//!
+//! A sample of the Sun or Moon whose line of sight meets the Earth first is
+//! hidden and contributes nothing, which covers partial occultation.
 //!
 //! # Validity
 //!
 //! A body yields no prediction, and the constraint counts as violated, when
 //! its nearest limb is inside the field, when that limb is inside the first
 //! cell of the table, or when the quadrature did not converge. A body showing
-//! no sunlit surface is valid: its quoted flux is an upper bound on a
-//! contribution that is physically negligible.
+//! no sunlit surface, or wholly hidden by the Earth, is valid and contributes
+//! nothing; neither needs the integral.
 
 use super::core::{
     track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult, EvaluationRoll,
@@ -82,10 +109,6 @@ const OBLIQUITY_J2000_DEG: f64 = 23.439_291_1;
 const QUADRATURE_RTOL: f64 = 0.02;
 /// Most times the starting grid is doubled.
 const MAX_REFINEMENTS: u32 = 4;
-/// A disk with no sunlit sample is accepted when the PST varies by less than
-/// this (relative) across it: the unresolved crescent's position then matters
-/// by less than that.
-const UNLIT_SPREAD_TOLERANCE: f64 = 0.1;
 /// Fewest cells worth spreading over the cores.
 const PARALLEL_MIN_CELLS: usize = 4;
 
@@ -290,9 +313,7 @@ impl ConstraintConfig for StrayLightConfig {
             zodi: self.zodi,
             zodi_v_mag_arcsec2: self.zodi_v_mag_arcsec2,
             in_field_deg: self.in_field_deg,
-            // V of the full Earth from 1 au: V_sun - 2.5 log10(p (R / au)^2).
-            earth_v_full_1au: self.sun_v_mag_1au
-                - 2.5 * (self.earth_albedo * (EARTH_MEAN_RADIUS_KM / AU_TO_KM).powi(2)).log10(),
+            earth_albedo: self.earth_albedo,
             sun_v_mag_1au: self.sun_v_mag_1au,
             moon_v_mag_full: self.moon_v_mag_full,
         })
@@ -478,102 +499,6 @@ impl PstTable {
     }
 }
 
-// ─── Body brightness ──────────────────────────────────────────────────────────
-
-/// Phase law of a Lambert sphere seen from a finite distance.
-///
-/// The distant-observer law assumes a whole hemisphere is visible. From
-/// distance `d` only the cap within `acos(R / d)` of the sub-observer point is,
-/// which hides the dim (gibbous) or the lit (crescent) edge. `phi(x, alpha)`,
-/// `x = R / d`, is the irradiance on a plane facing the sphere's centre,
-/// normalised so that `phi(0, alpha)` is the distant-observer law:
-///
-/// `phi = 3 d^2 / (2 pi) * integral over the visible cap of
-///        cos(i) cos(e) cos(p) / r^2 dOmega`
-///
-/// with `i` the solar incidence (Sun at infinity), `e` the emission angle
-/// toward the observer, `p` the angle of the ray to the plane normal and `r`
-/// the distance from the surface point to the observer. It is tabulated as
-/// `log10` on a regular (`x`, `alpha`) grid, one row of `x` at a time on first
-/// use, and interpolated bilinearly.
-mod lambert {
-    use std::sync::OnceLock;
-
-    const X_STEP: f64 = 0.01;
-    const X_COUNT: usize = 99; // x = 0 .. 0.98
-    const ALPHA_STEP_DEG: f64 = 2.5;
-    const ALPHA_COUNT: usize = 73; // alpha = 0 .. 180
-    const FLOOR_LOG10: f64 = -9.0;
-    /// Midpoint samples in colatitude (twice as many in longitude).
-    const SAMPLES: usize = 400;
-
-    type Row = [f64; ALPHA_COUNT];
-    static ROWS: [OnceLock<Row>; X_COUNT] = [const { OnceLock::new() }; X_COUNT];
-
-    fn compute_row(index: usize) -> Row {
-        let x = index as f64 * X_STEP;
-        let n = SAMPLES;
-        let theta_max = if index == 0 {
-            std::f64::consts::FRAC_PI_2
-        } else {
-            x.acos()
-        };
-        // Per colatitude: sin, cos and the geometric factor times sin(theta).
-        let rings: Vec<(f64, f64, f64)> = (0..n)
-            .map(|i| {
-                let theta = (i as f64 + 0.5) / n as f64 * theta_max;
-                let (st, ct) = theta.sin_cos();
-                let geometry = if index == 0 {
-                    // Distant observer: r -> d, cos e = cos(theta), cos p = 1.
-                    ct * st
-                } else {
-                    // Lengths in units of d: sphere radius x, observer at 1.
-                    let r2 = 1.0 - 2.0 * x * ct + x * x;
-                    (ct - x) * (1.0 - x * ct) / r2 * st / r2
-                };
-                (st, ct, geometry)
-            })
-            .collect();
-        // Symmetric about the Sun's plane: integrate longitude 0..pi, double.
-        let cos_longitude: Vec<f64> = (0..2 * n)
-            .map(|k| ((k as f64 + 0.5) / (2 * n) as f64 * std::f64::consts::PI).cos())
-            .collect();
-        let weight = (theta_max / n as f64) * (std::f64::consts::PI / (2 * n) as f64) * 2.0 * 3.0
-            / (2.0 * std::f64::consts::PI);
-        std::array::from_fn(|ia| {
-            let (sa, ca) = (ia as f64 * ALPHA_STEP_DEG).to_radians().sin_cos();
-            let mut sum = 0.0;
-            for &(st, ct, geometry) in &rings {
-                let (along, across) = (ct * ca, st * sa);
-                let mut ring = 0.0;
-                for &cp in &cos_longitude {
-                    ring += (across * cp + along).max(0.0);
-                }
-                sum += ring * geometry;
-            }
-            (weight * sum).max(1e-300).log10().max(FLOOR_LOG10)
-        })
-    }
-
-    fn row(index: usize) -> &'static Row {
-        ROWS[index].get_or_init(|| compute_row(index))
-    }
-
-    /// `phi(x = R / d, alpha)`; `x` beyond the grid is clamped.
-    pub fn phase(x: f64, alpha_deg: f64) -> f64 {
-        let fx = x.clamp(0.0, (X_COUNT - 1) as f64 * X_STEP) / X_STEP;
-        let fa = alpha_deg.clamp(0.0, 180.0) / ALPHA_STEP_DEG;
-        let i = (fx as usize).min(X_COUNT - 2);
-        let j = (fa as usize).min(ALPHA_COUNT - 2);
-        let (u, v) = (fx - i as f64, fa - j as f64);
-        let (low, high) = (row(i), row(i + 1));
-        10f64.powf(
-            (1.0 - u) * ((1.0 - v) * low[j] + v * low[j + 1])
-                + u * ((1.0 - v) * high[j] + v * high[j + 1]),
-        )
-    }
-}
-
 // ─── Zodiacal light ───────────────────────────────────────────────────────────
 
 /// Zodiacal surface brightness, V mag per square arcsecond of a solar-colour
@@ -637,6 +562,24 @@ fn zodi_table_v_mag(helio_longitude_deg: f64, latitude_deg: f64) -> f64 {
 
 // ─── Evaluator ────────────────────────────────────────────────────────────────
 
+/// Half the range of longitudes (radians, about the sub-observer point, zero
+/// on the Sun's side) that hold sunlit surface inside the visible cap of a
+/// sphere, for phase angle `alpha` and a cap reaching colatitude `theta_max`.
+/// `None` when no sunlit surface is visible: the day side (within 90 degrees
+/// of the subsolar point) and the cap do not meet,
+/// `alpha >= 90 degrees + theta_max`.
+fn lit_half_width(cos_alpha: f64, sin_alpha: f64, theta_max: f64) -> Option<f64> {
+    if cos_alpha > 0.0 {
+        // The sub-observer point itself is sunlit.
+        return Some(std::f64::consts::PI);
+    }
+    // Sunlit at the edge of the cap where
+    // cos_alpha cos(theta_max) + sin_alpha sin(theta_max) cos(phi) > 0.
+    let edge = -cos_alpha * theta_max.cos();
+    let reach = sin_alpha * theta_max.sin();
+    (reach > edge).then(|| (edge / reach).clamp(-1.0, 1.0).acos())
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Body {
     Sun,
@@ -671,14 +614,58 @@ struct Frame {
     x: Vec3,
 }
 
-/// One level of the disk quadrature.
+/// One level of the quadrature over a body.
+#[derive(Clone, Copy, Default)]
 struct DiskLevel {
-    /// Brightness-weighted mean PST.
-    mean: f64,
-    /// Fraction of the samples that are sunlit.
-    lit_fraction: f64,
-    /// `(max - min) / mean` of the PST over the samples.
-    spread: f64,
+    /// Sum of weight x PST over the samples in view.
+    weighted: f64,
+    /// Sum of the weights, hidden samples included: for the Earth and Moon
+    /// `cos(i) dOmega` (steradians), for the Sun `dOmega`.
+    weight: f64,
+    /// Solid angle (steradians) of the sunlit samples in view.
+    lit_solid_angle: f64,
+}
+
+impl DiskLevel {
+    /// Mean PST over the body's light, hidden parts counting as zero.
+    fn mean(&self) -> f64 {
+        if self.weight > 0.0 {
+            self.weighted / self.weight
+        } else {
+            0.0
+        }
+    }
+}
+
+/// The Earth as an obstacle on the line of sight to another body.
+#[derive(Clone, Copy)]
+struct Blocker {
+    /// Observer to the Earth's centre, km.
+    centre: Vec3,
+    /// Squared length of the tangent from the observer to the Earth, km^2.
+    tangent2: f64,
+}
+
+impl Blocker {
+    /// Whether the Earth lies on the ray along unit vector `p` before `range`.
+    #[inline(always)]
+    fn hides(&self, p: Vec3, range: f64) -> bool {
+        let along = dot(p, self.centre);
+        if along <= 0.0 {
+            return false;
+        }
+        let discriminant = along * along - self.tangent2;
+        discriminant > 0.0 && along - discriminant.sqrt() < range
+    }
+}
+
+/// How much of a body the Earth hides.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Hidden {
+    None,
+    /// Some lines of sight may meet the Earth: each sample is tested.
+    Partly,
+    All,
 }
 
 /// Why a body has, or has not, a stray-light prediction. The numeric values
@@ -687,20 +674,21 @@ struct DiskLevel {
 enum Status {
     /// A converged prediction.
     Ok = 0,
-    /// No sunlit surface is visible: the quoted flux is an upper bound on a
-    /// contribution that is physically negligible. Valid.
+    /// No sunlit surface is visible: no contribution. Valid.
     Dark = 1,
     /// The nearest limb is inside the field: direct light.
     InField = 2,
     /// The nearest limb is inside the first off-axis cell of the table.
     FirstCell = 3,
-    /// The disk quadrature did not converge.
+    /// The quadrature did not converge.
     Unconverged = 4,
+    /// The Earth hides the whole body: no contribution. Valid.
+    Occulted = 5,
 }
 
 impl Status {
     fn is_valid(self) -> bool {
-        matches!(self, Status::Ok | Status::Dark)
+        matches!(self, Status::Ok | Status::Dark | Status::Occulted)
     }
 }
 
@@ -711,6 +699,8 @@ struct BodyReport {
     /// Scattered flux in units of a V = 0 source: `10^(-0.4 V) <PST>`.
     flux: f64,
     status: Status,
+    /// Magnitude of the whole body, hidden or not; `+inf` for an Earth
+    /// showing no sunlit surface.
     v_mag: f64,
     /// Sun-body-observer angle, degrees: 0 full, 180 new. `NaN` for the Sun.
     phase_deg: f64,
@@ -721,12 +711,14 @@ struct BodyReport {
     limb_deg: f64,
     /// Table azimuth of the centre, in (-180, 180].
     azimuth_deg: f64,
-    /// PST toward the centre, and its brightness-weighted mean over the disk.
+    /// PST toward the centre, and its brightness-weighted mean over the
+    /// body's light, parts hidden by the Earth counting as zero.
     pst_center: f64,
     pst_mean: f64,
+    /// Fraction of the disk's solid angle that is sunlit and in view.
     lit_fraction: f64,
-    /// Relative change of the mean between the last two quadrature levels;
-    /// for a disk with no sunlit sample, the relative PST spread across it.
+    /// Relative change of the flux between the last two quadrature levels;
+    /// `NaN` when no quadrature was needed.
     quadrature_error: f64,
 }
 
@@ -809,7 +801,8 @@ struct StrayLightEvaluator {
     zodi: ZodiModel,
     zodi_v_mag_arcsec2: f64,
     in_field_deg: f64,
-    earth_v_full_1au: f64,
+    /// Geometric albedo of the Earth.
+    earth_albedo: f64,
     sun_v_mag_1au: f64,
     moon_v_mag_full: f64,
 }
@@ -912,24 +905,20 @@ impl StrayLightEvaluator {
         self.pst.lookup(polar, azimuth)
     }
 
-    /// One quadrature level over the disk of a body centred on `centre` (km
-    /// from the observer), on an `n_r` x `n_az` midpoint grid. With `lambert`
-    /// each sample is weighted by the illumination of the surface point it
-    /// sees; otherwise the disk is uniform.
-    #[allow(clippy::too_many_arguments)]
-    fn disk_level(
+    /// One quadrature level over the Sun's disk, centred on `centre` (km from
+    /// the observer), on an `n_r` x `n_az` midpoint grid in angle from the
+    /// centre and position angle. The disk is uniform.
+    fn sun_level(
         &self,
         frame: &Frame,
         centre: Vec3,
-        radius_km: f64,
-        sun: Vec3,
         n_r: usize,
         n_az: usize,
-        lambert: bool,
+        blocker: Option<Blocker>,
     ) -> DiskLevel {
         let distance = norm(centre);
         let e = scaled(centre, 1.0 / distance);
-        let rho = (radius_km / distance).clamp(-1.0, 1.0).asin();
+        let rho = (SUN_RADIUS_KM / distance).clamp(-1.0, 1.0).asin();
         let reference = if e[2].abs() < 0.95 {
             [0.0, 0.0, 1.0]
         } else {
@@ -940,134 +929,202 @@ impl StrayLightEvaluator {
         let around: Vec<(f64, f64)> = (0..n_az)
             .map(|k| ((k as f64 + 0.5) / n_az as f64 * std::f64::consts::TAU).sin_cos())
             .collect();
-        let hidden = distance * distance - radius_km * radius_km;
-
-        let (mut weighted, mut weight_sum) = (0.0, 0.0);
-        let (mut uniform, mut uniform_sum) = (0.0, 0.0);
-        let (mut lowest, mut highest, mut total) = (f64::INFINITY, f64::NEG_INFINITY, 0.0);
-        let mut lit = 0usize;
+        let cell = (rho / n_r as f64) * (std::f64::consts::TAU / n_az as f64);
+        let mut level = DiskLevel::default();
         for i in 0..n_r {
             let gamma = rho * (i as f64 + 0.5) / n_r as f64;
             let (sin_gamma, cos_gamma) = gamma.sin_cos();
-            // Distance to the near intersection of the ray with the sphere.
-            let reach = distance * cos_gamma;
-            let range = reach - (reach * reach - hidden).max(0.0).sqrt();
+            let weight = sin_gamma * cell;
             for &(sin_beta, cos_beta) in &around {
                 let p = add_scaled(
                     add_scaled(scaled(e, cos_gamma), u, sin_gamma * cos_beta),
                     w,
                     sin_gamma * sin_beta,
                 );
-                let value = self.pst_toward(frame, p);
-                let weight = if lambert {
-                    let surface = scaled(p, range);
-                    let normal = unit(add_scaled(surface, centre, -1.0));
-                    let to_sun = unit(add_scaled(sun, surface, -1.0));
-                    sin_gamma * dot(normal, to_sun).max(0.0)
-                } else {
-                    sin_gamma
-                };
-                if weight > 0.0 {
-                    lit += 1;
+                level.weight += weight;
+                if blocker.is_some_and(|earth| earth.hides(p, f64::INFINITY)) {
+                    continue;
                 }
-                weighted += weight * value;
-                weight_sum += weight;
-                uniform += sin_gamma * value;
-                uniform_sum += sin_gamma;
-                lowest = lowest.min(value);
-                highest = highest.max(value);
-                total += value;
+                level.weighted += weight * self.pst_toward(frame, p);
+                level.lit_solid_angle += weight;
             }
         }
-        let samples = (n_r * n_az) as f64;
-        DiskLevel {
-            // With no sunlit sample the uniform disk keeps the value defined.
-            mean: if weight_sum > 0.0 {
-                weighted / weight_sum
-            } else {
-                uniform / uniform_sum
-            },
-            lit_fraction: lit as f64 / samples,
-            spread: (highest - lowest) / (total / samples),
-        }
+        level
     }
 
-    /// Brightness-weighted mean PST over a body's disk, refining the grid
-    /// until two levels agree and a sample is sunlit. Returns the last level,
-    /// whether the result is converged, and the quadrature error estimate.
-    fn disk_mean(
+    /// One quadrature level over the sunlit, visible surface of a sphere
+    /// centred on `centre` (km from the observer) and lit from the unit
+    /// direction `to_sun`: `n_theta` colatitudes from the sub-observer point
+    /// at each of `n_phi` longitudes about it, both by the midpoint rule.
+    ///
+    /// Longitude zero is the Sun's side. Only the longitudes holding sunlit
+    /// surface are sampled, and each only between the terminator and the edge
+    /// of the visible cap, so every sample is sunlit. The weight of a sample
+    /// is `cos(i) dOmega`: the cosine of the solar incidence times the solid
+    /// angle its patch of surface subtends at the observer.
+    #[allow(clippy::too_many_arguments)]
+    fn cap_level(
+        &self,
+        frame: &Frame,
+        centre: Vec3,
+        radius_km: f64,
+        to_sun: Vec3,
+        n_theta: usize,
+        n_phi: usize,
+        blocker: Option<Blocker>,
+    ) -> DiskLevel {
+        let mut level = DiskLevel::default();
+        let distance = norm(centre);
+        // Unit vector from the body's centre to the observer.
+        let toward = scaled(centre, -1.0 / distance);
+        let theta_max = (radius_km / distance).clamp(0.0, 1.0).acos();
+        // cos and sin of the phase angle, and the Sun's side of the cap.
+        let cos_alpha = dot(to_sun, toward);
+        let across = add_scaled(to_sun, toward, -cos_alpha);
+        let sin_alpha = norm(across);
+        let Some(phi_max) = lit_half_width(cos_alpha, sin_alpha, theta_max) else {
+            return level;
+        };
+        let side = if sin_alpha > 1e-12 {
+            scaled(across, 1.0 / sin_alpha)
+        } else {
+            // Full phase: any direction across the line of sight will do.
+            let reference = if toward[2].abs() < 0.95 {
+                [0.0, 0.0, 1.0]
+            } else {
+                [0.0, 1.0, 0.0]
+            };
+            unit(cross(reference, toward))
+        };
+        let third = cross(toward, side);
+        let d_phi = 2.0 * phi_max / n_phi as f64;
+        let radius2 = radius_km * radius_km;
+        for j in 0..n_phi {
+            let phi = -phi_max + (j as f64 + 0.5) * d_phi;
+            let (sin_phi, cos_phi) = phi.sin_cos();
+            // cos(i) = cos_alpha cos(theta) + toward_sun sin(theta).
+            let toward_sun = sin_alpha * cos_phi;
+            let (low, high) = if cos_alpha > 0.0 {
+                if toward_sun < 0.0 {
+                    (0.0, theta_max.min((cos_alpha / -toward_sun).atan()))
+                } else {
+                    (0.0, theta_max)
+                }
+            } else {
+                ((-cos_alpha / toward_sun).atan(), theta_max)
+            };
+            if high <= low {
+                continue;
+            }
+            let d_theta = (high - low) / n_theta as f64;
+            let outward = add_scaled(scaled(side, cos_phi), third, sin_phi);
+            for k in 0..n_theta {
+                let theta = low + (k as f64 + 0.5) * d_theta;
+                let (sin_theta, cos_theta) = theta.sin_cos();
+                let normal = add_scaled(scaled(toward, cos_theta), outward, sin_theta);
+                let point = add_scaled(centre, normal, radius_km);
+                let range = norm(point);
+                let cos_emission = (distance * cos_theta - radius_km) / range;
+                let solid_angle =
+                    cos_emission * radius2 * sin_theta * d_theta * d_phi / (range * range);
+                let weight =
+                    (cos_alpha * cos_theta + toward_sun * sin_theta).max(0.0) * solid_angle;
+                level.weight += weight;
+                let p = scaled(point, 1.0 / range);
+                if blocker.is_some_and(|earth| earth.hides(p, range)) {
+                    continue;
+                }
+                level.weighted += weight * self.pst_toward(frame, p);
+                level.lit_solid_angle += solid_angle;
+            }
+        }
+        level
+    }
+
+    /// The quadrature over a body, refined until two levels agree. Returns
+    /// the last level, whether it is converged, and the relative change of
+    /// the flux between the last two levels.
+    fn disk_integral(
         &self,
         frame: &Frame,
         body: Body,
         centre: Vec3,
-        sun: Vec3,
+        to_sun: Vec3,
+        blocker: Option<Blocker>,
     ) -> (DiskLevel, bool, f64) {
-        let (n_r, n_az) = body.grid();
-        let lambert = body != Body::Sun;
-        let level = |k: u32| {
-            self.disk_level(
+        let (n_a, n_b) = body.grid();
+        let level = |k: u32| match body {
+            Body::Sun => self.sun_level(frame, centre, n_a << k, n_b << k, blocker),
+            _ => self.cap_level(
                 frame,
                 centre,
                 body.radius_km(),
-                sun,
-                n_r << k,
-                n_az << k,
-                lambert,
-            )
+                to_sun,
+                n_a << k,
+                n_b << k,
+                blocker,
+            ),
+        };
+        // What the flux is proportional to: the Earth's own radiance sum is
+        // part of its flux; the Sun's and Moon's magnitudes are given.
+        let signal = |level: &DiskLevel| match body {
+            Body::Earth => level.weighted,
+            _ => level.mean(),
         };
         let mut current = level(0);
-        let mut unsettled = true;
         let mut change = f64::INFINITY;
         for k in 1..=MAX_REFINEMENTS {
             let finer = level(k);
-            change = (finer.mean - current.mean).abs() / finer.mean;
+            let (new, old) = (signal(&finer), signal(&current));
+            change = if new == old {
+                0.0
+            } else {
+                (new - old).abs() / new.abs()
+            };
             current = finer;
-            // A NaN change (a zero mean) counts as unsettled.
-            unsettled = change.is_nan() || change > QUADRATURE_RTOL || current.lit_fraction == 0.0;
-            if !unsettled {
+            if change <= QUADRATURE_RTOL {
                 break;
             }
         }
-        if current.lit_fraction == 0.0 {
-            // A crescent thinner than the finest grid: the uniform-disk mean
-            // stands only if the PST hardly varies across the disk.
-            let spread = current.spread;
-            (current, spread <= UNLIT_SPREAD_TOLERANCE, spread)
-        } else {
-            (current, !unsettled, change)
-        }
+        (current, change <= QUADRATURE_RTOL, change)
     }
 
-    /// Disk-integrated V magnitude of a body at `distance_km`, `phase_deg`.
-    fn v_mag(&self, body: Body, distance_km: f64, phase_deg: f64) -> f64 {
-        match body {
-            // Self-luminous: no phase term.
-            Body::Sun => self.sun_v_mag_1au + 5.0 * (distance_km / AU_TO_KM).log10(),
-            // Lambert sphere at 1 au from the Sun, exact at finite distance.
-            Body::Earth => {
-                self.earth_v_full_1au + 5.0 * (distance_km / AU_TO_KM).log10()
-                    - 2.5 * lambert::phase(EARTH_MEAN_RADIUS_KM / distance_km, phase_deg).log10()
-            }
-            // Allen's empirical phase law, which reproduces the Moon's strong,
-            // non-Lambertian darkening away from full.
-            Body::Moon => {
-                let a = phase_deg.abs();
-                self.moon_v_mag_full
-                    + 5.0 * (distance_km / MOON_MEAN_DISTANCE_KM).log10()
-                    + 0.026 * a
-                    + 4e-9 * a.powi(4)
-            }
+    /// How much of a body the Earth hides from the observer.
+    fn hidden(body: Body, centre: Vec3, earth: Vec3) -> Hidden {
+        if body == Body::Earth {
+            return Hidden::None;
+        }
+        let (distance, earth_distance) = (norm(centre), norm(earth));
+        // Inside either body (or a position that is not a number): no geometry.
+        let outside = earth_distance > EARTH_MEAN_RADIUS_KM && distance > body.radius_km();
+        if !outside {
+            return Hidden::None;
+        }
+        let separation = angle_deg(centre, earth).to_radians();
+        let earth_radius = (EARTH_MEAN_RADIUS_KM / earth_distance).asin();
+        let radius = (body.radius_km() / distance).asin();
+        // A ray that meets the Earth does so within the tangent's length.
+        let tangent =
+            (earth_distance * earth_distance - EARTH_MEAN_RADIUS_KM * EARTH_MEAN_RADIUS_KM).sqrt();
+        if separation >= earth_radius + radius || distance + body.radius_km() <= tangent {
+            Hidden::None
+        } else if separation + radius <= earth_radius && distance - body.radius_km() >= tangent {
+            Hidden::All
+        } else {
+            Hidden::Partly
         }
     }
 
     /// `detail` asks for every reported quantity; without it only what the
-    /// violation mask needs is computed.
+    /// violation mask needs is computed. `earth` is the vector from the
+    /// observer to the Earth's centre.
     fn body_report(
         &self,
         frame: &Frame,
         body: Body,
         centre: Vec3,
         sun: Vec3,
+        earth: Vec3,
         detail: bool,
     ) -> BodyReport {
         let radius = body.radius_km();
@@ -1093,39 +1150,92 @@ impl StrayLightEvaluator {
         if distance.is_nan() || distance <= radius {
             return report;
         }
-        report.angular_radius_deg = (radius / distance).asin().to_degrees();
+        let sin_radius = radius / distance;
+        report.angular_radius_deg = sin_radius.asin().to_degrees();
         report.limb_deg = report.separation_deg - report.angular_radius_deg;
-        // Sun-body-observer angle: 0 full, 180 new.
-        let phase = if body == Body::Sun {
-            0.0
-        } else {
-            report.phase_deg = angle_deg(add_scaled(sun, centre, -1.0), scaled(centre, -1.0));
-            report.phase_deg
-        };
-        report.v_mag = self.v_mag(body, distance, phase);
-        // Direct light is a pointing violation, not a stray-light level: the
-        // integral is only worth its cost when the numbers are asked for.
-        let in_field = report.limb_deg.is_nan() || report.limb_deg < self.in_field_deg;
-        if in_field && !detail {
-            return report;
-        }
-        let (disk, converged, error) = self.disk_mean(frame, body, centre, sun);
-        report.pst_mean = disk.mean;
-        report.lit_fraction = disk.lit_fraction;
-        report.quadrature_error = error;
         if detail {
             report.pst_center = self.pst_toward(frame, scaled(centre, 1.0 / distance));
         }
-        // No sunlit surface is visible when the day cap (90 degrees from the
-        // subsolar point) and the visible cap (acos(R / d) from the
-        // sub-observer point) are disjoint.
-        let dark = body != Body::Sun
-            && disk.lit_fraction == 0.0
-            && phase >= 90.0 + (radius / distance).clamp(0.0, 1.0).acos().to_degrees();
+        // From the body to the Sun: its direction and distance.
+        let sunward = add_scaled(sun, centre, -1.0);
+        let sun_distance_au = norm(sunward) / AU_TO_KM;
+        // Sun-body-observer angle: 0 full, 180 new.
+        let mut dark = false;
+        match body {
+            Body::Sun => {
+                report.v_mag = self.sun_v_mag_1au + 5.0 * (distance / AU_TO_KM).log10();
+            }
+            Body::Earth | Body::Moon => {
+                report.phase_deg = angle_deg(sunward, scaled(centre, -1.0));
+                let (sin_alpha, cos_alpha) = report.phase_deg.to_radians().sin_cos();
+                dark = lit_half_width(cos_alpha, sin_alpha, sin_radius.acos()).is_none();
+                if body == Body::Moon {
+                    // Allen's empirical phase law, which reproduces the
+                    // Moon's strong, non-Lambertian darkening away from full.
+                    let a = report.phase_deg;
+                    report.v_mag = self.moon_v_mag_full
+                        + 5.0 * (distance / MOON_MEAN_DISTANCE_KM).log10()
+                        + 5.0 * sun_distance_au.log10()
+                        + 0.026 * a
+                        + 4e-9 * a.powi(4);
+                }
+            }
+        }
+        let nothing = |report: &mut BodyReport, status: Status| {
+            report.status = status;
+            report.flux = 0.0;
+            report.pst_mean = 0.0;
+            report.lit_fraction = 0.0;
+        };
+        // A body wholly behind the Earth sends nothing, wherever it is.
+        let hidden = Self::hidden(body, centre, earth);
+        if hidden == Hidden::All {
+            nothing(&mut report, Status::Occulted);
+            return report;
+        }
+        // Direct light is a pointing violation, not a stray-light level: the
+        // integral is only worth its cost when the numbers are asked for.
+        let in_field = report.limb_deg < self.in_field_deg;
+        if in_field && !detail {
+            return report;
+        }
+        if dark {
+            // No sunlit surface is visible: nothing to integrate.
+            nothing(&mut report, Status::Dark);
+            if body == Body::Earth {
+                report.v_mag = f64::INFINITY;
+            }
+            if in_field {
+                report.status = Status::InField;
+                report.flux = f64::NAN;
+            }
+            return report;
+        }
+        let blocker = (hidden == Hidden::Partly).then(|| Blocker {
+            centre: earth,
+            tangent2: dot(earth, earth) - EARTH_MEAN_RADIUS_KM * EARTH_MEAN_RADIUS_KM,
+        });
+        let (disk, converged, error) =
+            self.disk_integral(frame, body, centre, unit(sunward), blocker);
+        if body == Body::Earth {
+            // Radiance (3 p / 2 pi) E_sun cos(i), with E_sun the Sun's
+            // irradiance at the Earth, summed over the sky.
+            let sun_at_earth = self.sun_v_mag_1au + 5.0 * sun_distance_au.log10();
+            let radiance =
+                3.0 / std::f64::consts::TAU * self.earth_albedo * 10f64.powf(-0.4 * sun_at_earth);
+            report.v_mag = -2.5 * (radiance * disk.weight).log10();
+        }
+        report.pst_mean = disk.mean();
+        let disk_solid_angle =
+            std::f64::consts::TAU * (1.0 - (1.0 - sin_radius * sin_radius).sqrt());
+        report.lit_fraction = (disk.lit_solid_angle / disk_solid_angle).min(1.0);
+        report.quadrature_error = error;
+        report.flux = 10f64.powf(-0.4 * report.v_mag) * report.pst_mean;
         report.status = if in_field {
             Status::InField
-        } else if dark {
-            Status::Dark
+        } else if blocker.is_some() && disk.lit_solid_angle == 0.0 {
+            // Every sunlit sample is behind the Earth.
+            Status::Occulted
         } else if report.limb_deg < self.pst.first_cell_deg {
             Status::FirstCell
         } else if !converged {
@@ -1133,7 +1243,6 @@ impl StrayLightEvaluator {
         } else {
             Status::Ok
         };
-        report.flux = 10f64.powf(-0.4 * report.v_mag) * disk.mean;
         report
     }
 
@@ -1142,8 +1251,9 @@ impl StrayLightEvaluator {
         let detail = mode.detail;
         let sun = bodies[0];
         let (frame, roll_deg) = self.frame(boresight, sun, mode.roll_deg);
+        let earth = bodies[Body::Earth as usize];
         let parts = [Body::Sun, Body::Earth, Body::Moon]
-            .map(|body| self.body_report(&frame, body, bodies[body as usize], sun, detail));
+            .map(|body| self.body_report(&frame, body, bodies[body as usize], sun, earth, detail));
         let (helio_ecliptic_longitude_deg, ecliptic_latitude_deg) =
             zodi_coordinates_deg(boresight, sun);
         let table_needed = detail || self.zodi == ZodiModel::Table;
@@ -1252,6 +1362,30 @@ impl StrayLightEvaluator {
 }
 
 impl StrayLightEvaluator {
+    /// The violation mask (targets x times) at spacecraft roll `roll_deg`, or
+    /// at the nominal attitude without one.
+    fn mask(
+        &self,
+        ephemeris: &dyn EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        roll_deg: Option<f64>,
+    ) -> PyResult<Array2<bool>> {
+        let (violated, n_times) = self.grid(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            Mode::MASK.at_roll(roll_deg),
+            |report| report.cell.violated,
+        )?;
+        Ok(
+            Array2::from_shape_vec((target_ras.len(), n_times), violated)
+                .expect("one cell per target and time"),
+        )
+    }
+
     /// Paired evaluation, the mask and the values of each element in one pass:
     /// target `i` at ephemeris row `time_indices[i]`, at spacecraft roll
     /// `rolls[i]` where one is given.
@@ -1385,14 +1519,8 @@ impl ConstraintEvaluator for StrayLightEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
-        // A sweep candidate leaves the nominal attitude in force.
-        self.in_constraint_batch_at_roll(
-            ephemeris,
-            target_ras,
-            target_decs,
-            time_indices,
-            EvaluationRoll::Sweep(0.0),
-        )
+        // No roll: the nominal attitude.
+        self.mask(ephemeris, target_ras, target_decs, time_indices, None)
     }
 
     fn compute_named_values(
@@ -1405,9 +1533,9 @@ impl ConstraintEvaluator for StrayLightEvaluator {
         self.compute_named_values_at_roll(ephemeris, target_ras, target_decs, time_indices, None)
     }
 
-    /// An explicit spacecraft roll sets the attitude; a sweep candidate does
-    /// not, since this constraint defines its own (Sun-referenced) attitude
-    /// when no roll is given.
+    /// The roll is the attitude, whether it is an explicit spacecraft roll or
+    /// the candidate of a sweep that a roll-dependent rule of the same tree
+    /// started: every rule of a tree is evaluated at one roll.
     fn in_constraint_batch_at_roll(
         &self,
         ephemeris: &dyn EphemerisBase,
@@ -1416,19 +1544,20 @@ impl ConstraintEvaluator for StrayLightEvaluator {
         time_indices: Option<&[usize]>,
         roll_deg: EvaluationRoll,
     ) -> PyResult<Array2<bool>> {
-        let roll = roll_deg.is_fixed().then(|| roll_deg.degrees());
-        let (violated, n_times) = self.grid(
+        self.mask(
             ephemeris,
             target_ras,
             target_decs,
             time_indices,
-            Mode::MASK.at_roll(roll),
-            |report| report.cell.violated,
-        )?;
-        Ok(
-            Array2::from_shape_vec((target_ras.len(), n_times), violated)
-                .expect("one cell per target and time"),
+            Some(roll_deg.degrees()),
         )
+    }
+
+    /// Alone, this constraint is not swept: without a roll it supplies its
+    /// own attitude, so `is_roll_dependent` stays false. Inside a sweep it is
+    /// evaluated at each candidate.
+    fn follows_sweep_roll(&self) -> bool {
+        true
     }
 
     fn compute_named_values_at_roll(
@@ -1524,8 +1653,7 @@ mod tests {
             zodi: config.zodi,
             zodi_v_mag_arcsec2: config.zodi_v_mag_arcsec2,
             in_field_deg: config.in_field_deg,
-            earth_v_full_1au: config.sun_v_mag_1au
-                - 2.5 * (config.earth_albedo * (EARTH_MEAN_RADIUS_KM / AU_TO_KM).powi(2)).log10(),
+            earth_albedo: config.earth_albedo,
             sun_v_mag_1au: config.sun_v_mag_1au,
             moon_v_mag_full: config.moon_v_mag_full,
         }
@@ -1584,19 +1712,109 @@ mod tests {
         assert!(bad.validate().unwrap_err().contains("conversion_factor"));
     }
 
+    /// The Earth's flux for a constant PST, over (PST x the full-phase flux
+    /// of the inverse-square law): the phase law of the model.
+    fn earth_phase_law(distance_km: f64, phase_deg: f64) -> f64 {
+        let mut config = config();
+        config
+            .pst
+            .log10_pst
+            .iter_mut()
+            .flatten()
+            .for_each(|cell| *cell = Some(-6.0));
+        let evaluator = evaluator(&config);
+        let boresight = [0.0, 0.0, 1.0];
+        let earth = [distance_km, 0.0, 0.0];
+        let (sin, cos) = phase_deg.to_radians().sin_cos();
+        // Sun-Earth-observer angle `phase_deg`, with the Sun 1 au from the Earth.
+        let sun = add_scaled(earth, [-cos, sin, 0.0], AU_TO_KM);
+        let (frame, _) = evaluator.frame(boresight, sun, None);
+        let report = evaluator.body_report(&frame, Body::Earth, earth, sun, earth, true);
+        let full = config.earth_albedo
+            * 10f64.powf(-0.4 * config.sun_v_mag_1au)
+            * (EARTH_MEAN_RADIUS_KM / distance_km).powi(2);
+        report.flux / (1e-6 * full)
+    }
+
     #[test]
-    fn finite_distance_phase_law_reduces_to_lambert() {
+    fn earth_flux_is_the_radiance_summed_over_the_sky() {
         // Distant observer: Phi(alpha) = (sin a + (pi - a) cos a) / pi.
         for alpha in [0.0_f64, 30.0, 90.0, 150.0] {
             let a = alpha.to_radians();
             let expected = (a.sin() + (std::f64::consts::PI - a) * a.cos()) / std::f64::consts::PI;
-            assert!((lambert::phase(0.0, alpha) / expected - 1.0).abs() < 1e-4);
+            let model = earth_phase_law(1.0e7, alpha);
+            assert!(
+                (model / expected - 1.0).abs() < 5e-3,
+                "{alpha}: {model} {expected}"
+            );
         }
-        // Close in, a full disk is brighter than the inverse-square law says
-        // (the surface is nearer than the centre), while the visible cap hides
-        // the lit limb of a crescent.
-        assert!(lambert::phase(0.3, 0.0) > 1.1);
-        assert!(lambert::phase(0.3, 150.0) < 0.1 * lambert::phase(0.0, 150.0));
+        // Close in at full phase the sum has a closed form: with x = R / d,
+        // (3 / 2) d^2 times the integral over the cap of
+        // cos(theta) (cos(theta) - x) sin(theta) / (1 - 2 x cos(theta) + x^2)^(3/2).
+        for x in [0.2_f64, 0.5, 0.9, 0.93] {
+            let n = 200_000;
+            let theta_max = x.acos();
+            let integral: f64 = (0..n)
+                .map(|i| {
+                    let (st, ct) = ((i as f64 + 0.5) / n as f64 * theta_max).sin_cos();
+                    ct * (ct - x) * st / (1.0 - 2.0 * x * ct + x * x).powf(1.5)
+                })
+                .sum::<f64>()
+                * theta_max
+                / n as f64;
+            let expected = 3.0 * integral;
+            let model = earth_phase_law(EARTH_MEAN_RADIUS_KM / x, 0.0);
+            assert!(
+                (model / expected - 1.0).abs() < 5e-3,
+                "x = {x}: {model} {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_sunlit_surface_is_dark_without_an_integral() {
+        // From 500 km the cap reaches acos(R / d) = 22 degrees.
+        let distance = EARTH_MEAN_RADIUS_KM + 500.0;
+        let reach = (EARTH_MEAN_RADIUS_KM / distance).acos().to_degrees();
+        assert!(earth_phase_law(distance, 90.0 + reach - 0.5) > 0.0);
+        assert_eq!(earth_phase_law(distance, 90.0 + reach + 0.5), 0.0);
+        assert!(lit_half_width(-0.5, 0.75f64.sqrt(), 0.1).is_none());
+        assert_eq!(lit_half_width(0.1, 0.99, 0.1), Some(std::f64::consts::PI));
+    }
+
+    #[test]
+    fn the_earth_hides_what_is_behind_it() {
+        let earth = [7000.0, 0.0, 0.0];
+        let sun_behind = [AU_TO_KM, 0.0, 0.0];
+        let sun_clear = [0.0, AU_TO_KM, 0.0];
+        assert!(StrayLightEvaluator::hidden(Body::Sun, sun_behind, earth) == Hidden::All);
+        assert!(StrayLightEvaluator::hidden(Body::Sun, sun_clear, earth) == Hidden::None);
+        // Straddling the limb, 65.5 degrees from the nadir at this height.
+        let limb = (EARTH_MEAN_RADIUS_KM / 7000.0).asin();
+        let sun_setting = scaled([limb.cos(), limb.sin(), 0.0], AU_TO_KM);
+        assert!(StrayLightEvaluator::hidden(Body::Sun, sun_setting, earth) == Hidden::Partly);
+        // A Moon nearer than the Earth is in front of it.
+        let far_earth = [500_000.0, 0.0, 0.0];
+        let moon = [100_000.0, 0.0, 0.0];
+        assert!(StrayLightEvaluator::hidden(Body::Moon, moon, far_earth) == Hidden::None);
+
+        let evaluator = evaluator(&config());
+        let boresight = [0.0, 0.0, 1.0];
+        let (frame, _) = evaluator.frame(boresight, sun_setting, None);
+        let half = evaluator.body_report(&frame, Body::Sun, sun_setting, sun_setting, earth, true);
+        let whole = evaluator.body_report(
+            &frame,
+            Body::Sun,
+            sun_setting,
+            sun_setting,
+            scaled(earth, -1.0),
+            true,
+        );
+        assert!(half.status == Status::Ok && whole.status == Status::Ok);
+        assert!((half.lit_fraction - 0.5).abs() < 0.02);
+        assert!((half.flux / whole.flux - 0.5).abs() < 0.05);
+        let gone = evaluator.body_report(&frame, Body::Sun, sun_behind, sun_behind, earth, true);
+        assert!(gone.status == Status::Occulted && gone.flux == 0.0);
     }
 
     #[test]
@@ -1626,11 +1844,11 @@ mod tests {
         let sun = scaled(radec_to_unit_vector(90.0, 0.0), AU_TO_KM);
         let (frame, _) = evaluator.frame(boresight, sun, None);
         // The Sun, half a degree across, 90 degrees off axis.
-        let (disk, converged, _) = evaluator.disk_mean(&frame, Body::Sun, sun, sun);
+        let (disk, converged, _) = evaluator.disk_integral(&frame, Body::Sun, sun, unit(sun), None);
         assert!(converged);
-        assert_eq!(disk.lit_fraction, 1.0);
+        assert_eq!(disk.lit_solid_angle, disk.weight);
         let centre = evaluator.pst_toward(&frame, unit(sun));
-        assert!((disk.mean / centre - 1.0).abs() < 1e-3);
+        assert!((disk.mean() / centre - 1.0).abs() < 1e-3);
     }
 
     #[test]

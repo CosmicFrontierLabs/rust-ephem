@@ -374,6 +374,7 @@ class StrayLightStatus(int, Enum):
     IN_FIELD = 2
     FIRST_CELL = 3
     UNCONVERGED = 4
+    OCCULTED = 5
     @property
     def is_valid(self) -> bool: ...
 
