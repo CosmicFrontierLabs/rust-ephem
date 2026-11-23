@@ -1399,6 +1399,304 @@ Two FoV shapes are supported:
       # Evaluate at a specific roll (position angle in degrees, east of north)
       result = c.evaluate(ephem, target_ra, target_dec, target_roll=45.0)
 
+StrayLightConstraint
+^^^^^^^^^^^^^^^^^^^^
+
+Stray-light constraint - violated when out-of-field light from the Sun, Earth
+and Moon, scattered onto the focal plane, exceeds a multiple of the zodiacal
+background, or when the model has no prediction for the pointing.
+
+The telescope is described by a point-source transmittance (PST) table that
+you supply: ``PST(theta, phi) = E_focal / E_aperture``, the mean focal-plane
+irradiance produced by a collimated source of unit irradiance arriving from
+off-axis angle ``theta`` and azimuth ``phi`` about the boresight. No telescope
+data ships with ``rust-ephem``.
+
+For each body the model computes the light it puts on the focal plane, in
+units of a V = 0 source: radiance times PST, summed over the sky directions
+``p`` that the body's sunlit surface is seen in,
+``sum(L(p) * PST(p) * dOmega)``. It is reported as two factors whose product
+is that sum:
+
+1. the body's V magnitude at the observer:
+
+   - the Sun from its distance;
+   - the Earth as a Lambert sphere of the given geometric albedo ``p``. A
+     surface point at solar incidence ``i`` has radiance
+     ``(3 p / 2 pi) * E_sun * cos(i)``, with ``E_sun`` the Sun's irradiance at
+     the Earth, and the magnitude is that of the radiance summed over the
+     sky, ``sum(L * dOmega)``;
+   - the Moon from Allen's empirical phase law, scaled to its distances from
+     the observer and from the Sun;
+
+2. the mean of the PST over the body, each part weighted by its brightness:
+   uniform for the Sun, Lambertian for the Earth and Moon.
+
+The Earth's light is not reduced for the inclination of a ray to the Earth's
+direction. The PST is defined per source of unit irradiance on a plane facing
+that source, wherever on the sky the source is. From low orbit the Earth spans
+about 136 degrees, and such a factor would remove a third of its light at
+500 km and three quarters of a crescent's.
+
+The Earth and Moon are integrated over their surface, in colatitude from the
+sub-observer point and longitude about it. Each longitude is sampled only
+between the terminator and the edge of the visible cap, so a thin crescent on
+the limb is resolved as well as a full disk. The Sun is integrated over its
+disk. The grid is doubled until two levels agree to 2%.
+
+**Occultation.** A part of the Sun or Moon whose line of sight meets the Earth
+first contributes nothing. A body wholly behind the Earth has status
+``OCCULTED`` and a contribution of zero; one crossing the limb contributes in
+proportion to the part in view. A body the limb crosses is integrated over the
+part above the limb alone, on a grid laid out about the Earth's centre, so a
+sliver of the Sun still in view is never missed, however thin. The Earth is a sphere of its mean radius with
+no atmosphere: refraction, twilight and the Earth's shadow on the Moon are not
+modelled, and the Moon does not hide the Sun.
+
+The sum over the bodies, times ``conversion_factor``, is the surface brightness
+of the uniform sky that would put the same light on the focal plane. Its ratio
+to the zodiacal surface brightness is ``stray_light_ratio``; the constraint is
+violated when that exceeds ``max_ratio``.
+
+**Attitude.** The table's azimuth is tied to the Sun. A source in direction
+``p`` has azimuth ``atan2(p.x, p.y)`` about the boresight ``b``, with ``y`` the
+table's azimuth-zero axis and ``x = y x b``. At the nominal attitude the Sun's
+direction, projected perpendicular to the boresight, lies at azimuth
+``sun_azimuth_deg``: 0 if the table is measured from the Sun's side, 180 if
+from the side away from it. ``roll_offset_deg`` rolls the spacecraft
+right-handed about the boresight from there and adds to the Sun's azimuth.
+
+**Explicit rolls.** A ``target_roll`` (or a ``target_rolls`` entry) passed to
+an evaluation method is the absolute spacecraft roll for that row, in the
+convention of ``SolarRollConstraint`` and ``BoresightOffsetConstraint``:
+counter-clockwise about the boresight, with body +Y to the east and body +Z to
+the north at roll zero. It replaces the nominal attitude, and
+``roll_offset_deg`` is not applied to that row; rows whose roll is ``None`` keep
+the nominal attitude. In those terms the table's azimuth-zero axis is body +Y
+turned by ``sun_azimuth_deg``, and the nominal attitude is the solar-optimal
+roll of a +Y panel plus ``roll_offset_deg``.
+
+The roll actually used comes back as ``roll_deg``, so the two descriptions
+convert through it:
+
+.. code-block:: python
+
+   nominal = stray.evaluate_elementwise(ephem, ras, decs, times=times)
+   roll = np.asarray(nominal.constraint_values["roll_deg"])
+
+   # The same result, and the result 10 degrees either side of nominal
+   same = stray.evaluate_elementwise(ephem, ras, decs, times=times, target_rolls=list(roll))
+   plus = stray.evaluate_elementwise(ephem, ras, decs, times=times, target_rolls=list(roll + 10))
+
+   # Rolls at which one pointing is clear at one time
+   stray.roll_range(time, ephem, ra, dec)
+
+**Free roll.** In a combined constraint every component is evaluated at the
+same roll. With no roll given:
+
+- alone, or with components that do not depend on the roll, this constraint
+  is evaluated at its nominal attitude, as above;
+- in a tree with a component that needs a roll (``SolarRollConstraint``, a
+  boresight offset with pitch or yaw, a polygon field of view), the tree is
+  swept over ``n_roll_samples`` rolls, and this constraint is evaluated at
+  each candidate roll with the others. The tree is satisfied where some roll
+  satisfies all of it, which is what ``roll_range`` reports. The nominal
+  attitude gets no preference in that search.
+
+In a swept evaluation ``constraint_values`` still describe the nominal
+attitude (``roll_deg`` says which roll they belong to). To get the values at a
+roll the sweep would accept, take one from ``roll_range`` and pass it as
+``target_roll``.
+
+Under ``boresight_offset(...)`` this constraint receives the spacecraft roll,
+not the offset's own ``roll_deg``: the table's orientation is set by
+``sun_azimuth_deg``.
+
+**Validity.** A body gives no prediction when:
+
+- its nearest limb is within ``in_field_deg`` of the boresight (direct light,
+  a pointing violation rather than a stray-light level);
+- that limb lies inside the first off-axis cell of the table, where the table
+  is an order-of-magnitude guide only;
+- the integral over the body does not converge (the table changes too
+  abruptly across it).
+
+With ``zodi="table"`` the zodi itself has no entry within about 60 degrees of
+the Sun near the ecliptic. In every one of these cases the constraint is
+violated and the affected ``constraint_values`` are NaN: no prediction is
+treated as unknown, never as dark.
+
+A body that shows no sunlit surface (``DARK``), or that the Earth hides
+completely (``OCCULTED``), is valid and contributes exactly zero. Neither
+needs the integral, so an observer in eclipse costs less than one in daylight.
+An Earth whose night side is in the field is still ``IN_FIELD``.
+
+**Conversion factor.** The two sides of the ratio start in different units.
+The scattered light is an irradiance on the focal plane,
+``sum(flux * <PST>)``, with each body's flux in units of a V = 0 source. The
+zodi is a surface brightness: V = 0 sources per square arcsecond of sky.
+``conversion_factor`` is the surface brightness of the uniform sky that
+produces one unit of focal-plane irradiance. It is a property of the telescope,
+so it has no default:
+
+- A uniform sky of radiance ``L`` per steradian puts an irradiance of
+  ``L * pi / (4 N**2)`` on the focal plane of a telescope of focal ratio ``N``
+  (a faster telescope concentrates the sky more).
+- A surface brightness ``S`` per square arcsecond is a radiance of ``S * A**2``
+  per steradian, where ``A = 3600 * 180 / pi = 206264.8`` is the number of
+  arcseconds in a radian, so ``A**2`` is the number of square arcseconds in a
+  steradian.
+- If the sky's light passes through optics that the PST does not already
+  include (or the reverse), the ratio of the two throughputs enters too.
+
+Setting the sky's irradiance equal to one unit and solving for ``S``:
+
+.. code-block:: python
+
+   ARCSEC_PER_RADIAN = 3600 * 180 / np.pi   # 206264.8
+
+   conversion_factor = (
+       4 * f_number**2 / (np.pi * ARCSEC_PER_RADIAN**2)
+       * scatter_throughput / sky_throughput
+   )
+
+For an f/10 telescope with equal throughputs this is about 3.0e-9. For a grey
+PST and solar-colour sources a bandpass scales both sides by the same
+constants, so this one number is all the radiometry the constraint needs.
+
+.. py:class:: PointSourceTransmittance(off_axis_deg, azimuth_deg, log10_pst, azimuth_symmetric=True)
+
+   A PST table, interpolated bilinearly in ``log10(PST)``.
+
+   :param list off_axis_deg: Off-axis angles of the rows in degrees, strictly increasing, within [0, 180]; at least two
+   :param list azimuth_deg: Azimuths of the columns in degrees, strictly increasing. A single column describes a PST that does not depend on azimuth
+   :param list log10_pst: ``log10(PST)``, shape ``(len(off_axis_deg), len(azimuth_deg))``. ``None`` or NaN marks an empty cell
+   :param bool azimuth_symmetric: ``True`` (default): the response is mirror symmetric about its azimuth-zero plane, the columns lie within 0-180 degrees, and any azimuth is folded onto that range. ``False``: the columns span a full turn and wrap around
+
+   Outside the table: empty cells and off-axis angles beyond the last row take
+   the lowest value in the table; angles below the first row use the first row.
+
+   .. py:classmethod:: from_pst(off_axis_deg, azimuth_deg, pst, azimuth_symmetric=True)
+
+      Build a table from linear PST values. Zero, negative and NaN entries
+      become empty cells.
+
+.. py:class:: StrayLightConstraint(pst, conversion_factor, *, max_ratio=3.0, roll_offset_deg=0.0, sun_azimuth_deg=0.0, zodi="constant", zodi_v_mag_arcsec2=22.5, in_field_deg=0.3, earth_albedo=0.24, sun_v_mag_1au=-26.74, moon_v_mag_full=-12.73)
+
+   :param PointSourceTransmittance pst: The telescope's PST table (required)
+   :param float conversion_factor: Equivalent sky surface brightness (V = 0 sources per square arcsecond) per unit of PST-weighted flux (V = 0 sources); required, positive
+   :param float max_ratio: Largest allowed scattered light / zodi ratio
+   :param float roll_offset_deg: Roll about the boresight from the nominal attitude, degrees
+   :param float sun_azimuth_deg: Table azimuth of the Sun at the nominal attitude, degrees
+   :param str zodi: ``"constant"``: compare with ``zodi_v_mag_arcsec2`` everywhere. ``"table"``: the zodiacal light of Leinert et al. (1998), as tabulated in the HST WFC3 Instrument Handbook, against ecliptic latitude and longitude from the Sun
+   :param float zodi_v_mag_arcsec2: Surface brightness of the constant zodi, V mag per square arcsecond
+   :param float in_field_deg: A body whose nearest limb is closer to the boresight than this is in the field, degrees
+   :param float earth_albedo: Geometric albedo of the Earth in V (0.24 is the measured whole-disk value; 0.40 corresponds to the older V = -3.9 at 1 au)
+   :param float sun_v_mag_1au: V magnitude of the Sun at 1 au. The Earth and Moon are lit by the Sun at its actual distance from each
+   :param float moon_v_mag_full: V magnitude of the full Moon at 384,400 km from the observer and 1 au from the Sun
+
+   **Attributes:**
+
+   - ``type``: Always ``"stray_light"`` (Literal)
+   - the parameters above
+
+   **Constraint values.** ``constraint_values`` holds everything the model
+   works out, so nothing has to be recomputed outside it.
+
+   The result:
+
+   - ``stray_light_ratio``: scattered light over zodi; NaN without a prediction
+   - ``sun_stray_light_ratio``, ``earth_stray_light_ratio``,
+     ``moon_stray_light_ratio``: the part due to each body; NaN only when that
+     body has no prediction
+   - ``zodi_v_mag_arcsec2``: the zodi the ratio is taken against
+
+   The pointing:
+
+   - ``roll_deg``: the spacecraft roll used (0-360), in the convention of
+     ``target_roll``: the explicit roll, or the nominal one
+   - ``helio_ecliptic_longitude_deg`` (ecliptic longitude from the Sun, 0-360),
+     ``ecliptic_latitude_deg`` and ``zodi_table_v_mag_arcsec2`` (the tabulated
+     zodi at the pointing, whichever zodi the ratio uses)
+
+   Each body, with the prefix ``sun_``, ``earth_`` or ``moon_`` (for example
+   ``earth_v_mag``):
+
+   - ``v_mag``: V magnitude of the whole body at the observer, hidden or
+     not; ``+inf`` for an Earth showing no sunlit surface
+   - ``phase_deg``: Sun-body-observer angle (NaN for the Sun)
+   - ``distance_km``, ``angular_radius_deg``
+   - ``separation_deg``, ``limb_deg``: boresight to the centre and to the
+     nearest limb
+   - ``azimuth_deg``: table azimuth of the centre, -180 to 180
+   - ``pst_center``, ``pst_mean``: PST toward the centre, and its
+     brightness-weighted mean over the body, parts hidden by the Earth
+     counting as zero
+   - ``lit_fraction``: fraction of the disk's solid angle that is sunlit and
+     in view
+   - ``quadrature_error``: relative change of the flux between the last two
+     levels of the integral; NaN where no integral was needed
+   - ``status``: a :py:class:`StrayLightStatus` value
+
+   The per-body values are reported even where the body has no prediction. A
+   body's scattered flux in V = 0 sources is ``10**(-0.4 * v_mag) * pst_mean``,
+   and its part of the ratio is that times ``conversion_factor`` over the zodi
+   flux ``10**(-0.4 * zodi_v_mag_arcsec2)``.
+
+.. py:class:: StrayLightStatus
+
+   Integer enum behind ``sun_status``, ``earth_status`` and ``moon_status``.
+
+   - ``OK`` (0): a converged prediction
+   - ``DARK`` (1): no sunlit surface is visible; the body contributes
+     nothing, which counts as a prediction
+   - ``IN_FIELD`` (2): the nearest limb is within ``in_field_deg`` of the boresight
+   - ``FIRST_CELL`` (3): the nearest limb is inside the first off-axis cell of
+     the table
+   - ``UNCONVERGED`` (4): the integral over the body did not converge
+   - ``OCCULTED`` (5): the Earth hides the whole body; it contributes nothing,
+     which counts as a prediction
+
+   ``is_valid`` is true for ``OK``, ``DARK`` and ``OCCULTED``.
+
+   **Example:**
+
+   .. code-block:: python
+
+      import numpy as np
+      from rust_ephem import PointSourceTransmittance, StrayLightConstraint, SunConstraint
+
+      # Your telescope's table: rows are off-axis angles, columns azimuths.
+      pst = PointSourceTransmittance(
+          off_axis_deg=off_axis_deg,   # e.g. 0, 5, ..., 150
+          azimuth_deg=azimuth_deg,     # e.g. 0, 15, ..., 180
+          log10_pst=log10_pst,         # NaN where the raytrace found nothing
+      )
+      # Sky surface brightness per unit focal-plane irradiance: see
+      # "Conversion factor" above. 206264.8 arcseconds in a radian.
+      f_number = 10.0
+      arcsec_per_radian = 3600 * 180 / np.pi
+      stray = StrayLightConstraint(
+          pst=pst,
+          conversion_factor=4 * f_number**2 / (np.pi * arcsec_per_radian**2),
+          max_ratio=3.0,
+          sun_azimuth_deg=180.0,       # table measured from the anti-Sun side
+      )
+
+      # One row per (target, time) pair
+      result = stray.evaluate_elementwise(ephem, ras, decs, times=times)
+      ratio = result.constraint_values["stray_light_ratio"]
+      sun_part = result.constraint_values["sun_stray_light_ratio"]
+
+      # Combine with pointing rules as usual
+      rules = SunConstraint(min_angle=45) | stray
+      blocked = rules.in_constraint_batch(ephem, ras, decs, times=times)
+
+   The ephemeris should have a planetary kernel loaded
+   (``ensure_planetary_ephemeris()``) so the Sun and Moon are placed
+   accurately. The model is meant for observers in space: from the ground the
+   Earth fills half the sky and no pointing has a prediction.
+
 
 Catalog Utilities
 -----------------
@@ -2002,6 +2300,13 @@ by :py:meth:`evaluate`, :py:meth:`evaluate_batch`, and
    * - ``BrightStarConstraint``
      - ``nearest_bright_star_angle_deg``
      - Circle mode only (``fov_radius``); omitted in ``fov_polygon`` mode
+   * - ``StrayLightConstraint``
+     - ``stray_light_ratio``, ``sun_stray_light_ratio``,
+       ``earth_stray_light_ratio``, ``moon_stray_light_ratio``,
+       ``zodi_v_mag_arcsec2``, and the model's intermediates for the pointing
+       and each body (see ``StrayLightConstraint``)
+     - Scattered light over zodi, in total and per body; NaN where the model
+       has no prediction (which also counts as violated)
    * - ``SolarRollConstraint``
      - ``solar_optimal_roll_deg``
      - The computed optimal roll itself: meaningful whether ``roll_deg`` is
