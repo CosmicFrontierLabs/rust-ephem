@@ -87,3 +87,53 @@ def test_the_apparent_distance_differs_from_the_geometric(
     ras, decs = targets(7)
     shift = moon_angles(ephem, ras, decs, True) - moon_angles(ephem, ras, decs, False)
     assert np.abs(shift).max() > 1e-3
+
+
+@pytest.mark.parametrize("roll", [None, 0.0, 25.0])
+@pytest.mark.parametrize("apparent", [False, True])
+def test_a_boresight_offset_keeps_the_moon_distance_consistent(
+    ephem: TLEEphemeris, roll: float | None, apparent: bool
+) -> None:
+    """The offset is applied to the target as the observer sees it, in every
+    method, including for targets near a pole."""
+    ras, decs = targets(7)
+    ras, decs = [*ras, 40.0, 220.0], [*decs, 89.9, -89.95]
+    count = len(ras)
+    times = [ephem.timestamp[row] for row in ROWS]
+    rolls = None if roll is None else [roll] * count
+    expected = (
+        MoonConstraint(min_angle=30)
+        .boresight_offset(roll_deg=0.0, pitch_deg=10.0)
+        .evaluate_grid(
+            ephem, ras, decs, times=times, target_rolls=rolls, apparent=apparent
+        )
+        .constraint_values["moon_angle_deg"]
+    )
+    rule = MoonPhaseConstraint(max_illumination=0.5).boresight_offset(
+        roll_deg=0.0, pitch_deg=10.0
+    )
+
+    grid = rule.evaluate_grid(
+        ephem, ras, decs, times=times, target_rolls=rolls, apparent=apparent
+    )
+    np.testing.assert_allclose(grid.constraint_values[KEY], expected, atol=1e-9)
+
+    batch = rule.evaluate_batch(
+        ephem, ras, decs, times=times, target_rolls=rolls, apparent=apparent
+    )
+    for row, result in enumerate(batch):
+        np.testing.assert_allclose(
+            result.constraint_values[KEY], expected[row], atol=1e-9
+        )
+
+    paired = rule.evaluate_elementwise(
+        ephem,
+        np.repeat(ras, len(times)),
+        np.repeat(decs, len(times)),
+        times=times * count,
+        target_rolls=None if roll is None else [roll] * (count * len(times)),
+        apparent=apparent,
+    )
+    np.testing.assert_allclose(
+        paired.constraint_values[KEY].reshape(expected.shape), expected, atol=1e-9
+    )
