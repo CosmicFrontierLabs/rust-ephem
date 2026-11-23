@@ -240,3 +240,71 @@ def test_single_time_and_single_target_grids(
     assert bool(combined.in_constraint(times[4], ephem, one[0][0], one[1][0])) == bool(
         grid(combined, ephem, one, times[4:5], False)[0, 0]
     )
+
+
+@pytest.mark.parametrize("apparent", [False, True])
+def test_rules_without_a_paired_kernel_keep_their_cells(
+    ephem: re.FileEphemeris,
+    stray: StrayLightConstraint,
+    targets: tuple[list[float], list[float]],
+    times: list[datetime],
+    apparent: bool,
+) -> None:
+    """A rule with no paired kernel of its own is evaluated one time at a
+    time, whatever order its cells arrive in."""
+    phase = re.MoonPhaseConstraint(max_illumination=0.5)
+    ram = re.OrbitRamConstraint(min_angle=60)
+    for rule in (phase, ram):
+        alone = grid(rule, ephem, targets, times, apparent)
+        expensive = grid(stray, ephem, targets, times, apparent)
+        np.testing.assert_array_equal(
+            grid(rule | stray, ephem, targets, times, apparent), alone | expensive
+        )
+        np.testing.assert_array_equal(
+            grid(stray & rule, ephem, targets, times, apparent), alone & expensive
+        )
+        np.testing.assert_array_equal(
+            paired(rule, ephem, targets, times, apparent), alone
+        )
+        # Cells in a shuffled order, times repeated and unsorted.
+        n_targets, n_times = alone.shape
+        rng = np.random.default_rng(3)
+        cells = rng.permutation(n_targets * n_times)
+        rows, columns = cells // n_times, cells % n_times
+        ras = np.asarray(targets[0])[rows]
+        decs = np.asarray(targets[1])[rows]
+        cell_times = [times[column] for column in columns]
+        result = rule.evaluate_elementwise(
+            ephem, ras, decs, times=cell_times, apparent=apparent
+        )
+        np.testing.assert_array_equal(result.constraint_array, alone[rows, columns])
+        # The values follow their cells too: the same cells in grid order.
+        ordered = rule.evaluate_elementwise(
+            ephem,
+            np.repeat(targets[0], n_times),
+            np.repeat(targets[1], n_times),
+            times=times * n_targets,
+            apparent=apparent,
+        )
+        for key, values in result.constraint_values.items():
+            np.testing.assert_array_equal(
+                values, ordered.constraint_values[key][cells], key
+            )
+
+
+@pytest.mark.parametrize("apparent", [False, True])
+def test_in_constraint_over_times_is_one_row_of_the_grid(
+    ephem: re.FileEphemeris,
+    stray: StrayLightConstraint,
+    targets: tuple[list[float], list[float]],
+    times: list[datetime],
+    apparent: bool,
+) -> None:
+    one = ([targets[0][5]], [targets[1][5]])
+    for constraint, roll in ((rules() | stray, None), (stray, 30.0)):
+        rolls = None if roll is None else [roll]
+        expected = grid(constraint, ephem, one, times, apparent, rolls)[0]
+        result = constraint.in_constraint(
+            times, ephem, one[0][0], one[1][0], target_roll=roll, apparent=apparent
+        )
+        assert result == expected.tolist()

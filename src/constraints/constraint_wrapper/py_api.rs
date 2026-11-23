@@ -2016,13 +2016,11 @@ impl PyConstraint {
         let is_sequence = len_result.is_ok();
         let num_times = len_result.unwrap_or(1);
 
-        // Repeat target_ra and target_dec for each time
-        let target_ras = vec![target_ra; num_times];
-        let target_decs = vec![target_dec; num_times];
-
-        // Call the batch method with the time parameter as is
-        // Convert target_roll to target_rolls (per-target list with single element)
-        let target_rolls = target_roll.map(|roll| vec![roll; num_times]);
+        // One target against every time: a 1 x N grid. Repeating the target
+        // per time would evaluate N x N cells to keep one row of them.
+        let target_ras = vec![target_ra];
+        let target_decs = vec![target_dec];
+        let target_rolls = target_roll.map(|roll| vec![roll]);
         let result_array = self.in_constraint_batch(
             py,
             ephemeris,
