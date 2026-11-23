@@ -585,6 +585,10 @@ Classes
       - ``target_rolls`` — Optional per-element roll (degrees); ``None`` entries sweep rolls for roll-dependent constraints, as in ``in_constraint_batch``
       - Returns: 1D NumPy boolean array of shape (N,), True where the constraint is violated
 
+    * ``evaluate_grid(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)`` — As ``evaluate_batch``, returning the whole grid as ``(n_targets, n_times)`` arrays instead of one result per target
+
+      - Returns: ``GridResult`` object
+
     * ``evaluate_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES)`` — Same pairing as ``in_constraint_elementwise``, plus per-element values
 
       - Returns: ``ElementwiseResult`` object
@@ -624,7 +628,7 @@ Classes
     * ``constraint_name`` — String name/description of the constraint
     * ``timestamp`` — NumPy array of Python datetime objects (optimized with caching)
     * ``constraint_array`` — NumPy boolean array where True means constraint violated / target blocked (optimized with caching)
-    * ``constraint_values`` — ``dict[str, list[float]]`` of named continuous values computed
+    * ``constraint_values`` — ``dict[str, numpy.ndarray]`` (read-only float arrays, built once) of named continuous values computed
       during evaluation (e.g. ``sun_angle_deg``, the angle a ``SunConstraint`` thresholds), one
       array per key, aligned with ``timestamp``. Empty for constraints with no natural scalar
       (e.g. ``SAAConstraint``, polygon-mode ``BodyConstraint``/``BrightStarConstraint``).
@@ -659,6 +663,20 @@ Classes
       ``ConstraintResult`` (see above)
     * ``ras`` — NumPy array of the body's right ascension in degrees at each timestamp
     * ``decs`` — NumPy array of the body's declination in degrees at each timestamp
+
+**GridResult**
+  Result of ``evaluate_grid()``: every target at every time.
+
+  **Attributes (read-only):**
+    * ``constraint_array`` — (n_targets, n_times) NumPy bool array, True where the constraint is violated
+    * ``visibility_flags`` — the inverse of ``constraint_array``
+    * ``constraint_values`` — ``dict[str, numpy.ndarray]`` of (n_targets, n_times) float arrays
+    * ``component_violated`` — ``dict[str, numpy.ndarray]`` of (n_targets, n_times) bool arrays keyed by cause tag
+    * ``cause_value_keys``, ``constraint_name``, ``shape``
+    * ``timestamp`` — (n_times,) array of datetimes; ``ras``, ``decs`` — (n_targets,) arrays
+
+  **Methods:**
+    * ``target(index)`` — The ``ConstraintResult`` of one target, built on demand
 
 **ElementwiseResult**
   Result of ``evaluate_elementwise()``: one entry per input element, in input order.

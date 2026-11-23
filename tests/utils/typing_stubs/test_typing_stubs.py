@@ -57,7 +57,7 @@ class TestModuleLevelFunctions:
 
     def test_get_polar_motion_components_are_floats(self) -> None:
         test_time = datetime(2021, 1, 1, 12, 0, 0)
-        x, y = rust_ephem.get_polar_motion(test_time)
+        x, _y = rust_ephem.get_polar_motion(test_time)
         assert isinstance(x, float)
 
     def test_get_polar_motion_second_component_is_float(self) -> None:

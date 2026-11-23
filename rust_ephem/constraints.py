@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Union, cast
+from typing import Any, Literal, SupportsFloat, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -30,7 +30,7 @@ from pydantic import (
 import rust_ephem
 
 from ._rust_ephem import ConstraintResult as _RustConstraintResult
-from ._rust_ephem import ElementwiseResult, RouteResult
+from ._rust_ephem import ElementwiseResult, GridResult, RouteResult
 from .ephemeris import Ephemeris
 
 #: Default number of roll-angle samples used when sweeping spacecraft roll in
@@ -78,9 +78,7 @@ class ConstraintResult(BaseModel):
     _rust_result_ref: _RustConstraintResult | None = PrivateAttr(default=None)
 
     @classmethod
-    def _from_rust_result(
-        cls, rust_result: _RustConstraintResult
-    ) -> "ConstraintResult":
+    def _from_rust_result(cls, rust_result: _RustConstraintResult) -> ConstraintResult:
         """Wrap a single-evaluation Rust ``ConstraintResult``.
 
         Keeps a lazy reference to it for timestamps/constraint_array/visibility
@@ -146,11 +144,13 @@ class ConstraintResult(BaseModel):
         return []
 
     @property
-    def constraint_values(self) -> dict[str, list[float]]:
+    def constraint_values(self) -> dict[str, npt.NDArray[np.float64]]:
         """Named continuous values computed during evaluation (e.g. ``sun_angle_deg``).
 
-        One array per key, aligned with ``timestamps``. Empty for constraints that
-        don't expose a natural scalar (e.g. polygon-based constraints).
+        One read-only NumPy array per key, aligned with ``timestamps``. The
+        arrays are built on first access and shared by later ones. Empty for
+        constraints that don't expose a natural scalar (e.g. polygon-based
+        constraints).
         """
         if self._rust_result_ref is not None:
             return self._rust_result_ref.constraint_values
@@ -173,7 +173,7 @@ class ConstraintResult(BaseModel):
         return {}
 
     @property
-    def visibility(self) -> list["rust_ephem.VisibilityWindow"]:
+    def visibility(self) -> list[rust_ephem.VisibilityWindow]:
         """Visibility windows when the constraint is satisfied (target visible)."""
         if self._rust_result_ref is not None:
             return self._rust_result_ref.visibility
@@ -210,10 +210,6 @@ class ConstraintResult(BaseModel):
 
     def __repr__(self) -> str:
         return f"ConstraintResult(constraint='{self.constraint_name}', violations={len(self.violations)}, all_satisfied={self.all_satisfied})"
-
-
-if TYPE_CHECKING:
-    pass
 
 
 class RollReference(str, Enum):
@@ -467,9 +463,12 @@ class RustConstraintMixin(BaseModel):
                 # compose, so target_roll simply overwrites it. A circular FoV
                 # (no fov_polygon) or a plain body proximity check ignores roll
                 # and is left untouched.
-                if node.get("fov_polygon") is not None:
-                    if target_roll is not None and not sweep_roll:
-                        node["roll_deg"] = float(target_roll)
+                if (
+                    node.get("fov_polygon") is not None
+                    and target_roll is not None
+                    and not sweep_roll
+                ):
+                    node["roll_deg"] = float(target_roll)
                 return
 
             if node_type in {"and", "or", "xor", "at_least"}:
@@ -765,11 +764,11 @@ class RustConstraintMixin(BaseModel):
     def _elementwise_times(
         times: datetime | Sequence[datetime] | npt.NDArray[Any] | None,
     ) -> datetime | list[datetime] | npt.NDArray[np.datetime64] | None:
-        """Normalise elementwise ``times`` (datetime64 arrays -> UTC datetimes)."""
+        """Normalise elementwise ``times``. A ``datetime64`` array is passed
+        through as it is: the Rust side reads it directly, without a Python
+        ``datetime`` per element."""
         if isinstance(times, np.ndarray) and np.issubdtype(times.dtype, np.datetime64):
-            return cast(
-                list[datetime], times.astype("datetime64[us]").astype(object).tolist()
-            )
+            return cast(npt.NDArray[np.datetime64], times)
         if times is None or isinstance(times, datetime):
             return times
         return list(times)
@@ -791,8 +790,8 @@ class RustConstraintMixin(BaseModel):
     def in_constraint_elementwise(
         self,
         ephemeris: Ephemeris,
-        target_ras: Sequence[float] | npt.ArrayLike,
-        target_decs: Sequence[float] | npt.ArrayLike,
+        target_ras: Sequence[SupportsFloat] | npt.ArrayLike,
+        target_decs: Sequence[SupportsFloat] | npt.ArrayLike,
         times: datetime | Sequence[datetime] | npt.NDArray[Any] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -841,8 +840,8 @@ class RustConstraintMixin(BaseModel):
             npt.NDArray[np.bool_],
             backend.in_constraint_elementwise(
                 ephemeris,
-                np.asarray(target_ras, dtype=float).tolist(),
-                np.asarray(target_decs, dtype=float).tolist(),
+                target_ras,
+                target_decs,
                 self._elementwise_times(times),
                 target_rolls=rolls,
                 n_roll_samples=n_roll_samples,
@@ -853,8 +852,8 @@ class RustConstraintMixin(BaseModel):
     def evaluate_elementwise(
         self,
         ephemeris: Ephemeris,
-        target_ras: Sequence[float] | npt.ArrayLike,
-        target_decs: Sequence[float] | npt.ArrayLike,
+        target_ras: Sequence[SupportsFloat] | npt.ArrayLike,
+        target_decs: Sequence[SupportsFloat] | npt.ArrayLike,
         times: datetime | Sequence[datetime] | npt.NDArray[Any] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -880,9 +879,77 @@ class RustConstraintMixin(BaseModel):
             ElementwiseResult,
             backend.evaluate_elementwise(
                 ephemeris,
-                np.asarray(target_ras, dtype=float).tolist(),
-                np.asarray(target_decs, dtype=float).tolist(),
+                target_ras,
+                target_decs,
                 self._elementwise_times(times),
+                target_rolls=rolls,
+                n_roll_samples=n_roll_samples,
+                apparent=apparent,
+            ),
+        )
+
+    def evaluate_grid(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: Sequence[SupportsFloat] | npt.ArrayLike,
+        target_decs: Sequence[SupportsFloat] | npt.ArrayLike,
+        times: datetime | Sequence[datetime] | npt.NDArray[np.datetime64] | None = None,
+        indices: int | list[int] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
+    ) -> GridResult:
+        """Evaluate every target at every time and return the grid as arrays.
+
+        Same arguments, time handling, roll semantics, ``apparent`` option and
+        polarity as :meth:`evaluate_batch`, but without building one result per
+        target: the mask, the named values and the per-rule masks come back as
+        ``(n_targets, n_times)`` arrays. Use it when the values of the whole
+        grid are wanted; use :meth:`in_constraint_batch` for the mask alone and
+        :meth:`evaluate_batch` when every target's violation windows are.
+
+        Args:
+            ephemeris: One of TLEEphemeris, SPICEEphemeris, GroundEphemeris,
+                OEMEphemeris, FileEphemeris, or ParquetEphemeris
+            target_ras: Right ascensions in degrees (ICRS/J2000), length M
+            target_decs: Declinations in degrees (ICRS/J2000), length M
+            times: Optional time(s) within the ephemeris range; between stored
+                samples, geometry is interpolated at the requested time.
+            indices: Optional specific time index/indices to evaluate
+            target_rolls: Optional per-target spacecraft roll (degrees); ``None``
+                entries (or ``target_rolls=None``) sweep ``n_roll_samples`` rolls
+                for roll-dependent constraints, as in :meth:`in_constraint_batch`.
+            n_roll_samples: Roll angles swept in the free-roll case.
+            apparent: Measure angles as the observer sees them rather than
+                geometrically (see :meth:`in_constraint_batch`).
+
+        Returns:
+            :class:`~rust_ephem.GridResult` with ``constraint_array``
+            ``(M, N)`` bool (``True`` = violated; equal to
+            :meth:`in_constraint_batch`), ``visibility_flags``,
+            ``constraint_values`` (dict of ``(M, N)`` float arrays with the keys
+            :meth:`evaluate_batch` reports), ``component_violated`` (dict of
+            ``(M, N)`` bool arrays keyed by cause tag), ``cause_value_keys``,
+            ``constraint_name``, ``timestamp`` (length N), ``ras`` and ``decs``
+            (length M). ``result.target(i)`` builds the
+            :class:`ConstraintResult`-like result of one target, with its
+            violation and visibility windows, on demand. The grid arrays
+            and ``timestamp`` are read-only; ``ras`` and ``decs`` are copies.
+        """
+        if n_roll_samples <= 0:
+            raise ValueError("n_roll_samples must be a positive integer")
+        backend, rolls = self._elementwise_backend(target_rolls)
+        grid_times: Any = times
+        if times is not None and not isinstance(times, (datetime, np.ndarray)):
+            grid_times = list(times)
+        return cast(
+            GridResult,
+            backend.evaluate_grid(
+                ephemeris,
+                target_ras,
+                target_decs,
+                grid_times,
+                indices,
                 target_rolls=rolls,
                 n_roll_samples=n_roll_samples,
                 apparent=apparent,
@@ -1488,7 +1555,7 @@ class BodyConstraint(RustConstraintMixin):
     )
 
     @model_validator(mode="after")
-    def check_fov(self) -> "BodyConstraint":
+    def check_fov(self) -> BodyConstraint:
         has_angle = self.min_angle is not None
         has_polygon = self.fov_polygon is not None
         if not has_angle and not has_polygon:
@@ -2032,7 +2099,7 @@ class BrightStarConstraint(RustConstraintMixin):
     )
 
     @model_validator(mode="after")
-    def check_fov(self) -> "BrightStarConstraint":
+    def check_fov(self) -> BrightStarConstraint:
         has_radius = self.fov_radius is not None
         has_polygon = self.fov_polygon is not None
         if not has_radius and not has_polygon:
@@ -2410,30 +2477,30 @@ class StrayLightConstraint(RustConstraintMixin):
 
 
 # Union type for all constraints
-ConstraintConfig = Union[
-    SunConstraint,
-    MoonConstraint,
-    MoonLimbConstraint,
-    EclipseConstraint,
-    EarthLimbConstraint,
-    BodyConstraint,
-    DaytimeConstraint,
-    AirmassConstraint,
-    MoonPhaseConstraint,
-    SolarRollConstraint,
-    StrayLightConstraint,
-    OrbitRamConstraint,
-    OrbitPoleConstraint,
-    SAAConstraint,
-    AltAzConstraint,
-    BrightStarConstraint,
-    AndConstraint,
-    OrConstraint,
-    XorConstraint,
-    AtLeastConstraint,
-    NotConstraint,
-    BoresightOffsetConstraint,
-]
+ConstraintConfig = (
+    SunConstraint
+    | MoonConstraint
+    | MoonLimbConstraint
+    | EclipseConstraint
+    | EarthLimbConstraint
+    | BodyConstraint
+    | DaytimeConstraint
+    | AirmassConstraint
+    | MoonPhaseConstraint
+    | SolarRollConstraint
+    | StrayLightConstraint
+    | OrbitRamConstraint
+    | OrbitPoleConstraint
+    | SAAConstraint
+    | AltAzConstraint
+    | BrightStarConstraint
+    | AndConstraint
+    | OrConstraint
+    | XorConstraint
+    | AtLeastConstraint
+    | NotConstraint
+    | BoresightOffsetConstraint
+)
 
 
 # Update forward references after ConstraintConfig is defined

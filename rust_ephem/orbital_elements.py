@@ -11,8 +11,8 @@ from pydantic import BaseModel
 from .tle import WGS72_EARTH_MU_M3_S2
 
 __all__ = [
-    "OsculatingElements",
     "WGS72_EARTH_MU_KM3_S2",
+    "OsculatingElements",
     "osculating_elements_from_state",
 ]
 

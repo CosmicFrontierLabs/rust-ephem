@@ -670,6 +670,25 @@ Evaluation Methods
       # One pointing per row, each at its own (possibly off-grid) time
       blocked = constraint.in_constraint_elementwise(ephem, ras, decs, times)
 
+.. py:method:: Constraint.evaluate_grid(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
+
+   Evaluate every target at every time and return the grid as arrays.
+
+   Same arguments, time handling, roll semantics, ``apparent`` option and
+   polarity as ``evaluate_batch``, without building one result per target: the
+   mask, the named values and the per-rule masks come back as
+   ``(n_targets, n_times)`` arrays. Use it when the values of the whole grid are
+   wanted; ``in_constraint_batch`` for the mask alone; ``evaluate_batch`` when
+   every target's violation windows are.
+
+   :param target_rolls: Per-target spacecraft roll in degrees; ``None`` entries
+      (or ``target_rolls=None``) sweep ``n_roll_samples`` rolls for
+      roll-dependent constraints
+   :type target_rolls: list[float | None] or None
+   :returns: The grid: ``constraint_array`` (equal to ``in_constraint_batch``),
+      ``constraint_values``, ``component_violated`` and the rest
+   :rtype: GridResult
+
 .. py:method:: Constraint.evaluate_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
 
    Same pairing, time handling, roll semantics and polarity as
@@ -2012,6 +2031,33 @@ All Pydantic constraint models inherit these methods:
    :returns: 1D numpy boolean array of shape (N,), ``True`` where violated
    :rtype: numpy.ndarray
 
+.. py:method:: evaluate_grid(ephemeris, target_ras, target_decs, times=None, indices=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
+
+   Evaluate every target at every time and return the grid as arrays.
+
+   Same arguments, time handling, roll semantics, ``apparent`` option and
+   polarity as ``evaluate_batch``, without building one result per target: the
+   mask, the named values and the per-rule masks come back as
+   ``(n_targets, n_times)`` arrays. Use it when the values of the whole grid are
+   wanted; ``in_constraint_batch`` for the mask alone; ``evaluate_batch`` when
+   every target's violation windows are.
+
+   :param target_rolls: Per-target spacecraft roll in degrees; ``None`` entries
+      (or ``target_rolls=None``) sweep ``n_roll_samples`` rolls for
+      roll-dependent constraints
+   :type target_rolls: list[float | None] or None
+   :returns: The grid: ``constraint_array`` (equal to ``in_constraint_batch``),
+      ``constraint_values``, ``component_violated`` and the rest
+   :rtype: GridResult
+
+   .. code-block:: python
+
+      grid = constraint.evaluate_grid(ephem, ras, decs, times=times, apparent=True)
+      grid.constraint_array                          # (n_targets, n_times) bool
+      grid.constraint_values["sun.sun_angle_deg"]    # (n_targets, n_times) float
+      grid.component_violated["earth_limb"]          # which rule blocks each cell
+      grid.target(3).visibility                      # windows of one target, on demand
+
 .. py:method:: evaluate_elementwise(ephemeris, target_ras, target_decs, times=None, target_rolls=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
 
    Like :py:meth:`in_constraint_elementwise`, returning an ``ElementwiseResult`` whose
@@ -2168,6 +2214,46 @@ RouteResult
    - ``waypoint`` (tuple[float, float] | None): Validated ICRS RA/Dec in degrees.
    - ``detour_deg`` (float | None): Total length of the two validated legs.
 
+GridResult
+^^^^^^^^^^
+
+.. py:class:: GridResult
+
+   Result of ``evaluate_grid()``: every target at every time, as
+   ``(n_targets, n_times)`` arrays. The grid arrays (``constraint_array``,
+   ``visibility_flags`` and those in ``constraint_values`` and
+   ``component_violated``) and ``timestamp`` are built on first access, shared
+   by later ones, and read-only. ``ras`` and ``decs`` are new copies on each
+   access. The two dicts are new on each access, over the same arrays.
+
+   **Attributes:**
+
+   - ``shape`` (tuple[int, int]): ``(n_targets, n_times)``
+   - ``constraint_array`` (numpy.ndarray of bool): True where the constraint is
+     violated; equal to ``in_constraint_batch()``
+   - ``visibility_flags`` (numpy.ndarray of bool): its inverse
+   - ``constraint_values`` (dict[str, numpy.ndarray]): the named continuous
+     values, with the keys ``evaluate_batch()`` reports
+   - ``component_violated`` (dict[str, numpy.ndarray of bool]): per-rule
+     violation masks keyed by cause tag (``sun``, ``not.moon``, ...)
+   - ``cause_value_keys`` (dict[str, list[str]]): cause tag to value key(s)
+   - ``constraint_name`` (str): the constraint at the roll the targets were
+     evaluated at. A roll-dependent constraint states its roll in its name, so
+     when ``target_rolls`` holds different rolls no one name fits: this is
+     then the name of the constraint as defined, and
+     ``target(i).constraint_name`` is that of each target
+   - ``timestamp`` (numpy.ndarray of datetime): the ``n_times`` evaluated times
+   - ``ras``, ``decs`` (numpy.ndarray): the ``n_targets`` target coordinates
+
+   .. py:method:: target(index)
+
+      The result of one target, with its violation and visibility windows,
+      built on demand from row ``index``. Its name and violation descriptions
+      carry the roll that target was evaluated at, as ``evaluate_batch()``
+      reports them.
+
+      :rtype: ConstraintResult
+
 ConstraintResult
 ^^^^^^^^^^^^^^^^
 
@@ -2182,9 +2268,10 @@ Result of constraint evaluation containing all violation information.
    - ``constraint_name`` (str): Name/description of the constraint
    - ``timestamps`` (numpy.ndarray | list[datetime]): Evaluation times (cached, lazy)
    - ``constraint_array`` (list[bool]): Boolean array where True = violated (cached, lazy)
-   - ``constraint_values`` (dict[str, list[float]]): Named continuous values computed
-     during evaluation (e.g. ``sun_angle_deg``), one array per key, aligned with
-     ``timestamps``. See :ref:`constraint-values` below.
+   - ``constraint_values`` (dict[str, numpy.ndarray]): Named continuous values computed
+     during evaluation (e.g. ``sun_angle_deg``), one read-only float array per
+     key, aligned with ``timestamps``; built on first access and shared by later
+     ones. See :ref:`constraint-values` below.
    - ``cause_value_keys`` (dict[str, list[str]]): Map from a ``start_cause``/
      ``end_cause`` tag to the ``constraint_values`` key(s) it corresponds to. See
      :ref:`visibility-window-cause` below.
@@ -2242,8 +2329,15 @@ under an obvious key name, so you can inspect *why* a constraint was violated
 (or how close it came to being violated) without re-deriving the geometry
 yourself.
 
-``constraint_values`` is a ``dict[str, list[float]]``: one array per named
-quantity, aligned index-for-index with ``result.timestamps``. It is populated
+``constraint_values`` is a ``dict[str, numpy.ndarray]``: one read-only float
+array per named quantity, aligned index-for-index with ``result.timestamps``.
+The arrays are not lists: use ``array.tolist()`` where a list is needed, for
+example ``json.dumps({k: v.tolist() for k, v in result.constraint_values.items()})``,
+and ``array.copy()`` to modify one. The result of
+:py:meth:`evaluate_moving_body` is a pydantic model of plain lists, and its
+``constraint_values`` are still ``list[float]``.
+For a whole grid of targets and times, :py:meth:`evaluate_grid` returns the
+same quantities as ``(n_targets, n_times)`` arrays in one call. It is populated
 by :py:meth:`evaluate`, :py:meth:`evaluate_batch`, and
 :py:meth:`evaluate_moving_body` - **not** by :py:meth:`in_constraint_batch` or
 :py:meth:`in_constraint`, which stay on the fast boolean-only path.
@@ -2357,7 +2451,7 @@ two aberrations: up to about 41 arcseconds for a body and target on opposite
 sides of the observer's direction of motion.
 
 Every evaluation method accepts ``apparent=True`` to measure the angle as the
-observer sees it: ``evaluate()``, ``evaluate_batch()``, ``in_constraint()``,
+observer sees it: ``evaluate()``, ``evaluate_batch()``, ``evaluate_grid()``, ``in_constraint()``,
 ``in_constraint_batch()``, ``in_constraint_elementwise()``,
 ``evaluate_elementwise()``, ``evaluate_moving_body()``,
 ``instantaneous_field_of_regard()`` and ``route_around()``:
@@ -2882,6 +2976,20 @@ For evaluating many targets, use ``in_constraint_batch()``:
    violations = constraint.in_constraint_batch(ephem, target_ras, target_decs)
 
    # violations.shape = (10000, n_times)
+
+When the values are wanted as well as the mask, use ``evaluate_grid()``. It
+runs the same grid computation and returns ``(n_targets, n_times)`` arrays, so
+its cost is close to that of ``in_constraint_batch()``:
+
+.. code-block:: python
+
+   grid = constraint.evaluate_grid(ephem, target_ras, target_decs)
+   sun_angle = grid.constraint_values["sun.sun_angle_deg"]   # (10000, n_times)
+
+``evaluate_batch()`` returns one result object per target, which is the right
+shape when each target's violation windows are needed and a costly one when
+only arrays are: building 16,200 results and reading a value from each takes
+about a hundred times longer than ``evaluate_grid()`` on the same cells.
 
 **Performance by constraint type:**
 

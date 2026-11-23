@@ -43,7 +43,7 @@ try:
     import sphinx_rtd_theme  # type: ignore[import-untyped] # noqa: F401
 
     html_theme = "sphinx_rtd_theme"
-except Exception:
+except ImportError:
     html_theme = "alabaster"
 html_static_path = ["_static"]
 

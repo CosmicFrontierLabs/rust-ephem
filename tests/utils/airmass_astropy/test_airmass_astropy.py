@@ -20,7 +20,6 @@ have less atmosphere above them. For example:
 """
 
 from datetime import datetime
-from typing import List
 
 import astropy.units as u  # type: ignore[import-untyped]
 import numpy as np
@@ -43,7 +42,7 @@ ATOL_ALTITUDE = 0.01  # absolute tolerance
 class TestAirmassAstropyComparison:
     """Compare rust-ephem airmass calculations with astropy."""
 
-    def test_airmass_sea_level_zenith(self, test_times: List[datetime]) -> None:
+    def test_airmass_sea_level_zenith(self, test_times: list[datetime]) -> None:
         """Test airmass at zenith from sea level."""
 
         # Ground observer at sea level
@@ -88,7 +87,7 @@ class TestAirmassAstropyComparison:
                 atol=ATOL_SEA_LEVEL,
             )
 
-    def test_airmass_vs_altitude_comparison(self, test_times: List[datetime]) -> None:
+    def test_airmass_vs_altitude_comparison(self, test_times: list[datetime]) -> None:
         """Test airmass calculation for various altitudes."""
 
         lat, lon, height = 34.0, -118.0, 0.0  # Los Angeles, sea level
@@ -134,7 +133,7 @@ class TestAirmassAstropyComparison:
                     err_msg=f"Mismatch for target RA={ra_deg}, Dec={dec_deg}",
                 )
 
-    def test_airmass_low_altitude_rozenberg(self, test_times: List[datetime]) -> None:
+    def test_airmass_low_altitude_rozenberg(self, test_times: list[datetime]) -> None:
         """Test that low altitude uses Rozenberg approximation."""
         # At very low altitudes (< 10°), rust-ephem uses Rozenberg approximation
         # which is more accurate than simple secant
@@ -156,7 +155,7 @@ class TestAirmassAstropyComparison:
                 assert am > 1.0, "Airmass should be > 1.0"
                 assert am < 40.0, "Airmass should be < 40 for reasonable altitudes"
 
-    def test_airmass_below_horizon(self, test_times: List[datetime]) -> None:
+    def test_airmass_below_horizon(self, test_times: list[datetime]) -> None:
         """Test that targets below horizon return infinite airmass."""
         lat, lon, height = 40.0, -105.0, 0.0
         ephem = rust_ephem.GroundEphemeris(
