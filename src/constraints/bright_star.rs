@@ -411,40 +411,66 @@ fn catalogue_unit_vectors<'a>(
     Ok(std::borrow::Cow::Owned(catalogue))
 }
 
-/// Star comparisons (targets x catalogue stars) handed to one core at the
-/// least, about a quarter of a millisecond of work. A target costs one scan of
-/// the catalogue, around a nanosecond a star, and a call from the paired
-/// fallback holds only the targets of one time: handing such a group to the
-/// pool costs more than evaluating it, many times over on a machine with many
-/// cores.
-const PARALLEL_CHUNK_COMPARISONS: usize = 250_000;
+/// Targets evaluated on the calling thread first, to learn what one costs.
+const PROBE_TARGETS: usize = 8;
+/// Least work left after the probe that is worth spreading over the cores.
+/// Handing work to the pool costs tens of microseconds on a machine with many
+/// cores, so less than this is quicker on the calling thread.
+const PARALLEL_MIN_WORK: std::time::Duration = std::time::Duration::from_micros(500);
+/// Least work handed to one core.
+const PARALLEL_CHUNK_WORK: std::time::Duration = std::time::Duration::from_micros(100);
 
-impl BrightStarEvaluator {
-    /// `one(ra, dec)` for every target, in order. A batch is spread across
-    /// the cores only when it holds at least two shares of
-    /// [`PARALLEL_CHUNK_COMPARISONS`]; a smaller one stays on the calling
-    /// thread.
-    fn each_target<T: Send>(
-        &self,
-        target_ras: &[f64],
-        target_decs: &[f64],
-        one: impl Fn(f64, f64) -> T + Sync,
-    ) -> Vec<T> {
-        let chunk = (PARALLEL_CHUNK_COMPARISONS / self.stars.len().max(1)).max(1);
-        if target_ras.len() < 2 * chunk {
-            return target_ras
-                .iter()
-                .zip(target_decs)
-                .map(|(&ra, &dec)| one(ra, dec))
-                .collect();
-        }
-        target_ras
-            .par_iter()
-            .zip(target_decs.par_iter())
-            .with_min_len(chunk)
-            .map(|(&ra, &dec)| one(ra, dec))
-            .collect()
+/// `one(ra, dec)` for every target, in order.
+///
+/// What a target costs varies by orders of magnitude: a scan of the catalogue
+/// for a circle, and for a polygon also a test of every nearby star, at every
+/// candidate roll when the roll is free. How many stars are nearby depends on
+/// the field and on where the stars lie, so the cost is measured, not
+/// estimated: the first few targets run on the calling thread and are timed.
+/// The rest are spread across the cores only if they amount to
+/// [`PARALLEL_MIN_WORK`], in shares of at least [`PARALLEL_CHUNK_WORK`]. A
+/// group of a few cheap targets (the paired fallback passes the targets of one
+/// time) therefore never reaches the pool, and a batch of dear ones always
+/// does. The results do not depend on the choice.
+fn each_target<T: Send>(
+    target_ras: &[f64],
+    target_decs: &[f64],
+    one: impl Fn(f64, f64) -> T + Sync,
+) -> Vec<T> {
+    let probe = PROBE_TARGETS.min(target_ras.len());
+    let started = std::time::Instant::now();
+    let mut results: Vec<T> = target_ras[..probe]
+        .iter()
+        .zip(&target_decs[..probe])
+        .map(|(&ra, &dec)| one(ra, dec))
+        .collect();
+    let (rest_ras, rest_decs) = (&target_ras[probe..], &target_decs[probe..]);
+    if rest_ras.is_empty() {
+        return results;
     }
+    let per_target = started.elapsed().as_secs_f64() / probe as f64;
+    let remaining = per_target * rest_ras.len() as f64;
+    if remaining < PARALLEL_MIN_WORK.as_secs_f64() {
+        results.extend(
+            rest_ras
+                .iter()
+                .zip(rest_decs)
+                .map(|(&ra, &dec)| one(ra, dec)),
+        );
+        return results;
+    }
+    // Truncation is intended: a share is a whole number of targets.
+    let chunk = (PARALLEL_CHUNK_WORK.as_secs_f64() / per_target.max(f64::MIN_POSITIVE))
+        .ceil()
+        .clamp(1.0, rest_ras.len() as f64) as usize;
+    results.par_extend(
+        rest_ras
+            .par_iter()
+            .zip(rest_decs.par_iter())
+            .with_min_len(chunk)
+            .map(|(&ra, &dec)| one(ra, dec)),
+    );
+    results
 }
 
 impl ConstraintEvaluator for BrightStarEvaluator {
@@ -572,8 +598,7 @@ impl ConstraintEvaluator for BrightStarEvaluator {
 
         // Bright-star violation is time-invariant: evaluate once per target.
         // Parallelise across targets since each is fully independent.
-        let violated =
-            self.each_target(target_ras, target_decs, |ra, dec| self.is_violated(ra, dec));
+        let violated = each_target(target_ras, target_decs, |ra, dec| self.is_violated(ra, dec));
 
         let mut result = Array2::from_elem((n_targets, n_times), false);
         for (i, &v) in violated.iter().enumerate() {
@@ -625,7 +650,7 @@ impl ConstraintEvaluator for BrightStarEvaluator {
 
         // Each target is independent and time-invariant: parallelise across targets,
         // do gnomonic projection ONCE per target, then sweep cached rolls.
-        let violated = self.each_target(target_ras, target_decs, |ra_deg, dec_deg| {
+        let violated = each_target(target_ras, target_decs, |ra_deg, dec_deg| {
             let target_ra_rad = ra_deg.to_radians();
             let target_dec_rad = dec_deg.to_radians();
             let (sin_tdec, cos_tdec) = target_dec_rad.sin_cos();
@@ -691,7 +716,7 @@ impl ConstraintEvaluator for BrightStarEvaluator {
         let (sin_roll, cos_roll) = roll_deg.degrees().to_radians().sin_cos();
 
         // Bright-star violation is time-invariant; evaluate once per target, parallelise.
-        let violated = self.each_target(target_ras, target_decs, |ra_deg, dec_deg| {
+        let violated = each_target(target_ras, target_decs, |ra_deg, dec_deg| {
             let target_ra_rad = ra_deg.to_radians();
             let target_dec_rad = dec_deg.to_radians();
             let sin_tdec = target_dec_rad.sin();
