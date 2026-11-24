@@ -366,9 +366,13 @@ impl GridResult {
             violated.as_slice().expect("standard layout"),
             |tag| named.get(tag).and_then(|mask| mask.as_slice()),
         );
-        Ok(first_violated_labels(py, &self.component_order, indices)?
-            .call_method1("reshape", (grid.violated.dim(),))?
-            .unbind())
+        let labels = first_violated_labels(py, &self.component_order, indices)?
+            .call_method1("reshape", (grid.violated.dim(),))?;
+        // Read-only, as the other arrays of the grid are.
+        let read_only = pyo3::types::PyDict::new(py);
+        read_only.set_item("write", false)?;
+        labels.call_method("setflags", (), Some(&read_only))?;
+        Ok(labels.unbind())
     }
 
     /// numpy float array (n_targets,) of target right ascensions in degrees.

@@ -3,6 +3,8 @@ visibility windows. Both must be what the mask of ``in_constraint_batch``
 gives, without the mask being built."""
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from fractions import Fraction
 
 import numpy as np
 import numpy.typing as npt
@@ -212,3 +214,37 @@ def test_invalid_requests_are_rejected(ephem: TLEEphemeris) -> None:
             call(ephem, ras, decs, times=BEGIN, indices=0)
         with pytest.raises(IndexError):
             call(ephem, ras, decs, indices=[N_ROWS])
+
+
+def test_coordinates_follow_the_rule_of_the_mask(ephem: TLEEphemeris) -> None:
+    """Text is refused, and numbers held as objects are read, as
+    ``in_constraint_batch`` and ``evaluate_grid`` do."""
+    constraint = constraints()["or"]
+    ras, decs = targets(3)
+    expected = constraint.violated_count(ephem, ras, decs)
+    decimals = np.array([Decimal(float(ra)) for ra in ras], dtype=object)
+    fractions = np.array([Fraction(float(dec)) for dec in decs], dtype=object)
+    np.testing.assert_array_equal(
+        constraint.violated_count(ephem, decimals, fractions), expected
+    )
+    np.testing.assert_array_equal(
+        constraint.violated_count(ephem, ras.astype(object), decs.astype(object)),
+        expected,
+    )
+    text = np.array(["10", "20", "30"])
+    mixed = np.array([10.0, "20", 30.0], dtype=object)
+    missing = np.array([1.0, 2.0, None], dtype=object)
+    for call in (constraint.violated_count, constraint.visibility_windows):
+        with pytest.raises(TypeError, match="target_ras must be a 1-D sequence"):
+            call(ephem, text, decs)
+        with pytest.raises(TypeError, match="target_decs must be a 1-D sequence"):
+            call(ephem, ras, text)
+        with pytest.raises(TypeError, match=r"target_ras\[1\] is a str"):
+            call(ephem, mixed, decs)
+        with pytest.raises(TypeError, match=r"target_decs\[2\] is a NoneType"):
+            call(ephem, ras, missing)
+    # The grid refuses the same inputs with the same words.
+    with pytest.raises(TypeError, match="target_ras must be a 1-D sequence"):
+        constraint.evaluate_grid(ephem, text, decs)
+    with pytest.raises(TypeError, match=r"target_ras\[1\] is a str"):
+        constraint.evaluate_grid(ephem, mixed, decs)

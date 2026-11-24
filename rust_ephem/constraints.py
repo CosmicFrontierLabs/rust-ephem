@@ -222,6 +222,38 @@ class RollReference(str, Enum):
     NORTH = "north"
 
 
+def _coordinates(
+    values: Sequence[SupportsFloat] | npt.ArrayLike, name: str
+) -> npt.NDArray[np.float64]:
+    """Target coordinates as floats, by the rule of the batch and grid
+    methods: booleans, integers and floats, and numbers held as Python objects
+    (``Decimal``, ``Fraction``); text is a ``TypeError``, as are ``None`` and
+    any other dtype."""
+    given = np.asarray(values)
+    if given.dtype.kind == "O":
+        if given.ndim != 1:
+            raise ValueError(
+                f"{name} must be a 1-D sequence of numbers: it is not one-dimensional"
+            )
+        numbers = np.empty(len(given), dtype=np.float64)
+        for i, item in enumerate(given):
+            try:
+                if isinstance(item, (str, bytes)):
+                    raise TypeError
+                numbers[i] = float(item)
+            except (TypeError, ValueError):
+                raise TypeError(
+                    f"{name} must be a 1-D sequence of numbers: "
+                    f"{name}[{i}] is a {type(item).__name__}"
+                ) from None
+        return numbers
+    if given.dtype.kind not in "biuf":
+        raise TypeError(
+            f"{name} must be a 1-D sequence of numbers, not of dtype {given.dtype}"
+        )
+    return given.astype(np.float64)
+
+
 class RustConstraintMixin(BaseModel):
     """Base class for Rust constraint configurations"""
 
@@ -797,8 +829,8 @@ class RustConstraintMixin(BaseModel):
         roll go to the backend that leaves the roll free, the others to the
         fixed-roll backend with their rolls. Returns the coordinates and, for
         each group, its target indices, backend and rolls."""
-        ras = np.asarray(target_ras, dtype=np.float64)
-        decs = np.asarray(target_decs, dtype=np.float64)
+        ras = _coordinates(target_ras, "target_ras")
+        decs = _coordinates(target_decs, "target_decs")
         if ras.ndim != 1 or ras.shape != decs.shape:
             raise ValueError("target_ras and target_decs must have the same length")
         if target_rolls is None:

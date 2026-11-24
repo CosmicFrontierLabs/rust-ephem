@@ -114,6 +114,9 @@ def test_first_violated_is_the_first_flagged_rule(
     flags = [grid.component_violated[tag] & grid.constraint_array for tag in order]
     cells = grid.first_violated
     assert cells.shape == grid.shape
+    # Read-only, as the other arrays of a grid are.
+    with pytest.raises(ValueError, match="read-only"):
+        cells[0, 0] = "sun"
     np.testing.assert_array_equal(cells, np.select(flags, order, default=""))
 
 
