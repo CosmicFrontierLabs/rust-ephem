@@ -31,12 +31,22 @@ impl DiagonalEvaluation {
 /// Elements above which a paired kernel is shared across the cores.
 pub const PARALLEL_MIN_ELEMENTS: usize = 8192;
 
+/// Fewest elements handed to one core. An element costs tens of nanoseconds,
+/// so a smaller share costs more to hand out than to compute, and a machine
+/// with many cores would be slower than one core on a moderate input.
+pub const PARALLEL_CHUNK_ELEMENTS: usize = 4096;
+
 /// `one(i)` for every element `i` below `count`, in order. Elements are
-/// independent, so a large input is spread across the cores.
+/// independent, so a large input is spread across the cores, each taking at
+/// least [`PARALLEL_CHUNK_ELEMENTS`].
 pub fn each_element<T: Send>(count: usize, one: impl Fn(usize) -> T + Sync) -> Vec<T> {
     use rayon::prelude::*;
     if count >= PARALLEL_MIN_ELEMENTS {
-        (0..count).into_par_iter().map(&one).collect()
+        (0..count)
+            .into_par_iter()
+            .with_min_len(PARALLEL_CHUNK_ELEMENTS)
+            .map(&one)
+            .collect()
     } else {
         (0..count).map(one).collect()
     }
@@ -67,10 +77,13 @@ pub fn time_indices(
     Ok(indices)
 }
 
-/// Safe linear fallback for leaves without a dedicated paired kernel. A
-/// one-sample ephemeris also bounds allocations inside existing batch helpers:
-/// selecting a timestamp from the full ephemeris for each target would still
-/// copy O(N) ephemeris data N times.
+/// Fallback for leaves without a dedicated paired kernel: the elements of
+/// each distinct time are evaluated together, as one column of that leaf's
+/// batch kernel on a one-sample ephemeris. A grid passed as paired elements
+/// (every target at every time) therefore costs one batch call per time, and
+/// a track of distinct times one call per element. The one-sample ephemeris
+/// bounds allocations inside the batch helpers: selecting a timestamp from the
+/// full ephemeris for each call would copy O(N) ephemeris data every time.
 pub fn evaluate<T: ConstraintEvaluator + ?Sized>(
     evaluator: &T,
     ephemeris: &dyn EphemerisBase,
@@ -79,45 +92,54 @@ pub fn evaluate<T: ConstraintEvaluator + ?Sized>(
     indices: Option<&[usize]>,
 ) -> PyResult<DiagonalEvaluation> {
     let indices = time_indices(ephemeris, ras, decs, indices)?;
+    let n = ras.len();
     let mut result = DiagonalEvaluation {
-        violated: Vec::with_capacity(ras.len()),
+        violated: vec![false; n],
         named: HashMap::new(),
         values: HashMap::new(),
         cause_value_keys: HashMap::new(),
     };
-    for (i, &time_index) in indices.iter().enumerate() {
-        let sample = SampleEphemeris::new(ephemeris, time_index);
+    // Elements in order of time, so that those of one time are adjacent.
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by_key(|&i| indices[i]);
+    let (mut group_ras, mut group_decs) = (Vec::new(), Vec::new());
+    let mut have_keys = false;
+    for group in order.chunk_by(|&a, &b| indices[a] == indices[b]) {
+        group_ras.clear();
+        group_decs.clear();
+        group_ras.extend(group.iter().map(|&i| ras[i]));
+        group_decs.extend(group.iter().map(|&i| decs[i]));
+        let sample = SampleEphemeris::new(ephemeris, indices[group[0]]);
         let mask = evaluator.in_constraint_batch_with_causes(
             &sample,
-            &ras[i..i + 1],
-            &decs[i..i + 1],
+            &group_ras,
+            &group_decs,
             None,
             None,
         )?;
-        let values =
-            evaluator.compute_named_values(&sample, &ras[i..i + 1], &decs[i..i + 1], None)?;
-        if i == 0 {
-            result.cause_value_keys = evaluator.compute_cause_value_keys(
-                &sample,
-                &ras[i..i + 1],
-                &decs[i..i + 1],
-                None,
-            )?;
+        let values = evaluator.compute_named_values(&sample, &group_ras, &group_decs, None)?;
+        if !have_keys {
+            result.cause_value_keys =
+                evaluator.compute_cause_value_keys(&sample, &group_ras, &group_decs, None)?;
+            have_keys = true;
         }
-        result.violated.push(mask.violated[[0, 0]]);
-        for (key, values) in mask.named {
-            result
-                .named
-                .entry(key)
-                .or_insert_with(|| Vec::with_capacity(ras.len()))
-                .push(values[[0, 0]]);
+        for (place, &i) in group.iter().enumerate() {
+            result.violated[i] = mask.violated[[place, 0]];
         }
-        for (key, values) in values {
-            result
+        for (key, column) in mask.named {
+            let out = result.named.entry(key).or_insert_with(|| vec![false; n]);
+            for (place, &i) in group.iter().enumerate() {
+                out[i] = column[[place, 0]];
+            }
+        }
+        for (key, column) in values {
+            let out = result
                 .values
                 .entry(key)
-                .or_insert_with(|| Vec::with_capacity(ras.len()))
-                .push(values[[0, 0]]);
+                .or_insert_with(|| vec![f64::NAN; n]);
+            for (place, &i) in group.iter().enumerate() {
+                out[i] = column[[place, 0]];
+            }
         }
     }
     // Preserve the value/cause schema for an empty explicit track.

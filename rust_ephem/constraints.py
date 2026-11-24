@@ -1137,8 +1137,8 @@ class RustConstraintMixin(BaseModel):
             (its keys in the order the rules were written), ``first_violated``
             (``(M, N)`` str array: the first rule in that order violated where
             the constraint is, ``""`` where it is satisfied),
-            ``cause_value_keys``, ``constraint_name``, ``timestamp`` (length N), ``ras`` and ``decs``
-            (length M). ``result.target(i)`` builds the
+            ``cause_value_keys``, ``constraint_name``, ``timestamp`` (length N),
+            ``ras`` and ``decs`` (length M). ``result.target(i)`` builds the
             :class:`ConstraintResult`-like result of one target, with its
             violation and visibility windows, on demand. The grid arrays
             and ``timestamp`` are read-only; ``ras`` and ``decs`` are copies.
@@ -2492,8 +2492,8 @@ class StrayLightStatus(int, Enum):
         array of any shape, as ``constraint_values`` reports it. Returns a
         string array of the same shape holding each entry's :attr:`label`
         (``"ok"``, ``"dark"``, ``"in_field"``, ``"first_cell"``,
-        ``"unconverged"`` or ``"occulted"``), and an empty string for an entry that is not a
-        status (NaN, for instance).
+        ``"unconverged"`` or ``"occulted"``), and an empty string for an
+        entry that is not a status (NaN, for instance).
         """
         codes = np.asarray(values, dtype=np.float64)
         names = np.array([status.label for status in cls] + [""])

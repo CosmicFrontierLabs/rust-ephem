@@ -109,14 +109,26 @@ pub fn python_datetimes_to_utc(times: &Bound<PyAny>) -> PyResult<Vec<DateTime<Ut
 /// path gives, to the microsecond.
 ///
 /// # Errors
-/// `ValueError` for an instant that is not finite or lies within a leap
-/// second, which a UTC `datetime64` cannot hold.
+/// `ValueError` for a masked entry, and for an instant that is not finite or
+/// lies within a leap second, which a UTC `datetime64` cannot hold.
 fn astropy_time_to_datetime64<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> {
     if !(obj.hasattr("jd1")? && obj.hasattr("scale")? && obj.hasattr("utc")?) {
         return Ok(None);
     }
     let py = obj.py();
     let np = py.import("numpy")?;
+    // A masked entry still holds the Julian date it had before it was masked,
+    // so reading the parts would evaluate it at a time the caller withdrew.
+    if obj.hasattr("masked")? && obj.getattr("masked")?.is_truthy()? {
+        let masked = np
+            .call_method1("flatnonzero", (obj.getattr("mask")?,))?
+            .extract::<Vec<usize>>()?;
+        if let Some(i) = masked.first() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "times[{i}] is masked"
+            )));
+        }
+    }
     let utc = obj.getattr("utc")?;
     let jd1 = utc.getattr("jd1")?;
     let shape = np.call_method1("shape", (&jd1,))?;
@@ -300,6 +312,9 @@ fn utc_jd_to_unix_micros(
 
 /// `datetime64` entries above which the conversion is shared across the cores.
 const DATETIME64_PARALLEL_MIN_LEN: usize = 8192;
+/// Fewest entries converted by one core: a conversion costs a few
+/// nanoseconds, so a smaller share costs more to hand out than to convert.
+const DATETIME64_PARALLEL_CHUNK: usize = 4096;
 
 /// Convert NumPy `datetime64` data (array or scalar, any unit) to UTC instants
 /// in flattened (C) order, and likewise an astropy `Time`. Returns `Ok(None)`
@@ -351,7 +366,11 @@ fn datetime64_to_utc_from(
                 .flatten()
         };
         let converted: Option<Vec<DateTime<Utc>>> = match micros.as_slice() {
-            Some(values) => values.par_iter().map(valid).collect(),
+            Some(values) => values
+                .par_iter()
+                .with_min_len(DATETIME64_PARALLEL_CHUNK)
+                .map(valid)
+                .collect(),
             None => None,
         };
         if converted.is_some() {

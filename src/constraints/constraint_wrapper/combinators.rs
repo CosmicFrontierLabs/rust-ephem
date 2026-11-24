@@ -378,8 +378,7 @@ fn sweep_combination(
     n_roll_samples: usize,
     is_and: bool,
 ) -> PyResult<Array2<bool>> {
-    // A child that follows the candidate roll shares the sweep even when it
-    // would not start one itself.
+    // A child can share the candidate roll without starting a sweep itself.
     let (dependent, fixed): (Vec<&dyn ConstraintEvaluator>, Vec<_>) = children
         .iter()
         .map(|child| &**child)

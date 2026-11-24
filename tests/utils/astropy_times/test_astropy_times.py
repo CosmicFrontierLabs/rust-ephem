@@ -215,6 +215,31 @@ def test_a_time_within_a_leap_second_is_refused(ensure_planetary_data: None) -> 
         ephem.gcrs_pv_at(Time("2016-12-31T23:59:60.5", scale="utc"))
 
 
+def test_a_masked_time_is_refused(ephem: TLEEphemeris) -> None:
+    """A masked entry still holds the instant it had, which must not be used."""
+    times = instants(on_grid=True)
+    when = Time(times.astype("datetime64[ns]"), scale="utc")
+    when[3] = np.ma.masked
+    ras, decs = targets()
+    with pytest.raises(ValueError, match=r"times\[3\] is masked"):
+        ephem.gcrs_pv_at(when)
+    with pytest.raises(ValueError, match=r"times\[3\] is masked"):
+        ephem.get_body_pv("moon", times=when.tt)
+    with pytest.raises(ValueError, match=r"times\[3\] is masked"):
+        constraint().in_constraint_batch(ephem, ras, decs, times=when)
+    with pytest.raises(ValueError, match=r"times\[3\] is masked"):
+        constraint().in_constraint_elementwise(ephem, ras, decs, times=when)
+    scalar = Time("2024-01-01T00:10:00", scale="utc")
+    scalar[()] = np.ma.masked
+    with pytest.raises(ValueError, match=r"times\[0\] is masked"):
+        ephem.gcrs_pv_at(scalar)
+    # Unmasked again, the same object is read as before.
+    when[3] = Time(times[3].astype("datetime64[ns]"), scale="utc")
+    np.testing.assert_array_equal(
+        ephem.gcrs_pv_at(when).position, ephem.gcrs_pv_at(times).position
+    )
+
+
 def test_a_time_keeps_its_shape(ephem: TLEEphemeris) -> None:
     times = instants(on_grid=False)
     when = Time(times.astype("datetime64[ns]"), scale="utc")

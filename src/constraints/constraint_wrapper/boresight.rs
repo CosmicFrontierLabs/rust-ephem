@@ -760,6 +760,16 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         self.constraint.is_target_dependent()
     }
 
+    /// Never: the offset must be applied to the target as the observer sees
+    /// it, so the target is corrected before it is rotated. A view that leaves
+    /// the correction to the kernels would have the inner rule correct the
+    /// rotated direction instead, which is a different direction (by degrees,
+    /// for a target near a celestial pole). This matters even when the inner
+    /// mask ignores the target, since its values may not.
+    fn applies_target_corrections(&self) -> bool {
+        false
+    }
+
     /// Roll-dependent if this node's own offset leaves roll free, or if the inner
     /// constraint is itself roll-dependent (e.g. a `SolarRoll` or a polygon FoV
     /// nested under a zero-offset wrapper). Mirrors the Python-side

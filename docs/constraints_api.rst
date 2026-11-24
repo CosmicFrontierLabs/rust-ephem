@@ -1676,8 +1676,8 @@ constants, so this one number is all the radiometry the constraint needs.
    - ``OCCULTED`` (5): the Earth hides the whole body; it contributes nothing,
      which counts as a prediction
 
-   ``is_valid`` is true for ``OK``, ``DARK`` and ``OCCULTED``. ``label`` is the
-   lower-case name of a status (``"in_field"``), and
+   ``is_valid`` is true for ``OK``, ``DARK`` and ``OCCULTED``.
+   ``label`` is the lower-case name of a status (``"in_field"``).
    ``StrayLightStatus.labels(values)`` names every entry of a ``sun_status``,
    ``earth_status`` or ``moon_status`` array of any shape, with an empty string
    for an entry that is not a status.
@@ -2076,7 +2076,9 @@ All Pydantic constraint models inherit these methods:
       roll had been passed in ``target_rolls``, so one call replaces a call to
       read the nominal roll and a second to apply the offset. ``None`` entries
       are elements without a roll. For a ``StrayLightConstraint`` an entry
-      takes the place of ``roll_offset_deg`` for its element.
+      takes the place of ``roll_offset_deg`` for its element. This zero is
+      not that of ``boresight_offset(roll_reference="sun")``, which turns +Z
+      toward the Sun: the two differ by 90 degrees.
    :type roll_offsets: list[float | None] or None
    :returns: 1D numpy boolean array of shape (N,), ``True`` where violated
    :rtype: numpy.ndarray
@@ -2123,11 +2125,15 @@ All Pydantic constraint models inherit these methods:
       )
       rows.first_violated          # "sun", "earth_limb", ... or "" per row
 
-**Times.** Wherever a method takes ``time`` or ``times``, it accepts a
-``datetime``, a list of them, a NumPy ``datetime64`` array (read as UTC) or an
-astropy ``Time``. A ``Time`` in any scale is converted to UTC and rounded to
-the microsecond, so one built from an MJD or by adding seconds still lands on
-the ephemeris rows it was meant to.
+**Times.** The evaluation methods (``in_constraint``, ``evaluate``, the batch,
+grid and elementwise methods) and the ephemeris ``*_pv_at`` and
+``get_body_pv`` methods accept, as ``time`` or ``times``, a ``datetime``, a
+list of them, a NumPy ``datetime64`` array (read as UTC) or an astropy
+``Time``. A ``Time`` in any scale is converted to UTC and rounded to the
+microsecond, so one built from an MJD or by adding seconds still lands on the
+ephemeris rows it was meant to. A masked entry of a ``Time`` raises
+``ValueError``, as a ``NaT`` does. ``route_around`` and ``Ephemeris.index``
+take a ``datetime`` only.
 
 .. py:method:: in_constraint(time, ephemeris, target_ra, target_dec, target_roll=None, n_roll_samples=DEFAULT_N_ROLL_SAMPLES, apparent=False)
 
@@ -2224,6 +2230,8 @@ the ephemeris rows it was meant to.
       relative to the spacecraft's nominal roll frame.  Default ``0.0``.
    :param bool roll_clockwise: If True, positive roll is clockwise looking along +X.
    :param str roll_reference: Roll-zero reference axis. Default is ``"north"`` for celestial-north-projected +Z zero-roll. Use ``"sun"`` for Sun-projected +Z zero-roll.
+      The nominal roll of ``roll_offsets`` and of ``StrayLightConstraint`` turns +Y toward
+      the Sun instead, 90 degrees from the ``"sun"`` zero here.
    :param float pitch_deg: Fixed boresight pitch offset about +Y in degrees
    :param float yaw_deg: Fixed boresight yaw offset about +Z in degrees
    :returns: BoresightOffsetConstraint wrapping this constraint

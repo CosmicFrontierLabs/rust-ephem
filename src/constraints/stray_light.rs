@@ -1490,13 +1490,7 @@ impl StrayLightEvaluator {
         let one = |index: usize| {
             keep(&self.report(targets[index / n_times], &bodies[index % n_times], mode))
         };
-        let count = targets.len() * n_times;
-        let cells = if count >= PARALLEL_MIN_CELLS {
-            (0..count).into_par_iter().map(one).collect()
-        } else {
-            (0..count).map(one).collect()
-        };
-        Ok((cells, n_times))
+        Ok((Self::each(targets.len() * n_times, one), n_times))
     }
 }
 

@@ -256,13 +256,39 @@ impl StatesAt {
 
 impl StatesAt {
     /// The states of a held body; `None` for the Earth, at the origin.
-    fn held(&self, body: Held) -> PyResult<Option<&Array2<f64>>> {
-        Ok(match body {
-            Held::Earth => None,
-            Held::Sun => Some(self.sun()?),
-            Held::Moon => Some(self.moon()?),
-        })
+    /// Use the same Sun and Moon states as the constraints, warning if a
+    /// kernel was loaded after the ephemeris computed its analytic states.
+    fn held(&self, data: &EphemerisData, body: Held) -> PyResult<Option<&Array2<f64>>> {
+        let states = match body {
+            Held::Earth => return Ok(None),
+            Held::Sun => self.sun()?,
+            Held::Moon => self.moon()?,
+        };
+        if data.sun_moon_analytic
+            && crate::ephemeris::spice_manager::is_planetary_ephemeris_initialized()
+        {
+            warn_analytic_states_in_use()?;
+        }
+        Ok(Some(states))
     }
+}
+
+/// Warn that the Sun and Moon states an ephemeris holds are analytic although
+/// a planetary kernel is now loaded.
+fn warn_analytic_states_in_use() -> PyResult<()> {
+    Python::attach(|py| {
+        let category = py.get_type::<pyo3::exceptions::PyUserWarning>();
+        PyErr::warn(
+            py,
+            &category,
+            c"This ephemeris was built before a planetary kernel was loaded, so the Sun and Moon \
+              states it holds are analytic (the Moon may be off by ~200 km and the Sun by a few \
+              km). They are used here, as they are by constraints and by sun_pv_at/moon_pv_at. \
+              Rebuild the ephemeris to use the kernel, or pass spice_kernel= to read it for this \
+              call.",
+            1,
+        )
+    })
 }
 
 /// Observer-centred geometric states (N x 6, km and km/s, GCRS axes) of a body
@@ -278,7 +304,7 @@ fn geometric_body_states_at(
     spice_kernel: Option<&str>,
     use_horizons: bool,
 ) -> PyResult<Vec<Array2<f64>>> {
-    let held = held_bodies(data, bodies, spice_kernel)?;
+    let held = held_bodies(bodies, spice_kernel);
     let states = StatesAt::new(
         data,
         times,
@@ -290,7 +316,7 @@ fn geometric_body_states_at(
         .zip(&held)
         .map(|(body, held)| {
             Ok(match held {
-                Some(held) => match states.held(*held)? {
+                Some(held) => match states.held(data, *held)? {
                     None => &states.observer * -1.0,
                     Some(body) => body - &states.observer,
                 },
@@ -314,48 +340,11 @@ fn geometric_body_states_at(
 
 /// Which of `bodies` the ephemeris holds states for. None of them when a
 /// kernel is named: every body is then read from it.
-///
-/// The held Sun and Moon are what constraints and `sun_pv_at`/`moon_pv_at`
-/// use, so they are used even when they are analytic. If a planetary kernel
-/// has been loaded since the ephemeris was built, the kernel-backed calls
-/// (`get_body_pv(body)` on the grid, `get_body`, `spice_kernel=`) no longer
-/// agree with them, and a `UserWarning` says so.
-fn held_bodies(
-    data: &EphemerisData,
-    bodies: &[&str],
-    spice_kernel: Option<&str>,
-) -> PyResult<Vec<Option<Held>>> {
-    let held: Vec<Option<Held>> = bodies
+fn held_bodies(bodies: &[&str], spice_kernel: Option<&str>) -> Vec<Option<Held>> {
+    bodies
         .iter()
         .map(|body| Held::parse(body).filter(|_| spice_kernel.is_none()))
-        .collect();
-    if data.sun_moon_analytic
-        && held
-            .iter()
-            .any(|held| matches!(held, Some(Held::Sun | Held::Moon)))
-        && crate::ephemeris::spice_manager::is_planetary_ephemeris_initialized()
-    {
-        warn_analytic_states_in_use()?;
-    }
-    Ok(held)
-}
-
-/// Warn that the Sun and Moon states an ephemeris holds are analytic although
-/// a planetary kernel is now loaded.
-fn warn_analytic_states_in_use() -> PyResult<()> {
-    Python::attach(|py| {
-        let category = py.get_type::<pyo3::exceptions::PyUserWarning>();
-        PyErr::warn(
-            py,
-            &category,
-            c"This ephemeris was built before a planetary kernel was loaded, so the Sun and Moon \
-              states it holds are analytic (the Moon may be off by ~200 km and the Sun by a few \
-              km). They are used here, as they are by constraints and by sun_pv_at/moon_pv_at. \
-              Rebuild the ephemeris to use the kernel, or pass spice_kernel= to read it for this \
-              call.",
-            1,
-        )
-    })
+        .collect()
 }
 
 /// Observer-centred apparent positions (N x 3, km, GCRS axes) of a body at
@@ -372,7 +361,7 @@ fn apparent_body_positions_at(
     spice_kernel: Option<&str>,
     for_differencing: bool,
 ) -> PyResult<Vec<Array2<f64>>> {
-    let held = held_bodies(data, bodies, spice_kernel)?;
+    let held = held_bodies(bodies, spice_kernel);
     let moon = held.contains(&Some(Held::Moon));
     let states = if for_differencing {
         StatesAt::smoothed(data, times, moon)?
@@ -384,7 +373,7 @@ fn apparent_body_positions_at(
     let tables = held
         .iter()
         .flatten()
-        .map(|held| states.held(*held))
+        .map(|held| states.held(data, *held))
         .collect::<PyResult<Vec<_>>>()?;
     let mut solved = if tables.is_empty() {
         Vec::new()

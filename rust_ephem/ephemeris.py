@@ -2,7 +2,7 @@
 import abc
 from collections.abc import Iterable, Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 
 import numpy as np
 import numpy.typing as npt
@@ -121,16 +121,38 @@ class Ephemeris(abc.ABC):
         """Moon GCRS position/velocity at arbitrary time(s); see ``gcrs_pv_at``."""
         ...
 
-    @abc.abstractmethod
+    @overload
     def get_body_pv(
         self,
         body: str,
         spice_kernel: str | None = None,
         use_horizons: bool = False,
         *,
-        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time | None" = None,
         apparent: bool = False,
-    ) -> PositionVelocityData:
+    ) -> PositionVelocityData: ...
+
+    @overload
+    def get_body_pv(
+        self,
+        body: list[str] | tuple[str, ...],
+        spice_kernel: str | None = None,
+        use_horizons: bool = False,
+        *,
+        times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time | None" = None,
+        apparent: bool = False,
+    ) -> dict[str, PositionVelocityData]: ...
+
+    @abc.abstractmethod
+    def get_body_pv(
+        self,
+        body: str | list[str] | tuple[str, ...],
+        spice_kernel: str | None = None,
+        use_horizons: bool = False,
+        *,
+        times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time | None" = None,
+        apparent: bool = False,
+    ) -> PositionVelocityData | dict[str, PositionVelocityData]:
         """Position (km) and velocity (km/s) of a body relative to the observer.
 
         GCRS axes. By default the states are geometric and on the ephemeris
@@ -141,12 +163,13 @@ class Ephemeris(abc.ABC):
 
         Args:
             body: Body name or NAIF ID (``"sun"``, ``"moon"``, ``"earth"``,
-                ``"499"``).
+                ``"499"``), or a list or tuple of these. Several bodies return
+                a dictionary keyed by the supplied names or IDs.
             spice_kernel: Optional path to a SPICE kernel to read the body from.
             use_horizons: Geometric queries only: fall back to the JPL Horizons
                 API when SPICE fails.
             times: A datetime, an iterable of datetimes or a one-dimensional
-                ``datetime64`` array (read as UTC).
+                ``datetime64`` array (read as UTC), or an astropy ``Time``.
             apparent: Return the apparent state.
 
         Raises:
