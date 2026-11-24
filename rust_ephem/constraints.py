@@ -254,6 +254,20 @@ def _coordinates(
     return given.astype(np.float64)
 
 
+def _roll(value: SupportsFloat, index: int) -> float:
+    """One entry of ``target_rolls`` as a float. Text is a ``TypeError``, as it
+    is in the batch and grid methods, and so is anything else that is not a
+    number."""
+    try:
+        if isinstance(value, (str, bytes)):
+            raise TypeError
+        return float(value)
+    except (TypeError, ValueError):
+        raise TypeError(
+            f"target_rolls[{index}] must be a number, not a {type(value).__name__}"
+        ) from None
+
+
 class RustConstraintMixin(BaseModel):
     """Base class for Rust constraint configurations"""
 
@@ -855,7 +869,7 @@ class RustConstraintMixin(BaseModel):
         if len(free):
             groups.append((free, self._resolve_evaluation_constraint(None), None))
         if len(fixed):
-            rolls = [float(roll) for roll in target_rolls if roll is not None]
+            rolls = [_roll(target_rolls[i], int(i)) for i in fixed]
             groups.append((fixed, self._get_cached_rust_constraint(), rolls))
         return ras, decs, groups
 

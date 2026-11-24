@@ -248,3 +248,31 @@ def test_coordinates_follow_the_rule_of_the_mask(ephem: TLEEphemeris) -> None:
         constraint.evaluate_grid(ephem, text, decs)
     with pytest.raises(TypeError, match=r"target_ras\[1\] is a str"):
         constraint.evaluate_grid(ephem, mixed, decs)
+
+
+def test_rolls_follow_the_rule_of_the_mask(ephem: TLEEphemeris) -> None:
+    """A roll given as text is refused, as ``in_constraint_batch`` refuses it;
+    a number of another type is read."""
+    constraint = constraints()["solar_roll"]
+    ras, decs = targets(3)
+    expected = constraint.violated_count(
+        ephem, ras, decs, target_rolls=[5.0, None, 40.0]
+    )
+    np.testing.assert_array_equal(
+        constraint.violated_count(
+            ephem, ras, decs, target_rolls=[5, None, np.float64(40.0)]
+        ),
+        expected,
+    )
+    for call in (constraint.violated_count, constraint.visibility_windows):
+        with pytest.raises(TypeError, match=r"target_rolls\[2\] must be a number"):
+            call(ephem, ras, decs, target_rolls=[5.0, None, "40"])  # type: ignore[list-item]
+        with pytest.raises(TypeError, match=r"target_rolls\[0\] must be a number"):
+            call(ephem, ras, decs, target_rolls=[b"5", None, 40.0])  # type: ignore[list-item]
+    with pytest.raises(TypeError):
+        constraint.in_constraint_batch(
+            ephem,
+            ras.tolist(),
+            decs.tolist(),
+            target_rolls=["5", "5", "5"],  # type: ignore[list-item]
+        )
