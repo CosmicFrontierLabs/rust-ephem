@@ -760,6 +760,29 @@ impl ConstraintEvaluator for BoresightOffsetEvaluator {
         self.constraint.is_target_dependent()
     }
 
+    fn values_depend_on_target(&self) -> bool {
+        self.constraint.values_depend_on_target()
+    }
+
+    /// The offset must be applied to the target as the observer sees it, so
+    /// the target is corrected before it is rotated. A view that leaves the
+    /// correction to the kernels would have the inner rule correct the rotated
+    /// direction instead, which is a different direction (by degrees, for a
+    /// target near a celestial pole). So an offset rule takes such a view only
+    /// when that cannot matter:
+    ///
+    /// - without a pitch or yaw offset the rotated direction is the target
+    ///   itself, and the inner rule decides;
+    /// - an inner rule whose mask and values both ignore the target (eclipse,
+    ///   daytime, SAA) gives the same result for any direction. The mask alone
+    ///   is not enough: a Moon phase rule reports a distance to the target.
+    fn applies_target_corrections(&self) -> bool {
+        if self.pitch_deg.abs() <= NEAR_ZERO && self.yaw_deg.abs() <= NEAR_ZERO {
+            return self.constraint.applies_target_corrections();
+        }
+        !self.constraint.is_target_dependent() && !self.constraint.values_depend_on_target()
+    }
+
     /// Roll-dependent if this node's own offset leaves roll free, or if the inner
     /// constraint is itself roll-dependent (e.g. a `SolarRoll` or a polygon FoV
     /// nested under a zero-offset wrapper). Mirrors the Python-side

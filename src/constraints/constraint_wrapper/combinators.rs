@@ -872,6 +872,10 @@ impl ConstraintEvaluator for AndEvaluator {
         self.constraints.iter().any(|c| c.is_target_dependent())
     }
 
+    fn values_depend_on_target(&self) -> bool {
+        self.constraints.iter().any(|c| c.values_depend_on_target())
+    }
+
     fn applies_target_corrections(&self) -> bool {
         self.constraints
             .iter()
@@ -1386,6 +1390,10 @@ impl ConstraintEvaluator for OrEvaluator {
         self.constraints.iter().any(|c| c.is_target_dependent())
     }
 
+    fn values_depend_on_target(&self) -> bool {
+        self.constraints.iter().any(|c| c.values_depend_on_target())
+    }
+
     fn applies_target_corrections(&self) -> bool {
         self.constraints
             .iter()
@@ -1872,6 +1880,10 @@ impl ConstraintEvaluator for NotEvaluator {
         self.constraint.is_target_dependent()
     }
 
+    fn values_depend_on_target(&self) -> bool {
+        self.constraint.values_depend_on_target()
+    }
+
     fn applies_target_corrections(&self) -> bool {
         self.constraint.applies_target_corrections()
     }
@@ -2273,6 +2285,10 @@ impl ConstraintEvaluator for XorEvaluator {
 
     fn is_target_dependent(&self) -> bool {
         self.constraints.iter().any(|c| c.is_target_dependent())
+    }
+
+    fn values_depend_on_target(&self) -> bool {
+        self.constraints.iter().any(|c| c.values_depend_on_target())
     }
 
     fn applies_target_corrections(&self) -> bool {
@@ -2687,6 +2703,10 @@ impl ConstraintEvaluator for AtLeastEvaluator {
 
     fn is_target_dependent(&self) -> bool {
         self.constraints.iter().any(|c| c.is_target_dependent())
+    }
+
+    fn values_depend_on_target(&self) -> bool {
+        self.constraints.iter().any(|c| c.values_depend_on_target())
     }
 
     fn applies_target_corrections(&self) -> bool {

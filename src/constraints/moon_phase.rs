@@ -300,6 +300,11 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
         self.min_distance.is_some() || self.max_distance.is_some()
     }
 
+    /// The Moon distance is reported whether or not it is limited.
+    fn values_depend_on_target(&self) -> bool {
+        true
+    }
+
     fn evaluate(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -592,11 +597,18 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
             observer_positions_all
         };
 
-        let moon_units = self.compute_moon_unit_vectors(&moon_positions, &observer_positions)?;
-        let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
-        let cos_angles = target_vectors.dot(&moon_units.t());
-        let moon_distance_deg =
-            cos_angles.mapv(|cos_angle| cos_angle.clamp(-1.0, 1.0).acos().to_degrees());
+        // The distance depends on the target even when the mask does not (no
+        // distance limit). Such a rule is handed catalogue targets on an
+        // apparent view that leaves the target correction to the kernel, so
+        // the correction is applied here.
+        let moon_distance_deg = super::core::compute_angle_deg_batch_on(
+            ephemeris,
+            time_indices,
+            target_ras,
+            target_decs,
+            &moon_positions,
+            &observer_positions,
+        );
 
         let moon_illumination_frac =
             Array2::from_shape_fn((n_targets, n_times), |(_, t)| illuminations[t]);
