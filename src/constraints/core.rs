@@ -814,6 +814,14 @@ pub trait ConstraintEvaluator: Send + Sync {
         true
     }
 
+    /// Whether any value this tree reports depends on the pointing. It follows
+    /// the mask unless a rule reports a target-dependent value beside a mask
+    /// that ignores the target (a Moon phase rule's distance to the Moon).
+    /// Combinators and wrappers ask it of their children.
+    fn values_depend_on_target(&self) -> bool {
+        self.is_target_dependent()
+    }
+
     /// Whether the batch kernels of this tree correct catalogue targets on an
     /// apparent view that carries `EphemerisBase::target_corrections`, so the
     /// whole target x time grid can be evaluated in one call. Leaves that

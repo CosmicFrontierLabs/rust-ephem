@@ -300,6 +300,11 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
         self.min_distance.is_some() || self.max_distance.is_some()
     }
 
+    /// The Moon distance is reported whether or not it is limited.
+    fn values_depend_on_target(&self) -> bool {
+        true
+    }
+
     fn evaluate(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
