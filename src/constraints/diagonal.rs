@@ -29,7 +29,7 @@ impl DiagonalEvaluation {
 }
 
 /// Elements above which a paired kernel is shared across the cores.
-pub const PARALLEL_MIN_ELEMENTS: usize = 8192;
+pub const PARALLEL_MIN_ELEMENTS: usize = 16_384;
 
 /// Fewest elements handed to one core. An element costs tens of nanoseconds,
 /// so a smaller share costs more to hand out than to compute, and a machine

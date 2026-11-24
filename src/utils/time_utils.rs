@@ -94,7 +94,7 @@ pub fn python_datetimes_to_utc(times: &Bound<PyAny>) -> PyResult<Vec<DateTime<Ut
 }
 
 /// `datetime64` entries above which the conversion is shared across the cores.
-const DATETIME64_PARALLEL_MIN_LEN: usize = 8192;
+const DATETIME64_PARALLEL_MIN_LEN: usize = 16_384;
 /// Fewest entries converted by one core: a conversion costs a few
 /// nanoseconds, so a smaller share costs more to hand out than to convert.
 const DATETIME64_PARALLEL_CHUNK: usize = 4096;

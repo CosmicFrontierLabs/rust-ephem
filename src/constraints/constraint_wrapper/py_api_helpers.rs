@@ -27,7 +27,7 @@ const APPARENT_BLOCK_VALUES: usize = 8_000_000;
 const APPARENT_PARALLEL_MIN_CELLS: usize = 20_000;
 
 /// Paired elements above which their per-element set-up is shared across the cores.
-const ELEMENTWISE_PARALLEL_MIN_ROWS: usize = 8192;
+const ELEMENTWISE_PARALLEL_MIN_ROWS: usize = 16_384;
 /// Fewest paired elements set up by one core; see
 /// [`diagonal::PARALLEL_CHUNK_ELEMENTS`](crate::constraints::diagonal::PARALLEL_CHUNK_ELEMENTS).
 const ELEMENTWISE_PARALLEL_CHUNK: usize = crate::constraints::diagonal::PARALLEL_CHUNK_ELEMENTS;

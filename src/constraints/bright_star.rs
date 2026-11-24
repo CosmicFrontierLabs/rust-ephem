@@ -411,6 +411,42 @@ fn catalogue_unit_vectors<'a>(
     Ok(std::borrow::Cow::Owned(catalogue))
 }
 
+/// Star comparisons (targets x catalogue stars) handed to one core at the
+/// least, about a quarter of a millisecond of work. A target costs one scan of
+/// the catalogue, around a nanosecond a star, and a call from the paired
+/// fallback holds only the targets of one time: handing such a group to the
+/// pool costs more than evaluating it, many times over on a machine with many
+/// cores.
+const PARALLEL_CHUNK_COMPARISONS: usize = 250_000;
+
+impl BrightStarEvaluator {
+    /// `one(ra, dec)` for every target, in order. A batch is spread across
+    /// the cores only when it holds at least two shares of
+    /// [`PARALLEL_CHUNK_COMPARISONS`]; a smaller one stays on the calling
+    /// thread.
+    fn each_target<T: Send>(
+        &self,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        one: impl Fn(f64, f64) -> T + Sync,
+    ) -> Vec<T> {
+        let chunk = (PARALLEL_CHUNK_COMPARISONS / self.stars.len().max(1)).max(1);
+        if target_ras.len() < 2 * chunk {
+            return target_ras
+                .iter()
+                .zip(target_decs)
+                .map(|(&ra, &dec)| one(ra, dec))
+                .collect();
+        }
+        target_ras
+            .par_iter()
+            .zip(target_decs.par_iter())
+            .with_min_len(chunk)
+            .map(|(&ra, &dec)| one(ra, dec))
+            .collect()
+    }
+}
+
 impl ConstraintEvaluator for BrightStarEvaluator {
     fn prepare_attributed_roll_sweep<'a>(
         &'a self,
@@ -536,11 +572,8 @@ impl ConstraintEvaluator for BrightStarEvaluator {
 
         // Bright-star violation is time-invariant: evaluate once per target.
         // Parallelise across targets since each is fully independent.
-        let violated: Vec<bool> = target_ras
-            .par_iter()
-            .zip(target_decs.par_iter())
-            .map(|(&ra, &dec)| self.is_violated(ra, dec))
-            .collect();
+        let violated =
+            self.each_target(target_ras, target_decs, |ra, dec| self.is_violated(ra, dec));
 
         let mut result = Array2::from_elem((n_targets, n_times), false);
         for (i, &v) in violated.iter().enumerate() {
@@ -592,32 +625,28 @@ impl ConstraintEvaluator for BrightStarEvaluator {
 
         // Each target is independent and time-invariant: parallelise across targets,
         // do gnomonic projection ONCE per target, then sweep cached rolls.
-        let violated: Vec<bool> = target_ras
-            .par_iter()
-            .zip(target_decs.par_iter())
-            .map(|(&ra_deg, &dec_deg)| {
-                let target_ra_rad = ra_deg.to_radians();
-                let target_dec_rad = dec_deg.to_radians();
-                let (sin_tdec, cos_tdec) = target_dec_rad.sin_cos();
-                let (sin_tra, cos_tra) = target_ra_rad.sin_cos();
-                let target_unit = [cos_tdec * cos_tra, cos_tdec * sin_tra, sin_tdec];
-                let nearby =
-                    self.nearby_tangent_offsets(target_unit, target_ra_rad, sin_tdec, cos_tdec);
-                if nearby.is_empty() {
-                    return false;
+        let violated = self.each_target(target_ras, target_decs, |ra_deg, dec_deg| {
+            let target_ra_rad = ra_deg.to_radians();
+            let target_dec_rad = dec_deg.to_radians();
+            let (sin_tdec, cos_tdec) = target_dec_rad.sin_cos();
+            let (sin_tra, cos_tra) = target_ra_rad.sin_cos();
+            let target_unit = [cos_tdec * cos_tra, cos_tdec * sin_tra, sin_tdec];
+            let nearby =
+                self.nearby_tangent_offsets(target_unit, target_ra_rad, sin_tdec, cos_tdec);
+            if nearby.is_empty() {
+                return false;
+            }
+            for &(sin_roll, cos_roll) in &roll_table {
+                let any_blocked = nearby.iter().any(|&(east, north)| {
+                    let (u, v) = Self::to_instrument(east, north, sin_roll, cos_roll);
+                    Self::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
+                });
+                if !any_blocked {
+                    return false; // clear roll exists for this target
                 }
-                for &(sin_roll, cos_roll) in &roll_table {
-                    let any_blocked = nearby.iter().any(|&(east, north)| {
-                        let (u, v) = Self::to_instrument(east, north, sin_roll, cos_roll);
-                        Self::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
-                    });
-                    if !any_blocked {
-                        return false; // clear roll exists for this target
-                    }
-                }
-                true
-            })
-            .collect();
+            }
+            true
+        });
 
         let mut result = Array2::from_elem((n_targets, n_times), false);
         for (i, &v) in violated.iter().enumerate() {
@@ -662,24 +691,20 @@ impl ConstraintEvaluator for BrightStarEvaluator {
         let (sin_roll, cos_roll) = roll_deg.degrees().to_radians().sin_cos();
 
         // Bright-star violation is time-invariant; evaluate once per target, parallelise.
-        let violated: Vec<bool> = target_ras
-            .par_iter()
-            .zip(target_decs.par_iter())
-            .map(|(&ra_deg, &dec_deg)| {
-                let target_ra_rad = ra_deg.to_radians();
-                let target_dec_rad = dec_deg.to_radians();
-                let sin_tdec = target_dec_rad.sin();
-                let cos_tdec = target_dec_rad.cos();
-                let (sin_tra, cos_tra) = target_ra_rad.sin_cos();
-                let target_unit = [cos_tdec * cos_tra, cos_tdec * sin_tra, sin_tdec];
-                let nearby =
-                    self.nearby_tangent_offsets(target_unit, target_ra_rad, sin_tdec, cos_tdec);
-                nearby.iter().any(|&(east, north)| {
-                    let (u, v) = Self::to_instrument(east, north, sin_roll, cos_roll);
-                    Self::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
-                })
+        let violated = self.each_target(target_ras, target_decs, |ra_deg, dec_deg| {
+            let target_ra_rad = ra_deg.to_radians();
+            let target_dec_rad = dec_deg.to_radians();
+            let sin_tdec = target_dec_rad.sin();
+            let cos_tdec = target_dec_rad.cos();
+            let (sin_tra, cos_tra) = target_ra_rad.sin_cos();
+            let target_unit = [cos_tdec * cos_tra, cos_tdec * sin_tra, sin_tdec];
+            let nearby =
+                self.nearby_tangent_offsets(target_unit, target_ra_rad, sin_tdec, cos_tdec);
+            nearby.iter().any(|&(east, north)| {
+                let (u, v) = Self::to_instrument(east, north, sin_roll, cos_roll);
+                Self::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
             })
-            .collect();
+        });
 
         let mut result = Array2::from_elem((n_targets, n_times), false);
         for (i, &v) in violated.iter().enumerate() {
