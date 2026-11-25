@@ -10,11 +10,13 @@ import rust_ephem as re
 
 
 @pytest.mark.skipif(
-    os.environ.get("RUST_EPHEM_GPU") != "1", reason="requires GPU hardware"
+    os.environ.get("RUST_EPHEM_GPU") not in {"1", "cubecl"},
+    reason="requires GPU hardware",
 )
 def test_native_gpu_masks_match_cpu(
     ground_ephemeris: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    backend = os.environ["RUST_EPHEM_GPU"]
     # Cross the real dispatch threshold with duplicate and reordered epochs.
     indices = list(range(7, -1, -1)) * 128
     ra = np.linspace(0, 360, 4096, endpoint=False).tolist()
@@ -31,17 +33,19 @@ def test_native_gpu_masks_match_cpu(
     ]:
         monkeypatch.delenv("RUST_EPHEM_GPU")
         expected = rule.in_constraint_batch(ground_ephemeris, ra, dec, indices=indices)
-        monkeypatch.setenv("RUST_EPHEM_GPU", "1")
+        monkeypatch.setenv("RUST_EPHEM_GPU", backend)
         actual = rule.in_constraint_batch(ground_ephemeris, ra, dec, indices=indices)
         np.testing.assert_array_equal(actual, expected)
 
 
 @pytest.mark.skipif(
-    os.environ.get("RUST_EPHEM_GPU") != "1", reason="requires GPU hardware"
+    os.environ.get("RUST_EPHEM_GPU") not in {"1", "cubecl"},
+    reason="requires GPU hardware",
 )
 def test_bright_star_catalogue_tiles(
     ground_ephemeris: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    backend = os.environ["RUST_EPHEM_GPU"]
     # Include hits unique to either star tile, ties near the cone boundary,
     # and clear targets. The result repeats across the selected epochs.
     stars = [(0.0, 0.0)] * 32_768 + [(90.0, 0.0)]
@@ -52,6 +56,6 @@ def test_bright_star_catalogue_tiles(
     monkeypatch.delenv("RUST_EPHEM_GPU")
     expected = rule.in_constraint_batch(ground_ephemeris, ra, dec, indices=indices)
     np.testing.assert_array_equal(expected[:5, 0], [True, True, True, False, False])
-    monkeypatch.setenv("RUST_EPHEM_GPU", "1")
+    monkeypatch.setenv("RUST_EPHEM_GPU", backend)
     actual = rule.in_constraint_batch(ground_ephemeris, ra, dec, indices=indices)
     np.testing.assert_array_equal(actual, expected)

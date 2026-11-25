@@ -90,6 +90,16 @@ inside a circular field of view. Set the environment variable before evaluation.
 export RUST_EPHEM_GPU=1
 ```
 
+To use the Rust CubeCL kernels for the same calculations, build the extension
+with the optional `cubecl` Cargo feature and select it at runtime. From an
+activated Python environment in a source checkout, run
+
+```sh
+maturin develop --release --features cubecl
+export RUST_EPHEM_GPU=cubecl
+```
+
+CubeCL uses its wgpu runtime on the selected hardware adapter.
 Use the usual `in_constraint_batch` API. Geometric masks dispatch at 4,194,304
 target/time pairs. Bright-star searches count targets and catalogue stars
 independently of the number of epochs. They dispatch at 67,108,864 estimated

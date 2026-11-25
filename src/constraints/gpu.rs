@@ -3,7 +3,39 @@ use ndarray::Array2;
 use pyo3::{exceptions::PyRuntimeError, PyResult};
 
 #[cfg(feature = "gpu")]
+mod batch;
+#[cfg(feature = "cubecl")]
+mod cube;
+#[cfg(feature = "gpu")]
 mod native;
+
+#[derive(Clone, Copy)]
+enum Backend {
+    #[cfg(feature = "gpu")]
+    Wgpu,
+    #[cfg(feature = "cubecl")]
+    CubeCl,
+}
+
+impl Backend {
+    fn selected() -> PyResult<Option<Self>> {
+        match std::env::var("RUST_EPHEM_GPU").as_deref() {
+            #[cfg(feature = "gpu")]
+            Ok("1") => Ok(Some(Self::Wgpu)),
+            #[cfg(not(feature = "gpu"))]
+            Ok("1") => Err(PyRuntimeError::new_err(
+                "RUST_EPHEM_GPU=1 requires a build with the Cargo gpu feature",
+            )),
+            #[cfg(feature = "cubecl")]
+            Ok("cubecl") => Ok(Some(Self::CubeCl)),
+            #[cfg(not(feature = "cubecl"))]
+            Ok("cubecl") => Err(PyRuntimeError::new_err(
+                "RUST_EPHEM_GPU=cubecl requires a build with the Cargo cubecl feature",
+            )),
+            _ => Ok(None),
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(super) enum Angle {
@@ -21,7 +53,10 @@ impl Angle {
 }
 
 pub(super) fn enabled() -> bool {
-    std::env::var_os("RUST_EPHEM_GPU").as_deref() == Some(std::ffi::OsStr::new("1"))
+    matches!(
+        std::env::var("RUST_EPHEM_GPU").as_deref(),
+        Ok("1" | "cubecl")
+    )
 }
 
 pub(super) type AngularBounds = ([f64; 3], f64, Option<f64>);
@@ -61,18 +96,18 @@ fn try_angle_mask(
     row: impl Fn(usize) -> AngularBounds,
     angle: Angle,
 ) -> PyResult<Option<Array2<bool>>> {
-    if targets.nrows().saturating_mul(times) < 4_194_304 || !enabled() {
+    if targets.nrows().saturating_mul(times) < 4_194_304 {
         return Ok(None);
     }
+    let Some(backend) = Backend::selected()? else {
+        return Ok(None);
+    };
     #[cfg(feature = "gpu")]
-    return native::mask(targets, times, row, angle).map_err(PyRuntimeError::new_err);
-
+    return batch::mask(backend, targets, times, row, angle).map_err(PyRuntimeError::new_err);
     #[cfg(not(feature = "gpu"))]
     {
         let _ = (row, angle);
-        Err(PyRuntimeError::new_err(
-            "RUST_EPHEM_GPU=1 requires a build with the Cargo gpu feature",
-        ))
+        match backend {}
     }
 }
 
@@ -81,13 +116,15 @@ pub(super) fn catalogue_hits(
     stars: &[[f64; 3]],
     threshold: f64,
 ) -> PyResult<Option<Vec<bool>>> {
+    let Some(backend) = Backend::selected()? else {
+        return Ok(None);
+    };
     #[cfg(feature = "gpu")]
-    return native::catalogue_hits(targets, stars, threshold).map_err(PyRuntimeError::new_err);
+    return batch::catalogue_hits(backend, targets, stars, threshold)
+        .map_err(PyRuntimeError::new_err);
     #[cfg(not(feature = "gpu"))]
     {
         let _ = (targets, stars, threshold);
-        Err(PyRuntimeError::new_err(
-            "RUST_EPHEM_GPU=1 requires a build with the Cargo gpu feature",
-        ))
+        match backend {}
     }
 }
