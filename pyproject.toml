@@ -56,7 +56,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gpu = ["wgpu>=0.31.1,<0.32"]
 test = ["pytest>=7.0", "astropy>=5.0", "pytest-cov>=7.0.0", "jplephem>=2.21"]
 docs = ["sphinx>=6.0", "sphinx-rtd-theme"]
 dev = ["mypy", "ruff", "prek", "maturin", "pyarrow-stubs"]
