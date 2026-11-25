@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.18.0...v0.19.0) (2026-11-25)
+
+
+### Features
+
+* make parallelism tuneable ([#234](https://github.com/CosmicFrontierLabs/rust-ephem/issues/234)) ([74fea64](https://github.com/CosmicFrontierLabs/rust-ephem/commit/74fea64304530277367d93f0c6f74afcc9e3e721))
+
 ## [0.18.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.17.0...v0.18.0) (2026-11-25)
 
 
