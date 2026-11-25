@@ -69,7 +69,7 @@ If you require a specific architecture, please put in an [Issue](https://github.
 ## CPU threads
 
 Set `RAYON_NUM_THREADS` before starting Python to limit the Rust compute pool.
-For example, `RAYON_NUM_THREADS=4 python analysis.py` allows up to four workers
+For example, `RAYON_NUM_THREADS=4` allows up to four workers
 for frame conversions, Sun and Moon lookups, interpolation, and batch constraint
 evaluation. By default Rayon uses the logical CPUs available to the process.
 Small jobs run on the calling thread. Set the limit to `1` when running one
