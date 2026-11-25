@@ -39,12 +39,7 @@ pub struct ObserverAberration {
 }
 
 impl ObserverAberration {
-    /// Conditions for the 0.002-wide cosine screening band in the GPU mask.
-    /// At 0.5–2 au, deflection moves a unit vector by at most
-    /// (SRS / distance) * sqrt(2 / deflection_limit) < 0.000056.
-    /// In `ApparentCosine::cosine`, |b/a| < 2 under this speed limit.
-    /// Normalizing n + (b/a) beta at most doubles its displacement from a
-    /// unit target, leaving the total below 0.001 even before the f32 margin.
+    /// Whether the GPU mask's 0.002-wide cosine screening band is safe at this observer state.
     pub(crate) fn can_screen_cosine(&self) -> bool {
         can_screen_apparent_direction(self.sun_distance_au, &self.beta, &self.sun_to_observer)
     }

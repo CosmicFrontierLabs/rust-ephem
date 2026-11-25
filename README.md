@@ -92,9 +92,13 @@ export RUST_EPHEM_GPU=1
 ```
 
 Both `RUST_EPHEM_GPU=1` and `RUST_EPHEM_GPU=cubecl` enable the same kernels.
-The default build includes CubeCL’s portable `wgpu` runtime. To select another
-runtime, build with its Cargo feature and set `RUST_EPHEM_CUBECL_BACKEND`.
-You can combine runtime features in one build.
+The release workflow builds wheels with native Rust CPU and CubeCL’s portable
+`wgpu` runtime. On Linux x86-64 and ARM64 with glibc 2.34 or newer, and on
+Apple Silicon with macOS 15 or newer, pip can select a wheel that also includes
+CubeCL CPU. Set `RUST_EPHEM_GPU=1` and `RUST_EPHEM_CUBECL_BACKEND=cpu` to use
+it. Intel Mac wheels and wheels for older supported systems use the portable
+build. Source builds can combine additional runtimes using the Cargo features
+below.
 
 | `RUST_EPHEM_CUBECL_BACKEND` | Cargo feature | Execution |
 |---|---|---|
@@ -145,8 +149,8 @@ wide field. When a grid requests nearest-star distances, CubeCL narrows the
 catalogue search and Rust computes the reported angle in double precision.
 An eligible call using a GPU runtime requires a working hardware adapter.
 
-For a CPU-only source build, omit the GPU features (for example,
-`maturin build --release --no-default-features --features ut1,extension-module`).
+Source builds are CPU-only by default; add `--features gpu` (or another
+feature above) to include CubeCL.
 The angular mask kernels compute dot products in single precision. Rust rechecks ambiguous
 angular comparisons in double precision to preserve the CPU mask at the boundary.
 

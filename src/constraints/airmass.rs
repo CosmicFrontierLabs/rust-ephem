@@ -46,9 +46,7 @@ impl AirmassEvaluator {
     }
 }
 
-/// For finite limits >= 1 the Kasten curve crosses the limit once above
-/// the horizon, or jumps across it at the horizon. Bisect in sin(altitude),
-/// the quantity the angular kernel compares. Ties are resolved in f64.
+/// Bisect for the sin(altitude) where Kasten airmass reaches `airmass` (limit >= 1).
 fn sin_altitude_limit(airmass: f64) -> f64 {
     let (mut low, mut high) = (0.0, 1.0);
     for _ in 0..54 {

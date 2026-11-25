@@ -64,8 +64,7 @@ pub(super) fn mask(
             return Ok(None);
         }
         let [x, y, z] = direction;
-        // All dot products are between -4 and 4. Use finite sentinels for
-        // absent or unbounded thresholds; a comparison with NaN is false.
+        // Replace absent or unbounded thresholds with finite sentinels outside [-4, 4].
         let upper = if upper.is_nan() {
             16.0
         } else {
@@ -126,9 +125,14 @@ pub(super) fn angle_grid(
 ) -> Result<bool, String> {
     use cubecl::prelude::CubeElement;
 
+    // wgpu and Metal lack a reliable f64 acos; use the CPU loop without creating a device.
+    if matches!(
+        std::env::var("RUST_EPHEM_CUBECL_BACKEND").as_deref(),
+        Err(std::env::VarError::NotPresent) | Ok("wgpu" | "metal")
+    ) {
+        return Ok(false);
+    }
     let client = cube::client()?;
-    // The wgpu shader paths do not guarantee a double-precision acos,
-    // even on adapters advertising double-precision arithmetic.
     if !client.properties().supports_type(f64::cube_type()) || client.name().starts_with("wgpu") {
         return Ok(false);
     }

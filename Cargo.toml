@@ -5,7 +5,7 @@ edition = "2021"
 license = "Apache-2.0"
 
 [features]
-default = ["ut1", "extension-module", "gpu"]
+default = ["ut1", "extension-module"]
 gpu = ["cubecl"]
 cubecl = ["dep:cubecl", "dep:bytemuck"]
 cubecl-metal = ["cubecl", "cubecl/metal-native", "dep:objc2-metal"]
