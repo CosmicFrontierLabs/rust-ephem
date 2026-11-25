@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.18.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.17.0...v0.18.0) (2026-11-25)
+
+
+### Features
+
+* add evaluate_grid ([#225](https://github.com/CosmicFrontierLabs/rust-ephem/issues/225)) ([5577b78](https://github.com/CosmicFrontierLabs/rust-ephem/commit/5577b78c43a4038f9fddcf2f2cea02a74b284af9))
+* body states and target directions at arbitrary times, geometric or apparent ([#227](https://github.com/CosmicFrontierLabs/rust-ephem/issues/227)) ([#231](https://github.com/CosmicFrontierLabs/rust-ephem/issues/231)) ([3ba8ced](https://github.com/CosmicFrontierLabs/rust-ephem/commit/3ba8ced1c2fd32fd6cea05214f7cfd7310baea95))
+* roll offsets, per-target summaries, astropy times, several bodies per call, and labels ([#229](https://github.com/CosmicFrontierLabs/rust-ephem/issues/229)) ([bbfd76a](https://github.com/CosmicFrontierLabs/rust-ephem/commit/bbfd76aa4a73075263b6e3376cbf0f6f437009b7))
+* stray light constraint ([#224](https://github.com/CosmicFrontierLabs/rust-ephem/issues/224)) ([b40e7dc](https://github.com/CosmicFrontierLabs/rust-ephem/commit/b40e7dcb390d6921d441768dbe69b4974081877c))
+
+
+### Bug Fixes
+
+* datetime64 input, unit defaults, start-up cost and apparent-angle coverage ([#223](https://github.com/CosmicFrontierLabs/rust-ephem/issues/223)) ([7ffcc6f](https://github.com/CosmicFrontierLabs/rust-ephem/commit/7ffcc6fb25beb4d294708e07f45a1e4eadc8d24d))
+* report the apparent Moon distance from MoonPhaseConstraint in grid, batch and single evaluation ([#233](https://github.com/CosmicFrontierLabs/rust-ephem/issues/233)) ([52b5984](https://github.com/CosmicFrontierLabs/rust-ephem/commit/52b598455e56fed3da19b97660d03ab87f05e8ff))
+
+
+### Performance Improvements
+
+* short-circuit expensive rules in masks, faster elementwise and get_body_pv; feat: from_arrays without velocities ([#228](https://github.com/CosmicFrontierLabs/rust-ephem/issues/228)) ([213eddd](https://github.com/CosmicFrontierLabs/rust-ephem/commit/213edddf24615240ad91574037cc64f194cfd282))
+
 ## [0.17.0](https://github.com/CosmicFrontierLabs/rust-ephem/compare/v0.16.1...v0.17.0) (2026-11-18)
 
 
