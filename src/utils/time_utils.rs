@@ -3,6 +3,7 @@
 //! Provides conversions between chrono DateTime<Utc> and hifitime Epoch,
 //! Julian Date calculations in various time scales, and Python datetime interop.
 
+use crate::utils::parallel::should_parallelize;
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use hifitime::{Duration, Epoch};
 use numpy::PyArrayMethods;
@@ -358,7 +359,7 @@ fn datetime64_to_utc_from(
     let micros = micros.as_array();
     // A long array is converted across the cores. If any entry is invalid,
     // the serial pass below reports the first one.
-    if micros.len() >= DATETIME64_PARALLEL_MIN_LEN {
+    if should_parallelize(micros.len(), DATETIME64_PARALLEL_MIN_LEN) {
         use rayon::prelude::*;
         let valid = |us: &i64| {
             (*us != i64::MIN)

@@ -279,12 +279,12 @@ positions. ``ValueError`` is raised for arrays that are not ``(N, 3)``,
 mismatched lengths, fewer than two samples, non-finite values, times that are
 not strictly increasing, or a ``begin``/``end`` outside the sample range.
 
-Building an ephemeris of about a thousand rows or more converts frames and
-looks up the Sun and Moon on every core. A program that already runs one
-worker process per core should set the environment variable
-``RAYON_NUM_THREADS`` (for example to ``1``) before ``rust_ephem`` is imported,
-so that each worker does not start a full set of threads. This applies to
-every ephemeris type.
+Large frame conversions, Sun and Moon lookups, interpolation batches, and
+constraint evaluations share a Rayon compute pool. Set a positive
+``RAYON_NUM_THREADS`` before importing ``rust_ephem`` to choose its maximum
+worker count. The default uses the logical CPUs available to the process.
+For example, use ``RAYON_NUM_THREADS=1`` when running one Python process per
+core. This setting applies across ephemeris types.
 
 Constraint evaluation
 ---------------------

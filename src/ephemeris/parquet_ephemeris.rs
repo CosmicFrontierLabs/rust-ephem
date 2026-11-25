@@ -959,9 +959,15 @@ fn load_via_pyarrow(
     ];
     let mut columns = vec![time_col];
     columns.extend(state_cols.iter().map(|name| name.as_str()));
+    let scan_options = PyDict::new(py);
+    if let Some(limit) = crate::utils::parallel::configured_thread_limit() {
+        // Arrow offers a per-scan switch, but sizes its CPU pool process-wide.
+        let workers: usize = py.import("pyarrow")?.call_method0("cpu_count")?.extract()?;
+        scan_options.set_item("use_threads", workers <= limit && limit > 1)?;
+    }
     let table = dataset
         .call_method("dataset", (location,), Some(&kwargs))?
-        .call_method1("to_table", (columns,))?;
+        .call_method("to_table", (columns,), Some(&scan_options))?;
 
     let np = py.import("numpy")?;
     let column = |name: &str| {
@@ -1019,7 +1025,15 @@ fn load_via_duckdb(
     s3_region: Option<&str>,
     where_clause: Option<&str>,
 ) -> PyResult<(Vec<DateTime<Utc>>, Array2<f64>)> {
-    let conn = duckdb.call_method0("connect")?;
+    let conn = if let Some(limit) = crate::utils::parallel::configured_thread_limit() {
+        let config = PyDict::new(py);
+        config.set_item("threads", limit)?;
+        let kwargs = PyDict::new(py);
+        kwargs.set_item("config", config)?;
+        duckdb.call_method("connect", (), Some(&kwargs))?
+    } else {
+        duckdb.call_method0("connect")?
+    };
 
     // Configure cloud access if the source looks remote.
     let is_remote = is_remote_source(source);

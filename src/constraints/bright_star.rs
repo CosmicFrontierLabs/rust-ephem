@@ -5,6 +5,7 @@ use super::core::EvaluationRoll;
 /// FoV is defined either as a circle (radius around boresight) or a polygon
 /// in instrument frame coordinates that rotates with spacecraft roll.
 use super::core::{ConstraintConfig, ConstraintEvaluator, ConstraintResult};
+use crate::utils::parallel::should_parallelize;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
@@ -437,39 +438,31 @@ fn each_target<T: Send>(
     target_decs: &[f64],
     one: impl Fn(f64, f64) -> T + Sync,
 ) -> Vec<T> {
-    let probe = PROBE_TARGETS.min(target_ras.len());
-    let started = std::time::Instant::now();
-    let mut results: Vec<T> = target_ras[..probe]
-        .iter()
-        .zip(&target_decs[..probe])
-        .map(|(&ra, &dec)| one(ra, dec))
-        .collect();
-    let (rest_ras, rest_decs) = (&target_ras[probe..], &target_decs[probe..]);
-    if rest_ras.is_empty() {
-        return results;
+    each_target_index(0..target_ras.len(), |i| one(target_ras[i], target_decs[i]))
+}
+
+fn each_target_index<T: Send>(
+    indices: std::ops::Range<usize>,
+    one: impl Fn(usize) -> T + Sync,
+) -> Vec<T> {
+    if indices.len() <= PROBE_TARGETS {
+        return indices.map(one).collect();
     }
-    let per_target = started.elapsed().as_secs_f64() / probe as f64;
-    let remaining = per_target * rest_ras.len() as f64;
-    if remaining < PARALLEL_MIN_WORK.as_secs_f64() {
-        results.extend(
-            rest_ras
-                .iter()
-                .zip(rest_decs)
-                .map(|(&ra, &dec)| one(ra, dec)),
-        );
+    let split = indices.start + PROBE_TARGETS;
+    let started = std::time::Instant::now();
+    let mut results: Vec<T> = (indices.start..split).map(&one).collect();
+    let rest = split..indices.end;
+    let per_target = started.elapsed().as_secs_f64() / PROBE_TARGETS as f64;
+    let remaining = per_target * rest.len() as f64;
+    if remaining < PARALLEL_MIN_WORK.as_secs_f64() || !should_parallelize(rest.len(), 2) {
+        results.extend(rest.map(one));
         return results;
     }
     // Truncation is intended: a share is a whole number of targets.
     let chunk = (PARALLEL_CHUNK_WORK.as_secs_f64() / per_target.max(f64::MIN_POSITIVE))
         .ceil()
-        .clamp(1.0, rest_ras.len() as f64) as usize;
-    results.par_extend(
-        rest_ras
-            .par_iter()
-            .zip(rest_decs.par_iter())
-            .with_min_len(chunk)
-            .map(|(&ra, &dec)| one(ra, dec)),
-    );
+        .clamp(1.0, rest.len() as f64) as usize;
+    results.par_extend(rest.into_par_iter().with_min_len(chunk).map(&one));
     results
 }
 
@@ -516,15 +509,12 @@ impl ConstraintEvaluator for BrightStarEvaluator {
         let end = cells.iter().map(|&(i, _)| i + 1).max().unwrap_or(first);
         // A star's projection depends on the target, but neither time nor roll.
         // Keep only this chunk's rows, rather than allocating for every target.
-        let offsets: Vec<_> = (first..end)
-            .into_par_iter()
-            .map(|i| {
-                let ra = target_ras[i].to_radians();
-                let (sd, cd) = target_decs[i].to_radians().sin_cos();
-                let (sr, cr) = ra.sin_cos();
-                self.nearby_tangent_offsets([cd * cr, cd * sr, sd], ra, sd, cd)
-            })
-            .collect();
+        let offsets: Vec<_> = each_target_index(first..end, |i| {
+            let ra = target_ras[i].to_radians();
+            let (sd, cd) = target_decs[i].to_radians().sin_cos();
+            let (sr, cr) = ra.sin_cos();
+            self.nearby_tangent_offsets([cd * cr, cd * sr, sd], ra, sd, cd)
+        });
         Ok(Some(super::roll_sweep::PreparedRollEvaluator::new(
             move |cells, roll| {
                 let (sr, cr) = roll.to_radians().sin_cos();
@@ -766,17 +756,14 @@ impl ConstraintEvaluator for BrightStarEvaluator {
             FovDefinition::Polygon { vertices, roll_rad } => (vertices, roll_rad),
             FovDefinition::Circle { cos_radius } => {
                 // Circle mode is not roll-dependent; evaluate normally.
-                return Ok((0..n_targets)
-                    .into_par_iter()
-                    .map(|i| {
-                        let target_unit = [
-                            target_unit_vectors[[i, 0]],
-                            target_unit_vectors[[i, 1]],
-                            target_unit_vectors[[i, 2]],
-                        ];
-                        self.any_star_in_circle(target_unit, *cos_radius)
-                    })
-                    .collect());
+                return Ok(each_target_index(0..n_targets, |i| {
+                    let target_unit = [
+                        target_unit_vectors[[i, 0]],
+                        target_unit_vectors[[i, 1]],
+                        target_unit_vectors[[i, 2]],
+                    ];
+                    self.any_star_in_circle(target_unit, *cos_radius)
+                }));
             }
         };
 
@@ -784,24 +771,21 @@ impl ConstraintEvaluator for BrightStarEvaluator {
         let effective_roll_rad = stored_roll_rad.unwrap_or_else(|| roll_deg.to_radians());
         let (sin_roll, cos_roll) = effective_roll_rad.sin_cos();
 
-        Ok((0..n_targets)
-            .into_par_iter()
-            .map(|i| {
-                let ux = target_unit_vectors[[i, 0]];
-                let uy = target_unit_vectors[[i, 1]];
-                let uz = target_unit_vectors[[i, 2]];
-                let target_ra_rad = uy.atan2(ux);
-                let target_dec_rad = uz.clamp(-1.0, 1.0).asin();
-                let sin_tdec = target_dec_rad.sin();
-                let cos_tdec = target_dec_rad.cos();
-                let nearby =
-                    self.nearby_tangent_offsets([ux, uy, uz], target_ra_rad, sin_tdec, cos_tdec);
-                nearby.iter().any(|&(east, north)| {
-                    let (u, v) = Self::to_instrument(east, north, sin_roll, cos_roll);
-                    Self::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
-                })
+        Ok(each_target_index(0..n_targets, |i| {
+            let ux = target_unit_vectors[[i, 0]];
+            let uy = target_unit_vectors[[i, 1]];
+            let uz = target_unit_vectors[[i, 2]];
+            let target_ra_rad = uy.atan2(ux);
+            let target_dec_rad = uz.clamp(-1.0, 1.0).asin();
+            let sin_tdec = target_dec_rad.sin();
+            let cos_tdec = target_dec_rad.cos();
+            let nearby =
+                self.nearby_tangent_offsets([ux, uy, uz], target_ra_rad, sin_tdec, cos_tdec);
+            nearby.iter().any(|&(east, north)| {
+                let (u, v) = Self::to_instrument(east, north, sin_roll, cos_roll);
+                Self::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
             })
-            .collect())
+        }))
     }
 
     /// Cached-projection FoR sweep: project nearby stars per target ONCE, then test
@@ -822,44 +806,38 @@ impl ConstraintEvaluator for BrightStarEvaluator {
         let n_targets = target_unit_vectors.nrows();
 
         match &self.fov {
-            FovDefinition::Circle { cos_radius } => Ok((0..n_targets)
-                .into_par_iter()
-                .map(|i| {
-                    let target_unit = [
-                        target_unit_vectors[[i, 0]],
-                        target_unit_vectors[[i, 1]],
-                        target_unit_vectors[[i, 2]],
-                    ];
-                    self.any_star_in_circle(target_unit, *cos_radius)
-                })
-                .collect()),
+            FovDefinition::Circle { cos_radius } => Ok(each_target_index(0..n_targets, |i| {
+                let target_unit = [
+                    target_unit_vectors[[i, 0]],
+                    target_unit_vectors[[i, 1]],
+                    target_unit_vectors[[i, 2]],
+                ];
+                self.any_star_in_circle(target_unit, *cos_radius)
+            })),
 
             FovDefinition::Polygon {
                 vertices,
                 roll_rad: Some(roll),
             } => {
                 let (sin_roll, cos_roll) = roll.sin_cos();
-                Ok((0..n_targets)
-                    .into_par_iter()
-                    .map(|i| {
-                        let ux = target_unit_vectors[[i, 0]];
-                        let uy = target_unit_vectors[[i, 1]];
-                        let uz = target_unit_vectors[[i, 2]];
-                        let target_ra_rad = uy.atan2(ux);
-                        let target_dec_rad = uz.clamp(-1.0, 1.0).asin();
-                        let (sin_tdec, cos_tdec) = target_dec_rad.sin_cos();
-                        let nearby = self.nearby_tangent_offsets(
-                            [ux, uy, uz],
-                            target_ra_rad,
-                            sin_tdec,
-                            cos_tdec,
-                        );
-                        nearby.iter().any(|&(east, north)| {
-                            let (u, v) = Self::to_instrument(east, north, sin_roll, cos_roll);
-                            Self::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
-                        })
+                Ok(each_target_index(0..n_targets, |i| {
+                    let ux = target_unit_vectors[[i, 0]];
+                    let uy = target_unit_vectors[[i, 1]];
+                    let uz = target_unit_vectors[[i, 2]];
+                    let target_ra_rad = uy.atan2(ux);
+                    let target_dec_rad = uz.clamp(-1.0, 1.0).asin();
+                    let (sin_tdec, cos_tdec) = target_dec_rad.sin_cos();
+                    let nearby = self.nearby_tangent_offsets(
+                        [ux, uy, uz],
+                        target_ra_rad,
+                        sin_tdec,
+                        cos_tdec,
+                    );
+                    nearby.iter().any(|&(east, north)| {
+                        let (u, v) = Self::to_instrument(east, north, sin_roll, cos_roll);
+                        Self::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
                     })
-                    .collect())
+                }))
             }
 
             FovDefinition::Polygon {
@@ -876,36 +854,33 @@ impl ConstraintEvaluator for BrightStarEvaluator {
                     })
                     .collect();
 
-                Ok((0..n_targets)
-                    .into_par_iter()
-                    .map(|i| {
-                        let ux = target_unit_vectors[[i, 0]];
-                        let uy = target_unit_vectors[[i, 1]];
-                        let uz = target_unit_vectors[[i, 2]];
-                        let target_ra_rad = uy.atan2(ux);
-                        let target_dec_rad = uz.clamp(-1.0, 1.0).asin();
-                        let (sin_tdec, cos_tdec) = target_dec_rad.sin_cos();
-                        let nearby = self.nearby_tangent_offsets(
-                            [ux, uy, uz],
-                            target_ra_rad,
-                            sin_tdec,
-                            cos_tdec,
-                        );
-                        if nearby.is_empty() {
-                            return false; // accessible at every roll
+                Ok(each_target_index(0..n_targets, |i| {
+                    let ux = target_unit_vectors[[i, 0]];
+                    let uy = target_unit_vectors[[i, 1]];
+                    let uz = target_unit_vectors[[i, 2]];
+                    let target_ra_rad = uy.atan2(ux);
+                    let target_dec_rad = uz.clamp(-1.0, 1.0).asin();
+                    let (sin_tdec, cos_tdec) = target_dec_rad.sin_cos();
+                    let nearby = self.nearby_tangent_offsets(
+                        [ux, uy, uz],
+                        target_ra_rad,
+                        sin_tdec,
+                        cos_tdec,
+                    );
+                    if nearby.is_empty() {
+                        return false; // accessible at every roll
+                    }
+                    for &(sin_roll, cos_roll) in &roll_table {
+                        let any_blocked = nearby.iter().any(|&(east, north)| {
+                            let (u, v) = Self::to_instrument(east, north, sin_roll, cos_roll);
+                            Self::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
+                        });
+                        if !any_blocked {
+                            return false; // a clear roll exists for this target
                         }
-                        for &(sin_roll, cos_roll) in &roll_table {
-                            let any_blocked = nearby.iter().any(|&(east, north)| {
-                                let (u, v) = Self::to_instrument(east, north, sin_roll, cos_roll);
-                                Self::point_in_polygon(u.to_degrees(), v.to_degrees(), vertices)
-                            });
-                            if !any_blocked {
-                                return false; // a clear roll exists for this target
-                            }
-                        }
-                        true // every roll blocked
-                    })
-                    .collect())
+                    }
+                    true // every roll blocked
+                }))
             }
         }
     }
