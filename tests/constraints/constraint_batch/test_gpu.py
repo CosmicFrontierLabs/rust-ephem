@@ -1,4 +1,4 @@
-"""Exercise native hardware dispatch through the Python API."""
+"""Exercise CubeCL dispatch through the Python API."""
 
 import os
 from typing import Any
@@ -8,12 +8,14 @@ import pytest
 
 import rust_ephem as re
 
-
-@pytest.mark.skipif(
+requires_gpu = pytest.mark.skipif(
     os.environ.get("RUST_EPHEM_GPU") not in {"1", "cubecl"},
     reason="requires GPU hardware",
 )
-def test_native_gpu_masks_match_cpu(
+
+
+@requires_gpu
+def test_cubecl_masks_match_cpu(
     ground_ephemeris: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     backend = os.environ["RUST_EPHEM_GPU"]
@@ -38,10 +40,7 @@ def test_native_gpu_masks_match_cpu(
         np.testing.assert_array_equal(actual, expected)
 
 
-@pytest.mark.skipif(
-    os.environ.get("RUST_EPHEM_GPU") not in {"1", "cubecl"},
-    reason="requires GPU hardware",
-)
+@requires_gpu
 def test_bright_star_catalogue_tiles(
     ground_ephemeris: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -59,3 +58,20 @@ def test_bright_star_catalogue_tiles(
     monkeypatch.setenv("RUST_EPHEM_GPU", backend)
     actual = rule.in_constraint_batch(ground_ephemeris, ra, dec, indices=indices)
     np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.parametrize("selector", ["1", "cubecl"])
+def test_gpu_selector_uses_cubecl_runtime(
+    selector: str, ground_ephemeris: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RUST_EPHEM_GPU", selector)
+    monkeypatch.setenv("RUST_EPHEM_CUBECL_BACKEND", "unknown")
+    rule = re.SunConstraint(min_angle=40)
+    # A CPU-only build rejects the opt-in before runtime selection.
+    with pytest.raises(
+        RuntimeError,
+        match="Unknown RUST_EPHEM_CUBECL_BACKEND|requires a build with the Cargo gpu or cubecl feature",
+    ):
+        rule.in_constraint_batch(
+            ground_ephemeris, [0.0] * 4096, [0.0] * 4096, indices=[0] * 1024
+        )

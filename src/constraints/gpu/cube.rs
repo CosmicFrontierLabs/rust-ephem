@@ -1,10 +1,9 @@
 //! CubeCL implementations of the packed angular mask and star catalogue search.
-use super::batch::{Compute, Kernel};
-use super::{native, Angle};
+use super::Angle;
 use cubecl::device::{DeviceUnavailable, RuntimeId};
 use cubecl::prelude::*;
 use cubecl::server::Handle;
-use cubecl::wgpu::{try_init_device, WgpuSetup};
+use cubecl::wgpu::{try_init_setup, AutoGraphicsApi, WgpuDevice, WgpuDeviceKind, WgpuInitError};
 use once_cell::sync::OnceCell;
 
 /// Keep each initialized device when a caller switches runtimes between batches.
@@ -62,17 +61,21 @@ fn device_error(error: DeviceUnavailable) -> String {
 }
 
 fn wgpu_device() -> Result<cubecl::Device, String> {
-    let (instance, adapter, device, queue) = native::request_device()?;
-    let setup = WgpuSetup {
-        backend: adapter.get_info().backend,
-        instance,
-        adapter,
-        device,
-        queue,
-    };
-    try_init_device(setup, Default::default())
-        .map(cubecl::Device::Wgpu)
-        .map_err(|e| format!("CubeCL initialization failed: {e}"))
+    // Prefer a discrete GPU and exclude software rasterizers.
+    for kind in [
+        WgpuDeviceKind::DiscreteGpu(0),
+        WgpuDeviceKind::IntegratedGpu(0),
+        WgpuDeviceKind::VirtualGpu(0),
+        WgpuDeviceKind::Other(0),
+    ] {
+        let device = WgpuDevice::new(kind);
+        match try_init_setup::<AutoGraphicsApi>(&device, Default::default()) {
+            Ok(_) => return Ok(cubecl::Device::Wgpu(device)),
+            Err(WgpuInitError::AdapterUnavailable { .. }) => continue,
+            Err(e) => return Err(format!("CubeCL initialization failed: {e}")),
+        }
+    }
+    Err("CubeCL wgpu requires a hardware GPU adapter".into())
 }
 
 #[cfg(all(feature = "cubecl-metal", target_vendor = "apple"))]
@@ -175,47 +178,53 @@ fn catalogue(cones: &[f32], stars: &[f32], output: &mut [u32]) {
     }
 }
 
-impl Compute for Client {
-    type Buffer = Handle;
+pub(super) enum Kernel {
+    Mask(Angle),
+    Catalogue,
+}
 
-    fn storage(&self, data: &[f32]) -> Handle {
-        self.create_from_slice(f32::as_bytes(data))
-    }
+pub(super) fn storage(client: &Client, data: &[f32]) -> Handle {
+    client.create_from_slice(f32::as_bytes(data))
+}
 
-    fn dispatch(
-        &self,
-        kernel: Kernel,
-        inputs: [&Handle; 2],
-        records: usize,
-    ) -> Result<impl std::ops::Deref<Target = [u8]>, String> {
-        let output = self.empty(records * 8);
-        // All three allocations contain contiguous 32-bit elements.
-        let arg = |handle: &Handle| unsafe {
-            BufferArg::from_raw_parts(handle.clone(), handle.size() as usize / 4)
-        };
-        // The CPU runtime limits a cube to the number of available cores.
-        let hardware = &self.properties().hardware;
-        let width = 64
-            .min(hardware.max_units_per_cube)
-            .min(hardware.max_cube_dim.0);
-        let groups = CubeCount::Static(kernel.groups(records, width), 1, 1);
-        let dim = CubeDim::new_1d(width);
-        let [a, b] = inputs.map(arg);
-        match kernel {
-            Kernel::Mask(angle) => angular_mask::launch(
-                self,
-                groups,
-                dim,
-                a,
-                b,
-                arg(&output),
-                matches!(angle, Angle::NearestPole),
-            ),
-            Kernel::Catalogue => catalogue::launch(self, groups, dim, a, b, arg(&output)),
-        }
-        self.read_one(output)
-            .map_err(|e| format!("CubeCL dispatch failed: {e}"))
+pub(super) fn dispatch(
+    client: &Client,
+    kernel: Kernel,
+    inputs: [&Handle; 2],
+    records: usize,
+) -> Result<impl std::ops::Deref<Target = [u8]>, String> {
+    let output = client.empty(records * 8);
+    // All three allocations contain contiguous 32-bit elements.
+    let arg = |handle: &Handle| unsafe {
+        BufferArg::from_raw_parts(handle.clone(), handle.size() as usize / 4)
+    };
+    // The CPU runtime limits a cube to the number of available cores.
+    let hardware = &client.properties().hardware;
+    let width = 64
+        .min(hardware.max_units_per_cube)
+        .min(hardware.max_cube_dim.0);
+    let groups = match kernel {
+        Kernel::Mask(_) => records.div_ceil(width as usize),
+        Kernel::Catalogue => records,
+    };
+    let groups = CubeCount::Static(groups as u32, 1, 1);
+    let dim = CubeDim::new_1d(width);
+    let [a, b] = inputs.map(arg);
+    match kernel {
+        Kernel::Mask(angle) => angular_mask::launch(
+            client,
+            groups,
+            dim,
+            a,
+            b,
+            arg(&output),
+            matches!(angle, Angle::NearestPole),
+        ),
+        Kernel::Catalogue => catalogue::launch(client, groups, dim, a, b, arg(&output)),
     }
+    client
+        .read_one(output)
+        .map_err(|e| format!("CubeCL dispatch failed: {e}"))
 }
 
 #[cfg(test)]

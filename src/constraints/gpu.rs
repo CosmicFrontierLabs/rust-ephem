@@ -1,41 +1,15 @@
-//! Shared angular comparisons and optional native GPU dispatch.
+//! Shared angular comparisons and optional CubeCL dispatch.
 use ndarray::Array2;
 use pyo3::{exceptions::PyRuntimeError, PyResult};
 
-#[cfg(feature = "gpu")]
+#[cfg(feature = "cubecl")]
 mod batch;
 #[cfg(feature = "cubecl")]
 mod cube;
-#[cfg(feature = "gpu")]
-mod native;
 
-#[derive(Clone, Copy)]
-enum Backend {
-    #[cfg(feature = "gpu")]
-    Wgpu,
-    #[cfg(feature = "cubecl")]
-    CubeCl,
-}
-
-impl Backend {
-    fn selected() -> PyResult<Option<Self>> {
-        match std::env::var("RUST_EPHEM_GPU").as_deref() {
-            #[cfg(feature = "gpu")]
-            Ok("1") => Ok(Some(Self::Wgpu)),
-            #[cfg(not(feature = "gpu"))]
-            Ok("1") => Err(PyRuntimeError::new_err(
-                "RUST_EPHEM_GPU=1 requires a build with the Cargo gpu feature",
-            )),
-            #[cfg(feature = "cubecl")]
-            Ok("cubecl") => Ok(Some(Self::CubeCl)),
-            #[cfg(not(feature = "cubecl"))]
-            Ok("cubecl") => Err(PyRuntimeError::new_err(
-                "RUST_EPHEM_GPU=cubecl requires a build with the Cargo cubecl feature",
-            )),
-            _ => Ok(None),
-        }
-    }
-}
+#[cfg(not(feature = "cubecl"))]
+const GPU_BUILD_REQUIRED: &str =
+    "GPU execution requires a build with the Cargo gpu or cubecl feature";
 
 #[derive(Clone, Copy)]
 pub(super) enum Angle {
@@ -96,18 +70,15 @@ fn try_angle_mask(
     row: impl Fn(usize) -> AngularBounds,
     angle: Angle,
 ) -> PyResult<Option<Array2<bool>>> {
-    if targets.nrows().saturating_mul(times) < 4_194_304 {
+    if targets.nrows().saturating_mul(times) < 4_194_304 || !enabled() {
         return Ok(None);
     }
-    let Some(backend) = Backend::selected()? else {
-        return Ok(None);
-    };
-    #[cfg(feature = "gpu")]
-    return batch::mask(backend, targets, times, row, angle).map_err(PyRuntimeError::new_err);
-    #[cfg(not(feature = "gpu"))]
+    #[cfg(feature = "cubecl")]
+    return batch::mask(targets, times, row, angle).map_err(PyRuntimeError::new_err);
+    #[cfg(not(feature = "cubecl"))]
     {
         let _ = (row, angle);
-        match backend {}
+        Err(PyRuntimeError::new_err(GPU_BUILD_REQUIRED))
     }
 }
 
@@ -116,15 +87,14 @@ pub(super) fn catalogue_hits(
     stars: &[[f64; 3]],
     threshold: f64,
 ) -> PyResult<Option<Vec<bool>>> {
-    let Some(backend) = Backend::selected()? else {
+    if !enabled() {
         return Ok(None);
-    };
-    #[cfg(feature = "gpu")]
-    return batch::catalogue_hits(backend, targets, stars, threshold)
-        .map_err(PyRuntimeError::new_err);
-    #[cfg(not(feature = "gpu"))]
+    }
+    #[cfg(feature = "cubecl")]
+    return batch::catalogue_hits(targets, stars, threshold).map_err(PyRuntimeError::new_err);
+    #[cfg(not(feature = "cubecl"))]
     {
         let _ = (targets, stars, threshold);
-        match backend {}
+        Err(PyRuntimeError::new_err(GPU_BUILD_REQUIRED))
     }
 }

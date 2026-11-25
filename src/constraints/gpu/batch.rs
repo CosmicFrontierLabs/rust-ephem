@@ -1,46 +1,28 @@
 //! Host-side tiling, packed mask decoding, and f64 refinement for GPU kernels.
-use super::{native, Angle, AngularBounds, Backend};
+use super::{cube, cube::Kernel, Angle, AngularBounds};
+use cubecl::{prelude::Client, server::Handle};
 use ndarray::{s, Array2, ArrayView2, ArrayViewMut2};
 
-#[derive(Clone, Copy)]
-pub(super) enum Kernel {
-    Mask(Angle),
-    Catalogue,
-}
-
-impl Kernel {
-    pub(super) fn groups(self, records: usize, width: u32) -> u32 {
-        match self {
-            Self::Mask(_) => records.div_ceil(width as usize) as u32,
-            Self::Catalogue => records as u32,
-        }
-    }
-}
-
-pub(super) trait Compute {
-    type Buffer;
-    fn storage(&self, data: &[f32]) -> Self::Buffer;
-    /// Each output record consists of two u32 words.
-    fn dispatch(
-        &self,
-        kernel: Kernel,
-        inputs: [&Self::Buffer; 2],
-        records: usize,
-    ) -> Result<impl std::ops::Deref<Target = [u8]>, String>;
-}
-
-fn mask_tile<B: Compute>(
-    backend: &B,
+fn mask_tile(
+    client: &Client,
     targets: ArrayView2<'_, f64>,
     epochs: &[[f64; 5]],
-    geometry: &B::Buffer,
+    geometry: &Handle,
     angle: Angle,
     mut mask: ArrayViewMut2<'_, bool>,
 ) -> Result<(), String> {
     let words = epochs.len().div_ceil(32);
     let count = words * targets.nrows();
-    let target_buffer = backend.storage(&targets.iter().map(|&v| v as f32).collect::<Vec<_>>());
-    let data = backend.dispatch(Kernel::Mask(angle), [&target_buffer, geometry], count)?;
+    let target_buffer = cube::storage(
+        client,
+        &targets.iter().map(|&v| v as f32).collect::<Vec<_>>(),
+    );
+    let data = cube::dispatch(
+        client,
+        Kernel::Mask(angle),
+        [&target_buffer, geometry],
+        count,
+    )?;
     let packed: &[[u32; 2]] = bytemuck::cast_slice(&data);
     for (i, mut row) in mask.rows_mut().into_iter().enumerate() {
         let target = targets.row(i);
@@ -68,7 +50,6 @@ fn mask_tile<B: Compute>(
 }
 
 pub(super) fn mask(
-    backend: Backend,
     targets: &Array2<f64>,
     times: usize,
     row: impl Fn(usize) -> AngularBounds,
@@ -98,25 +79,12 @@ pub(super) fn mask(
             .clamp(-16.0, 16.0);
         epochs.push([x, y, z, upper, lower]);
     }
-    match backend {
-        Backend::Wgpu => native::with_backend(|backend| mask_on(backend, targets, &epochs, angle)),
-        #[cfg(feature = "cubecl")]
-        Backend::CubeCl => mask_on(&super::cube::client()?, targets, &epochs, angle),
-    }
-    .map(Some)
-}
-
-fn mask_on<B: Compute>(
-    backend: &B,
-    targets: &Array2<f64>,
-    epochs: &[[f64; 5]],
-    angle: Angle,
-) -> Result<Array2<bool>, String> {
-    let times = epochs.len();
+    let client = cube::client()?;
     let mut result = Array2::from_elem((targets.nrows(), times), false);
     for (block, epochs) in epochs.chunks(65_536).enumerate() {
         let t = block * 65_536;
-        let geometry = backend.storage(
+        let geometry = cube::storage(
+            &client,
             &epochs
                 .iter()
                 .flatten()
@@ -128,7 +96,7 @@ fn mask_on<B: Compute>(
         for i in (0..targets.nrows()).step_by(rows) {
             let end = (i + rows).min(targets.nrows());
             mask_tile(
-                backend,
+                &client,
                 targets.slice(s![i..end, ..]),
                 epochs,
                 &geometry,
@@ -137,12 +105,11 @@ fn mask_on<B: Compute>(
             )?;
         }
     }
-    Ok(result)
+    Ok(Some(result))
 }
 
 /// A catalogue tile returns one range per target, or a definite-hit sentinel.
 pub(super) fn catalogue_hits(
-    backend: Backend,
     targets: &Array2<f64>,
     stars: &[[f64; 3]],
     threshold: f64,
@@ -154,29 +121,14 @@ pub(super) fn catalogue_hits(
     {
         return Ok(None);
     }
-    match backend {
-        Backend::Wgpu => {
-            native::with_backend(|backend| catalogue_on(backend, targets, stars, threshold))
-        }
-        #[cfg(feature = "cubecl")]
-        Backend::CubeCl => catalogue_on(&super::cube::client()?, targets, stars, threshold),
-    }
-    .map(Some)
-}
-
-fn catalogue_on<B: Compute>(
-    backend: &B,
-    targets: &Array2<f64>,
-    stars: &[[f64; 3]],
-    threshold: f64,
-) -> Result<Vec<bool>, String> {
+    let client = cube::client()?;
     let mut hits = vec![false; targets.nrows()];
     for stars in stars.chunks(32_768) {
         let packed: Vec<f32> = stars
             .iter()
             .flat_map(|&[x, y, z]| [x as f32, y as f32, z as f32, 0.0])
             .collect();
-        let catalogue = backend.storage(&packed);
+        let catalogue = cube::storage(&client, &packed);
         // Bound the duration of a submission and respect WebGPU's portable
         // one-dimensional workgroup limit.
         let batch = (134_217_728 / stars.len()).min(65_535);
@@ -191,8 +143,13 @@ fn catalogue_on<B: Compute>(
                 .into_iter()
                 .flat_map(|v| [v[0] as f32, v[1] as f32, v[2] as f32, threshold as f32])
                 .collect();
-            let cones = backend.storage(&packed);
-            let data = backend.dispatch(Kernel::Catalogue, [&cones, &catalogue], results.len())?;
+            let cones = cube::storage(&client, &packed);
+            let data = cube::dispatch(
+                &client,
+                Kernel::Catalogue,
+                [&cones, &catalogue],
+                results.len(),
+            )?;
             let ranges: &[[u32; 2]] = bytemuck::cast_slice(&data);
             for ((hit, row), &[first, end]) in results.iter_mut().zip(rows.rows()).zip(ranges) {
                 *hit |= end == u32::MAX
@@ -203,18 +160,12 @@ fn catalogue_on<B: Compute>(
             }
         }
     }
-    Ok(hits)
+    Ok(Some(hits))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const BACKENDS: &[Backend] = &[
-        Backend::Wgpu,
-        #[cfg(feature = "cubecl")]
-        Backend::CubeCl,
-    ];
 
     #[test]
     #[ignore = "requires a hardware GPU adapter"]
@@ -232,20 +183,18 @@ mod tests {
             1 => ([1.0, 0.0, 0.0], 1.0, Some(0.5)),
             _ => ([0.0, 1.0, 0.0], 0.8, None),
         };
-        for &backend in BACKENDS {
-            let mask = mask(backend, &targets, times, row, Angle::Direction)
-                .unwrap()
-                .unwrap();
-            for ((i, t), &flag) in mask.indexed_iter() {
-                assert_eq!(
-                    flag,
-                    match t % 3 {
-                        0 => i % 3 == 2,
-                        1 => i % 3 == 0,
-                        _ => true,
-                    }
-                );
-            }
+        let mask = mask(&targets, times, row, Angle::Direction)
+            .unwrap()
+            .unwrap();
+        for ((i, t), &flag) in mask.indexed_iter() {
+            assert_eq!(
+                flag,
+                match t % 3 {
+                    0 => i % 3 == 2,
+                    1 => i % 3 == 0,
+                    _ => true,
+                }
+            );
         }
     }
 
@@ -258,43 +207,36 @@ mod tests {
             [x, (1.0 - x * x).sqrt(), 0.0][j]
         });
         let axis = [1.0, 0.0, 0.0];
-        for &backend in BACKENDS {
-            let grid = mask(
-                backend,
-                &targets,
-                2,
-                |t| {
-                    if t == 0 {
-                        (axis, 0.5, None)
-                    } else {
-                        (axis, 1.0, Some(0.5))
-                    }
-                },
-                Angle::NearestPole,
-            )
-            .unwrap()
-            .unwrap();
-            for i in 0..6 {
-                assert_eq!(grid[[i, 0]], i % 3 == 2);
-                assert_eq!(grid[[i, 1]], i % 3 == 0);
-            }
-            let hits = catalogue_hits(backend, &targets, &[axis], 0.5)
-                .unwrap()
-                .unwrap();
-            assert_eq!(hits, [false, false, true, false, false, false]);
-
-            // Two ambiguous stars in different lanes. Only the last clears the
-            // strict boundary, so the refinement range must include both.
-            let mut stars = vec![[0.0, 0.0, 1.0]; 100];
-            stars[7] = [values[0], (1.0 - values[0] * values[0]).sqrt(), 0.0];
-            stars[94] = [values[2], (1.0 - values[2] * values[2]).sqrt(), 0.0];
-            let targets = ndarray::arr2(&[axis]);
-            assert_eq!(
-                catalogue_hits(backend, &targets, &stars, 0.5)
-                    .unwrap()
-                    .unwrap(),
-                [true]
-            );
+        let grid = mask(
+            &targets,
+            2,
+            |t| {
+                if t == 0 {
+                    (axis, 0.5, None)
+                } else {
+                    (axis, 1.0, Some(0.5))
+                }
+            },
+            Angle::NearestPole,
+        )
+        .unwrap()
+        .unwrap();
+        for i in 0..6 {
+            assert_eq!(grid[[i, 0]], i % 3 == 2);
+            assert_eq!(grid[[i, 1]], i % 3 == 0);
         }
+        let hits = catalogue_hits(&targets, &[axis], 0.5).unwrap().unwrap();
+        assert_eq!(hits, [false, false, true, false, false, false]);
+
+        // Two ambiguous stars in different lanes. Only the last clears the
+        // strict boundary, so the refinement range must include both.
+        let mut stars = vec![[0.0, 0.0, 1.0]; 100];
+        stars[7] = [values[0], (1.0 - values[0] * values[0]).sqrt(), 0.0];
+        stars[94] = [values[2], (1.0 - values[2] * values[2]).sqrt(), 0.0];
+        let targets = ndarray::arr2(&[axis]);
+        assert_eq!(
+            catalogue_hits(&targets, &stars, 0.5).unwrap().unwrap(),
+            [true]
+        );
     }
 }

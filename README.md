@@ -81,7 +81,7 @@ limit. Other Python libraries and background I/O threads have their own settings
 
 ## Optional GPU compute
 
-The Rust extension uses native `wgpu` compute for large batches of Sun, Moon,
+The Rust extension uses CubeCL for large batches of Sun, Moon,
 Moon-limb, Earth-limb, orbit RAM, orbit pole, and circular body proximity
 constraints. It can also search a bright-star catalogue for targets with a star
 inside a circular field of view. Set the environment variable before evaluation.
@@ -90,22 +90,14 @@ inside a circular field of view. Set the environment variable before evaluation.
 export RUST_EPHEM_GPU=1
 ```
 
-To use the Rust CubeCL kernels for the same calculations, build the extension
-with the optional `cubecl` Cargo feature and select it at runtime. From an
-activated Python environment in a source checkout, run
-
-```sh
-maturin develop --release --features cubecl
-export RUST_EPHEM_GPU=cubecl
-```
-
-With `RUST_EPHEM_GPU=cubecl`, `RUST_EPHEM_CUBECL_BACKEND` selects the
-runtime for eligible batches. It defaults to `wgpu`. Build with the Cargo
-feature for the runtime you want, or combine features in one build.
+Both `RUST_EPHEM_GPU=1` and `RUST_EPHEM_GPU=cubecl` enable the same kernels.
+The default build includes CubeCL’s portable `wgpu` runtime. To select another
+runtime, build with its Cargo feature and set `RUST_EPHEM_CUBECL_BACKEND`.
+You can combine runtime features in one build.
 
 | `RUST_EPHEM_CUBECL_BACKEND` | Cargo feature | Execution |
 |---|---|---|
-| `wgpu` | `cubecl` | Portable GPU compute through Metal, Vulkan, or DX12 |
+| `wgpu` (default) | `gpu` or `cubecl` | Portable GPU compute through Metal, Vulkan, or DX12 |
 | `metal` | `cubecl-metal` | Native Metal on Apple hardware with Metal 3 support |
 | `cuda` | `cubecl-cuda` | NVIDIA GPU through CUDA |
 | `hip` or `rocm` | `cubecl-hip` | AMD GPU through ROCm/HIP |
@@ -115,7 +107,7 @@ For example, to use native Metal on a Mac, run
 
 ```sh
 maturin develop --release --features cubecl-metal
-export RUST_EPHEM_GPU=cubecl
+export RUST_EPHEM_GPU=1
 export RUST_EPHEM_CUBECL_BACKEND=metal
 ```
 
@@ -133,8 +125,7 @@ CPU execution is the default. Smaller workloads, polygon tests,
 apparent-coordinate corrections, and ephemeris construction use the CPU.
 An eligible call using a GPU runtime requires a working hardware adapter.
 
-The default Cargo features include `gpu`, with Metal, Vulkan, and DX12 support.
-For a CPU-only source build, omit `gpu` (for example,
+For a CPU-only source build, omit the GPU features (for example,
 `maturin build --release --no-default-features --features ut1,extension-module`).
 The GPU computes dot products in single precision. Rust rechecks ambiguous
 angular comparisons in double precision to preserve the CPU mask at the boundary.
