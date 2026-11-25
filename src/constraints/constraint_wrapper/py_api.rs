@@ -1716,7 +1716,20 @@ impl PyConstraint {
                     let (ras, decs) =
                         Self::extract_group_targets(&target_ras, &target_decs, group_indices);
                     let roll = EvaluationRoll::Fixed(rolls[group_indices[0]]);
-                    let mask = if apparent {
+                    let paired = if apparent {
+                        self.apparent_mask_paired(
+                            ephem_ref,
+                            time_indices.as_deref(),
+                            &ras,
+                            &decs,
+                            Some(roll.degrees()),
+                        )?
+                    } else {
+                        None
+                    };
+                    let mask = if let Some(mask) = paired {
+                        mask
+                    } else if apparent {
                         self.apparent_batch(
                             ephem_ref,
                             time_indices.as_deref(),
@@ -1751,6 +1764,15 @@ impl PyConstraint {
         } else {
             self.with_evaluation_ephemeris(bound, times, indices, |ephem_ref, time_indices| {
                 if apparent {
+                    if let Some(mask) = self.apparent_mask_paired(
+                        ephem_ref,
+                        time_indices.as_deref(),
+                        &target_ras,
+                        &target_decs,
+                        None,
+                    )? {
+                        return Ok(mask);
+                    }
                     return self.apparent_batch(
                         ephem_ref,
                         time_indices.as_deref(),
@@ -1994,13 +2016,11 @@ impl PyConstraint {
         let is_sequence = len_result.is_ok();
         let num_times = len_result.unwrap_or(1);
 
-        // Repeat target_ra and target_dec for each time
-        let target_ras = vec![target_ra; num_times];
-        let target_decs = vec![target_dec; num_times];
-
-        // Call the batch method with the time parameter as is
-        // Convert target_roll to target_rolls (per-target list with single element)
-        let target_rolls = target_roll.map(|roll| vec![roll; num_times]);
+        // One target against every time: a 1 x N grid. Repeating the target
+        // per time would evaluate N x N cells to keep one row of them.
+        let target_ras = vec![target_ra];
+        let target_decs = vec![target_dec];
+        let target_rolls = target_roll.map(|roll| vec![roll]);
         let result_array = self.in_constraint_batch(
             py,
             ephemeris,

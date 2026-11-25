@@ -251,6 +251,24 @@ transforms, Sun/Moon):
 
     assert eph.file_path is None
 
+``velocities`` may be omitted when only positions are to hand:
+
+.. code-block:: python
+
+    eph = re.FileEphemeris.from_arrays(times, r_km, step_size=60)
+
+They are then the derivative of the cubic spline through the positions (the
+same spline as ``scipy.interpolate.CubicSpline``), in the position unit per
+second. The samples must be close together compared with the time over which
+the path curves. The error grows as the cube of the sample spacing and is
+largest at the first and last samples: for a low Earth orbit sampled every
+60 s it is typically about 1 mm/s inside the span, 0.1 m/s at the second
+sample and 0.4 m/s at the ends (2 mm/s at the ends when sampled every 10 s),
+and for a geostationary orbit under 0.1 mm/s. Positions interpolated between
+the first two or the last two samples carry the end error with them: up to
+about 4 m for that orbit at 60 s, and about 70 m at 120 s. Supply the
+velocities when they are known.
+
 ``times`` may also be a NumPy ``datetime64`` array (interpreted as UTC). Units
 and frame are given with the same keywords as the file constructor's overrides,
 e.g. ``position_unit="m", velocity_unit="m/s"`` or ``frame="ECEF"``; the defaults

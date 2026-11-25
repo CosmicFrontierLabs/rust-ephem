@@ -288,3 +288,133 @@ class TestConstraint:
         ref = c.evaluate(file_eph, 10.0, 20.0)
         assert len(res.timestamps) == len(eph.timestamp)
         assert list(res.constraint_array) == list(ref.constraint_array)
+
+
+def circular_orbit(
+    radius_km: float, step: float, count: int
+) -> tuple[list[datetime], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    rate = np.sqrt(398600.4418 / radius_km**3)
+    phase = rate * np.arange(count) * step
+    position = radius_km * np.stack(
+        [np.cos(phase), 0.6 * np.sin(phase), 0.8 * np.sin(phase)], axis=1
+    )
+    velocity = (
+        radius_km
+        * rate
+        * np.stack([-np.sin(phase), 0.6 * np.cos(phase), 0.8 * np.cos(phase)], axis=1)
+    )
+    times = [BEGIN + timedelta(seconds=float(step * i)) for i in range(count)]
+    return times, position, velocity
+
+
+def not_a_knot_slopes(
+    seconds: npt.NDArray[np.float64], values: npt.NDArray[np.float64]
+) -> npt.NDArray[np.float64]:
+    """Slopes at the samples of the not-a-knot cubic spline through one
+    coordinate, from its defining conditions as a dense linear system in the
+    coefficients of every piece."""
+    pieces = len(seconds) - 1
+    h = np.diff(seconds)
+    system = np.zeros((4 * pieces, 4 * pieces))
+    right = np.zeros(4 * pieces)
+    row = 0
+    for k in range(pieces):  # each piece passes through its two samples
+        for x, value in ((0.0, values[k]), (h[k], values[k + 1])):
+            system[row, 4 * k : 4 * k + 4] = [1.0, x, x**2, x**3]
+            right[row] = value
+            row += 1
+    for k in range(pieces - 1):  # first and second derivatives are continuous
+        x = h[k]
+        system[row, 4 * k : 4 * k + 4] = [0.0, 1.0, 2 * x, 3 * x**2]
+        system[row, 4 * k + 5] = -1.0
+        row += 1
+        system[row, 4 * k : 4 * k + 4] = [0.0, 0.0, 2.0, 6 * x]
+        system[row, 4 * k + 6] = -2.0
+        row += 1
+    for k in (0, pieces - 2):  # the third is too, across the end knots
+        system[row, 4 * k + 3] = 1.0
+        system[row, 4 * k + 7] = -1.0
+        row += 1
+    coefficients = np.linalg.solve(system, right).reshape(pieces, 4)
+    last = coefficients[-1]
+    end = last[1] + 2 * last[2] * h[-1] + 3 * last[3] * h[-1] ** 2
+    slopes: npt.NDArray[np.float64] = np.append(coefficients[:, 1], end)
+    return slopes
+
+
+class TestDerivedVelocities:
+    def test_are_the_spline_derivative(self) -> None:
+        """Unevenly spaced samples, against the spline's defining conditions."""
+        rng = np.random.default_rng(2)
+        seconds = np.cumsum(rng.uniform(20.0, 90.0, 40)).round(3)
+        seconds -= seconds[0]
+        phase = 1.1e-3 * seconds
+        position = 7000.0 * np.stack(
+            [np.cos(phase), 0.6 * np.sin(phase), 0.8 * np.sin(phase)], axis=1
+        )
+        times = [BEGIN + timedelta(seconds=float(s)) for s in seconds]
+        eph = FileEphemeris.from_arrays(times, position, step_size=60)
+        expected = np.stack(
+            [not_a_knot_slopes(seconds, position[:, axis]) for axis in range(3)],
+            axis=1,
+        )
+        np.testing.assert_allclose(eph.file_pv.velocity, expected, rtol=0, atol=1e-10)
+        np.testing.assert_array_equal(eph.file_pv.position, position)
+
+    @pytest.mark.parametrize(
+        "radius_km,step,inside,ends",
+        [
+            (6900.0, 10, 1e-8, 3e-6),
+            (6900.0, 60, 2e-6, 5e-4),
+            (42164.0, 60, 1e-9, 1e-7),
+        ],
+    )
+    def test_are_close_to_the_true_velocity(
+        self, radius_km: float, step: int, inside: float, ends: float
+    ) -> None:
+        times, position, velocity = circular_orbit(radius_km, step, 400)
+        eph = FileEphemeris.from_arrays(times, position, step_size=step)
+        error = np.linalg.norm(eph.file_pv.velocity - velocity, axis=1)
+        assert error[5:-5].max() < inside
+        assert error.max() < ends
+        with_velocity = FileEphemeris.from_arrays(
+            times, position, velocity, step_size=step
+        )
+        np.testing.assert_allclose(
+            eph.gcrs_pv.position, with_velocity.gcrs_pv.position, rtol=0, atol=1e-9
+        )
+
+    def test_use_the_position_unit_per_second(self) -> None:
+        times, position, _ = circular_orbit(42164.0, 60, 30)
+        km = FileEphemeris.from_arrays(times, position, step_size=60)
+        metres = FileEphemeris.from_arrays(
+            times, position * 1000.0, step_size=60, position_unit="m"
+        )
+        assert metres.source_velocity_unit == "m/s"
+        np.testing.assert_allclose(
+            metres.file_pv.velocity, km.file_pv.velocity, rtol=1e-12, atol=1e-11
+        )
+
+    def test_two_and_three_samples(self) -> None:
+        times, position, _ = circular_orbit(42164.0, 60, 3)
+        line = FileEphemeris.from_arrays(times[:2], position[:2], step_size=60)
+        chord = (position[1] - position[0]) / 60.0
+        np.testing.assert_allclose(
+            line.file_pv.velocity, [chord, chord], rtol=1e-12, atol=0
+        )
+        parabola = FileEphemeris.from_arrays(times, position, step_size=60)
+        np.testing.assert_allclose(
+            parabola.file_pv.velocity[1],
+            (position[2] - position[0]) / 120.0,
+            rtol=1e-12,
+            atol=0,
+        )
+
+    def test_invalid_requests(self, arrays: Arrays) -> None:
+        t, r, _ = arrays
+        with pytest.raises(ValueError, match="velocity_unit was given without"):
+            FileEphemeris.from_arrays(t, r, velocity_unit="km/s")
+        with pytest.raises(ValueError, match="Length mismatch"):
+            FileEphemeris.from_arrays(t[:-1], r)
+        with pytest.raises(ValueError, match="At least 2 samples"):
+            FileEphemeris.from_arrays(t[:1], r[:1])

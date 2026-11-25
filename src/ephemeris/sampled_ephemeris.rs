@@ -5,10 +5,11 @@ use super::ephemeris_common::{EphemerisBase, EphemerisData};
 use crate::utils::apparent::{
     apparent_from_states, earth_barycentric_velocities, ObserverAberration,
 };
-use crate::utils::interpolation::hermite_interpolate;
+use crate::utils::interpolation::hermite_between;
 use chrono::{DateTime, Utc};
 use ndarray::{s, Array2};
 use pyo3::{exceptions::PyValueError, prelude::*};
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
@@ -33,6 +34,21 @@ pub(crate) fn locate_times(
     source: &[DateTime<Utc>],
     requested: &[DateTime<Utc>],
 ) -> PyResult<Vec<Result<usize, usize>>> {
+    // Many requests are located across the cores. If any lies outside the
+    // range, the serial pass below reports the first one.
+    if requested.len() >= SAMPLE_PARALLEL_MIN_ROWS {
+        let located: Option<Vec<Result<usize, usize>>> = requested
+            .par_iter()
+            .map(|time| match source.binary_search(time) {
+                Ok(index) => Some(Ok(index)),
+                Err(right) if right > 0 && right < source.len() => Some(Err(right)),
+                _ => None,
+            })
+            .collect();
+        if let Some(located) = located {
+            return Ok(located);
+        }
+    }
     requested
         .iter()
         .map(|time| match source.binary_search(time) {
@@ -59,24 +75,30 @@ pub(crate) fn sample_states(
     times: &[DateTime<Utc>],
     locations: &[Result<usize, usize>],
 ) -> Array2<f64> {
-    let mut output = Array2::zeros((times.len(), 6));
-    for (i, location) in locations.iter().enumerate() {
-        match *location {
-            Ok(index) => output.row_mut(i).assign(&states.row(index)),
-            Err(right) => {
-                // Only copy the bracket, not a full orbit, for scalar queries.
-                let bracket = states.slice(s![right - 1..=right, ..]).to_owned();
-                let interpolated = hermite_interpolate(
-                    &times[i..i + 1],
-                    &source_times[right - 1..=right],
-                    &bracket,
-                );
-                output.row_mut(i).assign(&interpolated.row(0));
-            }
+    let row = |index: usize| -> [f64; 6] { std::array::from_fn(|k| states[[index, k]]) };
+    let one = |i: usize| -> [f64; 6] {
+        match locations[i] {
+            Ok(index) => row(index),
+            Err(right) => hermite_between(
+                &times[i],
+                &source_times[right - 1],
+                &source_times[right],
+                &row(right - 1),
+                &row(right),
+            ),
         }
-    }
-    output
+    };
+    let rows: Vec<[f64; 6]> = if times.len() >= SAMPLE_PARALLEL_MIN_ROWS {
+        (0..times.len()).into_par_iter().map(one).collect()
+    } else {
+        (0..times.len()).map(one).collect()
+    };
+    Array2::from_shape_vec((times.len(), 6), rows.into_flattened())
+        .expect("six values per sampled row")
 }
+
+/// Rows above which sampling a state table is shared across the cores.
+const SAMPLE_PARALLEL_MIN_ROWS: usize = 4096;
 
 /// Locate `times` on `source_times` and sample `states` there (no extrapolation).
 pub(crate) fn sample_states_at(

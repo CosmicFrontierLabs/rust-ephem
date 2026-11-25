@@ -415,7 +415,7 @@ Classes
       units are unrecognised, or the frame is unsupported
 
   **Alternate constructor (in-memory data):**
-    ``FileEphemeris.from_arrays(times, positions, velocities, begin=None, end=None, step_size=60, *, polar_motion=False, position_unit="km", velocity_unit=None, frame="J2000")``
+    ``FileEphemeris.from_arrays(times, positions, velocities=None, begin=None, end=None, step_size=60, *, polar_motion=False, position_unit="km", velocity_unit=None, frame="J2000")``
 
     * ``times`` — Strictly increasing sample times: sequence of datetimes (naive = UTC) or NumPy ``datetime64`` array
     * ``positions``, ``velocities`` — ``(N, 3)`` array-likes in ``position_unit`` / ``velocity_unit``

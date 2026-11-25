@@ -3050,7 +3050,7 @@ class FileEphemeris(Ephemeris):
     def from_arrays(
         times: Sequence[datetime] | npt.NDArray[np.datetime64],
         positions: npt.ArrayLike,
-        velocities: npt.ArrayLike,
+        velocities: npt.ArrayLike | None = None,
         begin: datetime | None = None,
         end: datetime | None = None,
         step_size: int = 60,
@@ -3074,7 +3074,19 @@ class FileEphemeris(Ephemeris):
                 array (interpreted as UTC, microsecond resolution).
             positions: ``(N, 3)`` array-like of positions in ``position_unit``.
             velocities: ``(N, 3)`` array-like of velocities in
-                ``velocity_unit``.  Required: Hermite interpolation uses them.
+                ``velocity_unit``, which the Hermite interpolation uses.  If
+                omitted, they are derived from the positions: the derivative
+                of the cubic spline through each coordinate (continuous first
+                and second derivatives, "not-a-knot" ends, as
+                ``scipy.interpolate.CubicSpline``), in the position unit per
+                second.  The error grows as the cube of the sample spacing
+                and is largest at the first and last samples: for a low
+                Earth orbit sampled every 60 s, typically about 1 mm/s inside
+                the span, 0.1 m/s at the second sample and 0.4 m/s at the ends
+                (2 mm/s at the ends every 10 s); for a geostationary orbit,
+                under 0.1 mm/s.  Positions interpolated between the first two
+                or last two samples carry the end error (up to about 4 m at
+                60 s for that orbit).  Supply velocities when they are known.
             begin: Start of the output time grid (default: ``times[0]``).
             end: End of the output time grid (default: ``times[-1]``).
             step_size: Output time step in seconds (default 60).
@@ -3093,7 +3105,8 @@ class FileEphemeris(Ephemeris):
             ValueError: If shapes are not ``(N, 3)``, lengths differ, fewer than
                 two samples are given, values are non-finite, times are not
                 strictly increasing, the requested range lies outside the
-                samples, or a unit/frame is unrecognised.
+                samples, a unit/frame is unrecognised, or ``velocity_unit``
+                is given without ``velocities``.
         """
 
     @property

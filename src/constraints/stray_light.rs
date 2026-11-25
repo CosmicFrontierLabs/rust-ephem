@@ -1492,17 +1492,49 @@ impl StrayLightEvaluator {
         let one = |index: usize| {
             keep(&self.report(targets[index / n_times], &bodies[index % n_times], mode))
         };
-        let count = targets.len() * n_times;
-        let cells = if count >= PARALLEL_MIN_CELLS {
-            (0..count).into_par_iter().map(one).collect()
-        } else {
-            (0..count).map(one).collect()
-        };
-        Ok((cells, n_times))
+        Ok((Self::each(targets.len() * n_times, one), n_times))
     }
 }
 
 impl StrayLightEvaluator {
+    /// `one(i)` for every `i` below `count`, across the cores.
+    fn each<T: Send>(count: usize, one: impl Fn(usize) -> T + Sync) -> Vec<T> {
+        if count >= PARALLEL_MIN_CELLS {
+            (0..count).into_par_iter().map(&one).collect()
+        } else {
+            (0..count).map(one).collect()
+        }
+    }
+
+    /// Paired evaluation of the mask alone, without the work only the values
+    /// need.
+    fn diagonal_mask(
+        &self,
+        ephemeris: &dyn EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        rolls: Option<&[Option<f64>]>,
+    ) -> PyResult<Vec<bool>> {
+        if rolls.is_some_and(|rolls| rolls.len() != target_ras.len()) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_rolls must have the same length as target_ras and target_decs",
+            ));
+        }
+        let indices =
+            super::diagonal::time_indices(ephemeris, target_ras, target_decs, time_indices)?;
+        let states = States::of(ephemeris)?;
+        Ok(Self::each(indices.len(), |i| {
+            self.report(
+                radec_to_unit_vector(target_ras[i], target_decs[i]),
+                &states.bodies(indices[i]),
+                Mode::MASK.at_roll(rolls.and_then(|rolls| rolls[i])),
+            )
+            .cell
+            .violated
+        }))
+    }
+
     /// The violation mask (targets x times) at spacecraft roll `roll_deg`, or
     /// at the nominal attitude without one.
     fn mask(
@@ -1549,11 +1581,7 @@ impl StrayLightEvaluator {
             );
             (report.cell.violated, Self::values(&report))
         };
-        let cells: Vec<(bool, Vec<f64>)> = if indices.len() >= PARALLEL_MIN_CELLS {
-            (0..indices.len()).into_par_iter().map(one).collect()
-        } else {
-            (0..indices.len()).map(one).collect()
-        };
+        let cells: Vec<(bool, Vec<f64>)> = Self::each(indices.len(), one);
         let values = Self::value_keys()
             .into_iter()
             .enumerate()
@@ -1568,6 +1596,23 @@ impl StrayLightEvaluator {
 }
 
 impl ConstraintEvaluator for StrayLightEvaluator {
+    /// Each cell integrates the response over three resolved disks.
+    fn is_expensive(&self) -> bool {
+        true
+    }
+
+    fn mask_diagonal(
+        &self,
+        ephemeris: &dyn EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+        rolls: Option<&[Option<f64>]>,
+    ) -> PyResult<Option<Vec<bool>>> {
+        self.diagonal_mask(ephemeris, target_ras, target_decs, time_indices, rolls)
+            .map(Some)
+    }
+
     fn evaluate_diagonal(
         &self,
         ephemeris: &dyn EphemerisBase,
