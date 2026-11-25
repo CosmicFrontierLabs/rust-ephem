@@ -2,6 +2,7 @@
 visibility windows. Both must be what the mask of ``in_constraint_batch``
 gives, without the mask being built."""
 
+from collections.abc import Iterator, Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from fractions import Fraction
@@ -276,3 +277,47 @@ def test_rolls_follow_the_rule_of_the_mask(ephem: TLEEphemeris) -> None:
             decs.tolist(),
             target_rolls=["5", "5", "5"],  # type: ignore[list-item]
         )
+
+
+class Labelled(Sequence[float]):
+    """Rolls that iterate in order but are indexed by label, as a pandas
+    Series is: after a table is sorted, ``rolls[i]`` is no longer row ``i``."""
+
+    def __init__(self, values: list[float], labels: list[int]) -> None:
+        self.values = values
+        self.labels = labels
+
+    def __len__(self) -> int:
+        return len(self.values)
+
+    def __iter__(self) -> Iterator[float]:
+        return iter(self.values)
+
+    def __getitem__(self, label: int) -> float:  # type: ignore[override]
+        return self.values[self.labels.index(label)]
+
+
+def test_rolls_are_taken_by_position(ephem: TLEEphemeris) -> None:
+    constraint = constraints()["solar_roll"]
+    ras, decs = targets(3)
+    rolls = [90.0, 45.0, 0.0]
+    count = constraint.violated_count(ephem, ras, decs, target_rolls=rolls)
+    windows = constraint.visibility_windows(ephem, ras, decs, target_rolls=rolls)
+    # The cases must tell the rolls apart, or a mix-up would go unseen.
+    reversed_count = constraint.violated_count(
+        ephem, ras, decs, target_rolls=rolls[::-1]
+    )
+    assert not np.array_equal(count, reversed_count)
+    # A sorted table: the labels run backwards.
+    reordered = Labelled(rolls, [2, 1, 0])
+    assert [reordered[i] for i in range(3)] == rolls[::-1]
+    np.testing.assert_array_equal(
+        constraint.violated_count(ephem, ras, decs, target_rolls=reordered), count
+    )
+    found = constraint.visibility_windows(ephem, ras, decs, target_rolls=reordered)
+    assert [rows.tolist() for rows in found] == [rows.tolist() for rows in windows]
+    # A filtered table: label 0 is gone.
+    filtered = Labelled(rolls, [5, 7, 9])
+    np.testing.assert_array_equal(
+        constraint.violated_count(ephem, ras, decs, target_rolls=filtered), count
+    )

@@ -869,7 +869,13 @@ class RustConstraintMixin(BaseModel):
         if len(free):
             groups.append((free, self._resolve_evaluation_constraint(None), None))
         if len(fixed):
-            rolls = [_roll(target_rolls[i], int(i)) for i in fixed]
+            # By position, as the groups above are: indexing a pandas Series
+            # looks its label up, which is another row once a table is sorted.
+            rolls = [
+                _roll(roll, i)
+                for i, roll in enumerate(target_rolls)
+                if roll is not None
+            ]
             groups.append((fixed, self._get_cached_rust_constraint(), rolls))
         return ras, decs, groups
 
