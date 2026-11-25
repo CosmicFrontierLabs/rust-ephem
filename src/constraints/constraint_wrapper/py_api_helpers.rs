@@ -1,8 +1,10 @@
 use crate::constraints::core::{
     sweep_rolls_with_attribution, track_violations, ConstraintEvaluator, ConstraintResult,
-    EvaluationRoll,
+    EvaluationRoll, APPARENT_PARALLEL_MIN_CELLS,
 };
-use crate::constraints::diagonal::DiagonalEvaluation;
+use crate::constraints::diagonal::{
+    DiagonalEvaluation, PARALLEL_CHUNK_ELEMENTS, PARALLEL_MIN_ELEMENTS,
+};
 use crate::constraints::elementwise::evaluate_elements;
 use crate::constraints::grid::GridEvaluation;
 use crate::ephemeris::ephemeris_common::EphemerisBase;
@@ -14,6 +16,7 @@ use crate::ephemeris::ParquetEphemeris;
 use crate::ephemeris::SPICEEphemeris;
 use crate::ephemeris::TLEEphemeris;
 use crate::utils::apparent::ObserverAberration;
+use crate::utils::parallel::should_parallelize;
 use chrono::{DateTime, Utc};
 use pyo3::prelude::*;
 use rayon::prelude::*;
@@ -23,15 +26,6 @@ use super::PyConstraint;
 
 /// Target-vector components corrected per block of times (about 64 MB).
 const APPARENT_BLOCK_VALUES: usize = 8_000_000;
-/// Fewest target x time cells in a block worth spreading over the cores.
-const APPARENT_PARALLEL_MIN_CELLS: usize = 20_000;
-
-/// Paired elements above which their per-element set-up is shared across the cores.
-const ELEMENTWISE_PARALLEL_MIN_ROWS: usize = 16_384;
-/// Fewest paired elements set up by one core; see
-/// [`diagonal::PARALLEL_CHUNK_ELEMENTS`](crate::constraints::diagonal::PARALLEL_CHUNK_ELEMENTS).
-const ELEMENTWISE_PARALLEL_CHUNK: usize = crate::constraints::diagonal::PARALLEL_CHUNK_ELEMENTS;
-
 /// An apparent paired call finds its distinct ephemeris rows by sorting them
 /// when it has fewer elements than one in this many rows, and by marking them
 /// in a table of every row otherwise. The table costs time in proportion to
@@ -255,10 +249,11 @@ impl PyConstraint {
             // Elements usually share few distinct times, all on the grid:
             // each is then found directly, with nothing to sort.
             let find = |time: &DateTime<Utc>| source_times.binary_search(time).ok();
-            let on_grid: Option<Vec<usize>> = if requested.len() >= ELEMENTWISE_PARALLEL_MIN_ROWS {
+            let parallel = should_parallelize(requested.len(), PARALLEL_MIN_ELEMENTS);
+            let on_grid: Option<Vec<usize>> = if parallel {
                 requested
                     .par_iter()
-                    .with_min_len(ELEMENTWISE_PARALLEL_CHUNK)
+                    .with_min_len(PARALLEL_CHUNK_ELEMENTS)
                     .map(find)
                     .collect()
             } else {
@@ -268,14 +263,18 @@ impl PyConstraint {
                 return f(source, &indices, requested);
             }
             let mut unique = requested.clone();
-            unique.par_sort_unstable();
+            if parallel {
+                unique.par_sort_unstable();
+            } else {
+                unique.sort_unstable();
+            }
             unique.dedup();
             let locations = locate_times(source_times, &unique)?;
             let row = |time: &DateTime<Utc>| unique.binary_search(time).unwrap_or_else(|i| i);
-            let element_rows: Vec<usize> = if requested.len() >= ELEMENTWISE_PARALLEL_MIN_ROWS {
+            let element_rows: Vec<usize> = if parallel {
                 requested
                     .par_iter()
-                    .with_min_len(ELEMENTWISE_PARALLEL_CHUNK)
+                    .with_min_len(PARALLEL_CHUNK_ELEMENTS)
                     .map(row)
                     .collect()
             } else {
@@ -368,10 +367,10 @@ impl PyConstraint {
                         aberrations[local[i]].apply_radec_deg(target_ras[i], target_decs[i])
                     };
                     let (ras, decs): (Vec<f64>, Vec<f64>) =
-                        if local.len() >= ELEMENTWISE_PARALLEL_MIN_ROWS {
+                        if should_parallelize(local.len(), PARALLEL_MIN_ELEMENTS) {
                             (0..local.len())
                                 .into_par_iter()
-                                .with_min_len(ELEMENTWISE_PARALLEL_CHUNK)
+                                .with_min_len(PARALLEL_CHUNK_ELEMENTS)
                                 .map(correct)
                                 .unzip()
                         } else {
@@ -606,12 +605,15 @@ impl PyConstraint {
             .enumerate()
         {
             let cells = ras.len() * n_times;
-            let (cell_ras, cell_decs): (Vec<f64>, Vec<f64>) = (0..cells)
-                .into_par_iter()
-                .map(|c| {
-                    aberrations[c % n_times].apply_radec_deg(ras[c / n_times], decs[c / n_times])
-                })
-                .unzip();
+            let correct = |c: usize| {
+                aberrations[c % n_times].apply_radec_deg(ras[c / n_times], decs[c / n_times])
+            };
+            let (cell_ras, cell_decs): (Vec<f64>, Vec<f64>) =
+                if should_parallelize(cells, APPARENT_PARALLEL_MIN_CELLS) {
+                    (0..cells).into_par_iter().map(correct).unzip()
+                } else {
+                    (0..cells).map(correct).unzip()
+                };
             let rolls = roll.map(|roll| vec![Some(roll); cells]);
             let Some(mask) = evaluator.mask_diagonal(
                 &view,
@@ -696,7 +698,7 @@ impl PyConstraint {
                     *out = aberration.apply(*p);
                 }
             };
-            if corrections.len() * n_targets >= APPARENT_PARALLEL_MIN_CELLS {
+            if should_parallelize(corrections.len() * n_targets, APPARENT_PARALLEL_MIN_CELLS) {
                 proper
                     .par_iter_mut()
                     .zip(corrections.par_iter())
@@ -789,16 +791,16 @@ impl PyConstraint {
             // Wide: one time at a time, every target corrected for it.
             for (column, aberration) in aberrations.iter().enumerate() {
                 let correct = |(&ra, &dec): (&f64, &f64)| aberration.apply_radec_deg(ra, dec);
-                let (ras, decs): (Vec<f64>, Vec<f64>) = if n_targets >= APPARENT_PARALLEL_MIN_CELLS
-                {
-                    target_ras
-                        .par_iter()
-                        .zip(target_decs.par_iter())
-                        .map(correct)
-                        .unzip()
-                } else {
-                    target_ras.iter().zip(target_decs).map(correct).unzip()
-                };
+                let (ras, decs): (Vec<f64>, Vec<f64>) =
+                    if should_parallelize(n_targets, APPARENT_PARALLEL_MIN_CELLS) {
+                        target_ras
+                            .par_iter()
+                            .zip(target_decs.par_iter())
+                            .map(correct)
+                            .unzip()
+                    } else {
+                        target_ras.iter().zip(target_decs).map(correct).unzip()
+                    };
                 let part = Self::grid_geometric(
                     evaluator,
                     &view,

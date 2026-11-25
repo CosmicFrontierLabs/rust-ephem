@@ -93,6 +93,7 @@ use super::diagonal::DiagonalEvaluation;
 use super::solar_roll::{nominal_roll_deg, north_referenced_axes};
 use crate::ephemeris::ephemeris_common::EphemerisBase;
 use crate::utils::config::{AU_TO_KM, MOON_RADIUS_KM, SUN_RADIUS_KM};
+use crate::utils::parallel::should_parallelize;
 use crate::utils::vector_math::radec_to_unit_vector;
 use ndarray::Array2;
 use pyo3::PyResult;
@@ -1497,7 +1498,7 @@ impl StrayLightEvaluator {
 impl StrayLightEvaluator {
     /// `one(i)` for every `i` below `count`, across the cores.
     fn each<T: Send>(count: usize, one: impl Fn(usize) -> T + Sync) -> Vec<T> {
-        if count >= PARALLEL_MIN_CELLS {
+        if should_parallelize(count, PARALLEL_MIN_CELLS) {
             (0..count).into_par_iter().map(&one).collect()
         } else {
             (0..count).map(one).collect()

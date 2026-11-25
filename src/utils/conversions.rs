@@ -2,6 +2,7 @@
 ///
 /// This module provides reusable conversion functions for transforming between
 /// different coordinate frames (TEME, ITRS, GCRS), shared by ephemeris classes.
+use crate::utils::parallel::should_parallelize;
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::{exceptions::PyValueError, PyResult};
@@ -396,7 +397,7 @@ pub fn convert_frames(
     let values = out
         .as_slice_mut()
         .expect("freshly allocated arrays are in standard layout");
-    if n >= PARALLEL_MIN_ROWS {
+    if should_parallelize(n, PARALLEL_MIN_ROWS) {
         // A sample spaced wider than the cache step costs two full
         // precession-nutation series, which dominates building a long
         // ephemeris; spread the rows over the cores.

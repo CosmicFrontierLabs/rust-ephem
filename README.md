@@ -66,6 +66,19 @@ this will build from source. This will require your computer to have a valid
 [Rust installation](https://rustup.rs), and other dependencies may be required.
 If you require a specific architecture, please put in an [Issue](https://github.com/CosmicFrontierLabs/rust-ephem/issues/new).
 
+## CPU threads
+
+Set `RAYON_NUM_THREADS` before starting Python to limit the Rust compute pool.
+For example, `RAYON_NUM_THREADS=4` allows up to four workers
+for frame conversions, Sun and Moon lookups, interpolation, and batch constraint
+evaluation. By default Rayon uses the logical CPUs available to the process.
+Small jobs run on the calling thread. Set the limit to `1` when running one
+Python worker process per core.
+
+Parquet reads honor the same positive limit. DuckDB uses it for the reader's
+connection. PyArrow scans run serially if its shared CPU pool exceeds the
+limit. Other Python libraries and background I/O threads have their own settings.
+
 ## Quick Start
 
 ### Satellite Ephemeris from TLE

@@ -1,3 +1,4 @@
+use crate::utils::parallel::should_parallelize;
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use ndarray::{s, Array1, Array2};
 use pyo3::PyResult;
@@ -398,7 +399,7 @@ fn spice_states(
         .expect("freshly allocated arrays are in standard layout")
         .as_chunks_mut::<6>()
         .0;
-    if times.len() >= SPICE_PARALLEL_MIN_TIMES {
+    if should_parallelize(times.len(), SPICE_PARALLEL_MIN_TIMES) {
         rows.par_iter_mut()
             .zip(times.par_iter())
             .with_min_len(256)

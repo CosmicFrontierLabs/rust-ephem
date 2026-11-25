@@ -2,6 +2,7 @@
 //! samples, never the Cartesian product of N directions and N timestamps.
 use super::core::{value_key_prefix, ConstraintEvaluator};
 use crate::ephemeris::ephemeris_common::{EphemerisBase, EphemerisData};
+use crate::utils::parallel::should_parallelize;
 use ndarray::{s, Array1, Array2};
 use pyo3::prelude::*;
 use std::collections::HashMap;
@@ -41,7 +42,7 @@ pub const PARALLEL_CHUNK_ELEMENTS: usize = 4096;
 /// least [`PARALLEL_CHUNK_ELEMENTS`].
 pub fn each_element<T: Send>(count: usize, one: impl Fn(usize) -> T + Sync) -> Vec<T> {
     use rayon::prelude::*;
-    if count >= PARALLEL_MIN_ELEMENTS {
+    if should_parallelize(count, PARALLEL_MIN_ELEMENTS) {
         (0..count)
             .into_par_iter()
             .with_min_len(PARALLEL_CHUNK_ELEMENTS)

@@ -26,6 +26,19 @@ class TestBasicConstruction:
         eph = ParquetEphemeris(gcrs_parquet, BEGIN, END, STEP)
         assert eph is not None
 
+    def test_duckdb_connection_uses_worker_limit(
+        self, gcrs_parquet: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("RAYON_NUM_THREADS", "2")
+        eph = ParquetEphemeris(
+            gcrs_parquet,
+            BEGIN,
+            END,
+            STEP,
+            where_clause="current_setting('threads') = 2",
+        )
+        assert len(eph.timestamp) == 31
+
     def test_is_ephemeris_subclass(self, gcrs_parquet: str) -> None:
         eph = ParquetEphemeris(gcrs_parquet, BEGIN, END, STEP)
         assert isinstance(eph, Ephemeris)

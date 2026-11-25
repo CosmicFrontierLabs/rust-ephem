@@ -6,6 +6,7 @@ use crate::utils::apparent::{
     apparent_from_states, earth_barycentric_velocities, ObserverAberration,
 };
 use crate::utils::interpolation::hermite_between;
+use crate::utils::parallel::should_parallelize;
 use chrono::{DateTime, Utc};
 use ndarray::{s, Array2};
 use pyo3::{exceptions::PyValueError, prelude::*};
@@ -36,7 +37,7 @@ pub(crate) fn locate_times(
 ) -> PyResult<Vec<Result<usize, usize>>> {
     // Many requests are located across the cores. If any lies outside the
     // range, the serial pass below reports the first one.
-    if requested.len() >= SAMPLE_PARALLEL_MIN_ROWS {
+    if should_parallelize(requested.len(), SAMPLE_PARALLEL_MIN_ROWS) {
         let located: Option<Vec<Result<usize, usize>>> = requested
             .par_iter()
             .map(|time| match source.binary_search(time) {
@@ -88,7 +89,7 @@ pub(crate) fn sample_states(
             ),
         }
     };
-    let rows: Vec<[f64; 6]> = if times.len() >= SAMPLE_PARALLEL_MIN_ROWS {
+    let rows: Vec<[f64; 6]> = if should_parallelize(times.len(), SAMPLE_PARALLEL_MIN_ROWS) {
         (0..times.len()).into_par_iter().map(one).collect()
     } else {
         (0..times.len()).map(one).collect()

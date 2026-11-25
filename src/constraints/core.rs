@@ -9,6 +9,7 @@
 ///
 /// Constraints operate on ephemeris data and target coordinates to produce
 /// time-based violation windows.
+use crate::utils::parallel::should_parallelize;
 use crate::utils::time_utils::{python_datetime_to_utc, utc_to_python_datetime};
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
@@ -1474,7 +1475,7 @@ pub(crate) fn target_corrections_at(
 }
 
 /// Fewest target x time cells worth spreading over the cores.
-const APPARENT_PARALLEL_MIN_CELLS: usize = 20_000;
+pub(super) const APPARENT_PARALLEL_MIN_CELLS: usize = 20_000;
 
 /// A grid (targets x times) of some function of the apparent cosine between
 /// each catalogue target and the body direction of each time (`bodies`, unit
@@ -1510,7 +1511,7 @@ pub(crate) fn apparent_cosine_grid<T: Copy + Default + Send>(
         }
     };
     if n_times > 0 {
-        if n_targets * n_times >= APPARENT_PARALLEL_MIN_CELLS {
+        if should_parallelize(n_targets * n_times, APPARENT_PARALLEL_MIN_CELLS) {
             cells.par_chunks_mut(n_times).enumerate().for_each(fill);
         } else {
             cells.chunks_mut(n_times).enumerate().for_each(fill);

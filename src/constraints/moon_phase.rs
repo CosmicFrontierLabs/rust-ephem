@@ -1,5 +1,6 @@
 /// Moon phase constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
+use crate::utils::parallel::should_parallelize;
 use chrono::{DateTime, Utc};
 use ndarray::{s, Array2};
 use once_cell::sync::Lazy;
@@ -233,50 +234,55 @@ impl MoonPhaseEvaluator {
         let lon_rad: Vec<f64> = lons_deg.iter().map(|v| v.to_radians()).collect();
         let height_m: Vec<f64> = heights_km.iter().map(|v| v * 1000.0).collect();
 
-        let altitudes: PyResult<Vec<f64>> = (0..times.len())
-            .into_par_iter()
-            .map(|i| -> PyResult<f64> {
-                if distances[i] == 0.0 {
-                    return Ok(-90.0);
-                }
+        let altitude = |i: usize| -> PyResult<f64> {
+            if distances[i] == 0.0 {
+                return Ok(-90.0);
+            }
 
-                let time = &times[i];
-                let (utc1, utc2) = datetime_to_jd_utc(time);
-                let dut1 = ut1_provider::get_ut1_utc_offset(time);
-                let (xp, yp) = eop_provider::get_polar_motion_rad(time);
+            let time = &times[i];
+            let (utc1, utc2) = datetime_to_jd_utc(time);
+            let dut1 = ut1_provider::get_ut1_utc_offset(time);
+            let (xp, yp) = eop_provider::get_polar_motion_rad(time);
 
-                let (_aob, zob, _hob, _dob, _rob, _eo) = atco13(
-                    ra_rad[i],
-                    dec_rad[i],
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                    utc1,
-                    utc2,
-                    dut1,
-                    lon_rad[i],
-                    lat_rad[i],
-                    height_m[i],
-                    xp,
-                    yp,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.55,
-                )
-                .map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!(
-                        "SOFA atco13 failed for Moon altitude: {e:?}"
-                    ))
-                })?;
+            let (_aob, zob, _hob, _dob, _rob, _eo) = atco13(
+                ra_rad[i],
+                dec_rad[i],
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                utc1,
+                utc2,
+                dut1,
+                lon_rad[i],
+                lat_rad[i],
+                height_m[i],
+                xp,
+                yp,
+                0.0,
+                0.0,
+                0.0,
+                0.55,
+            )
+            .map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "SOFA atco13 failed for Moon altitude: {e:?}"
+                ))
+            })?;
 
-                Ok((std::f64::consts::FRAC_PI_2 - zob).to_degrees())
-            })
-            .collect();
+            Ok((std::f64::consts::FRAC_PI_2 - zob).to_degrees())
+        };
+        // Each row performs a full SOFA observed-place transformation.
+        let rows = 0..times.len();
+        let altitudes_vec = if should_parallelize(rows.len(), 4) {
+            rows.into_par_iter()
+                .map(altitude)
+                .collect::<PyResult<Vec<_>>>()
+        } else {
+            rows.map(altitude).collect()
+        }?;
 
         // Cache the computed altitudes
-        let altitudes_vec = altitudes?;
         let altitudes_arc = Arc::new(altitudes_vec.clone());
         if let Ok(mut cache) = MOON_ALTITUDE_CACHE.lock() {
             cache.insert(cache_key, altitudes_arc);
