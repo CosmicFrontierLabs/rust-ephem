@@ -807,8 +807,25 @@ impl EvaluationRoll {
     }
 }
 
+/// A roll-independent leaf that computes its mask and its continuous value together.
+pub struct LeafValueGrid {
+    pub violated: Array2<bool>,
+    pub key: &'static str,
+    pub values: Array2<f64>,
+}
+
 /// Evaluate constraints against observer ephemerides and target coordinates.
 pub trait ConstraintEvaluator: Send + Sync {
+    fn fused_leaf_grid(
+        &self,
+        _ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        _target_ras: &[f64],
+        _target_decs: &[f64],
+        _time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<LeafValueGrid>> {
+        Ok(None)
+    }
+
     /// Whether changing the pointing can change the violation mask. The router
     /// evaluates time-only trees once because a waypoint cannot clear them.
     fn is_target_dependent(&self) -> bool {
@@ -1475,7 +1492,7 @@ pub(crate) fn target_corrections_at(
 }
 
 /// Fewest target x time cells worth spreading over the cores.
-pub(super) const APPARENT_PARALLEL_MIN_CELLS: usize = 20_000;
+pub(super) const PARALLEL_MIN_GRID_CELLS: usize = 20_000;
 
 /// Screen large apparent-angle masks with a geometric dot product. The
 /// correction is evaluated in f64 for any cell it could move across a limit.
@@ -1558,7 +1575,7 @@ pub(crate) fn apparent_cosine_grid<T: Copy + Default + Send>(
         }
     };
     if n_times > 0 {
-        if should_parallelize(n_targets * n_times, APPARENT_PARALLEL_MIN_CELLS) {
+        if should_parallelize(n_targets * n_times, PARALLEL_MIN_GRID_CELLS) {
             cells.par_chunks_mut(n_times).enumerate().for_each(fill);
         } else {
             cells.chunks_mut(n_times).enumerate().for_each(fill);

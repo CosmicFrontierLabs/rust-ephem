@@ -125,3 +125,19 @@ pub(super) fn nearest_catalogue_cosines(
         Err(PyRuntimeError::new_err(GPU_BUILD_REQUIRED))
     }
 }
+
+pub(super) fn angle_values(
+    targets: &Array2<f64>,
+    bodies: &[[f64; 3]],
+    upper: f64,
+    lower: f64,
+    grid: &mut super::core::LeafValueGrid,
+) -> PyResult<bool> {
+    #[cfg(feature = "cubecl")]
+    return batch::angle_grid(targets, bodies, upper, lower, grid).map_err(PyRuntimeError::new_err);
+    #[cfg(not(feature = "cubecl"))]
+    {
+        let _ = (targets, bodies, upper, lower, grid);
+        Err(PyRuntimeError::new_err(GPU_BUILD_REQUIRED))
+    }
+}

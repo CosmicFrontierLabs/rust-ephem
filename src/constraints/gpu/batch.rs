@@ -116,6 +116,77 @@ pub(super) fn mask(
     Ok(Some(result))
 }
 
+/// Full geometric separations need a double-precision inverse cosine.
+pub(super) fn angle_grid(
+    targets: &Array2<f64>,
+    bodies: &[[f64; 3]],
+    upper: f64,
+    lower: f64,
+    grid: &mut crate::constraints::core::LeafValueGrid,
+) -> Result<bool, String> {
+    use cubecl::prelude::CubeElement;
+
+    let client = cube::client()?;
+    // The wgpu shader paths do not guarantee a double-precision acos,
+    // even on adapters advertising double-precision arithmetic.
+    if !client.properties().supports_type(f64::cube_type()) || client.name().starts_with("wgpu") {
+        return Ok(false);
+    }
+    let hardware = &client.properties().hardware;
+    let width = 64
+        .min(hardware.max_units_per_cube)
+        .min(hardware.max_cube_dim.0);
+    let capacity = (width as usize)
+        .saturating_mul(hardware.max_cube_count.0 as usize)
+        .min(1 << 22);
+    let epoch_tile = capacity.min(16_384);
+    let targets = targets
+        .as_slice()
+        .expect("contiguous target vectors")
+        .as_chunks::<3>()
+        .0;
+    for (epoch_block, epochs) in bodies.chunks(epoch_tile).enumerate() {
+        let start = epoch_block * epoch_tile;
+        let geometry = client.create_from_slice(f64::as_bytes(epochs.as_flattened()));
+        let rows = capacity / epochs.len();
+        for (block, vectors) in targets.chunks(rows).enumerate() {
+            let count = vectors.len() * epochs.len();
+            let data = cube::separations(
+                &client,
+                vectors.as_flattened(),
+                &geometry,
+                count,
+                width,
+                upper,
+                lower,
+            )?;
+            for (i, (target, signed)) in vectors
+                .iter()
+                .zip(f64::from_bytes(&data).chunks_exact(epochs.len()))
+                .enumerate()
+            {
+                let row = block * rows + i;
+                let range = s![row, start..start + epochs.len()];
+                let mut angles = grid.values.slice_mut(range);
+                let mut flags = grid.violated.slice_mut(range);
+                for (t, ((angle, flag), &value)) in
+                    angles.iter_mut().zip(&mut flags).zip(signed).enumerate()
+                {
+                    if value == 181.0 {
+                        let dot = crate::utils::vector_math::dot_product(target, &epochs[t]);
+                        *angle = dot.clamp(-1.0, 1.0).acos().to_degrees();
+                        *flag = dot > upper || dot < lower;
+                    } else {
+                        *angle = value.abs();
+                        *flag = value.is_sign_negative();
+                    }
+                }
+            }
+        }
+    }
+    Ok(true)
+}
+
 /// A catalogue tile returns one range per target, or a definite-hit sentinel.
 pub(super) fn catalogue_hits(
     targets: &Array2<f64>,

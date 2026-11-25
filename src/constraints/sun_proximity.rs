@@ -1,9 +1,10 @@
 /// Sun proximity constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
-use crate::utils::vector_math::radec_to_unit_vectors_batch;
+use crate::utils::vector_math::{dot_product, radec_to_unit_vectors_batch};
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -33,6 +34,12 @@ struct SunProximityEvaluator {
 }
 
 impl_proximity_evaluator!(SunProximityEvaluator, "Sun", "Sun", sun_positions);
+
+fn geometric_sun_direction(sun: &Array2<f64>, observer: &Array2<f64>, t: usize) -> [f64; 3] {
+    let relative = std::array::from_fn(|j| sun[[t, j]] - observer[[t, j]]);
+    let distance = dot_product(&relative, &relative).sqrt();
+    relative.map(|v| v / distance)
+}
 
 impl SunProximityEvaluator {
     fn mask_vectors(
@@ -70,32 +77,7 @@ impl SunProximityEvaluator {
             });
         }
 
-        let direction = |t: usize| {
-            let sun_pos = [
-                sun_filtered[[t, 0]],
-                sun_filtered[[t, 1]],
-                sun_filtered[[t, 2]],
-            ];
-            let obs_pos = [
-                obs_filtered[[t, 0]],
-                obs_filtered[[t, 1]],
-                obs_filtered[[t, 2]],
-            ];
-
-            let sun_rel = [
-                sun_pos[0] - obs_pos[0],
-                sun_pos[1] - obs_pos[1],
-                sun_pos[2] - obs_pos[2],
-            ];
-            let sun_dist =
-                (sun_rel[0] * sun_rel[0] + sun_rel[1] * sun_rel[1] + sun_rel[2] * sun_rel[2])
-                    .sqrt();
-            [
-                sun_rel[0] / sun_dist,
-                sun_rel[1] / sun_dist,
-                sun_rel[2] / sun_dist,
-            ]
-        };
+        let direction = |t| geometric_sun_direction(&sun_filtered, &obs_filtered, t);
         if let Some(mask) = super::gpu::try_mask(target_unit_vectors, n_times, |t| {
             (direction(t), min_cos_threshold, max_cos_threshold)
         })? {
@@ -146,6 +128,77 @@ impl SunProximityEvaluator {
 }
 
 impl ConstraintEvaluator for SunProximityEvaluator {
+    fn fused_leaf_grid(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<super::core::LeafValueGrid>> {
+        if ephemeris.target_corrections().is_some() {
+            return Ok(None);
+        }
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+        let sun = ephemeris.get_sun_positions_at_indices(time_indices)?;
+        let observer = ephemeris.get_gcrs_positions_at_indices(time_indices)?;
+        let bodies: Vec<_> = (0..sun.nrows())
+            .map(|t| geometric_sun_direction(&sun, &observer, t))
+            .collect();
+        if !bodies.iter().flatten().all(|v| v.is_finite()) {
+            // Standalone masks and angles have distinct zero-distance conventions.
+            return Ok(None);
+        }
+        let targets = radec_to_unit_vectors_batch(target_ras, target_decs);
+        let upper = self.min_angle_deg.to_radians().cos();
+        let lower = self
+            .max_angle_deg
+            .map(|v| v.to_radians().cos())
+            .unwrap_or(f64::NEG_INFINITY);
+        let shape = (targets.nrows(), bodies.len());
+        let mut grid = super::core::LeafValueGrid {
+            key: "sun_angle_deg",
+            values: Array2::zeros(shape),
+            violated: Array2::from_elem(shape, false),
+        };
+        if grid.values.is_empty() {
+            return Ok(Some(grid));
+        }
+        if super::gpu::mask_eligible(shape.0, shape.1, super::gpu::ANGULAR_MIN_PAIRS)
+            && targets.iter().all(|v| v.is_finite())
+            && super::gpu::angle_values(&targets, &bodies, upper, lower, &mut grid)?
+        {
+            return Ok(Some(grid));
+        }
+        let row = |(i, (values, mask)): (usize, (&mut [f64], &mut [bool]))| {
+            let target = std::array::from_fn(|j| targets[[i, j]]);
+            for ((angle, flag), body) in values.iter_mut().zip(mask).zip(&bodies) {
+                let dot = dot_product(&target, body);
+                *angle = dot.clamp(-1.0, 1.0).acos().to_degrees();
+                *flag = dot > upper || dot < lower;
+            }
+        };
+        let values = grid.values.as_slice_mut().unwrap();
+        let mask = grid.violated.as_slice_mut().unwrap();
+        if values.len() >= super::core::PARALLEL_MIN_GRID_CELLS {
+            values
+                .par_chunks_mut(shape.1)
+                .zip(mask.par_chunks_mut(shape.1))
+                .enumerate()
+                .for_each(row);
+        } else {
+            values
+                .chunks_mut(shape.1)
+                .zip(mask.chunks_mut(shape.1))
+                .enumerate()
+                .for_each(row);
+        }
+        Ok(Some(grid))
+    }
+
     fn evaluate_diagonal(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,

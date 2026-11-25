@@ -255,6 +255,63 @@ pub(super) fn dispatch(
         .map_err(|e| format!("CubeCL dispatch failed: {e}"))
 }
 
+/// One signed angle per cell. The sign carries the violation flag, including at zero.
+#[cube(launch)]
+fn separation(targets: &[f64], epochs: &[f64], output: &mut [f64], upper: f64, lower: f64) {
+    let cell = ABSOLUTE_POS;
+    if cell >= output.len() {
+        terminate!();
+    }
+    let times = epochs.len() / 3;
+    let i = cell / times * 3;
+    let t = cell % times * 3;
+    let dot =
+        targets[i] * epochs[t] + targets[i + 1] * epochs[t + 1] + targets[i + 2] * epochs[t + 2];
+    // Device contraction may change the last bits of the dot. Near a cutoff
+    // this can change the mask, and near +/-1 acos magnifies roundoff.
+    if f64::abs(dot) >= 0.999999 || f64::abs(dot - upper) <= 1e-13 || f64::abs(dot - lower) <= 1e-13
+    {
+        output[cell] = 181.0;
+    } else {
+        let angle = f64::acos(dot) * (180.0_f64 / std::f64::consts::PI);
+        output[cell] = if dot > upper || dot < lower {
+            -angle
+        } else {
+            angle
+        };
+    }
+}
+
+pub(super) fn separations(
+    client: &Client,
+    targets: &[f64],
+    epochs: &Handle,
+    cells: usize,
+    width: u32,
+    upper: f64,
+    lower: f64,
+) -> Result<impl std::ops::Deref<Target = [u8]>, String> {
+    let inputs = client.create_from_slice(f64::as_bytes(targets));
+    let output = client.empty(cells * size_of::<f64>());
+    // All three buffers contain contiguous f64 values.
+    let arg = |h: &Handle| unsafe {
+        BufferArg::from_raw_parts(h.clone(), h.size() as usize / size_of::<f64>())
+    };
+    separation::launch(
+        client,
+        CubeCount::Static(cells.div_ceil(width as usize) as u32, 1, 1),
+        CubeDim::new_1d(width),
+        arg(&inputs),
+        arg(epochs),
+        arg(&output),
+        upper,
+        lower,
+    );
+    client
+        .read_one(output)
+        .map_err(|e| format!("CubeCL dispatch failed: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

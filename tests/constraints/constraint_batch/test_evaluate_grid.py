@@ -1,6 +1,7 @@
 """``evaluate_grid``: the target x time grid as arrays, against the other
 evaluation methods on the same cells."""
 
+import os
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -88,6 +89,64 @@ def assert_same(a: Any, b: Any, what: str) -> None:
         atol=1e-9,
         equal_nan=True,
         err_msg=what,
+    )
+
+
+@pytest.mark.parametrize(
+    ("target_copies", "time_copies"),
+    [
+        (1, 1),
+        # Cross the dispatch threshold and both tile boundaries with a short tail.
+        pytest.param(
+            26,
+            5463,
+            marks=pytest.mark.skipif(
+                os.environ.get("RUST_EPHEM_GPU") not in {"1", "cubecl"},
+                reason="requires an enabled CubeCL runtime",
+            ),
+        ),
+    ],
+)
+def test_sun_grid_at_endpoints_and_cutoffs(
+    ephem: Any, target_copies: int, time_copies: int
+) -> None:
+    sun = ephem.sun_pv.position[0] - ephem.gcrs_pv.position[0]
+    sun /= np.linalg.norm(sun)
+    tangent = np.cross(sun, [0.0, 0.0, 1.0])
+    tangent /= np.linalg.norm(tangent)
+    offsets = np.array(
+        [
+            0,
+            1e-6,
+            40 - 1e-8,
+            40,
+            40 + 1e-8,
+            140 - 1e-8,
+            140,
+            140 + 1e-8,
+            180 - 1e-6,
+            180,
+        ]
+    )
+    radians = np.deg2rad(offsets)[:, None]
+    directions = np.cos(radians) * sun + np.sin(radians) * tangent
+    ras = np.rad2deg(np.arctan2(directions[:, 1], directions[:, 0])).tolist()
+    decs = np.rad2deg(np.arcsin(directions[:, 2])).tolist()
+    constraint = re.SunConstraint(min_angle=40, max_angle=140)
+    indices = [2, 0, 2]
+    grid = constraint.evaluate_grid(
+        ephem, ras * target_copies, decs * target_copies, indices=indices * time_copies
+    )
+    reference = constraint.evaluate_batch(ephem, ras, decs, indices=indices)
+    angles = np.array([r.constraint_values["sun_angle_deg"] for r in reference])
+    mask = constraint.in_constraint_batch(ephem, ras, decs, indices=indices)
+    angles = np.tile(angles, (target_copies, time_copies))
+    mask = np.tile(mask, (target_copies, time_copies))
+    assert_same(grid.constraint_values["sun_angle_deg"], angles, "sun_angle_deg")
+    np.testing.assert_array_equal(grid.constraint_array, mask)
+    np.testing.assert_array_equal(grid.component_violated["sun"], mask)
+    np.testing.assert_array_equal(
+        grid.constraint_array[[2, 4, 5, 7], 1], [True, False, False, True]
     )
 
 

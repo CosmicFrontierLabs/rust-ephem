@@ -131,6 +131,14 @@ the full apparent-place correction near a boundary. Altitude/azimuth masks
 similarly use the SOFA calculation near the limits. Polygon candidates are
 checked against the original vertices.
 
+For a standalone geometric `SunConstraint.evaluate_grid` call, rust-ephem
+computes each separation and its violation flag from the same double-precision
+dot product. At 4,194,304 target/time pairs or more, the CubeCL CPU, CUDA, and
+HIP runtimes can run this calculation on devices with double-precision support.
+Rust rechecks cells near the angular limits, 0°, and 180°. The wgpu and Metal
+runtimes use the native Rust loop for this full grid. Large native grids use
+Rayon and respect `RAYON_NUM_THREADS`.
+
 Bright-star searches dispatch at 67,108,864 target/star comparisons, independent
 of the number of epochs. Circular hit tests account for early matches in a
 wide field. When a grid requests nearest-star distances, CubeCL narrows the
@@ -139,7 +147,7 @@ An eligible call using a GPU runtime requires a working hardware adapter.
 
 For a CPU-only source build, omit the GPU features (for example,
 `maturin build --release --no-default-features --features ut1,extension-module`).
-The GPU computes dot products in single precision. Rust rechecks ambiguous
+The angular mask kernels compute dot products in single precision. Rust rechecks ambiguous
 angular comparisons in double precision to preserve the CPU mask at the boundary.
 
 ## Quick Start
