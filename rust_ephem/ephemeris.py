@@ -2,13 +2,14 @@
 import abc
 from collections.abc import Iterable, Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 
 import numpy as np
 import numpy.typing as npt
 
 if TYPE_CHECKING:
     from astropy.coordinates import SkyCoord  # type: ignore[import-untyped]
+    from astropy.time import Time  # type: ignore[import-untyped]
     from astropy.units import Quantity  # type: ignore[import-untyped]
 
 from ._rust_ephem import (
@@ -88,7 +89,7 @@ class Ephemeris(abc.ABC):
 
     @abc.abstractmethod
     def gcrs_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time"
     ) -> PositionVelocityData:
         """Observer GCRS position/velocity at arbitrary time(s).
 
@@ -101,35 +102,57 @@ class Ephemeris(abc.ABC):
 
     @abc.abstractmethod
     def itrs_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time"
     ) -> PositionVelocityData:
         """Observer ITRS position/velocity at arbitrary time(s); see ``gcrs_pv_at``."""
         ...
 
     @abc.abstractmethod
     def sun_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time"
     ) -> PositionVelocityData:
         """Sun GCRS position/velocity at arbitrary time(s); see ``gcrs_pv_at``."""
         ...
 
     @abc.abstractmethod
     def moon_pv_at(
-        self, times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64]
+        self, times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time"
     ) -> PositionVelocityData:
         """Moon GCRS position/velocity at arbitrary time(s); see ``gcrs_pv_at``."""
         ...
 
-    @abc.abstractmethod
+    @overload
     def get_body_pv(
         self,
         body: str,
         spice_kernel: str | None = None,
         use_horizons: bool = False,
         *,
-        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time | None" = None,
         apparent: bool = False,
-    ) -> PositionVelocityData:
+    ) -> PositionVelocityData: ...
+
+    @overload
+    def get_body_pv(
+        self,
+        body: list[str] | tuple[str, ...],
+        spice_kernel: str | None = None,
+        use_horizons: bool = False,
+        *,
+        times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time | None" = None,
+        apparent: bool = False,
+    ) -> dict[str, PositionVelocityData]: ...
+
+    @abc.abstractmethod
+    def get_body_pv(
+        self,
+        body: str | list[str] | tuple[str, ...],
+        spice_kernel: str | None = None,
+        use_horizons: bool = False,
+        *,
+        times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time | None" = None,
+        apparent: bool = False,
+    ) -> PositionVelocityData | dict[str, PositionVelocityData]:
         """Position (km) and velocity (km/s) of a body relative to the observer.
 
         GCRS axes. By default the states are geometric and on the ephemeris
@@ -140,12 +163,13 @@ class Ephemeris(abc.ABC):
 
         Args:
             body: Body name or NAIF ID (``"sun"``, ``"moon"``, ``"earth"``,
-                ``"499"``).
+                ``"499"``), or a list or tuple of these. Several bodies return
+                a dictionary keyed by the supplied names or IDs.
             spice_kernel: Optional path to a SPICE kernel to read the body from.
             use_horizons: Geometric queries only: fall back to the JPL Horizons
                 API when SPICE fails.
             times: A datetime, an iterable of datetimes or a one-dimensional
-                ``datetime64`` array (read as UTC).
+                ``datetime64`` array (read as UTC), or an astropy ``Time``.
             apparent: Return the apparent state.
 
         Raises:
@@ -159,7 +183,7 @@ class Ephemeris(abc.ABC):
         self,
         ras: float | Sequence[float] | npt.NDArray[np.float64],
         decs: float | Sequence[float] | npt.NDArray[np.float64],
-        times: datetime | Iterable[datetime] | npt.NDArray[np.datetime64],
+        times: "datetime | Iterable[datetime] | npt.NDArray[np.datetime64] | Time",
     ) -> npt.NDArray[np.float64]:
         """Directions in which catalogue targets are seen at arbitrary time(s).
 

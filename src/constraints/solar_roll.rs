@@ -163,6 +163,46 @@ pub fn solar_optimal_roll_deg(
     (f64::atan2(sun_z, sun_y) - panel_angle).to_degrees()
 }
 
+/// The nominal spacecraft roll (degrees) for a boresight and the vector from
+/// the observer to the Sun: body +Y toward the Sun, the solar-optimal roll of
+/// a +Y panel.
+pub fn nominal_roll_deg(boresight: [f64; 3], sun: [f64; 3]) -> f64 {
+    let scale = 1.0 / norm3(sun);
+    let sun_unit = [sun[0] * scale, sun[1] * scale, sun[2] * scale];
+    solar_optimal_roll_deg(&boresight, &sun_unit, default_panel_normal())
+}
+
+/// Spacecraft rolls from offsets measured from the nominal roll: element `i`
+/// points at (`ras[i]`, `decs[i]`) at ephemeris row `rows[i]`, and
+/// `offsets[i]` degrees from its nominal roll (`nominal_roll_deg`). An element
+/// without an offset has no roll.
+pub fn rolls_from_nominal(
+    ephemeris: &dyn EphemerisBase,
+    ras: &[f64],
+    decs: &[f64],
+    rows: &[usize],
+    offsets: &[Option<f64>],
+) -> PyResult<Vec<Option<f64>>> {
+    let missing = |what: &str| {
+        pyo3::exceptions::PyValueError::new_err(format!("No {what} positions available"))
+    };
+    let data = ephemeris.data();
+    let observer = data.gcrs.as_ref().ok_or_else(|| missing("GCRS"))?;
+    let sun = data.sun_gcrs.as_ref().ok_or_else(|| missing("Sun"))?;
+    Ok(offsets
+        .iter()
+        .enumerate()
+        .map(|(i, offset)| {
+            offset.map(|offset| {
+                let row = rows[i];
+                let to_sun: [f64; 3] = std::array::from_fn(|k| sun[[row, k]] - observer[[row, k]]);
+                let boresight = crate::utils::vector_math::radec_to_unit_vector(ras[i], decs[i]);
+                nominal_roll_deg(boresight, to_sun) + offset
+            })
+        })
+        .collect())
+}
+
 /// Shortest angular arc between two roll angles (result in [0, 180]).
 #[inline]
 pub fn circular_diff_deg(a: f64, b: f64) -> f64 {

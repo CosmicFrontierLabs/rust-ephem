@@ -586,12 +586,12 @@ impl FileEphemeris {
     fn get_body_pv(
         &self,
         py: Python,
-        body: &str,
+        body: &Bound<PyAny>,
         spice_kernel: Option<String>,
         use_horizons: bool,
         times: Option<&Bound<PyAny>>,
         apparent: bool,
-    ) -> PyResult<Py<PositionVelocityData>> {
+    ) -> PyResult<Py<PyAny>> {
         <Self as EphemerisBase>::get_body_pv(
             self,
             py,

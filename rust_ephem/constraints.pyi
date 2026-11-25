@@ -10,10 +10,11 @@ from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Literal, SupportsFloat, TypeAlias
+from typing import Literal, SupportsFloat, TypeAlias, overload
 
 import numpy as np
 import numpy.typing as npt
+from astropy.time import Time  # type: ignore[import-untyped]
 from pydantic import BaseModel, TypeAdapter
 
 from ._rust_ephem import ElementwiseResult as ElementwiseResult
@@ -103,7 +104,11 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
-        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         target_roll: float | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -114,7 +119,11 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -125,38 +134,106 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
     ) -> npt.NDArray[np.bool_]: ...
+    @overload
+    def violated_count(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: Sequence[float] | npt.ArrayLike,
+        target_decs: Sequence[float] | npt.ArrayLike,
+        times: datetime
+        | Sequence[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
+        indices: int | list[int] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
+        fraction: Literal[False] = False,
+    ) -> npt.NDArray[np.int64]: ...
+    @overload
+    def violated_count(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: Sequence[float] | npt.ArrayLike,
+        target_decs: Sequence[float] | npt.ArrayLike,
+        times: datetime
+        | Sequence[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
+        indices: int | list[int] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
+        *,
+        fraction: Literal[True],
+    ) -> npt.NDArray[np.float64]: ...
+    def visibility_windows(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: Sequence[float] | npt.ArrayLike,
+        target_decs: Sequence[float] | npt.ArrayLike,
+        times: datetime
+        | Sequence[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
+        indices: int | list[int] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
+    ) -> list[npt.NDArray[np.int64]]: ...
     def in_constraint_elementwise(
         self,
         ephemeris: Ephemeris,
         target_ras: Sequence[SupportsFloat] | npt.ArrayLike,
         target_decs: Sequence[SupportsFloat] | npt.ArrayLike,
-        times: datetime | Sequence[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | Sequence[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
+        roll_offsets: Sequence[float | None] | None = None,
     ) -> npt.NDArray[np.bool_]: ...
     def evaluate_elementwise(
         self,
         ephemeris: Ephemeris,
         target_ras: Sequence[SupportsFloat] | npt.ArrayLike,
         target_decs: Sequence[SupportsFloat] | npt.ArrayLike,
-        times: datetime | Sequence[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | Sequence[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
+        roll_offsets: Sequence[float | None] | None = None,
     ) -> ElementwiseResult: ...
     def evaluate_grid(
         self,
         ephemeris: Ephemeris,
         target_ras: Sequence[SupportsFloat] | npt.ArrayLike,
         target_decs: Sequence[SupportsFloat] | npt.ArrayLike,
-        times: datetime | Sequence[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | Sequence[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -164,7 +241,7 @@ class RustConstraintMixin(BaseModel):
     ) -> GridResult: ...
     def in_constraint(
         self,
-        time: datetime | list[datetime] | npt.NDArray[np.datetime64],
+        time: datetime | list[datetime] | npt.NDArray[np.datetime64] | Time,
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
@@ -195,7 +272,11 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float] | npt.ArrayLike | None = None,
         target_decs: list[float] | npt.ArrayLike | None = None,
-        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         body: str | int | None = None,
         use_horizons: bool = False,
         spice_kernel: str | None = None,
@@ -382,6 +463,10 @@ class StrayLightStatus(int, Enum):
     OCCULTED = 5
     @property
     def is_valid(self) -> bool: ...
+    @property
+    def label(self) -> str: ...
+    @classmethod
+    def labels(cls, values: npt.ArrayLike) -> npt.NDArray[np.str_]: ...
 
 class StrayLightConstraint(RustConstraintMixin):
     type: Literal["stray_light"] = "stray_light"

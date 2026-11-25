@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, SupportsFloat, cast
+from typing import TYPE_CHECKING, Any, Literal, SupportsFloat, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -32,6 +32,9 @@ import rust_ephem
 from ._rust_ephem import ConstraintResult as _RustConstraintResult
 from ._rust_ephem import ElementwiseResult, GridResult, RouteResult
 from .ephemeris import Ephemeris
+
+if TYPE_CHECKING:
+    from astropy.time import Time  # type: ignore[import-untyped]
 
 #: Default number of roll-angle samples used when sweeping spacecraft roll in
 #: :meth:`~RustConstraintMixin.instantaneous_field_of_regard` when ``target_roll``
@@ -219,6 +222,52 @@ class RollReference(str, Enum):
     NORTH = "north"
 
 
+def _coordinates(
+    values: Sequence[SupportsFloat] | npt.ArrayLike, name: str
+) -> npt.NDArray[np.float64]:
+    """Target coordinates as floats, by the rule of the batch and grid
+    methods: booleans, integers and floats, and numbers held as Python objects
+    (``Decimal``, ``Fraction``); text is a ``TypeError``, as are ``None`` and
+    any other dtype."""
+    given = np.asarray(values)
+    if given.dtype.kind == "O":
+        if given.ndim != 1:
+            raise ValueError(
+                f"{name} must be a 1-D sequence of numbers: it is not one-dimensional"
+            )
+        numbers = np.empty(len(given), dtype=np.float64)
+        for i, item in enumerate(given):
+            try:
+                if isinstance(item, (str, bytes)):
+                    raise TypeError
+                numbers[i] = float(item)
+            except (TypeError, ValueError):
+                raise TypeError(
+                    f"{name} must be a 1-D sequence of numbers: "
+                    f"{name}[{i}] is a {type(item).__name__}"
+                ) from None
+        return numbers
+    if given.dtype.kind not in "biuf":
+        raise TypeError(
+            f"{name} must be a 1-D sequence of numbers, not of dtype {given.dtype}"
+        )
+    return given.astype(np.float64)
+
+
+def _roll(value: SupportsFloat, index: int) -> float:
+    """One entry of ``target_rolls`` as a float. Text is a ``TypeError``, as it
+    is in the batch and grid methods, and so is anything else that is not a
+    number."""
+    try:
+        if isinstance(value, (str, bytes)):
+            raise TypeError
+        return float(value)
+    except (TypeError, ValueError):
+        raise TypeError(
+            f"target_rolls[{index}] must be a number, not a {type(value).__name__}"
+        ) from None
+
+
 class RustConstraintMixin(BaseModel):
     """Base class for Rust constraint configurations"""
 
@@ -265,7 +314,11 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
@@ -292,7 +345,11 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
@@ -511,7 +568,11 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
-        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         target_roll: float | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -574,7 +635,11 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -655,7 +720,11 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float],
         target_decs: list[float],
-        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -760,42 +829,206 @@ class RustConstraintMixin(BaseModel):
             ),
         )
 
+    def _roll_groups(
+        self,
+        target_ras: Sequence[float] | npt.ArrayLike,
+        target_decs: Sequence[float] | npt.ArrayLike,
+        target_rolls: Sequence[float | None] | None,
+    ) -> tuple[
+        npt.NDArray[np.float64],
+        npt.NDArray[np.float64],
+        list[tuple[npt.NDArray[np.intp], Any, list[float] | None]],
+    ]:
+        """Split targets as :meth:`in_constraint_batch` does: those without a
+        roll go to the backend that leaves the roll free, the others to the
+        fixed-roll backend with their rolls. Returns the coordinates and, for
+        each group, its target indices, backend and rolls."""
+        ras = _coordinates(target_ras, "target_ras")
+        decs = _coordinates(target_decs, "target_decs")
+        if ras.ndim != 1 or ras.shape != decs.shape:
+            raise ValueError("target_ras and target_decs must have the same length")
+        if target_rolls is None:
+            everything = np.arange(len(ras))
+            return (
+                ras,
+                decs,
+                [(everything, self._resolve_evaluation_constraint(None), None)],
+            )
+        if len(target_rolls) != len(ras):
+            raise ValueError(
+                "target_rolls must have the same length as target_ras and target_decs"
+            )
+        free = np.array(
+            [i for i, roll in enumerate(target_rolls) if roll is None], dtype=np.intp
+        )
+        fixed = np.array(
+            [i for i, roll in enumerate(target_rolls) if roll is not None],
+            dtype=np.intp,
+        )
+        groups: list[tuple[npt.NDArray[np.intp], Any, list[float] | None]] = []
+        if len(free):
+            groups.append((free, self._resolve_evaluation_constraint(None), None))
+        if len(fixed):
+            # By position, as the groups above are: indexing a pandas Series
+            # looks its label up, which is another row once a table is sorted.
+            rolls = [
+                _roll(roll, i)
+                for i, roll in enumerate(target_rolls)
+                if roll is not None
+            ]
+            groups.append((fixed, self._get_cached_rust_constraint(), rolls))
+        return ras, decs, groups
+
+    def violated_count(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: Sequence[float] | npt.ArrayLike,
+        target_decs: Sequence[float] | npt.ArrayLike,
+        times: datetime | Sequence[datetime] | npt.NDArray[Any] | Time | None = None,
+        indices: int | list[int] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
+        fraction: bool = False,
+    ) -> npt.NDArray[np.int64] | npt.NDArray[np.float64]:
+        """Count the times at which each target is in-constraint.
+
+        The row sums of :meth:`in_constraint_batch`, for the same arguments,
+        without the ``(n_targets, n_times)`` mask: targets are evaluated a
+        block at a time and only each one's count is kept, so memory does not
+        grow with the number of targets.
+
+        Args:
+            fraction: Return the violated fraction of the times instead of the
+                count (NaN when no time is evaluated). The visible fraction is
+                one minus it.
+
+        The other arguments are those of :meth:`in_constraint_batch`.
+
+        Returns:
+            int64 array of shape ``(n_targets,)``, the number of times at which
+            each target violates the constraint; or, with ``fraction=True``, a
+            float array of that number divided by the number of times.
+        """
+        if n_roll_samples <= 0:
+            raise ValueError("n_roll_samples must be a positive integer")
+        ras, decs, groups = self._roll_groups(target_ras, target_decs, target_rolls)
+        counts = np.zeros(len(ras), dtype=np.int64)
+        n_times = 0
+        for members, backend, rolls in groups:
+            counts[members], n_times = backend.violated_count(
+                ephemeris,
+                ras[members],
+                decs[members],
+                self._elementwise_times(times),
+                indices,
+                target_rolls=rolls,
+                n_roll_samples=n_roll_samples,
+                apparent=apparent,
+            )
+        if not fraction:
+            return counts
+        if n_times == 0:
+            return np.full(len(ras), np.nan)
+        return counts / float(n_times)
+
+    def visibility_windows(
+        self,
+        ephemeris: Ephemeris,
+        target_ras: Sequence[float] | npt.ArrayLike,
+        target_decs: Sequence[float] | npt.ArrayLike,
+        times: datetime | Sequence[datetime] | npt.NDArray[Any] | Time | None = None,
+        indices: int | list[int] | None = None,
+        target_rolls: Sequence[float | None] | None = None,
+        n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
+        apparent: bool = False,
+    ) -> list[npt.NDArray[np.int64]]:
+        """Find the visibility windows of each target.
+
+        A window is a run of consecutive evaluated times at which the target
+        does not violate the constraint: a run of ``False`` in the target's row
+        of :meth:`in_constraint_batch`, for the same arguments. The mask itself
+        is not built: targets are evaluated a block at a time and only the
+        bounds of each one's runs are kept.
+
+        The arguments are those of :meth:`in_constraint_batch`.
+
+        Returns:
+            One int64 array per target, of shape ``(n_windows, 2)``: the index
+            of the first and of the last time of each window, in time order.
+            Both are inclusive, and index the evaluated times (``times``,
+            ``indices``, or every ephemeris timestamp), so ``times[w[:, 0]]``
+            and ``times[w[:, 1]]`` are the window starts and ends. A target
+            that is never visible has an array of shape ``(0, 2)``.
+        """
+        if n_roll_samples <= 0:
+            raise ValueError("n_roll_samples must be a positive integer")
+        ras, decs, groups = self._roll_groups(target_ras, target_decs, target_rolls)
+        windows: list[npt.NDArray[np.int64]] = [
+            np.empty((0, 2), dtype=np.int64) for _ in range(len(ras))
+        ]
+        for members, backend, rolls in groups:
+            counts, bounds, _ = backend.visibility_windows(
+                ephemeris,
+                ras[members],
+                decs[members],
+                self._elementwise_times(times),
+                indices,
+                target_rolls=rolls,
+                n_roll_samples=n_roll_samples,
+                apparent=apparent,
+            )
+            if len(members) == 0:
+                continue
+            pieces = np.split(bounds, np.cumsum(counts)[:-1])
+            for member, piece in zip(members.tolist(), pieces, strict=True):
+                windows[member] = piece
+        return windows
+
     @staticmethod
     def _elementwise_times(
-        times: datetime | Sequence[datetime] | npt.NDArray[Any] | None,
-    ) -> datetime | list[datetime] | npt.NDArray[np.datetime64] | None:
-        """Normalise elementwise ``times``. A ``datetime64`` array is passed
-        through as it is: the Rust side reads it directly, without a Python
-        ``datetime`` per element."""
+        times: datetime | Sequence[datetime] | npt.NDArray[Any] | Time | None,
+    ) -> datetime | list[datetime] | npt.NDArray[np.datetime64] | Time | None:
+        """Normalise elementwise ``times``. A ``datetime64`` array or an astropy
+        ``Time`` is passed through as it is: the Rust side reads it directly,
+        without a Python ``datetime`` per element."""
         if isinstance(times, np.ndarray) and np.issubdtype(times.dtype, np.datetime64):
             return cast(npt.NDArray[np.datetime64], times)
-        if times is None or isinstance(times, datetime):
+        if times is None or isinstance(times, datetime) or hasattr(times, "jd1"):
             return times
         return list(times)
 
     def _elementwise_backend(
-        self, target_rolls: Sequence[float | None] | None
-    ) -> tuple[Any, list[float | None] | None]:
+        self,
+        target_rolls: Sequence[float | None] | None,
+        roll_offsets: Sequence[float | None] | None = None,
+    ) -> tuple[Any, list[float | None] | None, list[float | None] | None]:
         """Pick the Rust constraint with the same roll semantics as the batch APIs.
 
         Free-roll entries on a roll-dependent tree need the sweep backend; a fully
         fixed-roll call uses the definition-only backend, as ``in_constraint_batch``
-        does. Fixed rolls evaluate identically on either backend.
+        does. Fixed rolls evaluate identically on either backend. An offset from
+        the nominal roll fixes the roll of its element as an explicit roll does.
         """
+        if target_rolls is not None and roll_offsets is not None:
+            raise ValueError("Cannot specify both 'target_rolls' and 'roll_offsets'")
         rolls = None if target_rolls is None else list(target_rolls)
-        if rolls is not None and all(roll is not None for roll in rolls):
-            return self._get_cached_rust_constraint(), rolls
-        return self._resolve_evaluation_constraint(None), rolls
+        offsets = None if roll_offsets is None else list(roll_offsets)
+        given = rolls if offsets is None else offsets
+        if given is not None and all(roll is not None for roll in given):
+            return self._get_cached_rust_constraint(), rolls, offsets
+        return self._resolve_evaluation_constraint(None), rolls, offsets
 
     def in_constraint_elementwise(
         self,
         ephemeris: Ephemeris,
         target_ras: Sequence[SupportsFloat] | npt.ArrayLike,
         target_decs: Sequence[SupportsFloat] | npt.ArrayLike,
-        times: datetime | Sequence[datetime] | npt.NDArray[Any] | None = None,
+        times: datetime | Sequence[datetime] | npt.NDArray[Any] | Time | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
+        roll_offsets: Sequence[float | None] | None = None,
     ) -> npt.NDArray[np.bool_]:
         """Check targets paired elementwise with times (no target x time grid).
 
@@ -827,6 +1060,18 @@ class RustConstraintMixin(BaseModel):
                 (``ensure_planetary_ephemeris()``). The default, ``False``, keeps
                 the geometric convention. See "Geometric and apparent angles" in
                 the constraints documentation for what is and is not corrected.
+            roll_offsets: Optional per-element spacecraft roll, in degrees from
+                the nominal roll of that element, in place of ``target_rolls``
+                (the two cannot be combined). The nominal roll is the one that
+                turns body +Y toward the Sun, the solar-optimal roll of a +Y
+                panel, for the element's own target and time; with
+                ``apparent=True`` it is taken from the apparent directions.
+                Element ``i`` is evaluated at ``nominal_i + roll_offsets[i]``
+                exactly as if that roll had been passed in ``target_rolls``, so
+                one call replaces a call to read the nominal roll and a second
+                to apply the offset. ``None`` entries are elements without a
+                roll. For a :class:`StrayLightConstraint` an entry takes the
+                place of ``roll_offset_deg`` for its element.
 
         Returns:
             1D boolean array of shape (N,), ``True`` where the constraint is
@@ -835,7 +1080,7 @@ class RustConstraintMixin(BaseModel):
         Raises:
             ValueError: On length mismatches or times outside the ephemeris range.
         """
-        backend, rolls = self._elementwise_backend(target_rolls)
+        backend, rolls, offsets = self._elementwise_backend(target_rolls, roll_offsets)
         return cast(
             npt.NDArray[np.bool_],
             backend.in_constraint_elementwise(
@@ -846,6 +1091,7 @@ class RustConstraintMixin(BaseModel):
                 target_rolls=rolls,
                 n_roll_samples=n_roll_samples,
                 apparent=apparent,
+                roll_offsets=offsets,
             ),
         )
 
@@ -854,15 +1100,17 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: Sequence[SupportsFloat] | npt.ArrayLike,
         target_decs: Sequence[SupportsFloat] | npt.ArrayLike,
-        times: datetime | Sequence[datetime] | npt.NDArray[Any] | None = None,
+        times: datetime | Sequence[datetime] | npt.NDArray[Any] | Time | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
         apparent: bool = False,
+        roll_offsets: Sequence[float | None] | None = None,
     ) -> ElementwiseResult:
         """Evaluate targets paired elementwise with times, with per-element values.
 
-        Same pairing, time handling, roll semantics, ``apparent`` option and
-        polarity as :meth:`in_constraint_elementwise`. With ``apparent=True`` the
+        Same pairing, time handling, roll semantics (``target_rolls`` or
+        ``roll_offsets``), ``apparent`` option and polarity as
+        :meth:`in_constraint_elementwise`. With ``apparent=True`` the
         ``constraint_values`` are the apparent angles; ``ras`` and ``decs`` remain
         the catalogue coordinates passed in.
 
@@ -871,10 +1119,13 @@ class RustConstraintMixin(BaseModel):
             (N,) bool (``True`` = violated), ``visibility_flags``,
             ``constraint_values`` (dict of (N,) float arrays with the same keys
             :meth:`evaluate_batch` reports, e.g. ``sun.sun_angle_deg`` inside a
-            combinator), ``component_violated``, ``cause_value_keys``,
+            combinator), ``component_violated``, ``component_order`` (its keys
+            in the order the rules were written), ``first_violated`` ((N,) str
+            array: the first rule in that order violated where the constraint
+            is, ``""`` where it is satisfied), ``cause_value_keys``,
             ``timestamp``, ``ras`` and ``decs``.
         """
-        backend, rolls = self._elementwise_backend(target_rolls)
+        backend, rolls, offsets = self._elementwise_backend(target_rolls, roll_offsets)
         return cast(
             ElementwiseResult,
             backend.evaluate_elementwise(
@@ -885,6 +1136,7 @@ class RustConstraintMixin(BaseModel):
                 target_rolls=rolls,
                 n_roll_samples=n_roll_samples,
                 apparent=apparent,
+                roll_offsets=offsets,
             ),
         )
 
@@ -893,7 +1145,11 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: Sequence[SupportsFloat] | npt.ArrayLike,
         target_decs: Sequence[SupportsFloat] | npt.ArrayLike,
-        times: datetime | Sequence[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | Sequence[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         indices: int | list[int] | None = None,
         target_rolls: Sequence[float | None] | None = None,
         n_roll_samples: int = DEFAULT_N_ROLL_SAMPLES,
@@ -929,19 +1185,20 @@ class RustConstraintMixin(BaseModel):
             :meth:`in_constraint_batch`), ``visibility_flags``,
             ``constraint_values`` (dict of ``(M, N)`` float arrays with the keys
             :meth:`evaluate_batch` reports), ``component_violated`` (dict of
-            ``(M, N)`` bool arrays keyed by cause tag), ``cause_value_keys``,
-            ``constraint_name``, ``timestamp`` (length N), ``ras`` and ``decs``
-            (length M). ``result.target(i)`` builds the
+            ``(M, N)`` bool arrays keyed by cause tag), ``component_order``
+            (its keys in the order the rules were written), ``first_violated``
+            (``(M, N)`` str array: the first rule in that order violated where
+            the constraint is, ``""`` where it is satisfied),
+            ``cause_value_keys``, ``constraint_name``, ``timestamp`` (length N),
+            ``ras`` and ``decs`` (length M). ``result.target(i)`` builds the
             :class:`ConstraintResult`-like result of one target, with its
             violation and visibility windows, on demand. The grid arrays
             and ``timestamp`` are read-only; ``ras`` and ``decs`` are copies.
         """
         if n_roll_samples <= 0:
             raise ValueError("n_roll_samples must be a positive integer")
-        backend, rolls = self._elementwise_backend(target_rolls)
-        grid_times: Any = times
-        if times is not None and not isinstance(times, (datetime, np.ndarray)):
-            grid_times = list(times)
+        backend, rolls, _ = self._elementwise_backend(target_rolls)
+        grid_times = self._elementwise_times(times)
         return cast(
             GridResult,
             backend.evaluate_grid(
@@ -958,7 +1215,7 @@ class RustConstraintMixin(BaseModel):
 
     def in_constraint(
         self,
-        time: datetime | list[datetime] | npt.NDArray[np.datetime64],
+        time: datetime | list[datetime] | npt.NDArray[np.datetime64] | Time,
         ephemeris: Ephemeris,
         target_ra: float,
         target_dec: float,
@@ -1194,7 +1451,11 @@ class RustConstraintMixin(BaseModel):
         ephemeris: Ephemeris,
         target_ras: list[float] | npt.ArrayLike | None = None,
         target_decs: list[float] | npt.ArrayLike | None = None,
-        times: datetime | list[datetime] | npt.NDArray[np.datetime64] | None = None,
+        times: datetime
+        | list[datetime]
+        | npt.NDArray[np.datetime64]
+        | Time
+        | None = None,
         body: str | int | None = None,
         use_horizons: bool = False,
         spice_kernel: str | None = None,
@@ -2269,6 +2530,29 @@ class StrayLightStatus(int, Enum):
             StrayLightStatus.DARK,
             StrayLightStatus.OCCULTED,
         )
+
+    @property
+    def label(self) -> str:
+        """The lower-case name of this status, e.g. ``"in_field"``."""
+        return self.name.lower()
+
+    @classmethod
+    def labels(cls, values: npt.ArrayLike) -> npt.NDArray[np.str_]:
+        """Name every entry of an array of status values.
+
+        ``values`` is a ``sun_status``, ``earth_status`` or ``moon_status``
+        array of any shape, as ``constraint_values`` reports it. Returns a
+        string array of the same shape holding each entry's :attr:`label`
+        (``"ok"``, ``"dark"``, ``"in_field"``, ``"first_cell"``,
+        ``"unconverged"`` or ``"occulted"``), and an empty string for an
+        entry that is not a status (NaN, for instance).
+        """
+        codes = np.asarray(values, dtype=np.float64)
+        names = np.array([status.label for status in cls] + [""])
+        place = np.full(codes.shape, len(cls), dtype=np.intp)
+        for position, status in enumerate(cls):
+            place[codes == status.value] = position
+        return cast(npt.NDArray[np.str_], names[place])
 
 
 class StrayLightConstraint(RustConstraintMixin):
