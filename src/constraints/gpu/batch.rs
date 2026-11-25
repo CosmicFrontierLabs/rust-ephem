@@ -6,12 +6,13 @@ use ndarray::{s, Array2, ArrayView2, ArrayViewMut2};
 fn mask_tile(
     client: &Client,
     targets: ArrayView2<'_, f64>,
-    epochs: &[[f64; 5]],
+    times: usize,
     geometry: &Handle,
     angle: Angle,
+    refine: impl Fn(usize, usize) -> bool,
     mut mask: ArrayViewMut2<'_, bool>,
 ) -> Result<(), String> {
-    let words = epochs.len().div_ceil(32);
+    let words = times.div_ceil(32);
     let count = words * targets.nrows();
     let target_buffer = cube::storage(
         client,
@@ -25,7 +26,6 @@ fn mask_tile(
     )?;
     let packed: &[[u32; 2]] = bytemuck::cast_slice(&data);
     for (i, mut row) in mask.rows_mut().into_iter().enumerate() {
-        let target = targets.row(i);
         for (word, (cells, &[flags, mut uncertain])) in row
             .as_slice_mut()
             .expect("contiguous mask row")
@@ -38,10 +38,7 @@ fn mask_tile(
             }
             while uncertain != 0 {
                 let lane = uncertain.trailing_zeros() as usize;
-                let [x, y, z, upper, lower] = epochs[word * 32 + lane];
-                let dot = target[0] * x + target[1] * y + target[2] * z;
-                let cosine = angle.cosine(dot);
-                cells[lane] = cosine > upper || cosine < lower;
+                cells[lane] = refine(i, word * 32 + lane);
                 uncertain &= uncertain - 1;
             }
         }
@@ -54,6 +51,7 @@ pub(super) fn mask(
     times: usize,
     row: impl Fn(usize) -> AngularBounds,
     angle: Angle,
+    refine: Option<&dyn Fn(usize, usize) -> bool>,
 ) -> Result<Option<Array2<bool>>, String> {
     let bounded = |x: &f64| x.abs() <= 1.000001;
     if !targets.iter().all(bounded) {
@@ -98,9 +96,19 @@ pub(super) fn mask(
             mask_tile(
                 &client,
                 targets.slice(s![i..end, ..]),
-                epochs,
+                epochs.len(),
                 &geometry,
                 angle,
+                |r, c| {
+                    if let Some(exact) = refine {
+                        return exact(i + r, t + c);
+                    }
+                    let target = targets.row(i + r);
+                    let [x, y, z, upper, lower] = epochs[c];
+                    let dot = target[0] * x + target[1] * y + target[2] * z;
+                    let cosine = angle.cosine(dot);
+                    cosine > upper || cosine < lower
+                },
                 result.slice_mut(s![i..end, t..t + epochs.len()]),
             )?;
         }
@@ -114,15 +122,62 @@ pub(super) fn catalogue_hits(
     stars: &[[f64; 3]],
     threshold: f64,
 ) -> Result<Option<Vec<bool>>, String> {
+    let mut hits = vec![false; targets.nrows()];
+    let done = scan_catalogue(
+        targets,
+        stars,
+        Some(threshold),
+        &mut hits,
+        |chunk| chunk.iter().all(|&hit| hit),
+        |hit, row, stars, [first, end]| {
+            *hit |= end == u32::MAX
+                || (first < end
+                    && stars[first as usize..end as usize]
+                        .iter()
+                        .any(|s| row[0] * s[0] + row[1] * s[1] + row[2] * s[2] > threshold));
+        },
+    )?;
+    Ok(done.then_some(hits))
+}
+
+pub(super) fn nearest_cosines(
+    targets: &Array2<f64>,
+    stars: &[[f64; 3]],
+) -> Result<Option<Vec<f64>>, String> {
+    let mut best = vec![f64::NEG_INFINITY; targets.nrows()];
+    let done = scan_catalogue(
+        targets,
+        stars,
+        None,
+        &mut best,
+        |_| false,
+        |best, row, stars, [first, end]| {
+            for s in &stars[first as usize..end as usize] {
+                *best = best.max(row[0] * s[0] + row[1] * s[1] + row[2] * s[2]);
+            }
+        },
+    )?;
+    Ok(done.then_some(best))
+}
+
+/// Each workgroup returns a range containing every candidate still tied in
+/// f32, or a definite-hit sentinel for a cone search. Reduce tiles in f64.
+fn scan_catalogue<T>(
+    targets: &Array2<f64>,
+    stars: &[[f64; 3]],
+    threshold: Option<f64>,
+    results: &mut [T],
+    finished: impl Fn(&[T]) -> bool,
+    reduce: impl Fn(&mut T, ndarray::ArrayView1<'_, f64>, &[[f64; 3]], [u32; 2]),
+) -> Result<bool, String> {
     let bounded = |x: &f64| x.abs() <= 1.000001;
-    if !threshold.is_finite()
+    if threshold.is_some_and(|x| !x.is_finite())
         || !targets.iter().all(bounded)
         || !stars.iter().flatten().all(bounded)
     {
-        return Ok(None);
+        return Ok(false);
     }
     let client = cube::client()?;
-    let mut hits = vec![false; targets.nrows()];
     for stars in stars.chunks(32_768) {
         let packed: Vec<f32> = stars
             .iter()
@@ -132,8 +187,8 @@ pub(super) fn catalogue_hits(
         // Bound the duration of a submission and respect WebGPU's portable
         // one-dimensional workgroup limit.
         let batch = (134_217_728 / stars.len()).min(65_535);
-        for (block, results) in hits.chunks_mut(batch).enumerate() {
-            if results.iter().all(|&v| v) {
+        for (block, results) in results.chunks_mut(batch).enumerate() {
+            if finished(results) {
                 continue;
             }
             let first = block * batch;
@@ -141,26 +196,31 @@ pub(super) fn catalogue_hits(
             let packed: Vec<f32> = rows
                 .rows()
                 .into_iter()
-                .flat_map(|v| [v[0] as f32, v[1] as f32, v[2] as f32, threshold as f32])
+                .flat_map(|v| {
+                    [
+                        v[0] as f32,
+                        v[1] as f32,
+                        v[2] as f32,
+                        threshold.unwrap_or_default() as f32,
+                    ]
+                })
                 .collect();
             let cones = cube::storage(&client, &packed);
             let data = cube::dispatch(
                 &client,
-                Kernel::Catalogue,
+                Kernel::Catalogue {
+                    nearest: threshold.is_none(),
+                },
                 [&cones, &catalogue],
                 results.len(),
             )?;
             let ranges: &[[u32; 2]] = bytemuck::cast_slice(&data);
-            for ((hit, row), &[first, end]) in results.iter_mut().zip(rows.rows()).zip(ranges) {
-                *hit |= end == u32::MAX
-                    || (first < end
-                        && stars[first as usize..end as usize]
-                            .iter()
-                            .any(|s| row[0] * s[0] + row[1] * s[1] + row[2] * s[2] > threshold));
+            for ((output, row), &range) in results.iter_mut().zip(rows.rows()).zip(ranges) {
+                reduce(output, row, stars, range);
             }
         }
     }
-    Ok(Some(hits))
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -183,7 +243,7 @@ mod tests {
             1 => ([1.0, 0.0, 0.0], 1.0, Some(0.5)),
             _ => ([0.0, 1.0, 0.0], 0.8, None),
         };
-        let mask = mask(&targets, times, row, Angle::Direction)
+        let mask = mask(&targets, times, row, Angle::Direction, None)
             .unwrap()
             .unwrap();
         for ((i, t), &flag) in mask.indexed_iter() {
@@ -218,6 +278,7 @@ mod tests {
                 }
             },
             Angle::NearestPole,
+            None,
         )
         .unwrap()
         .unwrap();

@@ -39,6 +39,16 @@ pub struct ObserverAberration {
 }
 
 impl ObserverAberration {
+    /// Conditions for the 0.002-wide cosine screening band in the GPU mask.
+    /// At 0.5–2 au, deflection moves a unit vector by at most
+    /// (SRS / distance) * sqrt(2 / deflection_limit) < 0.000056.
+    /// In `ApparentCosine::cosine`, |b/a| < 2 under this speed limit.
+    /// Normalizing n + (b/a) beta at most doubles its displacement from a
+    /// unit target, leaving the total below 0.001 even before the f32 margin.
+    pub(crate) fn can_screen_cosine(&self) -> bool {
+        can_screen_apparent_direction(self.sun_distance_au, &self.beta, &self.sun_to_observer)
+    }
+
     /// Correct a catalogue unit vector (GCRS/ICRS axes).
     pub fn apply(&self, direction: [f64; 3]) -> [f64; 3] {
         let natural = ldsun(direction, self.sun_to_observer, self.sun_distance_au);
@@ -104,6 +114,16 @@ impl ObserverAberration {
             p[2].atan2(p[0].hypot(p[1])).to_degrees(),
         )
     }
+}
+
+pub(crate) fn can_screen_apparent_direction(
+    distance_au: f64,
+    beta: &[f64; 3],
+    sun_to_observer: &[f64; 3],
+) -> bool {
+    (0.5..=2.0).contains(&distance_au)
+        && norm(beta) <= 0.0002
+        && (norm(sun_to_observer) - 1.0).abs() < 1e-12
 }
 
 /// Spacing of the SPICE samples of the Sun's barycentric velocity. It changes

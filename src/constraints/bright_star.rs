@@ -934,11 +934,31 @@ impl ConstraintEvaluator for BrightStarEvaluator {
 
         // Result is time-invariant (fixed ICRS catalog vs. fixed target direction);
         // compute once per target and broadcast across times.
-        let nearest_deg: Vec<f64> = target_ras
-            .iter()
-            .zip(target_decs.iter())
-            .map(|(&ra, &dec)| self.nearest_star_angle_deg(ra, dec))
-            .collect();
+        let gpu_cosines = if n_targets.saturating_mul(self.stars.len()) >= 67_108_864
+            && super::gpu::enabled()
+        {
+            let units: Vec<_> = target_ras
+                .iter()
+                .zip(target_decs)
+                .map(|(&ra, &dec)| StarData::new(ra, dec).unit)
+                .collect();
+            let targets = Array2::from_shape_vec((n_targets, 3), units.into_flattened()).unwrap();
+            let stars: Vec<_> = self.stars.iter().map(|s| s.unit).collect();
+            super::gpu::nearest_catalogue_cosines(&targets, &stars)?
+        } else {
+            None
+        };
+        let nearest_deg: Vec<f64> = match gpu_cosines {
+            Some(values) => values
+                .into_iter()
+                .map(|v| v.clamp(-1.0, 1.0).acos().to_degrees())
+                .collect(),
+            None => target_ras
+                .iter()
+                .zip(target_decs)
+                .map(|(&ra, &dec)| self.nearest_star_angle_deg(ra, dec))
+                .collect(),
+        };
 
         let nearest_bright_star_angle_deg =
             Array2::from_shape_fn((n_targets, n_times), |(j, _)| nearest_deg[j]);

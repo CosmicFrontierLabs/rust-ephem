@@ -94,15 +94,12 @@ impl EarthLimbEvaluator {
 
         // On an apparent view the catalogue cosine becomes the apparent one.
         if let Some(corrections) = super::core::target_corrections_at(ephemeris, time_indices) {
-            return Ok(super::core::apparent_cosine_grid(
+            return super::core::apparent_mask(
                 target_unit_vectors,
                 &center_units,
                 &corrections,
-                |t, cos_angle| {
-                    cos_angle > cos_thresholds[t]
-                        || cos_max_thresholds[t].is_some_and(|cos_max| cos_angle < cos_max)
-                },
-            ));
+                |t| (cos_thresholds[t], cos_max_thresholds[t]),
+            );
         }
 
         if let Some(mask) = super::gpu::try_mask(target_unit_vectors, n_times, |t| {

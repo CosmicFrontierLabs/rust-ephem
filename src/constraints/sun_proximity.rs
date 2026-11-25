@@ -65,15 +65,9 @@ impl SunProximityEvaluator {
                     }))
                 })
                 .collect();
-            return Ok(super::core::apparent_cosine_grid(
-                target_unit_vectors,
-                &bodies,
-                &corrections,
-                |_, cos_angle| {
-                    cos_angle > min_cos_threshold
-                        || max_cos_threshold.is_some_and(|max| cos_angle < max)
-                },
-            ));
+            return super::core::apparent_mask(target_unit_vectors, &bodies, &corrections, |_| {
+                (min_cos_threshold, max_cos_threshold)
+            });
         }
 
         let direction = |t: usize| {

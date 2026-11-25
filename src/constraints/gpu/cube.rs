@@ -110,6 +110,7 @@ fn angular_mask(
     epochs: &[f32],
     output: &mut [u32],
     #[comptime] nearest_pole: bool,
+    #[comptime] apparent: bool,
 ) {
     let word = ABSOLUTE_POS;
     if word >= output.len() / 2 {
@@ -133,7 +134,8 @@ fn angular_mask(
         if cosine > upper || cosine < lower {
             flags |= bit;
         }
-        if f32::abs(cosine - upper) <= 2e-6_f32 || f32::abs(cosine - lower) <= 2e-6_f32 {
+        let margin = if apparent { 0.002_f32 } else { 2e-6_f32 };
+        if f32::abs(cosine - upper) <= margin || f32::abs(cosine - lower) <= margin {
             uncertain |= bit;
         }
     }
@@ -142,7 +144,7 @@ fn angular_mask(
 }
 
 #[cube(launch)]
-fn catalogue(cones: &[f32], stars: &[f32], output: &mut [u32]) {
+fn catalogue(cones: &[f32], stars: &[f32], output: &mut [u32], #[comptime] nearest: bool) {
     let target = CUBE_POS;
     let i = target * 4;
     let count = stars.len() / 4;
@@ -152,14 +154,36 @@ fn catalogue(cones: &[f32], stars: &[f32], output: &mut [u32]) {
         span[1].store(0u32);
     }
     sync_cube();
+    let mut threshold = cones[i + 3];
+    if nearest {
+        // Quantize down to share the maximum through portable u32 atomics.
+        // Adding four covers every dot of three components bounded by one.
+        let peak = Shared::<[Atomic<u32>]>::new_slice(1usize);
+        if UNIT_POS == 0 {
+            peak[0].store(0);
+        }
+        sync_cube();
+        let mut best = cones[i + 3] - 4.0;
+        let mut index = UNIT_POS as usize;
+        while index < count {
+            let j = index * 4;
+            let dot =
+                cones[i] * stars[j] + cones[i + 1] * stars[j + 1] + cones[i + 2] * stars[j + 2];
+            best = f32::max(best, dot);
+            index += CUBE_DIM as usize;
+        }
+        peak[0].fetch_max(((best + 4.0) * 1048576.0) as u32);
+        sync_cube();
+        threshold = peak[0].load() as f32 / 1048576.0 - 4.0;
+    }
     let mut first = count as u32;
     let mut end = 0u32;
     let mut star = UNIT_POS as usize;
     while star < count {
         let j = star * 4;
         let delta = cones[i] * stars[j] + cones[i + 1] * stars[j + 1] + cones[i + 2] * stars[j + 2]
-            - cones[i + 3];
-        if delta > 2e-6_f32 {
+            - threshold;
+        if !nearest && delta > 2e-6_f32 {
             end = u32::MAX;
             break;
         }
@@ -178,9 +202,10 @@ fn catalogue(cones: &[f32], stars: &[f32], output: &mut [u32]) {
     }
 }
 
+#[derive(Clone, Copy)]
 pub(super) enum Kernel {
     Mask(Angle),
-    Catalogue,
+    Catalogue { nearest: bool },
 }
 
 pub(super) fn storage(client: &Client, data: &[f32]) -> Handle {
@@ -205,7 +230,7 @@ pub(super) fn dispatch(
         .min(hardware.max_cube_dim.0);
     let groups = match kernel {
         Kernel::Mask(_) => records.div_ceil(width as usize),
-        Kernel::Catalogue => records,
+        Kernel::Catalogue { .. } => records,
     };
     let groups = CubeCount::Static(groups as u32, 1, 1);
     let dim = CubeDim::new_1d(width);
@@ -219,8 +244,11 @@ pub(super) fn dispatch(
             b,
             arg(&output),
             matches!(angle, Angle::NearestPole),
+            matches!(angle, Angle::Apparent),
         ),
-        Kernel::Catalogue => catalogue::launch(client, groups, dim, a, b, arg(&output)),
+        Kernel::Catalogue { nearest } => {
+            catalogue::launch(client, groups, dim, a, b, arg(&output), nearest)
+        }
     }
     client
         .read_one(output)

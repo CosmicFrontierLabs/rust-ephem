@@ -317,12 +317,10 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
                     (unit, self.cos_thresholds(self.limb_offset_deg(dist)))
                 })
                 .unzip();
-            return Ok(Some(super::core::apparent_cosine_grid(
-                target_unit_vectors,
-                &bodies,
-                &corrections,
-                |t, cos_angle| Self::is_violated(cos_angle, thresholds[t]),
-            )));
+            return super::core::apparent_mask(target_unit_vectors, &bodies, &corrections, |t| {
+                thresholds[t]
+            })
+            .map(Some);
         }
         self.violation_mask(target_unit_vectors, &moon, &observer)
             .map(Some)

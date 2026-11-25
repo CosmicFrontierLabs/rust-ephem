@@ -486,8 +486,6 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
 
         let n_targets = target_ras.len();
         let n_times = times_filtered.len();
-        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
-
         let illuminations = ephemeris.moon_illumination(time_indices)?;
         let moon_positions_all = ephemeris.get_moon_positions()?;
         let observer_positions_all = ephemeris.get_gcrs_positions()?;
@@ -520,60 +518,71 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
         let min_cos_threshold = self.min_distance.map(|min| min.to_radians().cos());
         let max_cos_threshold = self.max_distance.map(|max| max.to_radians().cos());
 
-        // Vectorized: compute all dot products at once using matrix multiplication
-        // moon_units: (n_times, 3), target_vectors: (n_targets, 3)
-        // We want: (n_targets, n_times) where result[j, i] = dot(target_vectors[j], moon_units[i])
-        // This is target_vectors @ moon_units.T
-        let cos_angles = target_vectors.dot(&moon_units.t());
-
-        // Process illumination and visibility for each time index
-        for i in 0..n_times {
-            let illumination = illuminations[i];
-            let moon_altitude = moon_altitudes[i];
-
-            // Check if we should enforce constraint based on Moon visibility
-            let moon_visible = self.is_moon_visible(moon_altitude);
-            if !self.enforce_when_below_horizon && !moon_visible {
-                // Moon is below horizon and we don't enforce in this case
-                // All targets are considered satisfied (not violated)
-                for j in 0..n_targets {
-                    result[[j, i]] = false;
+        // The epoch can force all targets clear (Moon hidden) or all violated
+        // (illumination out of range). Only the other epochs need a separation.
+        let forced: Vec<_> = (0..n_times)
+            .map(|t| {
+                if !self.enforce_when_below_horizon && !self.is_moon_visible(moon_altitudes[t]) {
+                    Some(false)
+                } else if illuminations[t] > self.max_illumination
+                    || self
+                        .min_illumination
+                        .is_some_and(|min| illuminations[t] < min)
+                {
+                    Some(true)
+                } else if min_cos_threshold.is_none() && max_cos_threshold.is_none() {
+                    Some(false)
+                } else {
+                    None
                 }
-                continue;
+            })
+            .collect();
+        if forced.iter().all(Option::is_some) {
+            return Ok(Array2::from_shape_fn((n_targets, n_times), |(_, t)| {
+                forced[t].unwrap()
+            }));
+        }
+        // Clamping the dot product makes cos > 1 and cos < -1 impossible.
+        let upper = min_cos_threshold
+            .filter(|&v| v < 1.0)
+            .unwrap_or(f64::INFINITY);
+        let lower = max_cos_threshold.filter(|&v| v > -1.0);
+        let violates = |dot: f64| dot > upper || lower.is_some_and(|v| dot < v);
+        let cosines = std::cell::OnceCell::new();
+        let exact_cosines = || cosines.get_or_init(|| target_vectors.dot(&moon_units.t()));
+        let refine = |i: usize, t: usize| {
+            let dot = target_vectors[[i, 0]] * moon_units[[t, 0]]
+                + target_vectors[[i, 1]] * moon_units[[t, 1]]
+                + target_vectors[[i, 2]] * moon_units[[t, 2]];
+            // Preserve the original matrix multiply's rounding on f64 ties.
+            if (dot - upper).abs() <= 2e-15 || lower.is_some_and(|v| (dot - v).abs() <= 2e-15) {
+                violates(exact_cosines()[[i, t]])
+            } else {
+                violates(dot)
             }
-
-            // Check illumination constraints (same for all targets)
-            let mut illumination_violated = false;
-            if illumination > self.max_illumination {
-                illumination_violated = true;
-            }
-            if let Some(min_illumination) = self.min_illumination {
-                if illumination < min_illumination {
-                    illumination_violated = true;
-                }
-            }
-
-            // Vectorized: check distance constraints for all targets at this time
-            for j in 0..n_targets {
-                let cos_angle = cos_angles[[j, i]].clamp(-1.0, 1.0);
-
-                let mut target_violated = illumination_violated;
-                if let Some(min_thresh) = min_cos_threshold {
-                    if cos_angle > min_thresh {
-                        target_violated = true;
-                    }
-                }
-                if let Some(max_thresh) = max_cos_threshold {
-                    if cos_angle < max_thresh {
-                        target_violated = true;
-                    }
-                }
-
-                result[[j, i]] = target_violated;
+        };
+        if super::gpu::mask_eligible(n_targets, n_times, super::gpu::ANGULAR_MIN_PAIRS) {
+            if let Some(mask) = super::gpu::dispatch_angle_mask(
+                &target_vectors,
+                n_times,
+                |t| match forced[t] {
+                    Some(v) => ([0.0; 3], if v { -1.0 } else { 1.0 }, None),
+                    None => (
+                        [moon_units[[t, 0]], moon_units[[t, 1]], moon_units[[t, 2]]],
+                        upper,
+                        lower,
+                    ),
+                },
+                super::gpu::Angle::Direction,
+                Some(&refine),
+            )? {
+                return Ok(mask);
             }
         }
-
-        Ok(result)
+        let cosines = exact_cosines();
+        Ok(Array2::from_shape_fn((n_targets, n_times), |(i, t)| {
+            forced[t].unwrap_or_else(|| violates(cosines[[i, t]]))
+        }))
     }
 
     fn compute_named_values(

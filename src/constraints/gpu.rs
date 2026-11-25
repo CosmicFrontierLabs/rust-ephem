@@ -15,12 +15,13 @@ const GPU_BUILD_REQUIRED: &str =
 pub(super) enum Angle {
     Direction,
     NearestPole,
+    Apparent,
 }
 
 impl Angle {
     pub(super) fn cosine(self, dot: f64) -> f64 {
         match self {
-            Self::Direction => dot,
+            Self::Direction | Self::Apparent => dot,
             Self::NearestPole => dot.abs(),
         }
     }
@@ -33,6 +34,13 @@ pub(super) fn enabled() -> bool {
     )
 }
 
+pub(super) const ANGULAR_MIN_PAIRS: usize = 4_194_304;
+pub(super) const TRIG_MIN_PAIRS: usize = 131_072;
+
+pub(super) fn mask_eligible(targets: usize, times: usize, minimum: usize) -> bool {
+    targets.saturating_mul(times) >= minimum && enabled()
+}
+
 pub(super) type AngularBounds = ([f64; 3], f64, Option<f64>);
 
 /// A target-by-direction grid shared by rules with per-epoch angular bounds.
@@ -41,8 +49,11 @@ pub(super) fn angular_grid(
     epochs: &[AngularBounds],
     angle: Angle,
 ) -> PyResult<Array2<bool>> {
-    if let Some(mask) = try_angle_mask(targets, epochs.len(), |t| epochs[t], angle)? {
-        return Ok(mask);
+    if mask_eligible(targets.nrows(), epochs.len(), ANGULAR_MIN_PAIRS) {
+        if let Some(mask) = dispatch_angle_mask(targets, epochs.len(), |t| epochs[t], angle, None)?
+        {
+            return Ok(mask);
+        }
     }
     Ok(Array2::from_shape_fn(
         (targets.nrows(), epochs.len()),
@@ -61,23 +72,26 @@ pub(super) fn try_mask(
     times: usize,
     row: impl Fn(usize) -> ([f64; 3], f64, Option<f64>),
 ) -> PyResult<Option<Array2<bool>>> {
-    try_angle_mask(targets, times, row, Angle::Direction)
+    if !mask_eligible(targets.nrows(), times, ANGULAR_MIN_PAIRS) {
+        return Ok(None);
+    }
+    dispatch_angle_mask(targets, times, row, Angle::Direction, None)
 }
 
-fn try_angle_mask(
+/// Dispatch after the caller checks eligibility and prepares its geometry.
+/// The callback resolves ambiguous cells in the original target/time indices.
+pub(super) fn dispatch_angle_mask(
     targets: &Array2<f64>,
     times: usize,
     row: impl Fn(usize) -> AngularBounds,
     angle: Angle,
+    refine: Option<&dyn Fn(usize, usize) -> bool>,
 ) -> PyResult<Option<Array2<bool>>> {
-    if targets.nrows().saturating_mul(times) < 4_194_304 || !enabled() {
-        return Ok(None);
-    }
     #[cfg(feature = "cubecl")]
-    return batch::mask(targets, times, row, angle).map_err(PyRuntimeError::new_err);
+    return batch::mask(targets, times, row, angle, refine).map_err(PyRuntimeError::new_err);
     #[cfg(not(feature = "cubecl"))]
     {
-        let _ = (row, angle);
+        let _ = (targets, times, row, angle, refine);
         Err(PyRuntimeError::new_err(GPU_BUILD_REQUIRED))
     }
 }
@@ -95,6 +109,19 @@ pub(super) fn catalogue_hits(
     #[cfg(not(feature = "cubecl"))]
     {
         let _ = (targets, stars, threshold);
+        Err(PyRuntimeError::new_err(GPU_BUILD_REQUIRED))
+    }
+}
+
+pub(super) fn nearest_catalogue_cosines(
+    targets: &Array2<f64>,
+    stars: &[[f64; 3]],
+) -> PyResult<Option<Vec<f64>>> {
+    #[cfg(feature = "cubecl")]
+    return batch::nearest_cosines(targets, stars).map_err(PyRuntimeError::new_err);
+    #[cfg(not(feature = "cubecl"))]
+    {
+        let _ = (targets, stars);
         Err(PyRuntimeError::new_err(GPU_BUILD_REQUIRED))
     }
 }

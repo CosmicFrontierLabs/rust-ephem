@@ -549,8 +549,6 @@ pub(crate) fn radec_to_altaz_batch(
     ephemeris: &dyn EphemerisBase,
     time_indices: Option<&[usize]>,
 ) -> PyResult<Vec<Array2<f64>>> {
-    use sofars::astro::{apco13, atciq, atioq, IauAstrom};
-
     if ras_deg.len() != decs_deg.len() {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "RA and Dec arrays must have same length",
@@ -559,6 +557,35 @@ pub(crate) fn radec_to_altaz_batch(
     if ras_deg.is_empty() {
         return Ok(Vec::new());
     }
+    let mut astrometry = altaz_astrometry(ephemeris, time_indices)?;
+    let mut results = Vec::with_capacity(ras_deg.len());
+    for (&ra, &dec) in ras_deg.iter().zip(decs_deg) {
+        let mut result = Array2::zeros((astrometry.len(), 2));
+        for (t, astrom) in astrometry.iter_mut().enumerate() {
+            let [alt, az] = observed_altaz(ra.to_radians(), dec.to_radians(), astrom);
+            result[[t, 0]] = alt;
+            result[[t, 1]] = az;
+        }
+        results.push(result);
+    }
+    Ok(results)
+}
+
+pub(crate) fn observed_altaz(ra: f64, dec: f64, astrom: &mut sofars::astro::IauAstrom) -> [f64; 2] {
+    let (ri, di) = sofars::astro::atciq(ra, dec, 0.0, 0.0, 0.0, 0.0, astrom);
+    let (az, zd, _, _, _) = sofars::astro::atioq(ri, di, astrom);
+    let az = az.to_degrees();
+    [
+        (std::f64::consts::FRAC_PI_2 - zd).to_degrees(),
+        if az < 0.0 { az + 360.0 } else { az },
+    ]
+}
+
+pub(crate) fn altaz_astrometry(
+    ephemeris: &dyn EphemerisBase,
+    time_indices: Option<&[usize]>,
+) -> PyResult<Vec<sofars::astro::IauAstrom>> {
+    use sofars::astro::{apco13, IauAstrom};
     let times = ephemeris.get_times()?;
     let gcrs = ephemeris
         .data()
@@ -602,29 +629,7 @@ pub(crate) fn radec_to_altaz_batch(
         })?;
         astrometry.push(astrom);
     }
-    let mut results = Vec::with_capacity(ras_deg.len());
-    for (&ra, &dec) in ras_deg.iter().zip(decs_deg) {
-        let mut result = Array2::zeros((times.len(), 2));
-        for (i, astrom) in astrometry.iter_mut().enumerate() {
-            // This is exactly atco13's target-dependent portion (zero proper
-            // motion, parallax and radial velocity, matching the scalar path).
-            let (ri, di) = atciq(
-                ra.to_radians(),
-                dec.to_radians(),
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                astrom,
-            );
-            let (az, zd, _, _, _) = atioq(ri, di, astrom);
-            result[[i, 0]] = (std::f64::consts::FRAC_PI_2 - zd).to_degrees();
-            let az = az.to_degrees();
-            result[[i, 1]] = if az < 0.0 { az + 360.0 } else { az };
-        }
-        results.push(result);
-    }
-    Ok(results)
+    Ok(astrometry)
 }
 
 /// Calculate airmass using Kasten empirical formula (fast approximation)
@@ -656,86 +661,85 @@ pub fn calculate_airmass_kasten(altitude_deg: f64) -> f64 {
     1.0 / denominator
 }
 
-/// Calculate airmass for multiple targets and all times using matrix multiplication
-///
-/// This fully vectorized function calculates airmass for multiple RA/Dec targets across
-/// all ephemeris times using matrix operations for maximum performance on large batches.
-///
-/// # Arguments
-/// * `ras_deg` - Right ascensions in degrees (array of N targets)
-/// * `decs_deg` - Declinations in degrees (array of N targets)
-/// * `ephemeris` - Ephemeris containing observer positions and times
-/// * `time_indices` - Optional indices into ephemeris times (default: all times)
-///
-/// # Returns
-/// Array2<f64> with shape (N_targets, N_times) containing airmass values
-///
-/// # Performance
-/// 50-100x faster than full topocentric SOFA calculation
-/// Matrix multiplication enables vectorized calculation for large batches (1000s of targets)
+/// Geocentric longitude and sine/cosine of latitude, in the GCRS frame.
+#[derive(Clone, Copy)]
+pub(crate) struct SkyDirection {
+    longitude: f64,
+    sin_lat: f64,
+    cos_lat: f64,
+}
+
+impl SkyDirection {
+    fn new(longitude: f64, latitude: f64) -> Self {
+        Self {
+            longitude,
+            sin_lat: latitude.sin(),
+            cos_lat: latitude.cos(),
+        }
+    }
+
+    pub(crate) fn unit(self) -> [f64; 3] {
+        let (sin_lon, cos_lon) = self.longitude.sin_cos();
+        [self.cos_lat * cos_lon, self.cos_lat * sin_lon, self.sin_lat]
+    }
+
+    pub(crate) fn airmass(self, observer: Self) -> f64 {
+        let ha = observer.longitude - self.longitude;
+        let sin_alt = self.sin_lat * observer.sin_lat + self.cos_lat * observer.cos_lat * ha.cos();
+        calculate_airmass_kasten(sin_alt.clamp(-1.0, 1.0).asin().to_degrees())
+    }
+}
+
+pub(crate) fn airmass_directions(
+    ras_deg: &[f64],
+    decs_deg: &[f64],
+    ephemeris: &dyn EphemerisBase,
+    time_indices: Option<&[usize]>,
+) -> (Vec<SkyDirection>, Vec<SkyDirection>) {
+    assert_eq!(
+        ras_deg.len(),
+        decs_deg.len(),
+        "RA and Dec arrays must have same length"
+    );
+    let targets = ras_deg
+        .iter()
+        .zip(decs_deg)
+        .map(|(&ra, &dec)| SkyDirection::new(ra.to_radians(), dec.to_radians()))
+        .collect();
+    let positions = ephemeris
+        .data()
+        .gcrs
+        .as_ref()
+        .expect("Ephemeris must have GCRS data");
+    let observer = |i: usize| {
+        let (x, y, z) = (positions[[i, 0]], positions[[i, 1]], positions[[i, 2]]);
+        SkyDirection::new(y.atan2(x), z.atan2((x * x + y * y).sqrt()))
+    };
+    let observers = match time_indices {
+        Some(indices) => indices.iter().copied().map(observer).collect(),
+        None => (0..positions.nrows()).map(observer).collect(),
+    };
+    (targets, observers)
+}
+
+/// Compute double-precision Kasten airmass for each target and selected epoch.
 pub fn calculate_airmass_batch_fast(
     ras_deg: &[f64],
     decs_deg: &[f64],
     ephemeris: &dyn EphemerisBase,
     time_indices: Option<&[usize]>,
 ) -> Array2<f64> {
-    assert_eq!(
-        ras_deg.len(),
-        decs_deg.len(),
-        "RA and Dec arrays must have same length"
-    );
-
-    let n_targets = ras_deg.len();
-
-    // Get observer positions in GCRS frame
-    let obs_positions = ephemeris
-        .data()
-        .gcrs
-        .as_ref()
-        .expect("Ephemeris must have GCRS data");
-
-    // Filter data if indices provided
-    let obs_filtered = if let Some(indices) = time_indices {
-        obs_positions.select(ndarray::Axis(0), indices)
-    } else {
-        obs_positions.clone()
-    };
-
-    let n_times = obs_filtered.nrows();
-
-    // Pre-compute observer latitudes and longitudes for all times
-    let obs_x = obs_filtered.column(0);
-    let obs_y = obs_filtered.column(1);
-    let obs_z = obs_filtered.column(2);
-
-    // Compute rho = sqrt(x² + y²) more efficiently using element-wise operations
-    let rho: Array1<f64> = obs_x
-        .iter()
-        .zip(obs_y.iter())
-        .map(|(x, y)| {
-            let x2y2 = x * x + y * y;
-            x2y2.sqrt()
-        })
-        .collect();
-
-    // Vectorize lat/lon computation avoiding collect
-    let obs_lats: Array1<f64> = Array1::from_shape_fn(n_times, |i| obs_z[i].atan2(rho[i]));
-    let obs_lons: Array1<f64> = Array1::from_shape_fn(n_times, |i| obs_y[i].atan2(obs_x[i]));
-
-    // Convert target RA/Dec to radians - avoid intermediate Vec
-    let ras_rad: Array1<f64> = Array1::from_shape_fn(n_targets, |i| ras_deg[i].to_radians());
-    let decs_rad: Array1<f64> = Array1::from_shape_fn(n_targets, |i| decs_deg[i].to_radians());
-
-    // Pre-compute trig functions
-    let sin_decs = decs_rad.mapv(f64::sin);
-    let cos_decs = decs_rad.mapv(f64::cos);
-    let sin_lats = obs_lats.mapv(f64::sin);
-    let cos_lats = obs_lats.mapv(f64::cos);
-
+    let (targets, observers) = airmass_directions(ras_deg, decs_deg, ephemeris, time_indices);
+    let (n_targets, n_times) = (targets.len(), observers.len());
+    let sin_decs = Array1::from_iter(targets.iter().map(|v| v.sin_lat));
+    let cos_decs = Array1::from_iter(targets.iter().map(|v| v.cos_lat));
+    let sin_lats = Array1::from_iter(observers.iter().map(|v| v.sin_lat));
+    let cos_lats = Array1::from_iter(observers.iter().map(|v| v.cos_lat));
     // Compute hour angles matrix: HA[j, i] = obs_lon[i] - ra_rad[j]
     // Avoid .to_owned() on broadcast by using from_shape_fn for direct computation
-    let ha_matrix: Array2<f64> =
-        Array2::from_shape_fn((n_targets, n_times), |(j, i)| obs_lons[i] - ras_rad[j]);
+    let ha_matrix: Array2<f64> = Array2::from_shape_fn((n_targets, n_times), |(j, i)| {
+        observers[i].longitude - targets[j].longitude
+    });
 
     // Reshape 1D arrays into column/row vectors for broadcasting
     let sin_dec_col = sin_decs

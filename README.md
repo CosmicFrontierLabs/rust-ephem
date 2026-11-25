@@ -81,10 +81,11 @@ limit. Other Python libraries and background I/O threads have their own settings
 
 ## Optional GPU compute
 
-The Rust extension uses CubeCL for large batches of Sun, Moon,
-Moon-limb, Earth-limb, orbit RAM, orbit pole, and circular body proximity
-constraints. It can also search a bright-star catalogue for targets with a star
-inside a circular field of view. Set the environment variable before evaluation.
+The Rust extension uses CubeCL for large constraint batches. Supported masks
+include Sun, Moon, Moon limb, Earth limb, lunar phase with distance limits,
+orbit RAM and pole, airmass, altitude/azimuth, fixed solar roll, and circular
+or polygonal body fields of view. Circular bright-star fields also support GPU
+catalogue searches and nearest-star distances. Enable it before evaluation.
 
 ```sh
 export RUST_EPHEM_GPU=1
@@ -117,12 +118,23 @@ search path. CUDA and HIP select device 0 and require the corresponding driver
 at runtime. An eligible call returns an error if the requested runtime is
 unavailable.
 
-Use the usual `in_constraint_batch` API. Geometric masks dispatch at 4,194,304
-target/time pairs. Bright-star searches count targets and catalogue stars
-independently of the number of epochs. They dispatch at 67,108,864 estimated
-comparisons, accounting for the chance of finding a star early in a wide field.
-CPU execution is the default. Smaller workloads, polygon tests,
-apparent-coordinate corrections, and ephemeris construction use the CPU.
+With `RUST_EPHEM_GPU` unset or set to `0`, rust-ephem runs its native Rust CPU
+implementation. To run CubeCL kernels on the CPU, build with `cubecl-cpu` and
+set both `RUST_EPHEM_GPU=1` and `RUST_EPHEM_CUBECL_BACKEND=cpu`.
+
+With GPU execution enabled, the usual
+`in_constraint_batch` API dispatches airmass, altitude/azimuth, fixed solar
+roll, and polygonal body masks from 131,072 target/time pairs. The other
+angular masks dispatch from 4,194,304 pairs. For apparent Sun, Moon, and
+Earth-limb masks near Earth, the GPU screens angular limits and Rust applies
+the full apparent-place correction near a boundary. Altitude/azimuth masks
+similarly use the SOFA calculation near the limits. Polygon candidates are
+checked against the original vertices.
+
+Bright-star searches dispatch at 67,108,864 target/star comparisons, independent
+of the number of epochs. Circular hit tests account for early matches in a
+wide field. When a grid requests nearest-star distances, CubeCL narrows the
+catalogue search and Rust computes the reported angle in double precision.
 An eligible call using a GPU runtime requires a working hardware adapter.
 
 For a CPU-only source build, omit the GPU features (for example,
