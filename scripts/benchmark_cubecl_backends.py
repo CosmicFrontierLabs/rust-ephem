@@ -371,11 +371,13 @@ def main() -> None:
             1,
             f"Could not load planetary ephemeris. Supply --kernel /path/to/de440s.bsp.\n{error}\n",
         )
-    requested = list(dict.fromkeys("hip" if b == "rocm" else b for b in args.backends))
+    requested = list(
+        dict.fromkeys(["native", *("hip" if b == "rocm" else b for b in args.backends)])
+    )
     first_ms, unavailable = probe_backends(
         requested, next(c for c in cases if c.name == "sun-mask")
     )
-    backends = list(first_ms)
+    available = list(first_ms)
     metadata = {
         "rust_ephem": version("rust-ephem"),
         "python": platform.python_version(),
@@ -391,12 +393,20 @@ def main() -> None:
         ", ".join(f"{b} {t:.2f}" for b, t in first_ms.items()),
     )
     print("Warmed median in ms (speedup vs native). * = native fallback.")
-    print(f"{'Scenario':34} " + " ".join(f"{b:>19}" for b in backends), flush=True)
+    labels = {"native": "native Rust CPU", "cpu": "CubeCL CPU"}
+    print(
+        f"{'Scenario':34} " + " ".join(f"{labels.get(b, b):>19}" for b in requested),
+        flush=True,
+    )
     records = {}
     for case in selected:
-        timings = measure(case, backends, args.repeats)
+        timings = measure(case, available, args.repeats)
         cells = []
-        for t in timings.values():
+        for backend in requested:
+            if backend in unavailable:
+                cells.append("unavailable")
+                continue
+            t = timings[backend]
             mark = "*" if t["route"] == "native fallback" else ""
             cells.append(f"{t['median_ms']:.2f} ({t['speedup']:.2f}x){mark}")
         print(f"{case.name:34} " + " ".join(s.rjust(19) for s in cells), flush=True)
