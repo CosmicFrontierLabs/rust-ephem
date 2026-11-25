@@ -55,6 +55,83 @@ struct EarthLimbEvaluator {
 }
 
 impl EarthLimbEvaluator {
+    fn mask_vectors(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Array2<bool>> {
+        // Extract and filter ephemeris data
+        let (times_filtered, obs_filtered) =
+            extract_observer_ephemeris_data!(ephemeris, time_indices);
+        // Earth radius in km
+
+        if target_unit_vectors.ncols() != 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_unit_vectors must have shape (N, 3)",
+            ));
+        }
+
+        let n_targets = target_unit_vectors.nrows();
+        let n_times = times_filtered.len();
+
+        // Pre-compute cosine thresholds and center unit vectors for each time point.
+        let mut cos_thresholds = vec![0.0; n_times];
+        let mut cos_max_thresholds = vec![None; n_times];
+        let mut center_units = vec![[0.0; 3]; n_times];
+
+        for t in 0..n_times {
+            let obs_pos = [
+                obs_filtered[[t, 0]],
+                obs_filtered[[t, 1]],
+                obs_filtered[[t, 2]],
+            ];
+
+            let r = vector_magnitude(&obs_pos);
+            (cos_thresholds[t], cos_max_thresholds[t]) = self.cos_bounds(r);
+            center_units[t] = normalize_vector(&[-obs_pos[0], -obs_pos[1], -obs_pos[2]]);
+        }
+
+        // On an apparent view the catalogue cosine becomes the apparent one.
+        if let Some(corrections) = super::core::target_corrections_at(ephemeris, time_indices) {
+            return Ok(super::core::apparent_cosine_grid(
+                target_unit_vectors,
+                &center_units,
+                &corrections,
+                |t, cos_angle| {
+                    cos_angle > cos_thresholds[t]
+                        || cos_max_thresholds[t].is_some_and(|cos_max| cos_angle < cos_max)
+                },
+            ));
+        }
+
+        if let Some(mask) = super::gpu::try_mask(target_unit_vectors, n_times, |t| {
+            (center_units[t], cos_thresholds[t], cos_max_thresholds[t])
+        })? {
+            return Ok(mask);
+        }
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+        for i in 0..n_targets {
+            let target_vec = [
+                target_unit_vectors[[i, 0]],
+                target_unit_vectors[[i, 1]],
+                target_unit_vectors[[i, 2]],
+            ];
+
+            for t in 0..n_times {
+                let cos_angle = dot_product(&target_vec, &center_units[t]);
+                let is_violated = if let Some(cos_max) = cos_max_thresholds[t] {
+                    cos_angle > cos_thresholds[t] || cos_angle < cos_max
+                } else {
+                    cos_angle > cos_thresholds[t]
+                };
+                result[[i, t]] = is_violated;
+            }
+        }
+
+        Ok(result)
+    }
+
     /// Angle (degrees) from the Earth's centre to its limb as seen from an
     /// observer `distance_km` from the centre: the apparent angular radius,
     /// plus horizon dip / refraction for ground observers when enabled. Every
@@ -321,86 +398,13 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
-        // An apparent view asks the kernel to correct the targets: one path does that.
-        if ephemeris.target_corrections().is_some() {
-            let vectors =
-                crate::utils::vector_math::radec_to_unit_vectors_batch(target_ras, target_decs);
-            if let Some(result) =
-                self.in_constraint_batch_unit_vectors(ephemeris, &vectors, time_indices)?
-            {
-                return Ok(result);
-            }
-        }
-        // Extract and filter ephemeris data
-        let (times_filtered, obs_filtered) =
-            extract_observer_ephemeris_data!(ephemeris, time_indices);
-        // Earth radius in km
-
-        // Validate inputs
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "target_ras and target_decs must have the same length",
             ));
         }
-
-        // Convert all target RA/Dec to unit vectors at once
-        let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
-
-        let n_targets = target_ras.len();
-        let n_times = times_filtered.len();
-        // Initialize to false (not violated) for consistency with default implementation
-        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
-
-        // Pre-compute cosine thresholds and center unit vectors for each time point
-        // These only depend on time, not on target, so compute once and reuse
-        // Using cosine trick: angle < threshold_deg ⟺ cos(angle) > cos(threshold_deg)
-        let mut cos_thresholds = vec![0.0; n_times];
-        let mut cos_max_thresholds = vec![None; n_times];
-        let mut center_units = vec![[0.0; 3]; n_times];
-
-        for t in 0..n_times {
-            let obs_pos = [
-                obs_filtered[[t, 0]],
-                obs_filtered[[t, 1]],
-                obs_filtered[[t, 2]],
-            ];
-
-            let r = vector_magnitude(&obs_pos);
-            // Pre-compute cosine bounds (avoids acos() in inner loop)
-            (cos_thresholds[t], cos_max_thresholds[t]) = self.cos_bounds(r);
-
-            // Pre-compute Earth center direction unit vector
-            center_units[t] = normalize_vector(&[-obs_pos[0], -obs_pos[1], -obs_pos[2]]);
-        }
-
-        // Vectorized evaluation for each target
-        for i in 0..n_targets {
-            let target_vec = [
-                target_vectors[[i, 0]],
-                target_vectors[[i, 1]],
-                target_vectors[[i, 2]],
-            ];
-
-            for t in 0..n_times {
-                // Use pre-computed center unit vector
-                let cos_angle = dot_product(&target_vec, &center_units[t]);
-
-                // Check constraint using cosine trick (avoids expensive acos/asin in inner loop)
-                // angle < threshold_deg ⟺ cos(angle) > cos(threshold_deg)
-                // angle > max_angle ⟺ cos(angle) < cos(max_angle)
-                let is_violated = if let Some(cos_max) = cos_max_thresholds[t] {
-                    // Too close to limb OR too far from limb
-                    cos_angle > cos_thresholds[t] || cos_angle < cos_max
-                } else {
-                    // Only check if too close to limb
-                    cos_angle > cos_thresholds[t]
-                };
-
-                result[[i, t]] = is_violated;
-            }
-        }
-
-        Ok(result)
+        let vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
+        self.mask_vectors(ephemeris, &vectors, time_indices)
     }
 
     fn applies_target_corrections(&self) -> bool {
@@ -413,70 +417,8 @@ impl ConstraintEvaluator for EarthLimbEvaluator {
         target_unit_vectors: &Array2<f64>,
         time_indices: Option<&[usize]>,
     ) -> PyResult<Option<Array2<bool>>> {
-        // Extract and filter ephemeris data
-        let (times_filtered, obs_filtered) =
-            extract_observer_ephemeris_data!(ephemeris, time_indices);
-        // Earth radius in km
-
-        if target_unit_vectors.ncols() != 3 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_unit_vectors must have shape (N, 3)",
-            ));
-        }
-
-        let n_targets = target_unit_vectors.nrows();
-        let n_times = times_filtered.len();
-        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
-
-        // Pre-compute cosine thresholds and center unit vectors for each time point.
-        let mut cos_thresholds = vec![0.0; n_times];
-        let mut cos_max_thresholds = vec![None; n_times];
-        let mut center_units = vec![[0.0; 3]; n_times];
-
-        for t in 0..n_times {
-            let obs_pos = [
-                obs_filtered[[t, 0]],
-                obs_filtered[[t, 1]],
-                obs_filtered[[t, 2]],
-            ];
-
-            let r = vector_magnitude(&obs_pos);
-            (cos_thresholds[t], cos_max_thresholds[t]) = self.cos_bounds(r);
-            center_units[t] = normalize_vector(&[-obs_pos[0], -obs_pos[1], -obs_pos[2]]);
-        }
-
-        // On an apparent view the catalogue cosine becomes the apparent one.
-        if let Some(corrections) = super::core::target_corrections_at(ephemeris, time_indices) {
-            return Ok(Some(super::core::apparent_cosine_grid(
-                target_unit_vectors,
-                &center_units,
-                &corrections,
-                |t, cos_angle| {
-                    cos_angle > cos_thresholds[t]
-                        || cos_max_thresholds[t].is_some_and(|cos_max| cos_angle < cos_max)
-                },
-            )));
-        }
-
-        for i in 0..n_targets {
-            let target_vec = [
-                target_unit_vectors[[i, 0]],
-                target_unit_vectors[[i, 1]],
-                target_unit_vectors[[i, 2]],
-            ];
-
-            for t in 0..n_times {
-                let cos_angle = dot_product(&target_vec, &center_units[t]);
-                let is_violated = if let Some(cos_max) = cos_max_thresholds[t] {
-                    cos_angle > cos_thresholds[t] || cos_angle < cos_max
-                } else {
-                    cos_angle > cos_thresholds[t]
-                };
-                result[[i, t]] = is_violated;
-            }
-        }
-
-        Ok(Some(result))
+        self.mask_vectors(ephemeris, target_unit_vectors, time_indices)
+            .map(Some)
     }
 }
 

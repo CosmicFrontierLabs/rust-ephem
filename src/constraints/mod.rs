@@ -11,6 +11,7 @@ pub mod core;
 pub mod diagonal;
 pub mod elementwise;
 pub mod fov_polygon;
+mod gpu;
 pub mod grid;
 pub mod roll_sweep;
 

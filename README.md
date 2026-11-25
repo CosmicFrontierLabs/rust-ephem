@@ -79,6 +79,27 @@ Parquet reads honor the same positive limit. DuckDB uses it for the reader's
 connection. PyArrow scans run serially if its shared CPU pool exceeds the
 limit. Other Python libraries and background I/O threads have their own settings.
 
+## Optional GPU compute
+
+With Python 3.11 or later and a hardware WebGPU adapter, large geometric Sun,
+Moon, Moon-limb, and Earth-limb constraint masks can run on the GPU. Install
+the GPU extra and enable it before evaluating constraints:
+
+```sh
+python -m pip install '.[gpu]'
+export RUST_EPHEM_GPU=1
+```
+
+Use the usual `in_constraint_batch` API. Eligible kernels dispatch at
+4,194,304 target/time pairs and above. Smaller masks, apparent-coordinate
+corrections, and ephemeris construction use the CPU. The default is CPU
+execution. Explicitly enabling the GPU requires a working adapter when an
+eligible kernel runs.
+
+The backend uses WebGPU through `wgpu-py` on macOS, Linux, and Windows.
+It computes dot products in single precision and rechecks cells near either
+angular limit in double precision to preserve the CPU mask at the boundary.
+
 ## Quick Start
 
 ### Satellite Ephemeris from TLE
