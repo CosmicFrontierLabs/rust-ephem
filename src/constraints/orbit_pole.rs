@@ -40,6 +40,44 @@ struct OrbitPoleEvaluator {
 }
 
 impl OrbitPoleEvaluator {
+    fn mask_vectors(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        targets: &Array2<f64>,
+        indices: Option<&[usize]>,
+    ) -> PyResult<Array2<bool>> {
+        if targets.ncols() != 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_unit_vectors must have shape (N, 3)",
+            ));
+        }
+        let (times,) = extract_time_data!(ephemeris, indices);
+        let states = ephemeris.data().gcrs.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("GCRS data not available in ephemeris")
+        })?;
+        if states.ncols() < 6 {
+            return Err(pyo3::exceptions::PyValueError::new_err("Velocity data not available in ephemeris - orbit pole constraint requires position and velocity data"));
+        }
+        let max = self.max_angle_deg.map(|v| v.to_radians().cos());
+        let epochs: Vec<_> = (0..times.len())
+            .map(|t| {
+                let i = indices.map_or(t, |rows| rows[t]);
+                let p = std::array::from_fn(|j| states[[i, j]]);
+                let v = std::array::from_fn(|j| states[[i, j + 3]]);
+                let (pole, _) = self.calculate_orbital_poles(&p, &v);
+                let min = if self.earth_limb_pole {
+                    let distance = crate::utils::vector_math::vector_magnitude(&p);
+                    (EARTH_RADIUS_KM / distance).min(1.0).asin().to_degrees() + self.min_angle_deg
+                        - 90.0
+                } else {
+                    self.min_angle_deg
+                };
+                (pole, min.to_radians().cos(), max)
+            })
+            .collect();
+        super::gpu::angular_grid(targets, &epochs, super::gpu::Angle::NearestPole)
+    }
+
     fn format_name(&self) -> String {
         let mut parts = vec![];
 
@@ -244,147 +282,13 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
-        // Extract and filter time data
-        let (times_filtered,) = extract_time_data!(ephemeris, time_indices);
-
-        let n_targets = target_ras.len();
-        let n_times = times_filtered.len();
-        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
-
-        // Convert target coordinates to unit vectors (vectorized)
-        let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
-
-        // Get position and velocity data
-        let gcrs_data = ephemeris.data().gcrs.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err("GCRS data not available in ephemeris")
-        })?;
-
-        if gcrs_data.ncols() < 6 {
+        if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
-                "Velocity data not available in ephemeris - orbit pole constraint requires position and velocity data"
+                "target_ras and target_decs must have the same length",
             ));
         }
-
-        // Create orbital pole direction vectors for all times (both north and south)
-        let mut north_pole_directions = Array2::<f64>::zeros((n_times, 3));
-        let mut south_pole_directions = Array2::<f64>::zeros((n_times, 3));
-        for i in 0..n_times {
-            let source_i = if let Some(indices) = time_indices {
-                indices[i]
-            } else {
-                i
-            };
-            let position = [
-                gcrs_data[[source_i, 0]], // x
-                gcrs_data[[source_i, 1]], // y
-                gcrs_data[[source_i, 2]], // z
-            ];
-            let velocity = [
-                gcrs_data[[source_i, 3]], // vx
-                gcrs_data[[source_i, 4]], // vy
-                gcrs_data[[source_i, 5]], // vz
-            ];
-
-            // Calculate both orbital pole unit vectors
-            let (north_pole, south_pole) = self.calculate_orbital_poles(&position, &velocity);
-            north_pole_directions[[i, 0]] = north_pole[0];
-            north_pole_directions[[i, 1]] = north_pole[1];
-            north_pole_directions[[i, 2]] = north_pole[2];
-            south_pole_directions[[i, 0]] = south_pole[0];
-            south_pole_directions[[i, 1]] = south_pole[1];
-            south_pole_directions[[i, 2]] = south_pole[2];
-        }
-
-        // Pre-compute effective minimum angle thresholds and cosine thresholds for each time
-        // These depend on time (due to earth_limb_pole), so compute once and reuse
-        // Using cosine trick: angle < threshold_deg ⟺ cos(angle) > cos(threshold_deg)
-        let mut cos_min_thresholds = vec![0.0; n_times];
-        let mut cos_max_thresholds: Option<Vec<f64>> =
-            self.max_angle_deg.map(|_| vec![0.0; n_times]);
-
-        for i in 0..n_times {
-            let source_i = if let Some(indices) = time_indices {
-                indices[i]
-            } else {
-                i
-            };
-            // Calculate effective minimum angle for this time
-            let effective_min_angle = if self.earth_limb_pole {
-                let position = [
-                    gcrs_data[[source_i, 0]], // x
-                    gcrs_data[[source_i, 1]], // y
-                    gcrs_data[[source_i, 2]], // z
-                ];
-                let distance = (position[0] * position[0]
-                    + position[1] * position[1]
-                    + position[2] * position[2])
-                    .sqrt();
-                let ratio = (EARTH_RADIUS_KM / distance).min(1.0);
-                let earth_radius_deg = ratio.asin().to_degrees();
-                earth_radius_deg + self.min_angle_deg - 90.0
-            } else {
-                self.min_angle_deg
-            };
-
-            // Pre-compute cosine of threshold (avoids acos() in inner loop)
-            cos_min_thresholds[i] = effective_min_angle.to_radians().cos();
-
-            // Pre-compute cosine of max angle threshold if present
-            if let Some(ref mut max_cos) = cos_max_thresholds {
-                if let Some(max_angle) = self.max_angle_deg {
-                    max_cos[i] = max_angle.to_radians().cos();
-                }
-            }
-        }
-
-        // Check constraints for all targets and times using cosine comparison
-        for j in 0..n_targets {
-            let target_vec = [
-                target_vectors[[j, 0]],
-                target_vectors[[j, 1]],
-                target_vectors[[j, 2]],
-            ];
-
-            for i in 0..n_times {
-                let north_pole_vec = [
-                    north_pole_directions[[i, 0]],
-                    north_pole_directions[[i, 1]],
-                    north_pole_directions[[i, 2]],
-                ];
-                let south_pole_vec = [
-                    south_pole_directions[[i, 0]],
-                    south_pole_directions[[i, 1]],
-                    south_pole_directions[[i, 2]],
-                ];
-
-                // Calculate cosines to both poles (avoids acos calls)
-                let cos_angle_north =
-                    crate::utils::vector_math::dot_product(&target_vec, &north_pole_vec);
-                let cos_angle_south =
-                    crate::utils::vector_math::dot_product(&target_vec, &south_pole_vec);
-
-                // Use the maximum cosine (corresponding to minimum angle to either pole)
-                let max_cos_angle = cos_angle_north.max(cos_angle_south);
-
-                // Check constraint using cosine trick (avoids expensive acos in inner loop)
-                // angle < min_angle ⟺ cos(angle) > cos(min_angle)
-                // angle > max_angle ⟺ cos(angle) < cos(max_angle)
-                let mut violated = false;
-
-                if max_cos_angle > cos_min_thresholds[i] {
-                    violated = true;
-                }
-                if let Some(ref max_cos) = cos_max_thresholds {
-                    if max_cos_angle < max_cos[i] {
-                        violated = true;
-                    }
-                }
-
-                result[[j, i]] = violated;
-            }
-        }
-
-        Ok(result)
+        let targets = radec_to_unit_vectors_batch(target_ras, target_decs);
+        self.mask_vectors(ephemeris, &targets, time_indices)
     }
 
     fn in_constraint_batch_unit_vectors(
@@ -393,133 +297,8 @@ impl ConstraintEvaluator for OrbitPoleEvaluator {
         target_unit_vectors: &Array2<f64>,
         time_indices: Option<&[usize]>,
     ) -> PyResult<Option<Array2<bool>>> {
-        let (times_filtered,) = extract_time_data!(ephemeris, time_indices);
-
-        if target_unit_vectors.ncols() != 3 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_unit_vectors must have shape (N, 3)",
-            ));
-        }
-
-        let n_targets = target_unit_vectors.nrows();
-        let n_times = times_filtered.len();
-        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
-
-        let gcrs_data = ephemeris.data().gcrs.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err("GCRS data not available in ephemeris")
-        })?;
-
-        if gcrs_data.ncols() < 6 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "Velocity data not available in ephemeris - orbit pole constraint requires position and velocity data"
-            ));
-        }
-
-        let mut north_pole_directions = Array2::<f64>::zeros((n_times, 3));
-        let mut south_pole_directions = Array2::<f64>::zeros((n_times, 3));
-        for i in 0..n_times {
-            let source_i = if let Some(indices) = time_indices {
-                indices[i]
-            } else {
-                i
-            };
-            let position = [
-                gcrs_data[[source_i, 0]],
-                gcrs_data[[source_i, 1]],
-                gcrs_data[[source_i, 2]],
-            ];
-            let velocity = [
-                gcrs_data[[source_i, 3]],
-                gcrs_data[[source_i, 4]],
-                gcrs_data[[source_i, 5]],
-            ];
-
-            let (north_pole, south_pole) = self.calculate_orbital_poles(&position, &velocity);
-            north_pole_directions[[i, 0]] = north_pole[0];
-            north_pole_directions[[i, 1]] = north_pole[1];
-            north_pole_directions[[i, 2]] = north_pole[2];
-            south_pole_directions[[i, 0]] = south_pole[0];
-            south_pole_directions[[i, 1]] = south_pole[1];
-            south_pole_directions[[i, 2]] = south_pole[2];
-        }
-
-        let mut cos_min_thresholds = vec![0.0; n_times];
-        let mut cos_max_thresholds: Option<Vec<f64>> =
-            self.max_angle_deg.map(|_| vec![0.0; n_times]);
-
-        for i in 0..n_times {
-            let source_i = if let Some(indices) = time_indices {
-                indices[i]
-            } else {
-                i
-            };
-            let effective_min_angle = if self.earth_limb_pole {
-                let position = [
-                    gcrs_data[[source_i, 0]],
-                    gcrs_data[[source_i, 1]],
-                    gcrs_data[[source_i, 2]],
-                ];
-                let distance = (position[0] * position[0]
-                    + position[1] * position[1]
-                    + position[2] * position[2])
-                    .sqrt();
-                let ratio = (EARTH_RADIUS_KM / distance).min(1.0);
-                let earth_radius_deg = ratio.asin().to_degrees();
-                earth_radius_deg + self.min_angle_deg - 90.0
-            } else {
-                self.min_angle_deg
-            };
-
-            cos_min_thresholds[i] = effective_min_angle.to_radians().cos();
-
-            if let Some(ref mut max_cos) = cos_max_thresholds {
-                if let Some(max_angle) = self.max_angle_deg {
-                    max_cos[i] = max_angle.to_radians().cos();
-                }
-            }
-        }
-
-        for j in 0..n_targets {
-            let target_vec = [
-                target_unit_vectors[[j, 0]],
-                target_unit_vectors[[j, 1]],
-                target_unit_vectors[[j, 2]],
-            ];
-
-            for i in 0..n_times {
-                let north_pole_vec = [
-                    north_pole_directions[[i, 0]],
-                    north_pole_directions[[i, 1]],
-                    north_pole_directions[[i, 2]],
-                ];
-                let south_pole_vec = [
-                    south_pole_directions[[i, 0]],
-                    south_pole_directions[[i, 1]],
-                    south_pole_directions[[i, 2]],
-                ];
-
-                let cos_angle_north =
-                    crate::utils::vector_math::dot_product(&target_vec, &north_pole_vec);
-                let cos_angle_south =
-                    crate::utils::vector_math::dot_product(&target_vec, &south_pole_vec);
-
-                let max_cos_angle = cos_angle_north.max(cos_angle_south);
-
-                let mut violated = false;
-                if max_cos_angle > cos_min_thresholds[i] {
-                    violated = true;
-                }
-                if let Some(ref max_cos) = cos_max_thresholds {
-                    if max_cos_angle < max_cos[i] {
-                        violated = true;
-                    }
-                }
-
-                result[[j, i]] = violated;
-            }
-        }
-
-        Ok(Some(result))
+        self.mask_vectors(ephemeris, target_unit_vectors, time_indices)
+            .map(Some)
     }
 
     fn compute_named_values(

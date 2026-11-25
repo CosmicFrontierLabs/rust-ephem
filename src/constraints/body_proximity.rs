@@ -219,12 +219,38 @@ impl BodyProximityEvaluator {
         }
     }
 
+    fn circle_mask(
+        &self,
+        targets: &Array2<f64>,
+        body: &Array2<f64>,
+        observer: &Array2<f64>,
+    ) -> pyo3::PyResult<Array2<bool>> {
+        let min = self.min_angle_deg.to_radians().cos();
+        let max = self.max_angle_deg.map(|v| v.to_radians().cos());
+        let epochs: Vec<_> = (0..body.nrows())
+            .map(|t| match Self::relative_direction(body, observer, t) {
+                Some(direction) => (direction, min, max),
+                None => ([0.0; 3], 1.0, None),
+            })
+            .collect();
+        super::gpu::angular_grid(targets, &epochs, super::gpu::Angle::Direction)
+    }
+
     /// Compute the body's RA/Dec (radians) from its GCRS position relative to the observer.
     fn body_radec_at(
         body_positions: &Array2<f64>,
         observer_positions: &Array2<f64>,
         i: usize,
     ) -> Option<(f64, f64)> {
+        Self::relative_direction(body_positions, observer_positions, i)
+            .map(|u| fov_polygon::unit_to_radec(&u))
+    }
+
+    fn relative_direction(
+        body_positions: &Array2<f64>,
+        observer_positions: &Array2<f64>,
+        i: usize,
+    ) -> Option<[f64; 3]> {
         let body_rel = [
             body_positions[[i, 0]] - observer_positions[[i, 0]],
             body_positions[[i, 1]] - observer_positions[[i, 1]],
@@ -237,7 +263,7 @@ impl BodyProximityEvaluator {
             return None;
         }
         let unit = [body_rel[0] / dist, body_rel[1] / dist, body_rel[2] / dist];
-        Some(fov_polygon::unit_to_radec(&unit))
+        Some(unit)
     }
 }
 
@@ -404,9 +430,8 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
         }
 
         let n_targets = target_ras.len();
-        let mut result = Array2::from_elem((n_targets, n_times), false);
-
         if let Some(ref vertices) = self.fov_polygon {
+            let mut result = Array2::from_elem((n_targets, n_times), false);
             let roll_rad = self.roll_rad;
             for (i, (&ra, &dec)) in target_ras.iter().zip(target_decs.iter()).enumerate() {
                 let target_ra_rad = ra.to_radians();
@@ -429,55 +454,8 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
             return Ok(result);
         }
 
-        // Circle mode
-        let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
-        let threshold = self.min_angle_deg.to_radians().cos();
-        let max_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
-
-        for (i, target_row) in target_vectors.axis_iter(ndarray::Axis(0)).enumerate() {
-            let target_unit = [target_row[0], target_row[1], target_row[2]];
-
-            for j in 0..n_times {
-                let body_pos = [
-                    body_positions_slice[[j, 0]],
-                    body_positions_slice[[j, 1]],
-                    body_positions_slice[[j, 2]],
-                ];
-                let obs_pos = [
-                    observer_positions_slice[[j, 0]],
-                    observer_positions_slice[[j, 1]],
-                    observer_positions_slice[[j, 2]],
-                ];
-                let body_rel = [
-                    body_pos[0] - obs_pos[0],
-                    body_pos[1] - obs_pos[1],
-                    body_pos[2] - obs_pos[2],
-                ];
-                let body_dist = (body_rel[0] * body_rel[0]
-                    + body_rel[1] * body_rel[1]
-                    + body_rel[2] * body_rel[2])
-                    .sqrt();
-                if body_dist == 0.0 {
-                    continue;
-                }
-                let body_unit = [
-                    body_rel[0] / body_dist,
-                    body_rel[1] / body_dist,
-                    body_rel[2] / body_dist,
-                ];
-                let cos_angle = target_unit[0] * body_unit[0]
-                    + target_unit[1] * body_unit[1]
-                    + target_unit[2] * body_unit[2];
-                let too_close = cos_angle > threshold;
-                let too_far = if let Some(max_thresh) = max_threshold {
-                    cos_angle < max_thresh
-                } else {
-                    false
-                };
-                result[[i, j]] = too_close || too_far;
-            }
-        }
-        Ok(result)
+        let targets = radec_to_unit_vectors_batch(target_ras, target_decs);
+        self.circle_mask(&targets, &body_positions_slice, &observer_positions_slice)
     }
 
     fn in_constraint_batch_unit_vectors(
@@ -509,9 +487,8 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
         }
 
         let n_targets = target_unit_vectors.nrows();
-        let mut result = Array2::from_elem((n_targets, n_times), false);
-
         if let Some(ref vertices) = self.fov_polygon {
+            let mut result = Array2::from_elem((n_targets, n_times), false);
             let roll_rad = self.roll_rad;
             for i in 0..n_targets {
                 let ux = target_unit_vectors[[i, 0]];
@@ -536,57 +513,12 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
             return Ok(Some(result));
         }
 
-        // Circle mode
-        let threshold = self.min_angle_deg.to_radians().cos();
-        let max_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
-
-        for i in 0..n_targets {
-            let target_unit = [
-                target_unit_vectors[[i, 0]],
-                target_unit_vectors[[i, 1]],
-                target_unit_vectors[[i, 2]],
-            ];
-            for j in 0..n_times {
-                let body_pos = [
-                    body_positions_slice[[j, 0]],
-                    body_positions_slice[[j, 1]],
-                    body_positions_slice[[j, 2]],
-                ];
-                let obs_pos = [
-                    observer_positions_slice[[j, 0]],
-                    observer_positions_slice[[j, 1]],
-                    observer_positions_slice[[j, 2]],
-                ];
-                let body_rel = [
-                    body_pos[0] - obs_pos[0],
-                    body_pos[1] - obs_pos[1],
-                    body_pos[2] - obs_pos[2],
-                ];
-                let body_dist = (body_rel[0] * body_rel[0]
-                    + body_rel[1] * body_rel[1]
-                    + body_rel[2] * body_rel[2])
-                    .sqrt();
-                if body_dist == 0.0 {
-                    continue;
-                }
-                let body_unit = [
-                    body_rel[0] / body_dist,
-                    body_rel[1] / body_dist,
-                    body_rel[2] / body_dist,
-                ];
-                let cos_angle = target_unit[0] * body_unit[0]
-                    + target_unit[1] * body_unit[1]
-                    + target_unit[2] * body_unit[2];
-                let too_close = cos_angle > threshold;
-                let too_far = if let Some(max_thresh) = max_threshold {
-                    cos_angle < max_thresh
-                } else {
-                    false
-                };
-                result[[i, j]] = too_close || too_far;
-            }
-        }
-        Ok(Some(result))
+        self.circle_mask(
+            target_unit_vectors,
+            &body_positions_slice,
+            &observer_positions_slice,
+        )
+        .map(Some)
     }
 
     /// Evaluate polygon geometry without rebuilding the evaluator. Explicit fixed

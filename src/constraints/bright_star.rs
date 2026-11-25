@@ -123,6 +123,36 @@ pub struct BrightStarEvaluator {
 impl BrightStarEvaluator {
     // ── Circle helpers ────────────────────────────────────────────────────────
 
+    fn gpu_circle_hits(
+        &self,
+        count: usize,
+        radius_cos: f64,
+        direction: impl Fn(usize) -> [f64; 3],
+    ) -> PyResult<Option<Vec<bool>>> {
+        // A CPU search stops at the first hit. The sky fraction of a circular
+        // field estimates the number of stars examined for a uniform catalogue.
+        let expected_scan = (2.0 / (1.0 - radius_cos)).ceil() as usize;
+        let comparisons = count.saturating_mul(self.stars.len().min(expected_scan));
+        if comparisons < 67_108_864 || !super::gpu::enabled() {
+            return Ok(None);
+        }
+        let units: Vec<_> = (0..count).map(direction).collect();
+        let targets = Array2::from_shape_vec((count, 3), units.into_flattened())
+            .expect("three coordinates per target");
+        let stars: Vec<_> = self.stars.iter().map(|s| s.unit).collect();
+        super::gpu::catalogue_hits(&targets, &stars, radius_cos)
+    }
+
+    fn circle_hits_vectors(&self, targets: &Array2<f64>, radius_cos: f64) -> PyResult<Vec<bool>> {
+        let direction = |i: usize| std::array::from_fn(|j| targets[[i, j]]);
+        if let Some(hits) = self.gpu_circle_hits(targets.nrows(), radius_cos, direction)? {
+            return Ok(hits);
+        }
+        Ok(each_target_index(0..targets.nrows(), |i| {
+            self.any_star_in_circle(direction(i), radius_cos)
+        }))
+    }
+
     fn any_star_in_circle(&self, target_unit: [f64; 3], cos_radius: f64) -> bool {
         for star in &self.stars {
             let cos_sep = target_unit[0] * star.unit[0]
@@ -588,7 +618,17 @@ impl ConstraintEvaluator for BrightStarEvaluator {
 
         // Bright-star violation is time-invariant: evaluate once per target.
         // Parallelise across targets since each is fully independent.
-        let violated = each_target(target_ras, target_decs, |ra, dec| self.is_violated(ra, dec));
+        let hits = match self.fov {
+            FovDefinition::Circle { cos_radius } => {
+                self.gpu_circle_hits(n_targets, cos_radius, |i| {
+                    StarData::new(target_ras[i], target_decs[i]).unit
+                })?
+            }
+            _ => None,
+        };
+        let violated = hits.unwrap_or_else(|| {
+            each_target(target_ras, target_decs, |ra, dec| self.is_violated(ra, dec))
+        });
 
         let mut result = Array2::from_elem((n_targets, n_times), false);
         for (i, &v) in violated.iter().enumerate() {
@@ -755,15 +795,7 @@ impl ConstraintEvaluator for BrightStarEvaluator {
         let (vertices, stored_roll_rad) = match &self.fov {
             FovDefinition::Polygon { vertices, roll_rad } => (vertices, roll_rad),
             FovDefinition::Circle { cos_radius } => {
-                // Circle mode is not roll-dependent; evaluate normally.
-                return Ok(each_target_index(0..n_targets, |i| {
-                    let target_unit = [
-                        target_unit_vectors[[i, 0]],
-                        target_unit_vectors[[i, 1]],
-                        target_unit_vectors[[i, 2]],
-                    ];
-                    self.any_star_in_circle(target_unit, *cos_radius)
-                }));
+                return self.circle_hits_vectors(target_unit_vectors, *cos_radius);
             }
         };
 
@@ -806,14 +838,9 @@ impl ConstraintEvaluator for BrightStarEvaluator {
         let n_targets = target_unit_vectors.nrows();
 
         match &self.fov {
-            FovDefinition::Circle { cos_radius } => Ok(each_target_index(0..n_targets, |i| {
-                let target_unit = [
-                    target_unit_vectors[[i, 0]],
-                    target_unit_vectors[[i, 1]],
-                    target_unit_vectors[[i, 2]],
-                ];
-                self.any_star_in_circle(target_unit, *cos_radius)
-            })),
+            FovDefinition::Circle { cos_radius } => {
+                self.circle_hits_vectors(target_unit_vectors, *cos_radius)
+            }
 
             FovDefinition::Polygon {
                 vertices,

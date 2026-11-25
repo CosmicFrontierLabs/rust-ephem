@@ -81,25 +81,28 @@ limit. Other Python libraries and background I/O threads have their own settings
 
 ## Optional GPU compute
 
-The Rust extension includes a native `wgpu` backend for large geometric Sun,
-Moon, Moon-limb, and Earth-limb constraint masks. With a hardware GPU adapter,
-enable it before evaluating constraints:
+The Rust extension uses native `wgpu` compute for large batches of Sun, Moon,
+Moon-limb, Earth-limb, orbit RAM, orbit pole, and circular body proximity
+constraints. It can also search a bright-star catalogue for targets with a star
+inside a circular field of view. Set the environment variable before evaluation.
 
 ```sh
 export RUST_EPHEM_GPU=1
 ```
 
-Use the usual `in_constraint_batch` API. Eligible kernels dispatch at
-4,194,304 target/time pairs and above. Smaller masks, apparent-coordinate
-corrections, and ephemeris construction use the CPU. The default is CPU
-execution. Explicitly enabling the GPU requires a working adapter when an
-eligible kernel runs.
+Use the usual `in_constraint_batch` API. Geometric masks dispatch at 4,194,304
+target/time pairs. Bright-star searches count targets and catalogue stars
+independently of the number of epochs. They dispatch at 67,108,864 estimated
+comparisons, accounting for the chance of finding a star early in a wide field.
+CPU execution is the default. Smaller workloads, polygon tests,
+apparent-coordinate corrections, and ephemeris construction use the CPU.
+An eligible GPU call requires a working hardware adapter.
 
 The default Cargo features include `gpu`, with Metal, Vulkan, and DX12 support.
 For a CPU-only source build, omit `gpu` (for example,
 `maturin build --release --no-default-features --features ut1,extension-module`).
-The GPU computes dot products in single precision and rechecks cells near either
-angular limit in double precision to preserve the CPU mask at the boundary.
+The GPU computes dot products in single precision. Rust rechecks ambiguous
+angular comparisons in double precision to preserve the CPU mask at the boundary.
 
 ## Quick Start
 
