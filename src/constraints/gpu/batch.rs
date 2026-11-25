@@ -9,9 +9,9 @@ pub(super) enum Kernel {
 }
 
 impl Kernel {
-    pub(super) fn groups(self, records: usize) -> u32 {
+    pub(super) fn groups(self, records: usize, width: u32) -> u32 {
         match self {
-            Self::Mask(_) => records.div_ceil(64) as u32,
+            Self::Mask(_) => records.div_ceil(width as usize) as u32,
             Self::Catalogue => records as u32,
         }
     }

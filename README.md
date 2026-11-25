@@ -99,14 +99,39 @@ maturin develop --release --features cubecl
 export RUST_EPHEM_GPU=cubecl
 ```
 
-CubeCL uses its wgpu runtime on the selected hardware adapter.
+With `RUST_EPHEM_GPU=cubecl`, `RUST_EPHEM_CUBECL_BACKEND` selects the
+runtime for eligible batches. It defaults to `wgpu`. Build with the Cargo
+feature for the runtime you want, or combine features in one build.
+
+| `RUST_EPHEM_CUBECL_BACKEND` | Cargo feature | Execution |
+|---|---|---|
+| `wgpu` | `cubecl` | Portable GPU compute through Metal, Vulkan, or DX12 |
+| `metal` | `cubecl-metal` | Native Metal on Apple hardware with Metal 3 support |
+| `cuda` | `cubecl-cuda` | NVIDIA GPU through CUDA |
+| `hip` or `rocm` | `cubecl-hip` | AMD GPU through ROCm/HIP |
+| `cpu` | `cubecl-cpu` | CubeCL kernels compiled for the host CPU |
+
+For example, to use native Metal on a Mac, run
+
+```sh
+maturin develop --release --features cubecl-metal
+export RUST_EPHEM_GPU=cubecl
+export RUST_EPHEM_CUBECL_BACKEND=metal
+```
+
+The CUDA, HIP, and CubeCL CPU features use CubeCL’s LLVM toolchain at build
+time. On macOS that toolchain also needs the zstd library on its library
+search path. CUDA and HIP select device 0 and require the corresponding driver
+at runtime. An eligible call returns an error if the requested runtime is
+unavailable.
+
 Use the usual `in_constraint_batch` API. Geometric masks dispatch at 4,194,304
 target/time pairs. Bright-star searches count targets and catalogue stars
 independently of the number of epochs. They dispatch at 67,108,864 estimated
 comparisons, accounting for the chance of finding a star early in a wide field.
 CPU execution is the default. Smaller workloads, polygon tests,
 apparent-coordinate corrections, and ephemeris construction use the CPU.
-An eligible GPU call requires a working hardware adapter.
+An eligible call using a GPU runtime requires a working hardware adapter.
 
 The default Cargo features include `gpu`, with Metal, Vulkan, and DX12 support.
 For a CPU-only source build, omit `gpu` (for example,

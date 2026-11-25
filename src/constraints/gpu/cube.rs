@@ -1,27 +1,104 @@
 //! CubeCL implementations of the packed angular mask and star catalogue search.
 use super::batch::{Compute, Kernel};
 use super::{native, Angle};
+use cubecl::device::{DeviceUnavailable, RuntimeId};
 use cubecl::prelude::*;
 use cubecl::server::Handle;
 use cubecl::wgpu::{try_init_device, WgpuSetup};
 use once_cell::sync::OnceCell;
 
+/// Keep each initialized device when a caller switches runtimes between batches.
 pub(super) fn client() -> Result<Client, String> {
-    static DEVICE: OnceCell<cubecl::Device> = OnceCell::new();
-    let device = DEVICE.get_or_try_init(|| {
-        let (instance, adapter, device, queue) = native::request_device()?;
-        let setup = WgpuSetup {
-            backend: adapter.get_info().backend,
-            instance,
-            adapter,
-            device,
-            queue,
-        };
-        try_init_device(setup, Default::default())
-            .map(cubecl::Device::Wgpu)
-            .map_err(|e| format!("CubeCL initialization failed: {e}"))
-    })?;
+    use std::env::{var, VarError};
+
+    let backend = match var("RUST_EPHEM_CUBECL_BACKEND") {
+        Ok(name) => runtime(&name)?,
+        Err(VarError::NotPresent) => RuntimeId::Wgpu,
+        Err(VarError::NotUnicode(_)) => return Err("Invalid RUST_EPHEM_CUBECL_BACKEND".into()),
+    };
+
+    static WGPU: OnceCell<cubecl::Device> = OnceCell::new();
+    static METAL: OnceCell<cubecl::Device> = OnceCell::new();
+    static CUDA: OnceCell<cubecl::Device> = OnceCell::new();
+    static HIP: OnceCell<cubecl::Device> = OnceCell::new();
+    static CPU: OnceCell<cubecl::Device> = OnceCell::new();
+    let device = match backend {
+        RuntimeId::Wgpu => WGPU.get_or_try_init(wgpu_device),
+        RuntimeId::Metal => METAL.get_or_try_init(metal_device),
+        RuntimeId::Cuda => CUDA.get_or_try_init(|| cubecl::Device::cuda(0).map_err(device_error)),
+        RuntimeId::Hip => HIP.get_or_try_init(|| cubecl::Device::rocm(0).map_err(device_error)),
+        RuntimeId::Cpu => CPU.get_or_try_init(|| cubecl::Device::cpu().map_err(device_error)),
+    }?;
     Ok(device.client())
+}
+
+fn runtime(name: &str) -> Result<RuntimeId, String> {
+    match name {
+        "wgpu" => Ok(RuntimeId::Wgpu),
+        "metal" => Ok(RuntimeId::Metal),
+        "cuda" => Ok(RuntimeId::Cuda),
+        "hip" | "rocm" => Ok(RuntimeId::Hip),
+        "cpu" => Ok(RuntimeId::Cpu),
+        _ => Err(format!("Unknown RUST_EPHEM_CUBECL_BACKEND={name:?}. Choose wgpu, metal, cuda, hip (rocm), or cpu.")),
+    }
+}
+
+fn device_error(error: DeviceUnavailable) -> String {
+    match error {
+        DeviceUnavailable::NotLinked(runtime) => {
+            let feature = match runtime {
+                RuntimeId::Cuda => "cubecl-cuda",
+                RuntimeId::Hip => "cubecl-hip",
+                RuntimeId::Metal => "cubecl-metal",
+                RuntimeId::Cpu => "cubecl-cpu",
+                RuntimeId::Wgpu => "cubecl",
+            };
+            format!(
+                "The CubeCL {runtime:?} backend requires a build with the Cargo {feature} feature"
+            )
+        }
+        e => e.to_string(),
+    }
+}
+
+fn wgpu_device() -> Result<cubecl::Device, String> {
+    let (instance, adapter, device, queue) = native::request_device()?;
+    let setup = WgpuSetup {
+        backend: adapter.get_info().backend,
+        instance,
+        adapter,
+        device,
+        queue,
+    };
+    try_init_device(setup, Default::default())
+        .map(cubecl::Device::Wgpu)
+        .map_err(|e| format!("CubeCL initialization failed: {e}"))
+}
+
+#[cfg(all(feature = "cubecl-metal", target_vendor = "apple"))]
+fn metal_device() -> Result<cubecl::Device, String> {
+    use objc2_metal::{MTLDevice, MTLGPUFamily};
+    // CubeCL asserts Metal 3 support when creating a client. Register the
+    // checked device so a missing or older adapter yields a Python error.
+    let device = cubecl::metal::device::default_device()
+        .filter(|d| d.supportsFamily(MTLGPUFamily::Metal3))
+        .or_else(|| {
+            cubecl::metal::device::all_devices()
+                .into_iter()
+                .find(|d| d.supportsFamily(MTLGPUFamily::Metal3))
+        })
+        .ok_or("CubeCL native Metal requires a Metal 3 capable device")?;
+    Ok(cubecl::Device::Metal(cubecl::metal::register_device(
+        device,
+    )))
+}
+
+#[cfg(not(all(feature = "cubecl-metal", target_vendor = "apple")))]
+fn metal_device() -> Result<cubecl::Device, String> {
+    Err(
+        "CubeCL native Metal requires an Apple target built with the Cargo cubecl-metal feature"
+            .into(),
+    )
 }
 
 #[cube(launch)]
@@ -116,8 +193,13 @@ impl Compute for Client {
         let arg = |handle: &Handle| unsafe {
             BufferArg::from_raw_parts(handle.clone(), handle.size() as usize / 4)
         };
-        let groups = CubeCount::Static(kernel.groups(records), 1, 1);
-        let dim = CubeDim::new_1d(64);
+        // The CPU runtime limits a cube to the number of available cores.
+        let hardware = &self.properties().hardware;
+        let width = 64
+            .min(hardware.max_units_per_cube)
+            .min(hardware.max_cube_dim.0);
+        let groups = CubeCount::Static(kernel.groups(records, width), 1, 1);
+        let dim = CubeDim::new_1d(width);
         let [a, b] = inputs.map(arg);
         match kernel {
             Kernel::Mask(angle) => angular_mask::launch(
@@ -133,5 +215,38 @@ impl Compute for Client {
         }
         self.read_one(output)
             .map_err(|e| format!("CubeCL dispatch failed: {e}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_names_select_exact_backends() {
+        for (name, expected) in [
+            ("wgpu", RuntimeId::Wgpu),
+            ("metal", RuntimeId::Metal),
+            ("cuda", RuntimeId::Cuda),
+            ("hip", RuntimeId::Hip),
+            ("rocm", RuntimeId::Hip),
+            ("cpu", RuntimeId::Cpu),
+        ] {
+            assert_eq!(runtime(name).unwrap(), expected);
+        }
+        assert!(runtime("unknown").is_err());
+    }
+
+    #[test]
+    #[ignore = "requires the configured CubeCL runtime"]
+    fn selected_client_uses_requested_runtime() {
+        let selected = std::env::var("RUST_EPHEM_CUBECL_BACKEND").unwrap_or_else(|_| "wgpu".into());
+        let expected = match selected.as_str() {
+            "rocm" => "hip",
+            other => other,
+        };
+        let client = client().unwrap();
+        // wgpu also reports its shader compiler, e.g. wgpu<wgsl>.
+        assert_eq!(client.name().split('<').next(), Some(expected));
     }
 }

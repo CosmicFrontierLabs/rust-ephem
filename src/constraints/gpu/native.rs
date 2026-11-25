@@ -106,7 +106,7 @@ impl Compute for Backend {
         inputs: [&wgpu::Buffer; 2],
         records: usize,
     ) -> Result<impl std::ops::Deref<Target = [u8]>, String> {
-        let groups = kernel.groups(records);
+        let groups = kernel.groups(records, 64);
         let pipeline = match kernel {
             Kernel::Mask(Angle::Direction) => &self.direction,
             Kernel::Mask(Angle::NearestPole) => &self.nearest_pole,

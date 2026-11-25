@@ -8,6 +8,10 @@ license = "Apache-2.0"
 default = ["ut1", "extension-module", "gpu"]
 gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 cubecl = ["gpu", "dep:cubecl"]
+cubecl-metal = ["cubecl", "cubecl/metal-native", "dep:objc2-metal"]
+cubecl-cuda = ["cubecl", "cubecl/cuda"]
+cubecl-hip = ["cubecl", "cubecl/hip"]
+cubecl-cpu = ["cubecl", "cubecl/cpu"]
 # UT1 support requires OpenSSL which may not be available on all platforms
 ut1 = ["hifitime"]
 # pyo3's extension-module feature builds an artifact that expects its Python
@@ -46,6 +50,8 @@ cubecl = { version = "0.11.4", optional = true, default-features = false, featur
 pollster = { version = "0.4", optional = true }
 bytemuck = { version = "1", optional = true }
 
+[target.'cfg(target_vendor = "apple")'.dependencies]
+objc2-metal = { version = "0.3", optional = true, default-features = false, features = ["MTLDevice"] }
 
 [build-dependencies]
 # none required for basic build; use maturin to build wheels

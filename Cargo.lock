@@ -3803,6 +3803,7 @@ dependencies = [
  "md5",
  "ndarray",
  "numpy",
+ "objc2-metal",
  "once_cell",
  "pollster",
  "pyo3",
