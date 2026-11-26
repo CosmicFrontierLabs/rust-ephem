@@ -112,6 +112,7 @@ fn angular_mask(
     #[comptime] nearest_pole: bool,
     #[comptime] apparent: bool,
     #[comptime] targets_first: bool,
+    #[comptime] roll_wedge_wide: Option<bool>,
 ) {
     let unit = ABSOLUTE_POS;
     if unit >= output.len() / 2 {
@@ -121,14 +122,19 @@ fn angular_mask(
     let words = times.div_ceil(32);
     // Neighboring GPU lanes can share the same 32 epoch records across targets.
     // Both launch orders write target-major words for the host decoder.
+    let stride = comptime!(if roll_wedge_wide.is_some() {
+        6usize
+    } else {
+        3usize
+    });
     let (target, epoch_word) = if targets_first {
-        let rows = targets.len() / 3;
+        let rows = targets.len() / stride;
         (unit % rows, unit / rows)
     } else {
         (unit / words, unit % words)
     };
     let word = target * words + epoch_word;
-    let i = target * 3;
+    let i = target * stride;
     let first = epoch_word * 32;
     let mut flags = 0u32;
     let mut uncertain = 0u32;
@@ -137,7 +143,20 @@ fn angular_mask(
         let dot = targets[i] * epochs[t]
             + targets[i + 1] * epochs[t + 1]
             + targets[i + 2] * epochs[t + 2];
-        let cosine = if nearest_pole { f32::abs(dot) } else { dot };
+        let cosine = if comptime!(roll_wedge_wide.is_some()) {
+            let right = targets[i + 3] * epochs[t]
+                + targets[i + 4] * epochs[t + 1]
+                + targets[i + 5] * epochs[t + 2];
+            if comptime!(roll_wedge_wide == Some(true)) {
+                f32::min(dot, right)
+            } else {
+                f32::max(dot, right)
+            }
+        } else if nearest_pole {
+            f32::abs(dot)
+        } else {
+            dot
+        };
         let upper = epochs[t + 3];
         let lower = epochs[t + 4];
         let bit = 1u32 << (lane as u32);
@@ -156,7 +175,10 @@ fn angular_mask(
 #[cube(launch)]
 fn catalogue(cones: &[f32], stars: &[f32], output: &mut [u32], #[comptime] nearest: bool) {
     let target = CUBE_POS;
-    let i = target * 4;
+    let i = target * 6;
+    // Tile indices up to 32,768 are exactly representable in the cone buffer.
+    let start = cones[i + 4] as usize;
+    let stop = cones[i + 5] as usize;
     let count = stars.len() / 4;
     let span = Shared::<[Atomic<u32>]>::new_slice(2usize);
     if UNIT_POS == 0 {
@@ -174,8 +196,8 @@ fn catalogue(cones: &[f32], stars: &[f32], output: &mut [u32], #[comptime] neare
         }
         sync_cube();
         let mut best = cones[i + 3] - 4.0;
-        let mut index = UNIT_POS as usize;
-        while index < count {
+        let mut index = start + UNIT_POS as usize;
+        while index < stop {
             let j = index * 4;
             let dot =
                 cones[i] * stars[j] + cones[i + 1] * stars[j + 1] + cones[i + 2] * stars[j + 2];
@@ -188,8 +210,8 @@ fn catalogue(cones: &[f32], stars: &[f32], output: &mut [u32], #[comptime] neare
     }
     let mut first = count as u32;
     let mut end = 0u32;
-    let mut star = UNIT_POS as usize;
-    while star < count {
+    let mut star = start + UNIT_POS as usize;
+    while star < stop {
         let j = star * 4;
         let delta = cones[i] * stars[j] + cones[i + 1] * stars[j + 1] + cones[i + 2] * stars[j + 2]
             - threshold;
@@ -222,6 +244,30 @@ pub(super) fn storage(client: &Client, data: &[f32]) -> Handle {
     client.create_from_slice(f32::as_bytes(data))
 }
 
+fn workgroup_width(client: &Client) -> u32 {
+    let hardware = &client.properties().hardware;
+    64.min(hardware.max_units_per_cube)
+        .min(hardware.max_cube_dim.0)
+}
+
+fn targets_first(client: &Client) -> bool {
+    client.name().starts_with("wgpu") || client.name() == "metal"
+}
+
+pub(super) fn mask_word_capacity(client: &Client) -> usize {
+    // A 16 MiB readback amortizes synchronization for full-sky masks on wgpu
+    // and Metal. Also respect the device's one-dimensional dispatch limit.
+    let limit = if targets_first(client) {
+        1 << 21
+    } else {
+        1 << 18
+    };
+    limit.min(
+        (workgroup_width(client) as usize)
+            .saturating_mul(client.properties().hardware.max_cube_count.0 as usize),
+    )
+}
+
 pub(super) fn dispatch(
     client: &Client,
     kernel: Kernel,
@@ -233,11 +279,7 @@ pub(super) fn dispatch(
     let arg = |handle: &Handle| unsafe {
         BufferArg::from_raw_parts(handle.clone(), handle.size() as usize / 4)
     };
-    // The CPU runtime limits a cube to the number of available cores.
-    let hardware = &client.properties().hardware;
-    let width = 64
-        .min(hardware.max_units_per_cube)
-        .min(hardware.max_cube_dim.0);
+    let width = workgroup_width(client);
     let groups = match kernel {
         Kernel::Mask(_) => records.div_ceil(width as usize),
         Kernel::Catalogue { .. } => records,
@@ -255,7 +297,11 @@ pub(super) fn dispatch(
             arg(&output),
             matches!(angle, Angle::NearestPole),
             matches!(angle, Angle::Apparent),
-            client.name().starts_with("wgpu") || client.name() == "metal",
+            targets_first(client),
+            match angle {
+                Angle::RollWedge { wide } => Some(wide),
+                _ => None,
+            },
         ),
         Kernel::Catalogue { nearest } => {
             catalogue::launch(client, groups, dim, a, b, arg(&output), nearest)

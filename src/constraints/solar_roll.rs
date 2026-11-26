@@ -270,33 +270,24 @@ impl SolarRollEvaluator {
             let half = self.tolerance_deg.to_radians();
             let (ls, lc) = (center - half).sin_cos();
             let (rs, rc) = (center + half).sin_cos();
-            let mut left = Array2::zeros((shape.0, 3));
-            let mut right = Array2::zeros((shape.0, 3));
+            let mut planes = Array2::zeros((shape.0, 6));
             for (i, &x) in targets.iter().enumerate() {
                 let (y, z) = north_referenced_axes(x);
                 for k in 0..3 {
-                    left[[i, k]] = ls * y[k] - lc * z[k];
-                    right[[i, k]] = rc * z[k] - rs * y[k];
+                    planes[[i, k]] = ls * y[k] - lc * z[k];
+                    planes[[i, k + 3]] = rc * z[k] - rs * y[k];
                 }
             }
-            let mask = |planes: &Array2<f64>| {
-                super::gpu::dispatch_angle_mask(
-                    planes,
-                    shape.1,
-                    |t| (suns[t], 0.0, None),
-                    super::gpu::Angle::Direction,
-                    Some(&exact),
-                )
-            };
-            if let Some(mut result) = mask(&left)? {
-                if let Some(other) = mask(&right)? {
-                    if self.tolerance_deg <= 90.0 {
-                        result |= &other;
-                    } else {
-                        result &= &other;
-                    }
-                    return Ok(result);
-                }
+            if let Some(result) = super::gpu::dispatch_angle_mask(
+                &planes,
+                shape.1,
+                |t| (suns[t], 0.0, None),
+                super::gpu::Angle::RollWedge {
+                    wide: self.tolerance_deg > 90.0,
+                },
+                Some(&exact),
+            )? {
+                return Ok(result);
             }
         }
         Ok(Array2::from_shape_fn(shape, |(i, t)| exact(i, t)))

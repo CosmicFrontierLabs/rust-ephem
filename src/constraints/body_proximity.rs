@@ -284,11 +284,7 @@ impl BodyProximityEvaluator {
                 super::gpu::Angle::Direction,
                 None,
             )? {
-                for ((i, t), cell) in mask.indexed_iter_mut() {
-                    if *cell {
-                        *cell = inside(i, t);
-                    }
-                }
+                super::gpu::refine_polygon_mask(&mut mask, true, inside);
                 return Ok(mask);
             }
         }

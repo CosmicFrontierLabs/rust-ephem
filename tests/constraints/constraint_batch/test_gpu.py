@@ -146,6 +146,25 @@ def test_nearest_star_values_across_tiles(
 
 
 @requires_gpu
+@pytest.mark.parametrize("tolerance", [0.0, 90.0, 135.0, 179.999999])
+def test_solar_roll_wedge_matches_native(
+    ground_ephemeris: Any, monkeypatch: pytest.MonkeyPatch, tolerance: float
+) -> None:
+    rule = re.SolarRollConstraint(
+        roll_deg=-23, tolerance_deg=tolerance, panel_normal=(1, -2, 3)
+    )
+    # 129 epochs exercises a partial packed word and crosses the trig dispatch threshold.
+    indices = [0, 4, 1] * 43
+    ra = np.linspace(0, 360, 1025).tolist()
+    dec = np.linspace(-90, 90, 1025).tolist()
+    monkeypatch.setenv("RUST_EPHEM_GPU", "0")
+    expected = rule.in_constraint_batch(ground_ephemeris, ra, dec, indices=indices)
+    monkeypatch.setenv("RUST_EPHEM_GPU", "1")
+    actual = rule.in_constraint_batch(ground_ephemeris, ra, dec, indices=indices)
+    np.testing.assert_array_equal(actual, expected)
+
+
+@requires_gpu
 def test_airmass_tie(ground_ephemeris: Any) -> None:
     rule = re.AirmassConstraint(max_airmass=2.5)
     value = rule.evaluate_grid(

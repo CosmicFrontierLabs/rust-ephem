@@ -179,11 +179,7 @@ impl AltAzEvaluator {
             result |= &az;
         }
         if self.polygon.is_some() {
-            for ((i, t), cell) in result.indexed_iter_mut() {
-                if !*cell {
-                    *cell = exact(i, t);
-                }
-            }
+            gpu::refine_polygon_mask(&mut result, false, exact);
         }
         Ok(Some(result))
     }

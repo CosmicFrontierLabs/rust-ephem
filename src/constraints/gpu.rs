@@ -6,6 +6,17 @@ use pyo3::{exceptions::PyRuntimeError, PyResult};
 mod batch;
 #[cfg(feature = "cubecl")]
 mod cube;
+#[cfg(feature = "cubecl")]
+pub(super) use batch::Catalogue;
+
+#[cfg(not(feature = "cubecl"))]
+pub(super) struct Catalogue;
+#[cfg(not(feature = "cubecl"))]
+impl Catalogue {
+    pub(super) fn new(_: impl IntoIterator<Item = [f64; 3]>) -> Self {
+        Self
+    }
+}
 
 #[cfg(not(feature = "cubecl"))]
 const GPU_BUILD_REQUIRED: &str =
@@ -16,13 +27,16 @@ pub(super) enum Angle {
     Direction,
     NearestPole,
     Apparent,
+    RollWedge { wide: bool },
 }
 
 impl Angle {
-    pub(super) fn cosine(self, dot: f64) -> f64 {
+    pub(super) fn projection(self, dot: impl Fn(usize) -> f64) -> f64 {
         match self {
-            Self::Direction | Self::Apparent => dot,
-            Self::NearestPole => dot.abs(),
+            Self::Direction | Self::Apparent => dot(0),
+            Self::NearestPole => dot(0).abs(),
+            Self::RollWedge { wide: true } => dot(0).min(dot(3)),
+            Self::RollWedge { wide: false } => dot(0).max(dot(3)),
         }
     }
 }
@@ -59,9 +73,11 @@ pub(super) fn angular_grid(
         (targets.nrows(), epochs.len()),
         |(i, t)| {
             let (unit, upper, lower) = epochs[t];
-            let dot =
-                targets[[i, 0]] * unit[0] + targets[[i, 1]] * unit[1] + targets[[i, 2]] * unit[2];
-            let cosine = angle.cosine(dot);
+            let cosine = angle.projection(|k| {
+                targets[[i, k]] * unit[0]
+                    + targets[[i, k + 1]] * unit[1]
+                    + targets[[i, k + 2]] * unit[2]
+            });
             cosine > upper || lower.is_some_and(|bound| cosine < bound)
         },
     ))
@@ -85,7 +101,7 @@ pub(super) fn dispatch_angle_mask(
     times: usize,
     row: impl Fn(usize) -> AngularBounds,
     angle: Angle,
-    refine: Option<&dyn Fn(usize, usize) -> bool>,
+    refine: Option<&(dyn Fn(usize, usize) -> bool + Sync)>,
 ) -> PyResult<Option<Array2<bool>>> {
     #[cfg(feature = "cubecl")]
     return batch::mask(targets, times, row, angle, refine).map_err(PyRuntimeError::new_err);
@@ -96,9 +112,33 @@ pub(super) fn dispatch_angle_mask(
     }
 }
 
+/// Finish the surviving polygon candidates in a densely packed screening mask.
+pub(super) fn refine_polygon_mask(
+    mask: &mut Array2<bool>,
+    candidate: bool,
+    exact: impl Fn(usize, usize) -> bool + Sync,
+) {
+    use rayon::prelude::*;
+    let times = mask.ncols();
+    if times == 0 {
+        return;
+    }
+    mask.as_slice_mut()
+        .expect("contiguous screening mask")
+        .par_chunks_mut(times)
+        .enumerate()
+        .for_each(|(i, row)| {
+            for (t, cell) in row.iter_mut().enumerate() {
+                if *cell == candidate {
+                    *cell = exact(i, t);
+                }
+            }
+        });
+}
+
 pub(super) fn catalogue_hits(
     targets: &Array2<f64>,
-    stars: &[[f64; 3]],
+    stars: &Catalogue,
     threshold: f64,
 ) -> PyResult<Option<Vec<bool>>> {
     if !enabled() {
@@ -114,8 +154,8 @@ pub(super) fn catalogue_hits(
 }
 
 pub(super) fn nearest_catalogue_cosines(
-    targets: &Array2<f64>,
-    stars: &[[f64; 3]],
+    targets: &ndarray::ArrayRef2<f64>,
+    stars: &Catalogue,
 ) -> PyResult<Option<Vec<f64>>> {
     #[cfg(feature = "cubecl")]
     return batch::nearest_cosines(targets, stars).map_err(PyRuntimeError::new_err);

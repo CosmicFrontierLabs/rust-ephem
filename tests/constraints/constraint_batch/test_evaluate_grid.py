@@ -60,6 +60,7 @@ def trees() -> dict[str, Any]:
         "rules": sun | limb | moon,
         # A rule that does not: corrected per column or per target.
         "body": re.BodyConstraint(body="Jupiter barycenter", min_angle=70) | sun,
+        "star_circle": re.BrightStarConstraint(stars=stars, fov_radius=12),
         "not_and": ~sun & limb,
         # Roll-dependent trees.
         "boresight": (sun | moon).boresight_offset(pitch_deg=20, yaw_deg=10),

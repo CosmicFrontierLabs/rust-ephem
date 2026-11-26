@@ -1,7 +1,8 @@
 //! Host-side tiling, packed mask decoding, and f64 refinement for GPU kernels.
 use super::{cube, cube::Kernel, Angle, AngularBounds};
 use cubecl::{prelude::Client, server::Handle};
-use ndarray::{s, Array2, ArrayView2, ArrayViewMut2};
+use ndarray::{s, Array2, ArrayView2, ArrayViewMut2, Axis};
+use rayon::prelude::*;
 
 fn mask_tile(
     client: &Client,
@@ -9,7 +10,7 @@ fn mask_tile(
     times: usize,
     geometry: &Handle,
     angle: Angle,
-    refine: impl Fn(usize, usize) -> bool,
+    refine: impl Fn(usize, usize) -> bool + Sync,
     mut mask: ArrayViewMut2<'_, bool>,
 ) -> Result<(), String> {
     let words = times.div_ceil(32);
@@ -25,23 +26,43 @@ fn mask_tile(
         count,
     )?;
     let packed: &[[u32; 2]] = bytemuck::cast_slice(&data);
-    for (i, mut row) in mask.rows_mut().into_iter().enumerate() {
-        for (word, (cells, &[flags, mut uncertain])) in row
-            .as_slice_mut()
-            .expect("contiguous mask row")
-            .chunks_mut(32)
-            .zip(&packed[i * words..(i + 1) * words])
-            .enumerate()
-        {
-            for (lane, cell) in cells.iter_mut().enumerate() {
-                *cell = flags & (1 << lane) != 0;
-            }
-            while uncertain != 0 {
-                let lane = uncertain.trailing_zeros() as usize;
-                cells[lane] = refine(i, word * 32 + lane);
-                uncertain &= uncertain - 1;
+    // Each task owns whole rows, including when this tile is a strided view
+    // into a mask with more than 65,536 epochs.
+    let rows_per_task = (32_768 / times).max(1);
+    let decode = |(block, mut rows): (usize, ArrayViewMut2<'_, bool>)| {
+        for (offset, mut row) in rows.rows_mut().into_iter().enumerate() {
+            let i = block * rows_per_task + offset;
+            let cells = row.as_slice_mut().expect("contiguous mask row");
+            for (word, (cells, &[flags, mut uncertain])) in cells
+                .chunks_mut(32)
+                .zip(&packed[i * words..(i + 1) * words])
+                .enumerate()
+            {
+                if flags == 0 || flags == u32::MAX {
+                    cells.fill(flags != 0);
+                } else if let Ok(full) = <&mut [bool; 32]>::try_from(&mut *cells) {
+                    *full = std::array::from_fn(|lane| flags & (1 << lane) != 0);
+                } else {
+                    for (lane, cell) in cells.iter_mut().enumerate() {
+                        *cell = flags & (1 << lane) != 0;
+                    }
+                }
+                while uncertain != 0 {
+                    let lane = uncertain.trailing_zeros() as usize;
+                    cells[lane] = refine(i, word * 32 + lane);
+                    uncertain &= uncertain - 1;
+                }
             }
         }
+    };
+    let parallel = mask.len() >= 131_072;
+    let blocks = mask
+        .axis_chunks_iter_mut(Axis(0), rows_per_task)
+        .enumerate();
+    if parallel {
+        blocks.par_bridge().for_each(decode);
+    } else {
+        blocks.for_each(decode);
     }
     Ok(())
 }
@@ -51,7 +72,7 @@ pub(super) fn mask(
     times: usize,
     row: impl Fn(usize) -> AngularBounds,
     angle: Angle,
-    refine: Option<&dyn Fn(usize, usize) -> bool>,
+    refine: Option<&(dyn Fn(usize, usize) -> bool + Sync)>,
 ) -> Result<Option<Array2<bool>>, String> {
     let bounded = |x: &f64| x.abs() <= 1.000001;
     if !targets.iter().all(bounded) {
@@ -78,8 +99,10 @@ pub(super) fn mask(
     }
     let client = cube::client()?;
     let mut result = Array2::from_elem((targets.nrows(), times), false);
-    for (block, epochs) in epochs.chunks(65_536).enumerate() {
-        let t = block * 65_536;
+    let word_capacity = cube::mask_word_capacity(&client);
+    let epoch_tile = 65_536.min(word_capacity.saturating_mul(32));
+    for (block, epochs) in epochs.chunks(epoch_tile).enumerate() {
+        let t = block * epoch_tile;
         let geometry = cube::storage(
             &client,
             &epochs
@@ -88,8 +111,7 @@ pub(super) fn mask(
                 .map(|&v| v as f32)
                 .collect::<Vec<_>>(),
         );
-        // Limit each dispatch to 262,144 pairs of mask/refinement words.
-        let rows = 262_144 / epochs.len().div_ceil(32);
+        let rows = word_capacity / epochs.len().div_ceil(32);
         for i in (0..targets.nrows()).step_by(rows) {
             let end = (i + rows).min(targets.nrows());
             mask_tile(
@@ -104,8 +126,8 @@ pub(super) fn mask(
                     }
                     let target = targets.row(i + r);
                     let [x, y, z, upper, lower] = epochs[c];
-                    let dot = target[0] * x + target[1] * y + target[2] * z;
-                    let cosine = angle.cosine(dot);
+                    let cosine =
+                        angle.projection(|k| target[k] * x + target[k + 1] * y + target[k + 2] * z);
                     cosine > upper || cosine < lower
                 },
                 result.slice_mut(s![i..end, t..t + epochs.len()]),
@@ -191,10 +213,38 @@ pub(super) fn angle_grid(
     Ok(true)
 }
 
+/// Immutable host data shared by repeated searches on any selected device.
+pub(in crate::constraints) struct Catalogue {
+    stars: Vec<[f64; 3]>,
+    packed: Vec<[f32; 4]>,
+    max_norm_squared: Option<f64>,
+}
+
+impl Catalogue {
+    pub(in crate::constraints) fn new(units: impl IntoIterator<Item = [f64; 3]>) -> Self {
+        let mut stars: Vec<_> = units.into_iter().collect();
+        stars.sort_unstable_by(|a, b| a[2].total_cmp(&b[2]));
+        let max_norm_squared = stars.iter().try_fold(0.0_f64, |highest, s| {
+            s.iter()
+                .all(|v| v.abs() <= 1.000001)
+                .then(|| highest.max(crate::utils::vector_math::dot_product(s, s)))
+        });
+        let packed = stars
+            .iter()
+            .map(|&[x, y, z]| [x as f32, y as f32, z as f32, 0.0])
+            .collect();
+        Self {
+            stars,
+            packed,
+            max_norm_squared,
+        }
+    }
+}
+
 /// A catalogue tile returns one range per target, or a definite-hit sentinel.
 pub(super) fn catalogue_hits(
     targets: &Array2<f64>,
-    stars: &[[f64; 3]],
+    stars: &Catalogue,
     threshold: f64,
 ) -> Result<Option<Vec<bool>>, String> {
     let mut hits = vec![false; targets.nrows()];
@@ -216,8 +266,8 @@ pub(super) fn catalogue_hits(
 }
 
 pub(super) fn nearest_cosines(
-    targets: &Array2<f64>,
-    stars: &[[f64; 3]],
+    targets: &ndarray::ArrayRef2<f64>,
+    stars: &Catalogue,
 ) -> Result<Option<Vec<f64>>, String> {
     let mut best = vec![f64::NEG_INFINITY; targets.nrows()];
     let done = scan_catalogue(
@@ -235,30 +285,61 @@ pub(super) fn nearest_cosines(
     Ok(done.then_some(best))
 }
 
+/// A star that can reach the cutoff must also lie within the chord distance
+/// along z. For nearest searches, actual stars near the target's z provide a
+/// lower bound on the winning dot product, even for clustered catalogues.
+fn catalogue_window(
+    target: &[f64; 3],
+    stars: &[[f64; 3]],
+    max_norm_squared: f64,
+    threshold: Option<f64>,
+) -> std::ops::Range<usize> {
+    use crate::utils::vector_math::dot_product;
+    let z = target[2];
+    let cutoff = threshold.unwrap_or_else(|| {
+        let samples = stars.len().min(32);
+        let middle = stars.partition_point(|s| s[2] < z);
+        let start = middle
+            .saturating_sub(samples / 2)
+            .min(stars.len() - samples);
+        stars[start..start + samples]
+            .iter()
+            .map(|s| dot_product(target, s))
+            .fold(f64::NEG_INFINITY, f64::max)
+    });
+    // |target - star|² = |target|² + |star|² - 2 dot(target, star).
+    // All coordinates are bounded by 1.000001. Round the squared radius
+    // outward by more than the f64 error, including cancellation at a tie.
+    let radius = (dot_product(target, target) + max_norm_squared - 2.0 * cutoff + 1e-12)
+        .max(0.0)
+        .sqrt();
+    stars.partition_point(|s| s[2] < z - radius)..stars.partition_point(|s| s[2] <= z + radius)
+}
+
 /// Each workgroup returns a range containing every candidate still tied in
 /// f32, or a definite-hit sentinel for a cone search. Reduce tiles in f64.
 fn scan_catalogue<T>(
-    targets: &Array2<f64>,
-    stars: &[[f64; 3]],
+    targets: &ndarray::ArrayRef2<f64>,
+    catalogue: &Catalogue,
     threshold: Option<f64>,
     results: &mut [T],
     finished: impl Fn(&[T]) -> bool,
     reduce: impl Fn(&mut T, ndarray::ArrayView1<'_, f64>, &[[f64; 3]], [u32; 2]),
 ) -> Result<bool, String> {
     let bounded = |x: &f64| x.abs() <= 1.000001;
-    if threshold.is_some_and(|x| !x.is_finite())
-        || !targets.iter().all(bounded)
-        || !stars.iter().flatten().all(bounded)
-    {
+    let Some(max_norm_squared) = catalogue.max_norm_squared else {
+        return Ok(false);
+    };
+    if threshold.is_some_and(|x| !x.is_finite()) || !targets.iter().all(bounded) {
         return Ok(false);
     }
     let client = cube::client()?;
-    for stars in stars.chunks(32_768) {
-        let packed: Vec<f32> = stars
-            .iter()
-            .flat_map(|&[x, y, z]| [x as f32, y as f32, z as f32, 0.0])
-            .collect();
-        let catalogue = cube::storage(&client, &packed);
+    for (stars, packed) in catalogue
+        .stars
+        .chunks(32_768)
+        .zip(catalogue.packed.chunks(32_768))
+    {
+        let catalogue = cube::storage(&client, packed.as_flattened());
         // Bound the duration of a submission and respect WebGPU's portable
         // one-dimensional workgroup limit.
         let batch = (134_217_728 / stars.len()).min(65_535);
@@ -272,11 +353,15 @@ fn scan_catalogue<T>(
                 .rows()
                 .into_iter()
                 .flat_map(|v| {
+                    let range =
+                        catalogue_window(&[v[0], v[1], v[2]], stars, max_norm_squared, threshold);
                     [
                         v[0] as f32,
                         v[1] as f32,
                         v[2] as f32,
                         threshold.unwrap_or_default() as f32,
+                        range.start as f32,
+                        range.end as f32,
                     ]
                 })
                 .collect();
@@ -303,9 +388,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn catalogue_window_keeps_brute_force_hits_and_nearest_ties() {
+        use crate::utils::vector_math::dot_product;
+        let catalogue = Catalogue::new(
+            (0..257)
+                .rev()
+                .map(|i| {
+                    let z = i as f64 / 128.0 - 1.0;
+                    let (y, x) = (i as f64 * 2.4).sin_cos();
+                    let r = (1.0 - z * z).sqrt();
+                    [r * x, r * y, z]
+                })
+                .chain([[0.0, 0.0, 1.0], [0.3, -0.2, 0.7], [1.0, 1.0, 1.0]]),
+        );
+        let stars = &catalogue.stars;
+        for target in [[0.0; 3], [0.0, 0.0, 1.0], [0.5, -0.75, -0.25], [-1.0; 3]] {
+            let best = stars
+                .iter()
+                .map(|s| dot_product(&target, s))
+                .fold(f64::NEG_INFINITY, f64::max);
+            for cutoff in [
+                None,
+                Some(best),
+                Some(best.next_down()),
+                Some(best.next_up()),
+                Some(-0.5),
+            ] {
+                let range =
+                    catalogue_window(&target, stars, catalogue.max_norm_squared.unwrap(), cutoff);
+                for (i, star) in stars.iter().enumerate() {
+                    if dot_product(&target, star) >= cutoff.unwrap_or(best) {
+                        assert!(range.contains(&i));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     #[ignore = "requires a hardware GPU adapter"]
     fn hardware_mask_preserves_ties_and_tile_order() {
-        // Cross both tile dimensions and the final partial word. Adjacent
+        // Cross the epoch tile, the CPU row tile and the final partial word. Adjacent
         // doubles on either side of 0.5 round to the same f32.
         let x = [0.5_f64.next_down(), 0.5, 0.5_f64.next_up()];
         let targets = Array2::from_shape_fn((129, 3), |(i, j)| {
@@ -361,7 +484,9 @@ mod tests {
             assert_eq!(grid[[i, 0]], i % 3 == 2);
             assert_eq!(grid[[i, 1]], i % 3 == 0);
         }
-        let hits = catalogue_hits(&targets, &[axis], 0.5).unwrap().unwrap();
+        let hits = catalogue_hits(&targets, &Catalogue::new([axis]), 0.5)
+            .unwrap()
+            .unwrap();
         assert_eq!(hits, [false, false, true, false, false, false]);
 
         // Two ambiguous stars in different lanes. Only the last clears the
@@ -371,7 +496,9 @@ mod tests {
         stars[94] = [values[2], (1.0 - values[2] * values[2]).sqrt(), 0.0];
         let targets = ndarray::arr2(&[axis]);
         assert_eq!(
-            catalogue_hits(&targets, &stars, 0.5).unwrap().unwrap(),
+            catalogue_hits(&targets, &Catalogue::new(stars), 0.5)
+                .unwrap()
+                .unwrap(),
             [true]
         );
     }

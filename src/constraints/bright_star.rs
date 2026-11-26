@@ -72,6 +72,7 @@ impl ConstraintConfig for BrightStarConfig {
             stars,
             fov,
             bounding_cos,
+            catalogue: Default::default(),
         })
     }
 }
@@ -113,6 +114,7 @@ enum FovDefinition {
 }
 
 pub struct BrightStarEvaluator {
+    catalogue: std::sync::OnceLock<super::gpu::Catalogue>,
     stars: Vec<StarData>,
     fov: FovDefinition,
     /// Precomputed cos(max_polygon_radius + 1°) for fast star rejection in polygon mode.
@@ -122,6 +124,11 @@ pub struct BrightStarEvaluator {
 
 impl BrightStarEvaluator {
     // ── Circle helpers ────────────────────────────────────────────────────────
+
+    fn gpu_catalogue(&self) -> &super::gpu::Catalogue {
+        self.catalogue
+            .get_or_init(|| super::gpu::Catalogue::new(self.stars.iter().map(|s| s.unit)))
+    }
 
     fn gpu_circle_hits(
         &self,
@@ -139,8 +146,7 @@ impl BrightStarEvaluator {
         let units: Vec<_> = (0..count).map(direction).collect();
         let targets = Array2::from_shape_vec((count, 3), units.into_flattened())
             .expect("three coordinates per target");
-        let stars: Vec<_> = self.stars.iter().map(|s| s.unit).collect();
-        super::gpu::catalogue_hits(&targets, &stars, radius_cos)
+        super::gpu::catalogue_hits(&targets, self.gpu_catalogue(), radius_cos)
     }
 
     fn circle_hits_vectors(&self, targets: &Array2<f64>, radius_cos: f64) -> PyResult<Vec<bool>> {
@@ -165,29 +171,31 @@ impl BrightStarEvaluator {
         false
     }
 
-    /// Angular separation (degrees) to the nearest catalog star. Empty catalogs report
-    /// 180° (no star anywhere nearby).
-    fn nearest_star_angle_deg(&self, target_ra_deg: f64, target_dec_deg: f64) -> f64 {
-        let target_dec_rad = target_dec_deg.to_radians();
-        let target_ra_rad = target_ra_deg.to_radians();
-        let (sin_dec, cos_dec) = target_dec_rad.sin_cos();
-        let (sin_ra, cos_ra) = target_ra_rad.sin_cos();
-        let target_unit = [cos_dec * cos_ra, cos_dec * sin_ra, sin_dec];
-
-        let max_cos_sep = self
-            .stars
+    fn nearest_cosines(&self, ras: &[f64], decs: &[f64]) -> PyResult<Vec<f64>> {
+        let units: Vec<_> = ras
             .iter()
-            .map(|star| {
-                target_unit[0] * star.unit[0]
-                    + target_unit[1] * star.unit[1]
-                    + target_unit[2] * star.unit[2]
-            })
-            .fold(f64::NEG_INFINITY, f64::max);
-
-        if max_cos_sep.is_finite() {
-            max_cos_sep.clamp(-1.0, 1.0).acos().to_degrees()
+            .zip(decs)
+            .map(|(&ra, &dec)| StarData::new(ra, dec).unit)
+            .collect();
+        if units.len().saturating_mul(self.stars.len()) >= 67_108_864 && super::gpu::enabled() {
+            let targets = ndarray::ArrayView2::from_shape((units.len(), 3), units.as_flattened())
+                .expect("three coordinates per target");
+            if let Some(best) =
+                super::gpu::nearest_catalogue_cosines(&targets, self.gpu_catalogue())?
+            {
+                return Ok(best);
+            }
+        }
+        let nearest = |unit: &[f64; 3]| {
+            self.stars
+                .iter()
+                .map(|s| crate::utils::vector_math::dot_product(unit, &s.unit))
+                .fold(f64::NEG_INFINITY, f64::max)
+        };
+        if units.len().saturating_mul(self.stars.len()) >= super::core::PARALLEL_MIN_GRID_CELLS {
+            Ok(units.par_iter().map(nearest).collect())
         } else {
-            180.0
+            Ok(units.iter().map(nearest).collect())
         }
     }
 
@@ -497,6 +505,33 @@ fn each_target_index<T: Send>(
 }
 
 impl ConstraintEvaluator for BrightStarEvaluator {
+    fn fused_leaf_grid(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<super::core::LeafValueGrid>> {
+        let FovDefinition::Circle { cos_radius } = self.fov else {
+            return Ok(None);
+        };
+        let (ras, decs) = catalogue_targets(ephemeris, target_ras, target_decs, time_indices)?;
+        let times = ephemeris.get_times()?;
+        let shape = (ras.len(), time_indices.map_or(times.len(), |v| v.len()));
+        let best = self.nearest_cosines(&ras, &decs)?;
+        // Compare before clamping for acos to preserve strict ties at the cone edge.
+        let violated = Array2::from_shape_fn(shape, |(i, _)| best[i] > cos_radius);
+        let angles: Vec<_> = best
+            .into_iter()
+            .map(|c| c.clamp(-1.0, 1.0).acos().to_degrees())
+            .collect();
+        Ok(Some(super::core::LeafValueGrid {
+            violated,
+            key: "nearest_bright_star_angle_deg",
+            values: Array2::from_shape_fn(shape, |(i, _)| angles[i]),
+        }))
+    }
+
     fn prepare_attributed_roll_sweep<'a>(
         &'a self,
         ephemeris: &'a dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -932,33 +967,11 @@ impl ConstraintEvaluator for BrightStarEvaluator {
         let n_times = time_indices.map(|idx| idx.len()).unwrap_or(all_times.len());
         let n_targets = target_ras.len();
 
-        // Result is time-invariant (fixed ICRS catalog vs. fixed target direction);
-        // compute once per target and broadcast across times.
-        let gpu_cosines = if n_targets.saturating_mul(self.stars.len()) >= 67_108_864
-            && super::gpu::enabled()
-        {
-            let units: Vec<_> = target_ras
-                .iter()
-                .zip(target_decs)
-                .map(|(&ra, &dec)| StarData::new(ra, dec).unit)
-                .collect();
-            let targets = Array2::from_shape_vec((n_targets, 3), units.into_flattened()).unwrap();
-            let stars: Vec<_> = self.stars.iter().map(|s| s.unit).collect();
-            super::gpu::nearest_catalogue_cosines(&targets, &stars)?
-        } else {
-            None
-        };
-        let nearest_deg: Vec<f64> = match gpu_cosines {
-            Some(values) => values
-                .into_iter()
-                .map(|v| v.clamp(-1.0, 1.0).acos().to_degrees())
-                .collect(),
-            None => target_ras
-                .iter()
-                .zip(target_decs)
-                .map(|(&ra, &dec)| self.nearest_star_angle_deg(ra, dec))
-                .collect(),
-        };
+        let nearest_deg: Vec<_> = self
+            .nearest_cosines(target_ras, target_decs)?
+            .into_iter()
+            .map(|c| c.clamp(-1.0, 1.0).acos().to_degrees())
+            .collect();
 
         let nearest_bright_star_angle_deg =
             Array2::from_shape_fn((n_targets, n_times), |(j, _)| nearest_deg[j]);

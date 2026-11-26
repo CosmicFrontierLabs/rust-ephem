@@ -548,7 +548,7 @@ impl ConstraintEvaluator for MoonPhaseEvaluator {
             .unwrap_or(f64::INFINITY);
         let lower = max_cos_threshold.filter(|&v| v > -1.0);
         let violates = |dot: f64| dot > upper || lower.is_some_and(|v| dot < v);
-        let cosines = std::cell::OnceCell::new();
+        let cosines = std::sync::OnceLock::new();
         let exact_cosines = || cosines.get_or_init(|| target_vectors.dot(&moon_units.t()));
         let refine = |i: usize, t: usize| {
             let dot = target_vectors[[i, 0]] * moon_units[[t, 0]]

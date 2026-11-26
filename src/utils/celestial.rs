@@ -557,18 +557,23 @@ pub(crate) fn radec_to_altaz_batch(
     if ras_deg.is_empty() {
         return Ok(Vec::new());
     }
-    let mut astrometry = altaz_astrometry(ephemeris, time_indices)?;
-    let mut results = Vec::with_capacity(ras_deg.len());
-    for (&ra, &dec) in ras_deg.iter().zip(decs_deg) {
+    use rayon::prelude::*;
+    let astrometry = altaz_astrometry(ephemeris, time_indices)?;
+    let calculate = |(&ra, &dec): (&f64, &f64)| {
         let mut result = Array2::zeros((astrometry.len(), 2));
-        for (t, astrom) in astrometry.iter_mut().enumerate() {
-            let [alt, az] = observed_altaz(ra.to_radians(), dec.to_radians(), astrom);
+        for (t, state) in astrometry.iter().enumerate() {
+            let mut state = *state;
+            let [alt, az] = observed_altaz(ra.to_radians(), dec.to_radians(), &mut state);
             result[[t, 0]] = alt;
             result[[t, 1]] = az;
         }
-        results.push(result);
+        result
+    };
+    if ras_deg.len().saturating_mul(astrometry.len()) >= 20_000 {
+        Ok(ras_deg.par_iter().zip(decs_deg).map(calculate).collect())
+    } else {
+        Ok(ras_deg.iter().zip(decs_deg).map(calculate).collect())
     }
-    Ok(results)
 }
 
 pub(crate) fn observed_altaz(ra: f64, dec: f64, astrom: &mut sofars::astro::IauAstrom) -> [f64; 2] {
@@ -601,8 +606,8 @@ pub(crate) fn altaz_astrometry(
     };
     let itrs = convert_frames(&gcrs, &times, Frame::GCRS, Frame::ITRS, true)?;
     let (lats, lons, heights) = ecef_to_geodetic_deg(&itrs.slice(s![.., 0..3]).to_owned());
-    let mut astrometry = Vec::with_capacity(times.len());
-    for (i, time) in times.iter().enumerate() {
+    use rayon::prelude::*;
+    let prepare = |(i, time): (usize, &DateTime<Utc>)| {
         let (utc1, utc2) = datetime_to_jd_utc(time);
         let dut1 = ut1_provider::get_ut1_utc_offset(time);
         let (xp, yp) = eop_provider::get_polar_motion_rad(time);
@@ -627,9 +632,13 @@ pub(crate) fn altaz_astrometry(
         .map_err(|status| {
             pyo3::exceptions::PyValueError::new_err(format!("SOFA apco13 failed: {status}"))
         })?;
-        astrometry.push(astrom);
+        Ok(astrom)
+    };
+    if times.len() >= 32 {
+        times.par_iter().enumerate().map(prepare).collect()
+    } else {
+        times.iter().enumerate().map(prepare).collect()
     }
-    Ok(astrometry)
 }
 
 /// Calculate airmass using Kasten empirical formula (fast approximation)
@@ -1126,9 +1135,9 @@ mod altaz_batch_tests {
         let ras = [0.0, 359.999, 73.4, 180.0, 290.0];
         let decs = [-90.0, 89.999, -23.7, 0.0, 65.0];
         for radius in [6378.137, 7000.0] {
-            let mut eph = TestEphemeris::new(5);
+            let mut eph = TestEphemeris::new(40);
             // Include motion in both hemispheres and nonzero velocities.
-            eph.data.gcrs = Some(Array2::from_shape_fn((5, 6), |(i, j)| {
+            eph.data.gcrs = Some(Array2::from_shape_fn((40, 6), |(i, j)| {
                 let angle = i as f64 * 0.7;
                 match j {
                     0 => radius * angle.cos(),
