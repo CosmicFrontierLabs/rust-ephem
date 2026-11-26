@@ -111,15 +111,25 @@ fn angular_mask(
     output: &mut [u32],
     #[comptime] nearest_pole: bool,
     #[comptime] apparent: bool,
+    #[comptime] targets_first: bool,
 ) {
-    let word = ABSOLUTE_POS;
-    if word >= output.len() / 2 {
+    let unit = ABSOLUTE_POS;
+    if unit >= output.len() / 2 {
         terminate!();
     }
     let times = epochs.len() / 5;
     let words = times.div_ceil(32);
-    let i = word / words * 3;
-    let first = word % words * 32;
+    // Neighboring GPU lanes can share the same 32 epoch records across targets.
+    // Both launch orders write target-major words for the host decoder.
+    let (target, epoch_word) = if targets_first {
+        let rows = targets.len() / 3;
+        (unit % rows, unit / rows)
+    } else {
+        (unit / words, unit % words)
+    };
+    let word = target * words + epoch_word;
+    let i = target * 3;
+    let first = epoch_word * 32;
     let mut flags = 0u32;
     let mut uncertain = 0u32;
     for lane in 0..usize::min(32, times - first) {
@@ -245,6 +255,7 @@ pub(super) fn dispatch(
             arg(&output),
             matches!(angle, Angle::NearestPole),
             matches!(angle, Angle::Apparent),
+            client.name().starts_with("wgpu") || client.name() == "metal",
         ),
         Kernel::Catalogue { nearest } => {
             catalogue::launch(client, groups, dim, a, b, arg(&output), nearest)
