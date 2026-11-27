@@ -79,6 +79,81 @@ Parquet reads honor the same positive limit. DuckDB uses it for the reader's
 connection. PyArrow scans run serially if its shared CPU pool exceeds the
 limit. Other Python libraries and background I/O threads have their own settings.
 
+## Optional GPU compute
+
+The Rust extension uses CubeCL for large constraint batches. Supported masks
+include Sun, Moon, Moon limb, Earth limb, lunar phase with distance limits,
+orbit RAM and pole, airmass, altitude/azimuth, fixed solar roll, and circular
+or polygonal body fields of view. Circular bright-star fields also support GPU
+catalogue searches and nearest-star distances. Enable it before evaluation.
+
+```sh
+export RUST_EPHEM_GPU=1
+```
+
+Both `RUST_EPHEM_GPU=1` and `RUST_EPHEM_GPU=cubecl` enable the same kernels.
+The release workflow builds wheels with native Rust CPU and CubeCL’s portable
+`wgpu` runtime. On Linux x86-64 and ARM64 with glibc 2.34 or newer, and on
+Apple Silicon with macOS 15 or newer, pip can select a wheel that also includes
+CubeCL CPU. Set `RUST_EPHEM_GPU=1` and `RUST_EPHEM_CUBECL_BACKEND=cpu` to use
+it. Intel Mac wheels and wheels for older supported systems use the portable
+build. Source builds can combine additional runtimes using the Cargo features
+below.
+
+| `RUST_EPHEM_CUBECL_BACKEND` | Cargo feature | Execution |
+|---|---|---|
+| `wgpu` (default) | `gpu` or `cubecl` | Portable GPU compute through Metal, Vulkan, or DX12 |
+| `metal` | `cubecl-metal` | Native Metal on Apple hardware with Metal 3 support |
+| `cuda` | `cubecl-cuda` | NVIDIA GPU through CUDA |
+| `hip` or `rocm` | `cubecl-hip` | AMD GPU through ROCm/HIP |
+| `cpu` | `cubecl-cpu` | CubeCL kernels compiled for the host CPU |
+
+For example, to use native Metal on a Mac, run
+
+```sh
+maturin develop --release --features cubecl-metal
+export RUST_EPHEM_GPU=1
+export RUST_EPHEM_CUBECL_BACKEND=metal
+```
+
+The CUDA, HIP, and CubeCL CPU features use CubeCL’s LLVM toolchain at build
+time. On macOS that toolchain also needs the zstd library on its library
+search path. CUDA and HIP select device 0 and require the corresponding driver
+at runtime. An eligible call returns an error if the requested runtime is
+unavailable.
+
+With `RUST_EPHEM_GPU` unset or set to `0`, rust-ephem runs its native Rust CPU
+implementation. To run CubeCL kernels on the CPU, build with `cubecl-cpu` and
+set both `RUST_EPHEM_GPU=1` and `RUST_EPHEM_CUBECL_BACKEND=cpu`.
+
+With GPU execution enabled, the usual
+`in_constraint_batch` API dispatches airmass, altitude/azimuth, fixed solar
+roll, and polygonal body masks from 131,072 target/time pairs. The other
+angular masks dispatch from 4,194,304 pairs. For apparent Sun, Moon, and
+Earth-limb masks near Earth, the GPU screens angular limits and Rust applies
+the full apparent-place correction near a boundary. Altitude/azimuth masks
+similarly use the SOFA calculation near the limits. Polygon candidates are
+checked against the original vertices.
+
+For a standalone geometric `SunConstraint.evaluate_grid` call, rust-ephem
+computes each separation and its violation flag from the same double-precision
+dot product. At 4,194,304 target/time pairs or more, the CubeCL CPU, CUDA, and
+HIP runtimes can run this calculation on devices with double-precision support.
+Rust rechecks cells near the angular limits, 0°, and 180°. The wgpu and Metal
+runtimes use the native Rust loop for this full grid. Large native grids use
+Rayon and respect `RAYON_NUM_THREADS`.
+
+Bright-star searches dispatch at 67,108,864 target/star comparisons, independent
+of the number of epochs. Circular hit tests account for early matches in a
+wide field. When a grid requests nearest-star distances, CubeCL narrows the
+catalogue search and Rust computes the reported angle in double precision.
+An eligible call using a GPU runtime requires a working hardware adapter.
+
+Source builds are CPU-only by default; add `--features gpu` (or another
+feature above) to include CubeCL.
+The angular mask kernels compute dot products in single precision. Rust rechecks ambiguous
+angular comparisons in double precision to preserve the CPU mask at the boundary.
+
 ## Quick Start
 
 ### Satellite Ephemeris from TLE

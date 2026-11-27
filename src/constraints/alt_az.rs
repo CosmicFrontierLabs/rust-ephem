@@ -49,6 +49,141 @@ struct AltAzEvaluator {
 }
 
 impl AltAzEvaluator {
+    fn outside(&self, altitude: f64, azimuth: f64) -> bool {
+        self.min_altitude.is_some_and(|v| altitude < v)
+            || self.max_altitude.is_some_and(|v| altitude > v)
+            || match (self.min_azimuth, self.max_azimuth) {
+                (Some(lo), Some(hi)) if lo <= hi => !(azimuth >= lo && azimuth <= hi),
+                (Some(lo), Some(hi)) => !(azimuth >= lo || azimuth <= hi),
+                (Some(lo), None) => azimuth < lo,
+                (None, Some(hi)) => azimuth > hi,
+                (None, None) => false,
+            }
+            || polygon::polygon_violation(self.polygon.as_ref(), altitude, azimuth)
+    }
+
+    fn gpu_mask(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+        n_times: usize,
+    ) -> PyResult<Option<Array2<bool>>> {
+        use super::gpu;
+        use crate::utils::celestial::{altaz_astrometry, observed_altaz};
+        use sofars::{
+            astro::atoiq,
+            vm::{s2c, trxp},
+        };
+        if !gpu::mask_eligible(ras.len(), n_times, gpu::TRIG_MIN_PAIRS)
+            || ras.len() != decs.len()
+            || [self.min_altitude, self.max_altitude]
+                .into_iter()
+                .flatten()
+                .any(|v| !(-90.0..=90.0).contains(&v))
+            || [self.min_azimuth, self.max_azimuth]
+                .into_iter()
+                .flatten()
+                .any(|v| !(0.0..=360.0).contains(&v))
+        {
+            return Ok(None);
+        }
+        let astrom = altaz_astrometry(ephemeris, indices)?;
+        // With zero refraction and zero separate diurnal aberration, atioq
+        // is a rotation. Only the bounded atciq deflection/aberration moves
+        // a target across the rotated geometric planes.
+        if !astrom.iter().all(|a| {
+            a.diurab == 0.0
+                && a.refa == 0.0
+                && a.refb == 0.0
+                && crate::utils::apparent::can_screen_apparent_direction(a.em, &a.v, &a.eh)
+        }) {
+            return Ok(None);
+        }
+        let targets = crate::utils::vector_math::radec_to_unit_vectors_batch(ras, decs);
+        let exact = |i: usize, t: usize| {
+            let mut state = astrom[t];
+            let [alt, az] = observed_altaz(ras[i].to_radians(), decs[i].to_radians(), &mut state);
+            self.outside(alt, az)
+        };
+        let plane = |az: f64, zd: f64, upper: f64, lower: Option<f64>| {
+            gpu::dispatch_angle_mask(
+                &targets,
+                n_times,
+                |t| {
+                    // Rotate the observed zenith or horizontal edge normal back
+                    // through the Earth orientation and bias-precession-nutation.
+                    let (ri, di) = atoiq("A", az, zd, &astrom[t]);
+                    let mut v = [0.0; 3];
+                    trxp(&astrom[t].bpn, &s2c(ri, di), &mut v);
+                    (v, upper, lower)
+                },
+                gpu::Angle::Apparent,
+                Some(&exact),
+            )
+        };
+        // A polygon must lie inside its altitude/azimuth bounding box.
+        // Screen that box first and apply the winding test to its survivors.
+        let (min_alt, max_alt, lo, hi) = if let Some(vertices) = &self.polygon {
+            if vertices.is_empty()
+                || !vertices
+                    .iter()
+                    .all(|&(alt, az)| (-90.0..=90.0).contains(&alt) && (0.0..=360.0).contains(&az))
+            {
+                return Ok(None);
+            }
+            let mut low_alt = 90.0_f64;
+            let mut high_alt = -90.0_f64;
+            let mut low_az = 360.0_f64;
+            let mut high_az = 0.0_f64;
+            for &(alt, az) in vertices {
+                low_alt = low_alt.min(alt);
+                high_alt = high_alt.max(alt);
+                low_az = low_az.min(az);
+                high_az = high_az.max(az);
+            }
+            (Some(low_alt), Some(high_alt), low_az, high_az)
+        } else {
+            (
+                self.min_altitude,
+                self.max_altitude,
+                self.min_azimuth.unwrap_or(0.0),
+                self.max_azimuth.unwrap_or(360.0),
+            )
+        };
+        let mut result = if min_alt.is_some() || max_alt.is_some() {
+            let upper = max_alt.map_or(f64::INFINITY, |v| v.to_radians().sin());
+            let lower = min_alt.map(|v| v.to_radians().sin());
+            let Some(mask) = plane(0.0, 0.0, upper, lower)? else {
+                return Ok(None);
+            };
+            mask
+        } else {
+            Array2::from_elem((ras.len(), n_times), false)
+        };
+        if (lo, hi) != (0.0, 360.0) {
+            let horizontal =
+                |az: f64| plane(az.to_radians(), std::f64::consts::FRAC_PI_2, 0.0, None);
+            let Some(mut az) = horizontal(lo - 90.0)? else {
+                return Ok(None);
+            };
+            let Some(end) = horizontal(hi + 90.0)? else {
+                return Ok(None);
+            };
+            if (hi - lo).rem_euclid(360.0) <= 180.0 {
+                az |= &end;
+            } else {
+                az &= &end;
+            }
+            result |= &az;
+        }
+        if self.polygon.is_some() {
+            gpu::refine_polygon_mask(&mut result, false, exact);
+        }
+        Ok(Some(result))
+    }
+
     fn format_name(&self) -> String {
         let mut parts = vec![];
 
@@ -179,72 +314,22 @@ impl ConstraintEvaluator for AltAzEvaluator {
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
         let n_targets = target_ras.len();
-        let altaz_list = crate::utils::celestial::radec_to_altaz_batch(
+        let n_times =
+            time_indices.map_or_else(|| ephemeris.get_times().map(|t| t.len()), |i| Ok(i.len()))?;
+        if let Some(mask) =
+            self.gpu_mask(ephemeris, target_ras, target_decs, time_indices, n_times)?
+        {
+            return Ok(mask);
+        }
+        let altaz = crate::utils::celestial::radec_to_altaz_batch(
             target_ras,
             target_decs,
             ephemeris,
             time_indices,
         )?;
-
-        // Empty target batches still share the ephemeris time axis with other
-        // constraint masks (including cached masks in attributed roll sweeps).
-        let n_times =
-            time_indices.map_or_else(|| ephemeris.get_times().map(|t| t.len()), |i| Ok(i.len()))?;
-
-        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
-
-        for i in 0..n_times {
-            for (j, altaz) in altaz_list.iter().enumerate() {
-                let altitude_deg = altaz[[i, 0]];
-                let azimuth_deg = altaz[[i, 1]];
-
-                let mut violated = false;
-
-                // Check polygon constraint first if defined
-                if polygon::polygon_violation(self.polygon.as_ref(), altitude_deg, azimuth_deg) {
-                    violated = true;
-                }
-
-                if !violated {
-                    // Check altitude
-                    if let Some(min_alt) = self.min_altitude {
-                        if altitude_deg < min_alt {
-                            violated = true;
-                        }
-                    }
-                    if let Some(max_altitude) = self.max_altitude {
-                        if altitude_deg > max_altitude {
-                            violated = true;
-                        }
-                    }
-                }
-
-                // Check azimuth
-                if !violated {
-                    if let Some(min_azimuth) = self.min_azimuth {
-                        if let Some(max_azimuth) = self.max_azimuth {
-                            let az_in_range = if min_azimuth <= max_azimuth {
-                                azimuth_deg >= min_azimuth && azimuth_deg <= max_azimuth
-                            } else {
-                                azimuth_deg >= min_azimuth || azimuth_deg <= max_azimuth
-                            };
-                            if !az_in_range {
-                                violated = true;
-                            }
-                        } else if azimuth_deg < min_azimuth {
-                            violated = true;
-                        }
-                    } else if let Some(max_azimuth) = self.max_azimuth {
-                        if azimuth_deg > max_azimuth {
-                            violated = true;
-                        }
-                    }
-                }
-
-                result[[j, i]] = violated;
-            }
-        }
-
+        let result = Array2::from_shape_fn((n_targets, n_times), |(i, t)| {
+            self.outside(altaz[i][[t, 0]], altaz[i][[t, 1]])
+        });
         Ok(result)
     }
 

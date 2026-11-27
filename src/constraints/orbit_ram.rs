@@ -32,6 +32,36 @@ struct OrbitRamEvaluator {
 }
 
 impl OrbitRamEvaluator {
+    fn mask_vectors(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        targets: &Array2<f64>,
+        indices: Option<&[usize]>,
+    ) -> PyResult<Array2<bool>> {
+        if targets.ncols() != 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_unit_vectors must have shape (N, 3)",
+            ));
+        }
+        let (times,) = extract_time_data!(ephemeris, indices);
+        let states = ephemeris.data().gcrs.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("GCRS data not available in ephemeris")
+        })?;
+        if states.ncols() < 6 {
+            return Err(pyo3::exceptions::PyValueError::new_err("Velocity data not available in ephemeris - orbit RAM constraint requires position and velocity data"));
+        }
+        let max = self.max_angle_deg.map(|v| v.to_radians().cos());
+        let min = self.min_angle_deg.to_radians().cos();
+        let epochs: Vec<_> = (0..times.len())
+            .map(|t| {
+                let i = indices.map_or(t, |rows| rows[t]);
+                let v = std::array::from_fn(|j| states[[i, j + 3]]);
+                (crate::utils::vector_math::normalize_vector(&v), min, max)
+            })
+            .collect();
+        super::gpu::angular_grid(targets, &epochs, super::gpu::Angle::Direction)
+    }
+
     fn format_name(&self) -> String {
         match self.max_angle_deg {
             Some(max) => format!(
@@ -155,88 +185,13 @@ impl ConstraintEvaluator for OrbitRamEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
-        // Extract and filter time data
-        let (times_filtered,) = extract_time_data!(ephemeris, time_indices);
-
-        let n_targets = target_ras.len();
-        let n_times = times_filtered.len();
-        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
-
-        // Convert target coordinates to unit vectors (vectorized)
-        let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
-
-        // Get velocity data
-        let gcrs_data = ephemeris.data().gcrs.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err("GCRS data not available in ephemeris")
-        })?;
-
-        if gcrs_data.ncols() < 6 {
+        if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
-                "Velocity data not available in ephemeris - orbit RAM constraint requires position and velocity data"
+                "target_ras and target_decs must have the same length",
             ));
         }
-
-        // Create RAM direction vectors for all times
-        let mut ram_directions = Array2::<f64>::zeros((n_times, 3));
-        for i in 0..n_times {
-            let source_i = if let Some(indices) = time_indices {
-                indices[i]
-            } else {
-                i
-            };
-            let velocity = [
-                gcrs_data[[source_i, 3]],
-                gcrs_data[[source_i, 4]],
-                gcrs_data[[source_i, 5]],
-            ];
-            let ram_unit = crate::utils::vector_math::normalize_vector(&velocity);
-            ram_directions[[i, 0]] = ram_unit[0];
-            ram_directions[[i, 1]] = ram_unit[1];
-            ram_directions[[i, 2]] = ram_unit[2];
-        }
-
-        // Pre-compute cosine thresholds (avoids acos() in inner loop)
-        // Using cosine trick: angle < threshold_deg ⟺ cos(angle) > cos(threshold_deg)
-        let cos_min_threshold = self.min_angle_deg.to_radians().cos();
-        let cos_max_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
-
-        // Check constraints for all targets and times using cosine comparison
-        for j in 0..n_targets {
-            let target_vec = [
-                target_vectors[[j, 0]],
-                target_vectors[[j, 1]],
-                target_vectors[[j, 2]],
-            ];
-
-            for i in 0..n_times {
-                let ram_vec = [
-                    ram_directions[[i, 0]],
-                    ram_directions[[i, 1]],
-                    ram_directions[[i, 2]],
-                ];
-
-                // Calculate cosine of angle (avoids acos call)
-                let cos_angle = crate::utils::vector_math::dot_product(&target_vec, &ram_vec);
-
-                // Check constraint using cosine trick (avoids expensive acos in inner loop)
-                // angle < min_angle ⟺ cos(angle) > cos(min_angle)
-                // angle > max_angle ⟺ cos(angle) < cos(max_angle)
-                let mut violated = false;
-
-                if cos_angle > cos_min_threshold {
-                    violated = true;
-                }
-                if let Some(cos_max) = cos_max_threshold {
-                    if cos_angle < cos_max {
-                        violated = true;
-                    }
-                }
-
-                result[[j, i]] = violated;
-            }
-        }
-
-        Ok(result)
+        let targets = radec_to_unit_vectors_batch(target_ras, target_decs);
+        self.mask_vectors(ephemeris, &targets, time_indices)
     }
 
     fn in_constraint_batch_unit_vectors(
@@ -245,80 +200,8 @@ impl ConstraintEvaluator for OrbitRamEvaluator {
         target_unit_vectors: &Array2<f64>,
         time_indices: Option<&[usize]>,
     ) -> PyResult<Option<Array2<bool>>> {
-        let (times_filtered,) = extract_time_data!(ephemeris, time_indices);
-
-        if target_unit_vectors.ncols() != 3 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_unit_vectors must have shape (N, 3)",
-            ));
-        }
-
-        let n_targets = target_unit_vectors.nrows();
-        let n_times = times_filtered.len();
-        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
-
-        let gcrs_data = ephemeris.data().gcrs.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err("GCRS data not available in ephemeris")
-        })?;
-
-        if gcrs_data.ncols() < 6 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "Velocity data not available in ephemeris - orbit RAM constraint requires position and velocity data"
-            ));
-        }
-
-        let mut ram_directions = Array2::<f64>::zeros((n_times, 3));
-        for i in 0..n_times {
-            let source_i = if let Some(indices) = time_indices {
-                indices[i]
-            } else {
-                i
-            };
-            let velocity = [
-                gcrs_data[[source_i, 3]],
-                gcrs_data[[source_i, 4]],
-                gcrs_data[[source_i, 5]],
-            ];
-            let ram_unit = crate::utils::vector_math::normalize_vector(&velocity);
-            ram_directions[[i, 0]] = ram_unit[0];
-            ram_directions[[i, 1]] = ram_unit[1];
-            ram_directions[[i, 2]] = ram_unit[2];
-        }
-
-        let cos_min_threshold = self.min_angle_deg.to_radians().cos();
-        let cos_max_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
-
-        for j in 0..n_targets {
-            let target_vec = [
-                target_unit_vectors[[j, 0]],
-                target_unit_vectors[[j, 1]],
-                target_unit_vectors[[j, 2]],
-            ];
-
-            for i in 0..n_times {
-                let ram_vec = [
-                    ram_directions[[i, 0]],
-                    ram_directions[[i, 1]],
-                    ram_directions[[i, 2]],
-                ];
-
-                let cos_angle = crate::utils::vector_math::dot_product(&target_vec, &ram_vec);
-
-                let mut violated = false;
-                if cos_angle > cos_min_threshold {
-                    violated = true;
-                }
-                if let Some(cos_max) = cos_max_threshold {
-                    if cos_angle < cos_max {
-                        violated = true;
-                    }
-                }
-
-                result[[j, i]] = violated;
-            }
-        }
-
-        Ok(Some(result))
+        self.mask_vectors(ephemeris, target_unit_vectors, time_indices)
+            .map(Some)
     }
 
     fn compute_named_values(

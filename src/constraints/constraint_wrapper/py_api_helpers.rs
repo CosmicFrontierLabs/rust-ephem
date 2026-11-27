@@ -1,6 +1,6 @@
 use crate::constraints::core::{
     sweep_rolls_with_attribution, track_violations, ConstraintEvaluator, ConstraintResult,
-    EvaluationRoll, APPARENT_PARALLEL_MIN_CELLS,
+    EvaluationRoll, PARALLEL_MIN_GRID_CELLS,
 };
 use crate::constraints::diagonal::{
     DiagonalEvaluation, PARALLEL_CHUNK_ELEMENTS, PARALLEL_MIN_ELEMENTS,
@@ -609,7 +609,7 @@ impl PyConstraint {
                 aberrations[c % n_times].apply_radec_deg(ras[c / n_times], decs[c / n_times])
             };
             let (cell_ras, cell_decs): (Vec<f64>, Vec<f64>) =
-                if should_parallelize(cells, APPARENT_PARALLEL_MIN_CELLS) {
+                if should_parallelize(cells, PARALLEL_MIN_GRID_CELLS) {
                     (0..cells).into_par_iter().map(correct).unzip()
                 } else {
                     (0..cells).map(correct).unzip()
@@ -698,7 +698,7 @@ impl PyConstraint {
                     *out = aberration.apply(*p);
                 }
             };
-            if should_parallelize(corrections.len() * n_targets, APPARENT_PARALLEL_MIN_CELLS) {
+            if should_parallelize(corrections.len() * n_targets, PARALLEL_MIN_GRID_CELLS) {
                 proper
                     .par_iter_mut()
                     .zip(corrections.par_iter())
@@ -792,7 +792,7 @@ impl PyConstraint {
             for (column, aberration) in aberrations.iter().enumerate() {
                 let correct = |(&ra, &dec): (&f64, &f64)| aberration.apply_radec_deg(ra, dec);
                 let (ras, decs): (Vec<f64>, Vec<f64>) =
-                    if should_parallelize(n_targets, APPARENT_PARALLEL_MIN_CELLS) {
+                    if should_parallelize(n_targets, PARALLEL_MIN_GRID_CELLS) {
                         target_ras
                             .par_iter()
                             .zip(target_decs.par_iter())
@@ -1085,43 +1085,51 @@ impl PyConstraint {
         n_roll_samples: usize,
         target_roll: Option<f64>,
     ) -> PyResult<GridEvaluation> {
-        // See `eval_with_ephemeris`: one coordinated sweep produces both the
-        // violation array and the cause masks consistent with it.
-        let swept = if let Some(roll) = target_roll {
-            evaluator.in_constraint_batch_with_causes(
-                ephemeris,
-                target_ras,
-                target_decs,
-                time_indices,
-                Some(EvaluationRoll::Fixed(roll)),
-            )?
+        let (violated, named, values) = if let Some(grid) =
+            evaluator.fused_leaf_grid(ephemeris, target_ras, target_decs, time_indices)?
+        {
+            let tag = crate::constraints::core::value_key_prefix(&evaluator.name());
+            let named = HashMap::from([(tag, grid.violated.clone())]);
+            (
+                grid.violated,
+                named,
+                HashMap::from([(grid.key.to_owned(), grid.values)]),
+            )
         } else {
-            sweep_rolls_with_attribution(
-                evaluator,
-                ephemeris,
-                target_ras,
-                target_decs,
-                time_indices,
-                n_roll_samples,
-            )?
-        };
-        Ok(GridEvaluation {
-            name: evaluator.name_at_roll(target_roll),
-            target_names: None,
-            // Times, the cause-key mapping and the name are the same for every
-            // target: built once and shared.
-            times: ephemeris.get_times_at_indices(time_indices)?.into(),
-            violated: swept.violated,
-            named: swept.named,
-            // Named continuous values, once for all targets (not swept across
-            // roll angles).
-            values: evaluator.compute_named_values_at_roll(
+            let swept = if let Some(roll) = target_roll {
+                evaluator.in_constraint_batch_with_causes(
+                    ephemeris,
+                    target_ras,
+                    target_decs,
+                    time_indices,
+                    Some(EvaluationRoll::Fixed(roll)),
+                )?
+            } else {
+                sweep_rolls_with_attribution(
+                    evaluator,
+                    ephemeris,
+                    target_ras,
+                    target_decs,
+                    time_indices,
+                    n_roll_samples,
+                )?
+            };
+            let values = evaluator.compute_named_values_at_roll(
                 ephemeris,
                 target_ras,
                 target_decs,
                 time_indices,
                 target_roll,
-            )?,
+            )?;
+            (swept.violated, swept.named, values)
+        };
+        Ok(GridEvaluation {
+            name: evaluator.name_at_roll(target_roll),
+            target_names: None,
+            times: ephemeris.get_times_at_indices(time_indices)?.into(),
+            violated,
+            named,
+            values,
             // The mapping depends only on the evaluator's structure, not on
             // the target positions.
             cause_value_keys: std::sync::Arc::new(Self::cause_value_keys_for(

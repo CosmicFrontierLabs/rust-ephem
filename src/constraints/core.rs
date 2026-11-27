@@ -807,8 +807,25 @@ impl EvaluationRoll {
     }
 }
 
+/// A roll-independent leaf that computes its mask and its continuous value together.
+pub struct LeafValueGrid {
+    pub violated: Array2<bool>,
+    pub key: &'static str,
+    pub values: Array2<f64>,
+}
+
 /// Evaluate constraints against observer ephemerides and target coordinates.
 pub trait ConstraintEvaluator: Send + Sync {
+    fn fused_leaf_grid(
+        &self,
+        _ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        _target_ras: &[f64],
+        _target_decs: &[f64],
+        _time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<LeafValueGrid>> {
+        Ok(None)
+    }
+
     /// Whether changing the pointing can change the violation mask. The router
     /// evaluates time-only trees once because a waypoint cannot clear them.
     fn is_target_dependent(&self) -> bool {
@@ -1475,7 +1492,54 @@ pub(crate) fn target_corrections_at(
 }
 
 /// Fewest target x time cells worth spreading over the cores.
-pub(super) const APPARENT_PARALLEL_MIN_CELLS: usize = 20_000;
+pub(super) const PARALLEL_MIN_GRID_CELLS: usize = 20_000;
+
+/// Screen large apparent-angle masks with a geometric dot product. The
+/// correction is evaluated in f64 for any cell it could move across a limit.
+pub(super) fn apparent_mask(
+    targets: &Array2<f64>,
+    bodies: &[[f64; 3]],
+    corrections: &[crate::utils::apparent::ObserverAberration],
+    bounds: impl Fn(usize) -> (f64, Option<f64>) + Sync,
+) -> PyResult<Array2<bool>> {
+    let violated = |t, cosine| {
+        let (upper, lower) = bounds(t);
+        cosine > upper || lower.is_some_and(|v| cosine < v)
+    };
+    let unit = |x: f64, y: f64, z: f64| ((x * x + y * y + z * z) - 1.0).abs() <= 1e-12;
+    if super::gpu::mask_eligible(targets.nrows(), bodies.len(), super::gpu::ANGULAR_MIN_PAIRS)
+        && corrections.iter().all(|v| v.can_screen_cosine())
+        && bodies.iter().all(|&[x, y, z]| unit(x, y, z))
+        && targets.rows().into_iter().all(|r| unit(r[0], r[1], r[2]))
+    {
+        let apparent: Vec<_> = corrections
+            .iter()
+            .zip(bodies)
+            .map(|(c, &body)| c.toward(body))
+            .collect();
+        let exact = |i: usize, t: usize| {
+            let v = [targets[[i, 0]], targets[[i, 1]], targets[[i, 2]]];
+            let b = bodies[t];
+            violated(
+                t,
+                apparent[t].cosine(v, v[0] * b[0] + v[1] * b[1] + v[2] * b[2]),
+            )
+        };
+        if let Some(mask) = super::gpu::dispatch_angle_mask(
+            targets,
+            bodies.len(),
+            |t| {
+                let (hi, lo) = bounds(t);
+                (bodies[t], hi, lo)
+            },
+            super::gpu::Angle::Apparent,
+            Some(&exact),
+        )? {
+            return Ok(mask);
+        }
+    }
+    Ok(apparent_cosine_grid(targets, bodies, corrections, violated))
+}
 
 /// A grid (targets x times) of some function of the apparent cosine between
 /// each catalogue target and the body direction of each time (`bodies`, unit
@@ -1511,7 +1575,7 @@ pub(crate) fn apparent_cosine_grid<T: Copy + Default + Send>(
         }
     };
     if n_times > 0 {
-        if should_parallelize(n_targets * n_times, APPARENT_PARALLEL_MIN_CELLS) {
+        if should_parallelize(n_targets * n_times, PARALLEL_MIN_GRID_CELLS) {
             cells.par_chunks_mut(n_times).enumerate().for_each(fill);
         } else {
             cells.chunks_mut(n_times).enumerate().for_each(fill);

@@ -211,6 +211,88 @@ pub fn circular_diff_deg(a: f64, b: f64) -> f64 {
 }
 
 impl SolarRollEvaluator {
+    fn sun_units(
+        ephemeris: &dyn EphemerisBase,
+        indices: Option<&[usize]>,
+    ) -> PyResult<Vec<[f64; 3]>> {
+        let sun = ephemeris.get_sun_positions()?;
+        let obs = ephemeris.get_gcrs_positions()?;
+        let unit = |i: usize| {
+            let v = std::array::from_fn(|j| sun[[i, j]] - obs[[i, j]]);
+            let n = norm3(v);
+            if n < NEAR_ZERO {
+                [1.0, 0.0, 0.0]
+            } else {
+                v.map(|x| x / n)
+            }
+        };
+        Ok(match indices {
+            Some(rows) => rows.iter().copied().map(unit).collect(),
+            None => (0..sun.nrows()).map(unit).collect(),
+        })
+    }
+
+    fn fixed_roll_mask(
+        &self,
+        ephemeris: &dyn EphemerisBase,
+        ras: &[f64],
+        decs: &[f64],
+        indices: Option<&[usize]>,
+        roll: f64,
+    ) -> PyResult<Array2<bool>> {
+        let suns = Self::sun_units(ephemeris, indices)?;
+        let targets: Vec<_> = ras
+            .iter()
+            .zip(decs)
+            .map(|(&ra, &dec)| radec_to_unit(ra, dec))
+            .collect();
+        let shape = (targets.len(), suns.len());
+        let exact = |i: usize, t: usize| {
+            !roll_is_unconstrained(&targets[i], &suns[t], self.panel_normal)
+                && circular_diff_deg(
+                    roll,
+                    solar_optimal_roll_deg(&targets[i], &suns[t], self.panel_normal),
+                ) > self.tolerance_deg
+        };
+        if super::gpu::mask_eligible(shape.0, shape.1, super::gpu::TRIG_MIN_PAIRS)
+            && roll.abs() <= 360.0
+            && (0.0..=180.0).contains(&self.tolerance_deg)
+            && self.panel_normal.iter().all(|v| v.is_finite())
+        {
+            let [_, ny, nz] = self.panel_normal;
+            if (ny * ny + nz * nz).sqrt() <= NEAR_ZERO || self.tolerance_deg == 180.0 {
+                return Ok(Array2::from_elem(shape, false));
+            }
+            // The allowed Sun projection is a wedge in the target's Y-Z plane.
+            // Its two edges are great circles. The exact test handles ties
+            // and a Sun along the boresight, whose projections are near zero.
+            let center = roll.to_radians() + nz.atan2(ny);
+            let half = self.tolerance_deg.to_radians();
+            let (ls, lc) = (center - half).sin_cos();
+            let (rs, rc) = (center + half).sin_cos();
+            let mut planes = Array2::zeros((shape.0, 6));
+            for (i, &x) in targets.iter().enumerate() {
+                let (y, z) = north_referenced_axes(x);
+                for k in 0..3 {
+                    planes[[i, k]] = ls * y[k] - lc * z[k];
+                    planes[[i, k + 3]] = rc * z[k] - rs * y[k];
+                }
+            }
+            if let Some(result) = super::gpu::dispatch_angle_mask(
+                &planes,
+                shape.1,
+                |t| (suns[t], 0.0, None),
+                super::gpu::Angle::RollWedge {
+                    wide: self.tolerance_deg > 90.0,
+                },
+                Some(&exact),
+            )? {
+                return Ok(result);
+            }
+        }
+        Ok(Array2::from_shape_fn(shape, |(i, t)| exact(i, t)))
+    }
+
     fn name_str(&self) -> String {
         format!("SolarRollConstraint(tolerance={:.1}°)", self.tolerance_deg)
     }
@@ -238,25 +320,8 @@ impl ConstraintEvaluator for SolarRollEvaluator {
         if self.roll_deg.is_some() {
             return Ok(None);
         }
-        let sun = ephemeris.get_sun_positions()?;
-        let obs = ephemeris.get_gcrs_positions()?;
-        let n_times = time_indices.map_or(sun.nrows(), |idx| idx.len());
-        let sun_units: Vec<_> = (0..n_times)
-            .map(|j| {
-                let idx = time_indices.map_or(j, |indices| indices[j]);
-                let v = [
-                    sun[[idx, 0]] - obs[[idx, 0]],
-                    sun[[idx, 1]] - obs[[idx, 1]],
-                    sun[[idx, 2]] - obs[[idx, 2]],
-                ];
-                let n = norm3(v);
-                if n < NEAR_ZERO {
-                    [1.0, 0.0, 0.0]
-                } else {
-                    [v[0] / n, v[1] / n, v[2] / n]
-                }
-            })
-            .collect();
+        let sun_units = Self::sun_units(ephemeris, time_indices)?;
+        let n_times = sun_units.len();
         let targets: Vec<_> = target_ras
             .iter()
             .zip(target_decs)
@@ -378,44 +443,12 @@ impl ConstraintEvaluator for SolarRollEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
-        let (times_filtered,) = extract_time_data!(ephemeris, time_indices);
-        let n_targets = target_ras.len();
-        let n_times = times_filtered.len();
-        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
-
-        let Some(roll) = self.roll_deg else {
-            // No roll — always satisfied (not violated).
-            return Ok(result);
-        };
-
-        let sun = ephemeris.get_sun_positions()?;
-        let obs = ephemeris.get_gcrs_positions()?;
-
-        for j in 0..n_targets {
-            let target = radec_to_unit(target_ras[j], target_decs[j]);
-            for i in 0..n_times {
-                let source_i = time_indices.map_or(i, |indices| indices[i]);
-                let v = [
-                    sun[[source_i, 0]] - obs[[source_i, 0]],
-                    sun[[source_i, 1]] - obs[[source_i, 1]],
-                    sun[[source_i, 2]] - obs[[source_i, 2]],
-                ];
-                let n = norm3(v);
-                let sun_unit = if n < NEAR_ZERO {
-                    [1.0, 0.0, 0.0]
-                } else {
-                    [v[0] / n, v[1] / n, v[2] / n]
-                };
-                if roll_is_unconstrained(&target, &sun_unit, self.panel_normal) {
-                    result[[j, i]] = false;
-                } else {
-                    let opt = solar_optimal_roll_deg(&target, &sun_unit, self.panel_normal);
-                    result[[j, i]] = circular_diff_deg(roll, opt) > self.tolerance_deg;
-                }
-            }
+        if let Some(roll) = self.roll_deg {
+            return self.fixed_roll_mask(ephemeris, target_ras, target_decs, time_indices, roll);
         }
-
-        Ok(result)
+        let times =
+            time_indices.map_or_else(|| ephemeris.get_times().map(|v| v.len()), |v| Ok(v.len()))?;
+        Ok(Array2::from_elem((target_ras.len(), times), false))
     }
 
     fn in_constraint_batch_unit_vectors(
@@ -441,41 +474,13 @@ impl ConstraintEvaluator for SolarRollEvaluator {
             // A sweep candidate leaves the configured roll in force.
             return self.in_constraint_batch(ephemeris, target_ras, target_decs, time_indices);
         }
-        // Evaluate the supplied sweep candidate or explicit override.
-        let (times_filtered,) = extract_time_data!(ephemeris, time_indices);
-        let n_targets = target_ras.len();
-        let n_times = times_filtered.len();
-        let mut result = Array2::<bool>::from_elem((n_targets, n_times), false);
-
-        let sun = ephemeris.get_sun_positions()?;
-        let obs = ephemeris.get_gcrs_positions()?;
-
-        for j in 0..n_targets {
-            let target = radec_to_unit(target_ras[j], target_decs[j]);
-            for i in 0..n_times {
-                let source_i = time_indices.map_or(i, |indices| indices[i]);
-                let v = [
-                    sun[[source_i, 0]] - obs[[source_i, 0]],
-                    sun[[source_i, 1]] - obs[[source_i, 1]],
-                    sun[[source_i, 2]] - obs[[source_i, 2]],
-                ];
-                let n = norm3(v);
-                let sun_unit = if n < NEAR_ZERO {
-                    [1.0, 0.0, 0.0]
-                } else {
-                    [v[0] / n, v[1] / n, v[2] / n]
-                };
-                if roll_is_unconstrained(&target, &sun_unit, self.panel_normal) {
-                    result[[j, i]] = false;
-                } else {
-                    let opt = solar_optimal_roll_deg(&target, &sun_unit, self.panel_normal);
-                    result[[j, i]] =
-                        circular_diff_deg(roll_deg.degrees(), opt) > self.tolerance_deg;
-                }
-            }
-        }
-
-        Ok(result)
+        self.fixed_roll_mask(
+            ephemeris,
+            target_ras,
+            target_decs,
+            time_indices,
+            roll_deg.degrees(),
+        )
     }
 
     /// Whether a (target, time) pair is violated at *every* sampled roll over [0°, 360°)

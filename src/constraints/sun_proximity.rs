@@ -1,9 +1,10 @@
 /// Sun proximity constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
-use crate::utils::vector_math::radec_to_unit_vectors_batch;
+use crate::utils::vector_math::{dot_product, radec_to_unit_vectors_batch};
 use chrono::{DateTime, Utc};
 use ndarray::Array2;
 use pyo3::PyResult;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -34,7 +35,71 @@ struct SunProximityEvaluator {
 
 impl_proximity_evaluator!(SunProximityEvaluator, "Sun", "Sun", sun_positions);
 
+fn geometric_sun_direction(sun: &Array2<f64>, observer: &Array2<f64>, t: usize) -> [f64; 3] {
+    let relative = std::array::from_fn(|j| sun[[t, j]] - observer[[t, j]]);
+    let distance = dot_product(&relative, &relative).sqrt();
+    relative.map(|v| v / distance)
+}
+
 impl SunProximityEvaluator {
+    fn mask_vectors(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_unit_vectors: &Array2<f64>,
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Array2<bool>> {
+        if target_unit_vectors.ncols() != 3 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_unit_vectors must have shape (N, 3)",
+            ));
+        }
+
+        let (times_filtered, sun_filtered, obs_filtered) =
+            extract_standard_ephemeris_data!(ephemeris, time_indices);
+
+        let n_targets = target_unit_vectors.nrows();
+        let n_times = times_filtered.len();
+
+        let min_cos_threshold = self.min_angle_deg.to_radians().cos();
+        let max_cos_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
+
+        // On an apparent view the catalogue cosine becomes the apparent one.
+        if let Some(corrections) = super::core::target_corrections_at(ephemeris, time_indices) {
+            let bodies: Vec<[f64; 3]> = (0..n_times)
+                .map(|t| {
+                    crate::utils::vector_math::normalize_vector(&std::array::from_fn(|j| {
+                        sun_filtered[[t, j]] - obs_filtered[[t, j]]
+                    }))
+                })
+                .collect();
+            return super::core::apparent_mask(target_unit_vectors, &bodies, &corrections, |_| {
+                (min_cos_threshold, max_cos_threshold)
+            });
+        }
+
+        let direction = |t| geometric_sun_direction(&sun_filtered, &obs_filtered, t);
+        if let Some(mask) = super::gpu::try_mask(target_unit_vectors, n_times, |t| {
+            (direction(t), min_cos_threshold, max_cos_threshold)
+        })? {
+            return Ok(mask);
+        }
+        let mut result = Array2::from_elem((n_targets, n_times), false);
+        for t in 0..n_times {
+            let sun_unit = direction(t);
+            for target_idx in 0..n_targets {
+                let cos_angle = target_unit_vectors[[target_idx, 0]] * sun_unit[0]
+                    + target_unit_vectors[[target_idx, 1]] * sun_unit[1]
+                    + target_unit_vectors[[target_idx, 2]] * sun_unit[2];
+
+                let too_close = cos_angle > min_cos_threshold;
+                let too_far = max_cos_threshold.is_some_and(|max_thresh| cos_angle < max_thresh);
+                result[[target_idx, t]] = too_close || too_far;
+            }
+        }
+
+        Ok(result)
+    }
+
     #[allow(dead_code)]
     fn default_final_violation_description(&self) -> String {
         match self.max_angle_deg {
@@ -63,6 +128,77 @@ impl SunProximityEvaluator {
 }
 
 impl ConstraintEvaluator for SunProximityEvaluator {
+    fn fused_leaf_grid(
+        &self,
+        ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
+        target_ras: &[f64],
+        target_decs: &[f64],
+        time_indices: Option<&[usize]>,
+    ) -> PyResult<Option<super::core::LeafValueGrid>> {
+        if ephemeris.target_corrections().is_some() {
+            return Ok(None);
+        }
+        if target_ras.len() != target_decs.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "target_ras and target_decs must have the same length",
+            ));
+        }
+        let sun = ephemeris.get_sun_positions_at_indices(time_indices)?;
+        let observer = ephemeris.get_gcrs_positions_at_indices(time_indices)?;
+        let bodies: Vec<_> = (0..sun.nrows())
+            .map(|t| geometric_sun_direction(&sun, &observer, t))
+            .collect();
+        if !bodies.iter().flatten().all(|v| v.is_finite()) {
+            // Standalone masks and angles have distinct zero-distance conventions.
+            return Ok(None);
+        }
+        let targets = radec_to_unit_vectors_batch(target_ras, target_decs);
+        let upper = self.min_angle_deg.to_radians().cos();
+        let lower = self
+            .max_angle_deg
+            .map(|v| v.to_radians().cos())
+            .unwrap_or(f64::NEG_INFINITY);
+        let shape = (targets.nrows(), bodies.len());
+        let mut grid = super::core::LeafValueGrid {
+            key: "sun_angle_deg",
+            values: Array2::zeros(shape),
+            violated: Array2::from_elem(shape, false),
+        };
+        if grid.values.is_empty() {
+            return Ok(Some(grid));
+        }
+        if super::gpu::mask_eligible(shape.0, shape.1, super::gpu::ANGULAR_MIN_PAIRS)
+            && targets.iter().all(|v| v.is_finite())
+            && super::gpu::angle_values(&targets, &bodies, upper, lower, &mut grid)?
+        {
+            return Ok(Some(grid));
+        }
+        let row = |(i, (values, mask)): (usize, (&mut [f64], &mut [bool]))| {
+            let target = std::array::from_fn(|j| targets[[i, j]]);
+            for ((angle, flag), body) in values.iter_mut().zip(mask).zip(&bodies) {
+                let dot = dot_product(&target, body);
+                *angle = dot.clamp(-1.0, 1.0).acos().to_degrees();
+                *flag = dot > upper || dot < lower;
+            }
+        };
+        let values = grid.values.as_slice_mut().unwrap();
+        let mask = grid.violated.as_slice_mut().unwrap();
+        if values.len() >= super::core::PARALLEL_MIN_GRID_CELLS {
+            values
+                .par_chunks_mut(shape.1)
+                .zip(mask.par_chunks_mut(shape.1))
+                .enumerate()
+                .for_each(row);
+        } else {
+            values
+                .chunks_mut(shape.1)
+                .zip(mask.chunks_mut(shape.1))
+                .enumerate()
+                .for_each(row);
+        }
+        Ok(Some(grid))
+    }
+
     fn evaluate_diagonal(
         &self,
         ephemeris: &dyn crate::ephemeris::ephemeris_common::EphemerisBase,
@@ -120,91 +256,13 @@ impl ConstraintEvaluator for SunProximityEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
-        // An apparent view asks the kernel to correct the targets: one path does that.
-        if ephemeris.target_corrections().is_some() {
-            let vectors =
-                crate::utils::vector_math::radec_to_unit_vectors_batch(target_ras, target_decs);
-            if let Some(result) =
-                self.in_constraint_batch_unit_vectors(ephemeris, &vectors, time_indices)?
-            {
-                return Ok(result);
-            }
-        }
-        // Extract and filter ephemeris data
-        let (times_filtered, sun_filtered, obs_filtered) =
-            extract_standard_ephemeris_data!(ephemeris, time_indices);
-        // Validate inputs
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "target_ras and target_decs must have the same length",
             ));
         }
-
-        let n_targets = target_ras.len();
-        let n_times = times_filtered.len();
-
-        // Convert all target RA/Dec to unit vectors at once
-        let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
-
-        // Initialize result array: false = not violated (constraint satisfied)
-        let mut result = Array2::from_elem((n_targets, n_times), false);
-
-        // Pre-compute cosine thresholds (avoids acos() in inner loop)
-        // For angle comparison: angle < threshold ⟺ cos(angle) > cos(threshold)
-        let min_cos_threshold = self.min_angle_deg.to_radians().cos();
-        let max_cos_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
-
-        // For each time, check all targets
-        for t in 0..n_times {
-            let sun_pos = [
-                sun_filtered[[t, 0]],
-                sun_filtered[[t, 1]],
-                sun_filtered[[t, 2]],
-            ];
-            let obs_pos = [
-                obs_filtered[[t, 0]],
-                obs_filtered[[t, 1]],
-                obs_filtered[[t, 2]],
-            ];
-
-            // Compute relative sun position from observer
-            let sun_rel = [
-                sun_pos[0] - obs_pos[0],
-                sun_pos[1] - obs_pos[1],
-                sun_pos[2] - obs_pos[2],
-            ];
-            let sun_dist =
-                (sun_rel[0] * sun_rel[0] + sun_rel[1] * sun_rel[1] + sun_rel[2] * sun_rel[2])
-                    .sqrt();
-            let sun_unit = [
-                sun_rel[0] / sun_dist,
-                sun_rel[1] / sun_dist,
-                sun_rel[2] / sun_dist,
-            ];
-
-            // Check all targets at this time
-            for target_idx in 0..n_targets {
-                let target_vec = [
-                    target_vectors[[target_idx, 0]],
-                    target_vectors[[target_idx, 1]],
-                    target_vectors[[target_idx, 2]],
-                ];
-
-                // Calculate cosine of angle between target and sun
-                let cos_angle = target_vec[0] * sun_unit[0]
-                    + target_vec[1] * sun_unit[1]
-                    + target_vec[2] * sun_unit[2];
-
-                // Check constraints using cosine comparison (avoids acos)
-                // too_close: angle < min_angle ⟺ cos(angle) > cos(min_angle)
-                let too_close = cos_angle > min_cos_threshold;
-                let too_far = max_cos_threshold.is_some_and(|max_thresh| cos_angle < max_thresh);
-
-                result[[target_idx, t]] = too_close || too_far;
-            }
-        }
-
-        Ok(result)
+        let vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
+        self.mask_vectors(ephemeris, &vectors, time_indices)
     }
 
     fn applies_target_corrections(&self) -> bool {
@@ -217,80 +275,8 @@ impl ConstraintEvaluator for SunProximityEvaluator {
         target_unit_vectors: &Array2<f64>,
         time_indices: Option<&[usize]>,
     ) -> PyResult<Option<Array2<bool>>> {
-        if target_unit_vectors.ncols() != 3 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "target_unit_vectors must have shape (N, 3)",
-            ));
-        }
-
-        let (times_filtered, sun_filtered, obs_filtered) =
-            extract_standard_ephemeris_data!(ephemeris, time_indices);
-
-        let n_targets = target_unit_vectors.nrows();
-        let n_times = times_filtered.len();
-        let mut result = Array2::from_elem((n_targets, n_times), false);
-
-        let min_cos_threshold = self.min_angle_deg.to_radians().cos();
-        let max_cos_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
-
-        // On an apparent view the catalogue cosine becomes the apparent one.
-        if let Some(corrections) = super::core::target_corrections_at(ephemeris, time_indices) {
-            let bodies: Vec<[f64; 3]> = (0..n_times)
-                .map(|t| {
-                    crate::utils::vector_math::normalize_vector(&std::array::from_fn(|j| {
-                        sun_filtered[[t, j]] - obs_filtered[[t, j]]
-                    }))
-                })
-                .collect();
-            return Ok(Some(super::core::apparent_cosine_grid(
-                target_unit_vectors,
-                &bodies,
-                &corrections,
-                |_, cos_angle| {
-                    cos_angle > min_cos_threshold
-                        || max_cos_threshold.is_some_and(|max| cos_angle < max)
-                },
-            )));
-        }
-
-        for t in 0..n_times {
-            let sun_pos = [
-                sun_filtered[[t, 0]],
-                sun_filtered[[t, 1]],
-                sun_filtered[[t, 2]],
-            ];
-            let obs_pos = [
-                obs_filtered[[t, 0]],
-                obs_filtered[[t, 1]],
-                obs_filtered[[t, 2]],
-            ];
-
-            let sun_rel = [
-                sun_pos[0] - obs_pos[0],
-                sun_pos[1] - obs_pos[1],
-                sun_pos[2] - obs_pos[2],
-            ];
-            let sun_dist =
-                (sun_rel[0] * sun_rel[0] + sun_rel[1] * sun_rel[1] + sun_rel[2] * sun_rel[2])
-                    .sqrt();
-            let sun_unit = [
-                sun_rel[0] / sun_dist,
-                sun_rel[1] / sun_dist,
-                sun_rel[2] / sun_dist,
-            ];
-
-            for target_idx in 0..n_targets {
-                let cos_angle = target_unit_vectors[[target_idx, 0]] * sun_unit[0]
-                    + target_unit_vectors[[target_idx, 1]] * sun_unit[1]
-                    + target_unit_vectors[[target_idx, 2]] * sun_unit[2];
-
-                let too_close = cos_angle > min_cos_threshold;
-                let too_far = max_cos_threshold.is_some_and(|max_thresh| cos_angle < max_thresh);
-                result[[target_idx, t]] = too_close || too_far;
-            }
-        }
-
-        Ok(Some(result))
+        self.mask_vectors(ephemeris, target_unit_vectors, time_indices)
+            .map(Some)
     }
 
     fn compute_named_values(

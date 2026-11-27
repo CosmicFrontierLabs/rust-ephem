@@ -130,9 +130,16 @@ impl MoonProximityEvaluator {
         target_vectors: &Array2<f64>,
         moon: &Array2<f64>,
         observer: &Array2<f64>,
-    ) -> Array2<bool> {
+    ) -> PyResult<Array2<bool>> {
         let n_targets = target_vectors.nrows();
         let n_times = moon.nrows();
+        if let Some(mask) = super::gpu::try_mask(target_vectors, n_times, |t| {
+            let (unit, dist) = moon_direction(moon, observer, t);
+            let (min, max) = self.cos_thresholds(self.limb_offset_deg(dist));
+            (unit, min, max)
+        })? {
+            return Ok(mask);
+        }
         let mut result = Array2::from_elem((n_targets, n_times), false);
         for t in 0..n_times {
             let (unit, dist) = moon_direction(moon, observer, t);
@@ -144,7 +151,7 @@ impl MoonProximityEvaluator {
                 result[[i, t]] = Self::is_violated(cos_angle, thresholds);
             }
         }
-        result
+        Ok(result)
     }
 }
 
@@ -282,7 +289,7 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
             ));
         }
         let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
-        Ok(self.violation_mask(&target_vectors, &moon, &observer))
+        self.violation_mask(&target_vectors, &moon, &observer)
     }
 
     fn applies_target_corrections(&self) -> bool {
@@ -310,18 +317,13 @@ impl ConstraintEvaluator for MoonProximityEvaluator {
                     (unit, self.cos_thresholds(self.limb_offset_deg(dist)))
                 })
                 .unzip();
-            return Ok(Some(super::core::apparent_cosine_grid(
-                target_unit_vectors,
-                &bodies,
-                &corrections,
-                |t, cos_angle| Self::is_violated(cos_angle, thresholds[t]),
-            )));
+            return super::core::apparent_mask(target_unit_vectors, &bodies, &corrections, |t| {
+                thresholds[t]
+            })
+            .map(Some);
         }
-        Ok(Some(self.violation_mask(
-            target_unit_vectors,
-            &moon,
-            &observer,
-        )))
+        self.violation_mask(target_unit_vectors, &moon, &observer)
+            .map(Some)
     }
 
     fn compute_named_values(

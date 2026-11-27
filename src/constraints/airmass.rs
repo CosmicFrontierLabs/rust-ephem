@@ -1,6 +1,9 @@
 /// Airmass constraint implementation
 use super::core::{track_violations, ConstraintConfig, ConstraintEvaluator, ConstraintResult};
-use crate::utils::celestial::calculate_airmass_batch_fast;
+use super::gpu;
+use crate::utils::celestial::{
+    airmass_directions, calculate_airmass_batch_fast, calculate_airmass_kasten,
+};
 use ndarray::Array2;
 use pyo3::PyResult;
 use serde::{Deserialize, Serialize};
@@ -41,6 +44,20 @@ impl AirmassEvaluator {
             None => format!("AirmassConstraint(max={:.2})", self.max_airmass),
         }
     }
+}
+
+/// Bisect for the sin(altitude) where Kasten airmass reaches `airmass` (limit >= 1).
+fn sin_altitude_limit(airmass: f64) -> f64 {
+    let (mut low, mut high) = (0.0, 1.0);
+    for _ in 0..54 {
+        let mid: f64 = (low + high) * 0.5;
+        if calculate_airmass_kasten(mid.asin().to_degrees()) > airmass {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    (low + high) * 0.5
 }
 
 impl ConstraintEvaluator for AirmassEvaluator {
@@ -121,20 +138,47 @@ impl ConstraintEvaluator for AirmassEvaluator {
         target_decs: &[f64],
         time_indices: Option<&[usize]>,
     ) -> PyResult<Array2<bool>> {
-        // Get airmass for ALL targets at ALL times in one vectorized call
-        let airmass_values =
-            calculate_airmass_batch_fast(target_ras, target_decs, ephemeris, time_indices);
-
-        // Vectorized constraint evaluation - single pass with mapv, no nested loops
-        let result = airmass_values.mapv(|airmass| {
-            let mut violated = airmass > self.max_airmass;
-            if let Some(min_airmass) = self.min_airmass {
-                violated = violated || airmass < min_airmass;
+        let n_times = time_indices.map_or_else(
+            || ephemeris.data().gcrs.as_ref().map_or(0, |p| p.nrows()),
+            |idx| idx.len(),
+        );
+        let valid_limit = |v: f64| v.is_finite() && v >= 1.0;
+        if gpu::mask_eligible(target_ras.len(), n_times, gpu::TRIG_MIN_PAIRS)
+            && valid_limit(self.max_airmass)
+            && self.min_airmass.is_none_or(valid_limit)
+            // For unwrapped longitudes, lon - RA can lose precision before
+            // the CPU's cosine. Preserve that behavior for those inputs.
+            && target_ras.iter().all(|ra| ra.abs() <= 360.0)
+        {
+            let (targets, observers) =
+                airmass_directions(target_ras, target_decs, ephemeris, time_indices);
+            let violated = |i: usize, t: usize| {
+                let value = targets[i].airmass(observers[t]);
+                value > self.max_airmass || self.min_airmass.is_some_and(|min| value < min)
+            };
+            let upper = self.min_airmass.map_or(f64::INFINITY, sin_altitude_limit);
+            let lower = sin_altitude_limit(self.max_airmass);
+            let mut vectors = Array2::zeros((targets.len(), 3));
+            for (mut row, target) in vectors.rows_mut().into_iter().zip(&targets) {
+                for (component, value) in row.iter_mut().zip(target.unit()) {
+                    *component = value;
+                }
             }
-            violated
-        });
-
-        Ok(result)
+            if let Some(mask) = gpu::dispatch_angle_mask(
+                &vectors,
+                observers.len(),
+                |t| (observers[t].unit(), upper, Some(lower)),
+                gpu::Angle::Direction,
+                Some(&violated),
+            )? {
+                return Ok(mask);
+            }
+        }
+        Ok(
+            calculate_airmass_batch_fast(target_ras, target_decs, ephemeris, time_indices).mapv(
+                |value| value > self.max_airmass || self.min_airmass.is_some_and(|min| value < min),
+            ),
+        )
     }
 
     fn compute_named_values(

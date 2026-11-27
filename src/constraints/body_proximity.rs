@@ -219,12 +219,93 @@ impl BodyProximityEvaluator {
         }
     }
 
+    fn circle_mask(
+        &self,
+        targets: &Array2<f64>,
+        body: &Array2<f64>,
+        observer: &Array2<f64>,
+    ) -> pyo3::PyResult<Array2<bool>> {
+        let min = self.min_angle_deg.to_radians().cos();
+        let max = self.max_angle_deg.map(|v| v.to_radians().cos());
+        let epochs: Vec<_> = (0..body.nrows())
+            .map(|t| match Self::relative_direction(body, observer, t) {
+                Some(direction) => (direction, min, max),
+                None => ([0.0; 3], 1.0, None),
+            })
+            .collect();
+        super::gpu::angular_grid(targets, &epochs, super::gpu::Angle::Direction)
+    }
+
+    fn polygon_mask(
+        targets: &[(f64, f64)],
+        body: &Array2<f64>,
+        observer: &Array2<f64>,
+        vertices: &[[f64; 2]],
+        roll: Option<f64>,
+    ) -> pyo3::PyResult<Array2<bool>> {
+        let directions: Vec<_> = (0..body.nrows())
+            .map(|t| Self::body_radec_at(body, observer, t))
+            .collect();
+        let shape = (targets.len(), directions.len());
+        let inside = |i: usize, t: usize| {
+            directions[t].is_some_and(|(ra, dec)| {
+                fov_polygon::point_violates_polygon(
+                    targets[i].0,
+                    targets[i].1,
+                    ra,
+                    dec,
+                    vertices,
+                    roll,
+                )
+            })
+        };
+        if super::gpu::mask_eligible(shape.0, shape.1, super::gpu::TRIG_MIN_PAIRS)
+            && targets
+                .iter()
+                .all(|&(ra, dec)| ra.abs() <= std::f64::consts::TAU && dec.is_finite())
+            && vertices.iter().flatten().all(|v| v.abs() <= 360.0)
+        {
+            // Gnomonic radius is tan(separation). A disk enclosing every
+            // vertex also encloses every polygon edge at every roll.
+            let radius = vertices
+                .iter()
+                .map(|v| v[0].hypot(v[1]))
+                .fold(0.0, f64::max)
+                .to_radians();
+            let bound = 1.0 / 1.0_f64.hypot(radius) - 1e-12;
+            let unit =
+                |(ra, dec): (f64, f64)| [dec.cos() * ra.cos(), dec.cos() * ra.sin(), dec.sin()];
+            let vectors: Vec<_> = targets.iter().copied().map(unit).collect();
+            let vectors = Array2::from_shape_vec((shape.0, 3), vectors.into_flattened()).unwrap();
+            if let Some(mut mask) = super::gpu::dispatch_angle_mask(
+                &vectors,
+                shape.1,
+                |t| (directions[t].map_or([0.0; 3], unit), bound, None),
+                super::gpu::Angle::Direction,
+                None,
+            )? {
+                super::gpu::refine_polygon_mask(&mut mask, true, inside);
+                return Ok(mask);
+            }
+        }
+        Ok(Array2::from_shape_fn(shape, |(i, t)| inside(i, t)))
+    }
+
     /// Compute the body's RA/Dec (radians) from its GCRS position relative to the observer.
     fn body_radec_at(
         body_positions: &Array2<f64>,
         observer_positions: &Array2<f64>,
         i: usize,
     ) -> Option<(f64, f64)> {
+        Self::relative_direction(body_positions, observer_positions, i)
+            .map(|u| fov_polygon::unit_to_radec(&u))
+    }
+
+    fn relative_direction(
+        body_positions: &Array2<f64>,
+        observer_positions: &Array2<f64>,
+        i: usize,
+    ) -> Option<[f64; 3]> {
         let body_rel = [
             body_positions[[i, 0]] - observer_positions[[i, 0]],
             body_positions[[i, 1]] - observer_positions[[i, 1]],
@@ -237,7 +318,7 @@ impl BodyProximityEvaluator {
             return None;
         }
         let unit = [body_rel[0] / dist, body_rel[1] / dist, body_rel[2] / dist];
-        Some(fov_polygon::unit_to_radec(&unit))
+        Some(unit)
     }
 }
 
@@ -382,102 +463,42 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
     ) -> pyo3::PyResult<Array2<bool>> {
         use crate::utils::vector_math::radec_to_unit_vectors_batch;
 
-        let times = ephemeris.get_times()?;
-        let (body_positions_slice, observer_positions_slice, n_times) =
-            if let Some(indices) = time_indices {
-                let body_filtered = self
-                    .body_positions(ephemeris)?
-                    .select(ndarray::Axis(0), indices);
-                let obs_filtered = ephemeris
-                    .get_gcrs_positions()?
-                    .select(ndarray::Axis(0), indices);
-                (body_filtered, obs_filtered, indices.len())
-            } else {
-                let body_positions = self.body_positions(ephemeris)?;
-                let observer_positions = ephemeris.get_gcrs_positions()?;
-                (body_positions, observer_positions, times.len())
-            };
+        let (body_positions_slice, observer_positions_slice) = if let Some(indices) = time_indices {
+            let body_filtered = self
+                .body_positions(ephemeris)?
+                .select(ndarray::Axis(0), indices);
+            let obs_filtered = ephemeris
+                .get_gcrs_positions()?
+                .select(ndarray::Axis(0), indices);
+            (body_filtered, obs_filtered)
+        } else {
+            let body_positions = self.body_positions(ephemeris)?;
+            let observer_positions = ephemeris.get_gcrs_positions()?;
+            (body_positions, observer_positions)
+        };
         if target_ras.len() != target_decs.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "target_ras and target_decs must have the same length",
             ));
         }
 
-        let n_targets = target_ras.len();
-        let mut result = Array2::from_elem((n_targets, n_times), false);
-
-        if let Some(ref vertices) = self.fov_polygon {
-            let roll_rad = self.roll_rad;
-            for (i, (&ra, &dec)) in target_ras.iter().zip(target_decs.iter()).enumerate() {
-                let target_ra_rad = ra.to_radians();
-                let target_dec_rad = dec.to_radians();
-                for j in 0..n_times {
-                    if let Some((body_ra, body_dec)) =
-                        Self::body_radec_at(&body_positions_slice, &observer_positions_slice, j)
-                    {
-                        result[[i, j]] = fov_polygon::point_violates_polygon(
-                            target_ra_rad,
-                            target_dec_rad,
-                            body_ra,
-                            body_dec,
-                            vertices,
-                            roll_rad,
-                        );
-                    }
-                }
-            }
-            return Ok(result);
+        if let Some(vertices) = &self.fov_polygon {
+            let targets: Vec<_> = target_ras
+                .iter()
+                .zip(target_decs)
+                .map(|(ra, dec)| (ra.to_radians(), dec.to_radians()))
+                .collect();
+            return Self::polygon_mask(
+                &targets,
+                &body_positions_slice,
+                &observer_positions_slice,
+                vertices,
+                self.roll_rad,
+            );
         }
 
-        // Circle mode
-        let target_vectors = radec_to_unit_vectors_batch(target_ras, target_decs);
-        let threshold = self.min_angle_deg.to_radians().cos();
-        let max_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
-
-        for (i, target_row) in target_vectors.axis_iter(ndarray::Axis(0)).enumerate() {
-            let target_unit = [target_row[0], target_row[1], target_row[2]];
-
-            for j in 0..n_times {
-                let body_pos = [
-                    body_positions_slice[[j, 0]],
-                    body_positions_slice[[j, 1]],
-                    body_positions_slice[[j, 2]],
-                ];
-                let obs_pos = [
-                    observer_positions_slice[[j, 0]],
-                    observer_positions_slice[[j, 1]],
-                    observer_positions_slice[[j, 2]],
-                ];
-                let body_rel = [
-                    body_pos[0] - obs_pos[0],
-                    body_pos[1] - obs_pos[1],
-                    body_pos[2] - obs_pos[2],
-                ];
-                let body_dist = (body_rel[0] * body_rel[0]
-                    + body_rel[1] * body_rel[1]
-                    + body_rel[2] * body_rel[2])
-                    .sqrt();
-                if body_dist == 0.0 {
-                    continue;
-                }
-                let body_unit = [
-                    body_rel[0] / body_dist,
-                    body_rel[1] / body_dist,
-                    body_rel[2] / body_dist,
-                ];
-                let cos_angle = target_unit[0] * body_unit[0]
-                    + target_unit[1] * body_unit[1]
-                    + target_unit[2] * body_unit[2];
-                let too_close = cos_angle > threshold;
-                let too_far = if let Some(max_thresh) = max_threshold {
-                    cos_angle < max_thresh
-                } else {
-                    false
-                };
-                result[[i, j]] = too_close || too_far;
-            }
-        }
-        Ok(result)
+        let targets = radec_to_unit_vectors_batch(target_ras, target_decs);
+        self.circle_mask(&targets, &body_positions_slice, &observer_positions_slice)
     }
 
     fn in_constraint_batch_unit_vectors(
@@ -486,21 +507,19 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
         target_unit_vectors: &Array2<f64>,
         time_indices: Option<&[usize]>,
     ) -> pyo3::PyResult<Option<Array2<bool>>> {
-        let times = ephemeris.get_times()?;
-        let (body_positions_slice, observer_positions_slice, n_times) =
-            if let Some(indices) = time_indices {
-                let body_filtered = self
-                    .body_positions(ephemeris)?
-                    .select(ndarray::Axis(0), indices);
-                let obs_filtered = ephemeris
-                    .get_gcrs_positions()?
-                    .select(ndarray::Axis(0), indices);
-                (body_filtered, obs_filtered, indices.len())
-            } else {
-                let body_positions = self.body_positions(ephemeris)?;
-                let observer_positions = ephemeris.get_gcrs_positions()?;
-                (body_positions, observer_positions, times.len())
-            };
+        let (body_positions_slice, observer_positions_slice) = if let Some(indices) = time_indices {
+            let body_filtered = self
+                .body_positions(ephemeris)?
+                .select(ndarray::Axis(0), indices);
+            let obs_filtered = ephemeris
+                .get_gcrs_positions()?
+                .select(ndarray::Axis(0), indices);
+            (body_filtered, obs_filtered)
+        } else {
+            let body_positions = self.body_positions(ephemeris)?;
+            let observer_positions = ephemeris.get_gcrs_positions()?;
+            (body_positions, observer_positions)
+        };
 
         if target_unit_vectors.ncols() != 3 {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -508,85 +527,28 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
             ));
         }
 
-        let n_targets = target_unit_vectors.nrows();
-        let mut result = Array2::from_elem((n_targets, n_times), false);
-
-        if let Some(ref vertices) = self.fov_polygon {
-            let roll_rad = self.roll_rad;
-            for i in 0..n_targets {
-                let ux = target_unit_vectors[[i, 0]];
-                let uy = target_unit_vectors[[i, 1]];
-                let uz = target_unit_vectors[[i, 2]];
-                let (target_ra_rad, target_dec_rad) = fov_polygon::unit_to_radec(&[ux, uy, uz]);
-                for j in 0..n_times {
-                    if let Some((body_ra, body_dec)) =
-                        Self::body_radec_at(&body_positions_slice, &observer_positions_slice, j)
-                    {
-                        result[[i, j]] = fov_polygon::point_violates_polygon(
-                            target_ra_rad,
-                            target_dec_rad,
-                            body_ra,
-                            body_dec,
-                            vertices,
-                            roll_rad,
-                        );
-                    }
-                }
-            }
-            return Ok(Some(result));
+        if let Some(vertices) = &self.fov_polygon {
+            let targets: Vec<_> = target_unit_vectors
+                .rows()
+                .into_iter()
+                .map(|r| fov_polygon::unit_to_radec(&[r[0], r[1], r[2]]))
+                .collect();
+            return Self::polygon_mask(
+                &targets,
+                &body_positions_slice,
+                &observer_positions_slice,
+                vertices,
+                self.roll_rad,
+            )
+            .map(Some);
         }
 
-        // Circle mode
-        let threshold = self.min_angle_deg.to_radians().cos();
-        let max_threshold = self.max_angle_deg.map(|max| max.to_radians().cos());
-
-        for i in 0..n_targets {
-            let target_unit = [
-                target_unit_vectors[[i, 0]],
-                target_unit_vectors[[i, 1]],
-                target_unit_vectors[[i, 2]],
-            ];
-            for j in 0..n_times {
-                let body_pos = [
-                    body_positions_slice[[j, 0]],
-                    body_positions_slice[[j, 1]],
-                    body_positions_slice[[j, 2]],
-                ];
-                let obs_pos = [
-                    observer_positions_slice[[j, 0]],
-                    observer_positions_slice[[j, 1]],
-                    observer_positions_slice[[j, 2]],
-                ];
-                let body_rel = [
-                    body_pos[0] - obs_pos[0],
-                    body_pos[1] - obs_pos[1],
-                    body_pos[2] - obs_pos[2],
-                ];
-                let body_dist = (body_rel[0] * body_rel[0]
-                    + body_rel[1] * body_rel[1]
-                    + body_rel[2] * body_rel[2])
-                    .sqrt();
-                if body_dist == 0.0 {
-                    continue;
-                }
-                let body_unit = [
-                    body_rel[0] / body_dist,
-                    body_rel[1] / body_dist,
-                    body_rel[2] / body_dist,
-                ];
-                let cos_angle = target_unit[0] * body_unit[0]
-                    + target_unit[1] * body_unit[1]
-                    + target_unit[2] * body_unit[2];
-                let too_close = cos_angle > threshold;
-                let too_far = if let Some(max_thresh) = max_threshold {
-                    cos_angle < max_thresh
-                } else {
-                    false
-                };
-                result[[i, j]] = too_close || too_far;
-            }
-        }
-        Ok(Some(result))
+        self.circle_mask(
+            target_unit_vectors,
+            &body_positions_slice,
+            &observer_positions_slice,
+        )
+        .map(Some)
     }
 
     /// Evaluate polygon geometry without rebuilding the evaluator. Explicit fixed
@@ -606,37 +568,18 @@ impl ConstraintEvaluator for BodyProximityEvaluator {
         };
 
         let entry = self.roll_geometry(ephemeris, time_indices)?;
-        let (body_positions_slice, observer_positions_slice, n_times) = (
+        let targets: Vec<_> = target_ras
+            .iter()
+            .zip(target_decs)
+            .map(|(ra, dec)| (ra.to_radians(), dec.to_radians()))
+            .collect();
+        Self::polygon_mask(
+            &targets,
             &entry.body_positions,
             &entry.observer_positions,
-            entry.n_times,
-        );
-
-        let n_targets = target_ras.len();
-        let mut result = Array2::from_elem((n_targets, n_times), false);
-        let (sin_roll, cos_roll) = roll_deg.degrees().to_radians().sin_cos();
-
-        for (i, (&ra, &dec)) in target_ras.iter().zip(target_decs.iter()).enumerate() {
-            let target_ra_rad = ra.to_radians();
-            let target_dec_rad = dec.to_radians();
-            for j in 0..n_times {
-                if let Some((body_ra, body_dec)) =
-                    Self::body_radec_at(body_positions_slice, observer_positions_slice, j)
-                {
-                    result[[i, j]] = fov_polygon::point_in_polygon_at_roll(
-                        target_ra_rad,
-                        target_dec_rad,
-                        body_ra,
-                        body_dec,
-                        vertices,
-                        sin_roll,
-                        cos_roll,
-                    );
-                }
-            }
-        }
-
-        Ok(result)
+            vertices,
+            Some(roll_deg.degrees().to_radians()),
+        )
     }
 
     /// When this evaluator uses a free-roll polygon (no fixed roll), the polygon
